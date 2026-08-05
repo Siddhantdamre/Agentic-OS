@@ -1,0 +1,62 @@
+# Nango Integration Configuration Manifest
+# File: services/connectors/nango.yaml
+
+integrations:
+  whatsapp:
+    auth_mode: OAUTH2
+    categories: [messaging]
+    authorization_url: https://www.facebook.com/v18.0/dialog/oauth
+    token_url: https://graph.facebook.com/v18.0/oauth/access_token
+    scopes:
+      - whatsapp_business_management
+      - whatsapp_business_messaging
+
+  gmail:
+    auth_mode: OAUTH2
+    categories: [email]
+    authorization_url: https://accounts.google.com/o/oauth2/v2/auth
+    token_url: https://oauth2.googleapis.com/token
+    scopes:
+      - https://www.googleapis.com/auth/gmail.send
+      - https://www.googleapis.com/auth/gmail.readonly
+
+  google-calendar:
+    auth_mode: OAUTH2
+    categories: [calendar]
+    authorization_url: https://accounts.google.com/o/oauth2/v2/auth
+    token_url: https://oauth2.googleapis.com/token
+    scopes:
+      - https://www.googleapis.com/auth/calendar
+      - https://www.googleapis.com/auth/calendar.events
+
+  hubspot:
+    auth_mode: OAUTH2
+    categories: [crm]
+    authorization_url: https://app.hubspot.com/oauth/authorize
+    token_url: https://api.hubapi.com/oauth/v1/token
+    scopes:
+      - crm.objects.contacts.read
+      - crm.objects.contacts.write
+      - crm.objects.deals.read
+      - crm.objects.deals.write
+
+  razorpay:
+    auth_mode: API_KEY
+    categories: [payments]
+
+  meta-ads:
+    auth_mode: OAUTH2
+    categories: [ads]
+    authorization_url: https://www.facebook.com/v18.0/dialog/oauth
+    token_url: https://graph.facebook.com/v18.0/oauth/access_token
+    scopes:
+      - ads_management
+      - ads_read
+
+  google-ads:
+    auth_mode: OAUTH2
+    categories: [ads]
+    authorization_url: https://accounts.google.com/o/oauth2/v2/auth
+    token_url: https://oauth2.googleapis.com/token
+    scopes:
+      - https://www.googleapis.com/auth/adwords

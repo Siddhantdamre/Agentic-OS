@@ -1,10 +1,12 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { Sparkles, MessageSquare, Clock, AlertTriangle, CheckCircle2, ArrowUpRight, Send, RefreshCw } from 'lucide-react';
 
-export default function HomePage() {
+export const dynamic = 'force-dynamic';
+
+function HomeContent() {
   const searchParams = useSearchParams();
   const [isWarmup, setIsWarmup] = useState(searchParams?.get('warmup') === 'true');
   const [provisionProgress, setProvisionProgress] = useState(35);
@@ -225,5 +227,13 @@ export default function HomePage() {
         </button>
       </div>
     </div>
+  );
+}
+
+export default function HomePage() {
+  return (
+    <Suspense fallback={<div className="p-8 text-center text-slate-500 font-serif">Loading snapshot...</div>}>
+      <HomeContent />
+    </Suspense>
   );
 }
