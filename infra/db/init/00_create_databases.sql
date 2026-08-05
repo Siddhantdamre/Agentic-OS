@@ -9,6 +9,7 @@ CREATE DATABASE langfuse;
 CREATE DATABASE nango;
 CREATE DATABASE litellm;
 CREATE DATABASE temporal_visibility;
+CREATE DATABASE supertokens;
 
 -- Connect to the primary darex DB and enable pgvector
 \connect darex

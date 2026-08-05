@@ -273,6 +273,34 @@ services:
       - darex-net
 
   # ─────────────────────────────────────────────────────────────────────────
+  # SuperTokens — Authentication & Multi-tenant Identity Core
+  # ─────────────────────────────────────────────────────────────────────────
+  supertokens:
+    image: registry.supertokens.io/supertokens/supertokens-postgresql:9.2.1
+    container_name: darex-supertokens
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "3567:3567"   # SuperTokens API
+    environment:
+      POSTGRESQL_USER: darex
+      POSTGRESQL_PASSWORD: darex_dev_secret
+      POSTGRESQL_HOST: postgres
+      POSTGRESQL_PORT: 5432
+      POSTGRESQL_DATABASE_NAME: supertokens
+      API_KEYS: darex-supertokens-api-key-dev
+    networks:
+      - darex-net
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:3567/hello || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+
+  # ─────────────────────────────────────────────────────────────────────────
   # LiteLLM — Unified LLM gateway (placeholder; wired fully in Phase 4)
   # ─────────────────────────────────────────────────────────────────────────
   litellm:
