@@ -9,8 +9,6 @@
 #   docker-compose down -v        # stop + wipe all data volumes (reset)
 ##############################################################################
 
-version: "3.9"
-
 networks:
   darex-net:
     driver: bridge
@@ -103,18 +101,37 @@ services:
       - darex-net
 
   # ─────────────────────────────────────────────────────────────────────────
+  # Redis — required by Nango for job queues
+  # ─────────────────────────────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: darex-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    networks:
+      - darex-net
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # ─────────────────────────────────────────────────────────────────────────
   # Nango — self-hosted OAuth / connector platform
-  # Uses the same Postgres instance (nango schema).
+  # Uses the same Postgres instance (nango schema) + Redis for queues.
   # ─────────────────────────────────────────────────────────────────────────
   nango-server:
-    image: nangohq/nango:latest
+    image: nangohq/nango-server:latest
     container_name: darex-nango
     restart: unless-stopped
     depends_on:
       postgres:
         condition: service_healthy
+      redis:
+        condition: service_healthy
     ports:
-      - "3003:3003"   # Nango API
+      - "3003:3003"   # Nango API + Dashboard
     environment:
       - NANGO_DB_USER=darex
       - NANGO_DB_PASSWORD=darex_dev_secret
@@ -122,6 +139,7 @@ services:
       - NANGO_DB_PORT=5432
       - NANGO_DB_NAME=nango
       - NANGO_DB_SSL=false
+      - NANGO_REDIS_URL=redis://redis:6379
       - SERVER_RUN_MODE=PROD
       - NANGO_SECRET_KEY=darex-nango-secret-dev-change-in-prod
       - NANGO_SERVER_URL=http://localhost:3003
@@ -136,7 +154,7 @@ services:
       interval: 15s
       timeout: 10s
       retries: 10
-      start_period: 20s
+      start_period: 30s
 
   # ─────────────────────────────────────────────────────────────────────────
   # Langfuse — LLM tracing & observability
@@ -254,7 +272,7 @@ services:
   # LiteLLM — Unified LLM gateway (placeholder; wired fully in Phase 4)
   # ─────────────────────────────────────────────────────────────────────────
   litellm:
-    image: ghcr.io/berriai/litellm:main-latest
+    image: litellm/litellm:main-latest
     container_name: darex-litellm
     restart: unless-stopped
     ports:
