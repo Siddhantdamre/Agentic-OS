@@ -1,0 +1,35 @@
+# LiteLLM Proxy Config — Phase 0 Placeholder
+# Full model routing and fallbacks are wired in Phase 4.
+# This config just starts the proxy and keeps the healthcheck green.
+# File: infra/litellm/config.yaml
+
+model_list:
+  # Placeholder — replace with real model configs in Phase 4
+  - model_name: gpt-4o
+    litellm_params:
+      model: openai/gpt-4o
+      api_key: os.environ/OPENAI_API_KEY
+
+  - model_name: claude-3-5-sonnet
+    litellm_params:
+      model: anthropic/claude-3-5-sonnet-20241022
+      api_key: os.environ/ANTHROPIC_API_KEY
+
+  # Default fallback
+  - model_name: default
+    litellm_params:
+      model: openai/gpt-4o-mini
+      api_key: os.environ/OPENAI_API_KEY
+
+litellm_settings:
+  # Tag every call with org_id for per-tenant cost tracking (wired in Phase 4)
+  default_team_id: darex-default
+  success_callback: ["langfuse"]
+  failure_callback: ["langfuse"]
+
+  # Langfuse integration (wired in Phase 8, placeholder here)
+  langfuse_host: http://darex-langfuse-server:3000
+
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY
+  database_url: os.environ/DATABASE_URL
