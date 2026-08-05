@@ -66,7 +66,7 @@ services:
     ports:
       - "7233:7233"   # gRPC frontend
     environment:
-      - DB=postgresql
+      - DB=postgres12
       - DB_PORT=5432
       - POSTGRES_USER=darex
       - POSTGRES_PWD=darex_dev_secret
@@ -75,7 +75,7 @@ services:
       - ENABLE_ES=false
       - TEMPORAL_CLI_ADDRESS=temporal:7233
     volumes:
-      - ./infra/temporal/dynamicconfig:/etc/temporal/config/dynamicconfig:ro
+      - ./temporal/dynamicconfig:/etc/temporal/config/dynamicconfig:ro
     networks:
       - darex-net
     healthcheck:
@@ -227,6 +227,8 @@ services:
       LANGFUSE_INIT_USER_NAME: Darex Admin
       LANGFUSE_INIT_USER_PASSWORD: darex_admin_dev
       CLICKHOUSE_URL: http://darex-langfuse-clickhouse:8123
+      CLICKHOUSE_MIGRATION_URL: clickhouse://langfuse:langfuse_dev_secret@darex-langfuse-clickhouse:9000/langfuse
+      CLICKHOUSE_CLUSTER_ENABLED: "false"
       CLICKHOUSE_USER: langfuse
       CLICKHOUSE_PASSWORD: langfuse_dev_secret
       LANGFUSE_S3_EVENT_UPLOAD_BUCKET: langfuse-events
@@ -239,7 +241,7 @@ services:
     networks:
       - darex-net
     healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:3000/api/public/health || exit 1"]
+      test: ["CMD", "node", "-e", "require('http').get('http://darex-langfuse-server:3000/api/public/health', r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))"]
       interval: 15s
       timeout: 10s
       retries: 20
@@ -256,6 +258,8 @@ services:
       DATABASE_URL: postgresql://darex:darex_dev_secret@postgres:5432/langfuse
       SALT: darex-langfuse-salt-dev-change-in-prod
       CLICKHOUSE_URL: http://darex-langfuse-clickhouse:8123
+      CLICKHOUSE_MIGRATION_URL: clickhouse://langfuse:langfuse_dev_secret@darex-langfuse-clickhouse:9000/langfuse
+      CLICKHOUSE_CLUSTER_ENABLED: "false"
       CLICKHOUSE_USER: langfuse
       CLICKHOUSE_PASSWORD: langfuse_dev_secret
       LANGFUSE_S3_EVENT_UPLOAD_BUCKET: langfuse-events
@@ -278,7 +282,7 @@ services:
     ports:
       - "4000:4000"
     volumes:
-      - ./infra/litellm/config.yaml:/app/config.yaml:ro
+      - ./litellm/config.yaml:/app/config.yaml:ro
     command: ["--config", "/app/config.yaml", "--port", "4000", "--num_workers", "1"]
     environment:
       - LITELLM_MASTER_KEY=sk-darex-litellm-dev-key
