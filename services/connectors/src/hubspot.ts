@@ -1,5 +1,5 @@
-import { NangoConnectorClient } from './client.js';
-import { CreateHubspotContactPayload } from './types.js';
+import { NangoConnectorClient } from './client';
+import { CreateHubspotContactPayload } from './types';
 
 export async function createHubspotContact(
   client: NangoConnectorClient,

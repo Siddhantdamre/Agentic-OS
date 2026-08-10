@@ -3,10 +3,6 @@
 -- Every table MUST have org_id + an RLS policy. No exceptions.
 -- File: infra/db/migrations/001_core_schema.sql
 ----------------------------------------------------------------------------
-
-\connect darex;
-
-----------------------------------------------------------------------------
 -- 1. ORGANISATIONS TABLE
 ----------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS orgs (

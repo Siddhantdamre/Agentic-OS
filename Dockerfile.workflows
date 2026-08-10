@@ -1,0 +1,18 @@
+FROM node:20-alpine AS builder
+RUN apk add --no-cache libc6-compat
+WORKDIR /app
+RUN corepack enable pnpm
+
+COPY . .
+RUN pnpm install --frozen-lockfile
+RUN pnpm --filter @darex/workflows build
+
+FROM node:20-alpine AS runner
+WORKDIR /app
+RUN corepack enable pnpm
+
+ENV NODE_ENV production
+
+COPY --from=builder /app ./
+
+CMD ["pnpm", "--filter", "@darex/workflows", "start"]

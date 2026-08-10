@@ -13,7 +13,8 @@ export function ensureSuperTokensInit() {
       framework: 'custom',
       supertokens: {
         connectionURI: process.env.SUPERTOKENS_CONNECTION_URI || 'http://localhost:3567',
-        apiKey: process.env.SUPERTOKENS_API_KEY || 'darex-supertokens-api-key-dev',
+        // apiKey is optional; set SUPERTOKENS_API_KEY to match the SuperTokens server's API_KEYS
+        apiKey: process.env.SUPERTOKENS_API_KEY,
       },
       appInfo: {
         appName: process.env.NEXT_PUBLIC_SUPERTOKENS_APP_NAME || 'DareX ai',

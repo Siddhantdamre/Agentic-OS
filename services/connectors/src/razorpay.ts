@@ -1,5 +1,5 @@
-import { NangoConnectorClient } from './client.js';
-import { CreateRazorpayInvoicePayload } from './types.js';
+import { NangoConnectorClient } from './client';
+import { CreateRazorpayInvoicePayload } from './types';
 
 export async function createRazorpayInvoice(
   client: NangoConnectorClient,
@@ -10,6 +10,6 @@ export async function createRazorpayInvoice(
     type: 'invoice',
     description: payload.description,
     customer: { email: payload.customerEmail },
-    line_items: [{ amount: payload.amountInPaisa, currency: 'INR', name: payload.description }],
+    line_items: [{ amount: payload.amountInPaisa, currency: 'INR', name: payload.description, quantity: 1 }],
   });
 }

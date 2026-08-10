@@ -1,5 +1,5 @@
-import { NangoConnectorClient } from './client.js';
-import { CreateCalendarEventPayload } from './types.js';
+import { NangoConnectorClient } from './client';
+import { CreateCalendarEventPayload } from './types';
 
 export async function createGoogleCalendarEvent(
   client: NangoConnectorClient,

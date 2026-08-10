@@ -1,5 +1,5 @@
-import { NangoConnectorClient } from './client.js';
-import { SendMessagePayload } from './types.js';
+import { NangoConnectorClient } from './client';
+import { SendMessagePayload } from './types';
 
 export async function sendGmailEmail(
   client: NangoConnectorClient,

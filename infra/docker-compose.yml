@@ -43,7 +43,7 @@ services:
     volumes:
       - postgres-data:/var/lib/postgresql/data
       # Init scripts run in alphabetical order on first boot
-      - ./infra/db/init:/docker-entrypoint-initdb.d:ro
+      - ./db/init:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U darex -d darex"]
       interval: 5s
@@ -150,7 +150,7 @@ services:
     networks:
       - darex-net
     healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:3003/health || exit 1"]
+      test: ["CMD-SHELL", "node -e \"require('http').get('http://localhost:3003/health', r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))\""]
       interval: 15s
       timeout: 10s
       retries: 10
@@ -294,7 +294,7 @@ services:
     networks:
       - darex-net
     healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:3567/hello || exit 1"]
+      test: ["CMD-SHELL", "bash -c '</dev/tcp/127.0.0.1/3567' || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 10
@@ -321,8 +321,36 @@ services:
     networks:
       - darex-net
     healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:4000/health || exit 1"]
+      test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:4000/health/readiness')\""]
       interval: 15s
       timeout: 10s
       retries: 10
       start_period: 20s
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # Inbox — Chatwoot Fork / Multi-Channel Inbox Gateway (Phase 3)
+  # Runs in separate container on port 3004
+  # ─────────────────────────────────────────────────────────────────────────
+  inbox:
+    build:
+      context: ../apps/inbox
+      dockerfile: Dockerfile
+    container_name: darex-inbox
+    restart: unless-stopped
+    ports:
+      - "3004:3004"
+    environment:
+      - PORT=3004
+      - DASHBOARD_URL=http://localhost:3000
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - darex-net
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"require('http').get('http://localhost:3004/health', r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))\""]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+

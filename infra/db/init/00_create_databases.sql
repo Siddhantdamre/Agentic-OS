@@ -1,8 +1,6 @@
-##############################################################################
-# Darex Postgres Init — runs on first container boot only
-# Creates all databases needed by the services, enables extensions.
-# File: infra/db/init/00_create_databases.sql
-##############################################################################
+-- Darex Postgres Init — runs on first container boot only
+-- Creates all databases needed by the services, enables extensions.
+-- File: infra/db/init/00_create_databases.sql
 
 -- Create databases for services that need their own DB
 CREATE DATABASE langfuse;

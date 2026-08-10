@@ -2,7 +2,7 @@ const http = require('http');
 
 console.log('\n=== Testing SuperTokens Auth & Nango OAuth Integration ===\n');
 
-function makeRequest(url, method = 'GET', body = null) {
+function makeRequest(url, method = 'GET', body = null, cookie = null) {
   return new Promise((resolve, reject) => {
     const parsedUrl = new URL(url);
     const postData = body ? JSON.stringify(body) : null;
@@ -10,10 +10,11 @@ function makeRequest(url, method = 'GET', body = null) {
     const options = {
       hostname: parsedUrl.hostname,
       port: parsedUrl.port,
-      path: parsedUrl.pathname,
+      path: parsedUrl.pathname + parsedUrl.search,
       method: method,
       headers: {
         'Content-Type': 'application/json',
+        ...(cookie ? { Cookie: cookie } : {}),
         ...(postData ? { 'Content-Length': Buffer.byteLength(postData) } : {}),
       },
     };
@@ -52,7 +53,7 @@ async function testAuthAndNango() {
     });
 
     if (regRes.statusCode === 200 && regRes.body.status === 'OK' && regRes.body.userId) {
-      console.log(`   [PASS] Registered SuperTokens user: ${regRes.body.userId}`);
+      console.log(`   [PASS] Registered user: ${regRes.body.userId}`);
       pass++;
     } else {
       console.log(`   [FAIL] Registration failed — HTTP ${regRes.statusCode}:`, regRes.body);
@@ -66,17 +67,19 @@ async function testAuthAndNango() {
       password: testPassword,
     });
 
+    let cookie = '';
     if (loginRes.statusCode === 200 && loginRes.body.status === 'OK' && loginRes.body.userId) {
       console.log(`   [PASS] Authenticated user: ${loginRes.body.email}`);
       pass++;
+      cookie = (loginRes.headers['set-cookie'] || []).map((c) => c.split(';')[0]).join('; ');
     } else {
       console.log(`   [FAIL] Login failed — HTTP ${loginRes.statusCode}:`, loginRes.body);
       fail++;
     }
 
-    // 3. Test Integrations Page
+    // 3. Test Integrations Page (authenticated)
     console.log('\n3. Testing Integrations Nango OAuth API (/api/integrations)...');
-    const intRes = await makeRequest('http://localhost:3000/api/integrations', 'GET');
+    const intRes = await makeRequest('http://localhost:3000/api/integrations', 'GET', null, cookie);
     if (intRes.statusCode === 200 && intRes.body.integrations) {
       console.log(`   [PASS] Integrations API working. Total apps: ${intRes.body.integrations.length}`);
       pass++;

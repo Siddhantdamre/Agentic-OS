@@ -9,6 +9,8 @@ node_modules/
 dist/
 build/
 out/
+.turbo/
+*.tsbuildinfo
 
 # Environment files
 .env
@@ -70,6 +72,13 @@ nango-data/
 
 # Graphify
 graphify-out/
+
+# Windows
+nul
+
+# Runtime working dirs
+workspace_storage/
+sandbox/
 
 # Terraform
 infra/.terraform/

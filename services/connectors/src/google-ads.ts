@@ -1,4 +1,4 @@
-import { NangoConnectorClient } from './client.js';
+import { NangoConnectorClient } from './client';
 
 export async function getGoogleAdsPerformance(
   client: NangoConnectorClient,
@@ -12,6 +12,9 @@ export async function getGoogleAdsPerformance(
     'POST',
     {
       query: 'SELECT campaign.id, campaign.name, metrics.impressions, metrics.clicks, metrics.cost_micros FROM campaign',
+    },
+    {
+      'developer-token': process.env.GOOGLE_ADS_DEVELOPER_TOKEN || '',
     }
   );
 }

@@ -1,86 +1,106 @@
 import { NextResponse } from 'next/server';
-import { Pool } from 'pg';
+import { cookies } from 'next/headers';
+import { pool } from '@/lib/db';
 
-const pool = new Pool({
-  host: process.env.DB_HOST || 'localhost',
-  port: parseInt(process.env.DB_PORT || '5432'),
-  user: process.env.DB_USER || 'darex',
-  password: process.env.DB_PASSWORD || 'darex_dev_secret',
-  database: process.env.DB_NAME || 'darex',
-});
-
+/**
+ * POST /api/org/create
+ * Called at the final step of onboarding to persist org name, team size,
+ * business type, and selected channels (initial channel seed).
+ */
 export async function POST(request: Request) {
+  const cookieStore = await cookies();
+  const sessionUserId = cookieStore.get('darex_session')?.value;
+
+  if (!sessionUserId) {
+    return NextResponse.json({ status: 'ERROR', message: 'Unauthorized' }, { status: 401 });
+  }
+
+  const { businessName, teamSize, businessType, channels } = await request.json().catch(() => ({}));
+
+  if (!businessName) {
+    return NextResponse.json({ status: 'ERROR', message: 'Business name is required' }, { status: 400 });
+  }
+
   const client = await pool.connect();
   try {
-    const body = await request.json();
-    const { businessName, teamSize, businessType, channels } = body;
+    // 1. Get or create org for this user
+    const userRes = await client.query(
+      `SELECT id, email, org_id FROM users WHERE id = $1 LIMIT 1`,
+      [sessionUserId]
+    );
 
-    if (!businessName) {
-      return NextResponse.json({ message: 'Business name is required' }, { status: 400 });
+    if (userRes.rows.length === 0) {
+      return NextResponse.json({ status: 'ERROR', message: 'User not found' }, { status: 404 });
     }
 
-    await client.query('BEGIN');
+    const user = userRes.rows[0];
+    let orgId = user.org_id;
 
-    // 1. Create Organization
-    const slug = businessName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '') + '-' + Math.floor(Math.random() * 1000);
-    const orgRes = await client.query(
-      `INSERT INTO orgs (name, slug, plan, status) VALUES ($1, $2, 'free', 'provisioning') RETURNING id`,
-      [businessName, slug]
-    );
-    const orgId = orgRes.rows[0].id;
+    const slug = businessName
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-|-$/g, '');
 
-    // Set session RLS context for remaining inserts
-    await client.query(`SELECT set_config('app.current_org_id', $1, true)`, [orgId]);
+    if (!orgId) {
+      // Create a fresh org for this user
+      const orgRes = await client.query(
+        `INSERT INTO orgs (name, slug, plan, status)
+         VALUES ($1, $2, 'starter', 'active')
+         ON CONFLICT (slug) DO UPDATE SET name = EXCLUDED.name
+         RETURNING id`,
+        [businessName, `${slug}-${Date.now()}`]
+      );
+      orgId = orgRes.rows[0].id;
 
-    // 2. Create Owner User
-    await client.query(
-      `INSERT INTO users (org_id, email, role) VALUES ($1, $2, 'owner')`,
-      [orgId, `owner@${slug}.com`]
-    );
-
-    // 3. Create Default Roster of AI Employees (Sales, Support, Marketing)
-    const defaultEmployees = [
-      { name: 'Sarah', role: 'sales', graph_id: 'sales_agent_v1', tool_allowlist: ['hubspot', 'razorpay', 'google_calendar'] },
-      { name: 'Emma', role: 'support', graph_id: 'support_agent_v1', tool_allowlist: ['whatsapp', 'email', 'razorpay'] },
-      { name: 'Marcus', role: 'marketing', graph_id: 'marketing_agent_v1', tool_allowlist: ['meta_ads', 'google_ads'] },
-    ];
-
-    for (const emp of defaultEmployees) {
+      // Link user to org
       await client.query(
-        `INSERT INTO ai_employees (org_id, name, role, graph_id, tool_allowlist, status) VALUES ($1, $2, $3, $4, $5, 'active')`,
-        [orgId, emp.name, emp.role, emp.graph_id, emp.tool_allowlist]
+        `UPDATE users SET org_id = $1, role = 'owner' WHERE id = $2`,
+        [orgId, sessionUserId]
+      );
+    } else {
+      // Update org name/metadata
+      await client.query(
+        `UPDATE orgs SET name = $1 WHERE id = $2`,
+        [businessName, orgId]
       );
     }
 
-    // 4. Register Channels
-    if (Array.isArray(channels)) {
-      for (const ch of channels) {
+    await client.query(`SELECT set_config('app.current_org_id', $1, true)`, [orgId]);
+
+    // 2. Seed initial channels from selection
+    if (Array.isArray(channels) && channels.length > 0) {
+      for (const channelType of channels) {
         await client.query(
-          `INSERT INTO channels (org_id, channel_type, status) VALUES ($1, $2, 'connecting')`,
-          [orgId, ch]
+          `INSERT INTO channels (org_id, channel_type, status)
+           VALUES ($1, $2, 'pending')
+           ON CONFLICT (org_id, channel_type) DO NOTHING`,
+          [orgId, channelType]
         );
       }
     }
 
-    // 5. Create Onboarding State Record
-    await client.query(
-      `INSERT INTO org_onboarding (org_id, wizard_step, business_name, team_size, business_type, channels_selected, provisioning_started_at)
-       VALUES ($1, 'complete', $2, $3, $4, $5, NOW())`,
-      [orgId, businessName, teamSize, businessType, channels]
-    );
-
-    await client.query('COMMIT');
-
-    return NextResponse.json({
-      success: true,
+    // 3. Set the org cookie
+    const res = NextResponse.json({
+      status: 'OK',
       orgId,
-      slug,
-      message: 'Organization created successfully',
+      businessName,
+      teamSize,
+      businessType,
+      channelsSeeded: channels?.length || 0,
     });
-  } catch (error: any) {
-    await client.query('ROLLBACK');
-    console.error('Org creation error:', error);
-    return NextResponse.json({ message: error.message || 'Internal server error' }, { status: 500 });
+
+    res.cookies.set('darex_org_id', orgId, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'lax',
+      path: '/',
+      maxAge: 60 * 60 * 24 * 7,
+    });
+
+    return res;
+  } catch (err: any) {
+    console.error('Org create error:', err);
+    return NextResponse.json({ status: 'ERROR', message: err.message }, { status: 500 });
   } finally {
     client.release();
   }

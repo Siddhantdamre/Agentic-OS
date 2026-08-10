@@ -2,8 +2,6 @@
 -- Migration 002
 -- Verify cross-tenant isolation with a stored procedure test.
 
-\connect darex;
-
 CREATE OR REPLACE FUNCTION test_rls_isolation()
 RETURNS TEXT AS $$
 DECLARE

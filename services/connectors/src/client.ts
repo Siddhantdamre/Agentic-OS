@@ -1,12 +1,15 @@
 import { Nango } from '@nangohq/node';
-import { ConnectorStatus, ConnectorType } from './types.js';
+import { ConnectorStatus, ConnectorType } from './types';
 
 export class NangoConnectorClient {
   private nango: Nango;
 
   constructor() {
     const host = process.env.NANGO_HOST || 'http://localhost:3003';
-    const secretKey = process.env.NANGO_SECRET_KEY || 'darex-nango-secret-dev-change-in-prod';
+    if (!process.env.NANGO_SECRET_KEY) {
+      throw new Error('NANGO_SECRET_KEY is not set — configure it in services/connectors/.env');
+    }
+    const secretKey = process.env.NANGO_SECRET_KEY;
     this.nango = new Nango({ host, secretKey });
   }
 
@@ -50,7 +53,8 @@ export class NangoConnectorClient {
     provider: ConnectorType,
     endpoint: string,
     method: 'GET' | 'POST' | 'PUT' | 'DELETE' = 'GET',
-    data?: any
+    data?: any,
+    headers?: Record<string, string>
   ): Promise<any> {
     const connectionId = this.getConnectionId(orgId, provider);
     const response = await this.nango.proxy({
@@ -59,6 +63,7 @@ export class NangoConnectorClient {
       providerConfigKey: provider,
       connectionId,
       data,
+      headers,
     });
     return response.data;
   }

@@ -5,7 +5,13 @@
  * Usage: node infra/db/migrate.js
  */
 
-const { Client } = require('pg');
+let Client;
+try {
+  Client = require('pg').Client;
+} catch (e) {
+  Client = require(require('path').join(__dirname, '../../apps/dashboard/node_modules/pg')).Client;
+}
+
 const fs = require('fs');
 const path = require('path');
 
@@ -70,6 +76,6 @@ async function runMigrations() {
 }
 
 runMigrations().catch(err => {
-  console.error('Migration failed:', err.message);
+  console.error('Migration failed:', err);
   process.exit(1);
 });

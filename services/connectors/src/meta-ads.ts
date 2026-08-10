@@ -1,4 +1,4 @@
-import { NangoConnectorClient } from './client.js';
+import { NangoConnectorClient } from './client';
 
 export async function getMetaAdsInsights(
   client: NangoConnectorClient,
