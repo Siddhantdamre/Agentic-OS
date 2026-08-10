@@ -19,6 +19,8 @@ volumes:
   langfuse-clickhouse-data:
   langfuse-minio-data:
   nango-data:
+  atomic-agent-data:
+  atomic-agent-work:
 
 ##############################################################################
 # Services
@@ -326,6 +328,41 @@ services:
       timeout: 10s
       retries: 10
       start_period: 20s
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # Atomic Agent — Local-first AI agent (OpenAI-compatible HTTP serve)
+  # Replaces the legacy Hermes agent. Full agent loop + memory fabric +
+  # MCP tool bridge lives here. Pinned release v0.1.73 (Node >= 25.7).
+  # ─────────────────────────────────────────────────────────────────────────
+  atomic-agent:
+    build:
+      context: ./docker/atomic-agent
+      dockerfile: Dockerfile
+    container_name: darex-atomic-agent
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8787:8787"   # OpenAI-compatible HTTP API (localhost only)
+    environment:
+      - ATOMIC_AGENT_STATE_DIR=/data
+      - ATOMIC_AGENT_API_KEY=${ATOMIC_AGENT_API_KEY:-darex-atomic-agent-dev-key}
+      # .env.local pins the (dead) ":free" OpenRouter slug — override to the
+      # paid slug that the API currently accepts. `environment` wins over env_file.
+      - OPENROUTER_MODEL=${ATOMIC_AGENT_OPENROUTER_MODEL:-meta-llama/llama-3.3-70b-instruct}
+    env_file:
+      - ../.env
+      - ../apps/dashboard/.env.local
+      - ./.env
+    volumes:
+      - atomic-agent-data:/data
+      - atomic-agent-work:/work
+    networks:
+      - darex-net
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"require('http').get('http://localhost:8787/health', r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))\""]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
 
   # ─────────────────────────────────────────────────────────────────────────
   # Inbox — Chatwoot Fork / Multi-Channel Inbox Gateway (Phase 3)
