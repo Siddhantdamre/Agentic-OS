@@ -11,7 +11,7 @@ if (process.env.OPENROUTER_API_KEY) {
   providers.push({
     id: 'darex-openrouter',
     kind: 'openrouter',
-    apiKeyEnvVar: 'OPENROUTER_API_KEY',
+    apiKey: process.env.OPENROUTER_API_KEY,
     defaultChatModel: process.env.OPENROUTER_MODEL || 'openrouter/auto',
     supportsTools: true,
     supportsVision: true,
@@ -24,7 +24,7 @@ if (process.env.GROQ_API_KEY) {
     kind: 'openai-compatible',
     baseUrl:
       process.env.GROQ_BASE_URL || 'https://api.groq.com/openai/v1',
-    apiKeyEnvVar: 'GROQ_API_KEY',
+    apiKey: process.env.GROQ_API_KEY,
     defaultChatModel:
       process.env.GROQ_CHAT_MODEL || 'llama-3.3-70b-versatile',
     supportsTools: true,
@@ -39,7 +39,7 @@ if (process.env.GEMINI_API_KEY) {
     baseUrl:
       process.env.GEMINI_BASE_URL ||
       'https://generativelanguage.googleapis.com/v1beta/openai',
-    apiKeyEnvVar: 'GEMINI_API_KEY',
+    apiKey: process.env.GEMINI_API_KEY,
     defaultChatModel: process.env.GEMINI_CHAT_MODEL || 'gemini-2.0-flash',
     supportsTools: true,
     supportsVision: true,
@@ -210,7 +210,20 @@ const config = {
     parseMode: 'html',
     progressIndicator: true,
   },
-  mcp: { servers: [] },
+  mcp: {
+    servers: [
+      {
+        name: 'darex-connectors',
+        description: 'DareX business connectors (WhatsApp, Gmail, Calendar, HubSpot, Meta/Google Ads, Slack, Notion, Stripe, Shopify, Zendesk, Intercom, Razorpay, web, DB)',
+        enabled: true,
+        transport: {
+          kind: 'sse',
+          url: process.env.ATOMIC_AGENT_MCP_URL || 'http://atomic-bridge:8790/sse',
+        },
+        trust: 'approval_gated',
+      },
+    ],
+  },
   llm: {
     activeTextProvider: active.id,
     activeEmbeddingProvider: active.id,

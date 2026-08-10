@@ -330,6 +330,45 @@ services:
       start_period: 20s
 
   # ─────────────────────────────────────────────────────────────────────────
+  # Atomic Bridge — MCP SSE connector bridge for the Atomic Agent.
+  # Exposes the DareX business connectors (WhatsApp, Gmail, Calendar, HubSpot,
+  # Meta/Google Ads, Slack, Notion, Stripe, Shopify, Zendesk, Intercom,
+  # Razorpay, web, DB) as MCP tools (mcp.darex-connectors.*). Built from the
+  # @darex/workflows workspace so it can reuse executeAutonomousToolAction.
+  # ─────────────────────────────────────────────────────────────────────────
+  atomic-bridge:
+    build:
+      context: ../
+      dockerfile: infra/docker/atomic-bridge/Dockerfile
+    container_name: darex-atomic-bridge
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      nango-server:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:8790:8790"   # MCP SSE endpoint (localhost only)
+    environment:
+      # Inside Docker the DB and Nango are reachable by service name.
+      # `environment` wins over env_file.
+      - DB_HOST=postgres
+      - NANGO_HOST=http://nango-server:3003
+    env_file:
+      - ../.env
+      - ../apps/dashboard/.env.local
+      - ./.env
+      - ../services/connectors/.env
+    networks:
+      - darex-net
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"require('net').connect(8790,'localhost').on('connect',()=>process.exit(0)).on('error',()=>process.exit(1))\""]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 20s
+
+  # ─────────────────────────────────────────────────────────────────────────
   # Atomic Agent — Local-first AI agent (OpenAI-compatible HTTP serve)
   # Replaces the legacy Hermes agent. Full agent loop + memory fabric +
   # MCP tool bridge lives here. Pinned release v0.1.73 (Node >= 25.7).
@@ -340,6 +379,9 @@ services:
       dockerfile: Dockerfile
     container_name: darex-atomic-agent
     restart: unless-stopped
+    depends_on:
+      atomic-bridge:
+        condition: service_healthy
     ports:
       - "127.0.0.1:8787:8787"   # OpenAI-compatible HTTP API (localhost only)
     environment:
