@@ -213,7 +213,7 @@ const config = {
   mcp: {
     servers: [
       {
-        name: 'darex-connectors',
+        name: 'darex',
         description: 'DareX business connectors (WhatsApp, Gmail, Calendar, HubSpot, Meta/Google Ads, Slack, Notion, Stripe, Shopify, Zendesk, Intercom, Razorpay, web, DB)',
         enabled: true,
         transport: {

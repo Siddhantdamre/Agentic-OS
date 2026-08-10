@@ -390,6 +390,9 @@ services:
       # .env.local pins the (dead) ":free" OpenRouter slug — override to the
       # paid slug that the API currently accepts. `environment` wins over env_file.
       - OPENROUTER_MODEL=${ATOMIC_AGENT_OPENROUTER_MODEL:-meta-llama/llama-3.3-70b-instruct}
+      # Default active LLM provider is Gemini (working key in .env); other
+      # providers can be selected per-run via ATOMIC_AGENT_ACTIVE_PROVIDER.
+      - ATOMIC_AGENT_ACTIVE_PROVIDER=${ATOMIC_AGENT_ACTIVE_PROVIDER:-darex-gemini}
     env_file:
       - ../.env
       - ../apps/dashboard/.env.local
