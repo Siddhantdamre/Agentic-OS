@@ -1,7 +1,6 @@
 import { NextResponse } from 'next/server';
 import { pool } from '@/lib/db';
-import { runAutonomousAgentLoop } from '@darex/workflows/dist/agent-engine';
-import { executeAutonomousToolAction } from '@darex/workflows/dist/tool-executor';
+import { runAutonomousAgentDirect } from '@darex/workflows/dist/atomic-agent-client';
 
 /**
  * GET /api/webhooks/whatsapp
@@ -224,15 +223,9 @@ export async function POST(req: Request) {
             console.warn('[WhatsApp Webhook] Temporal fallback:', temporalErr.message);
           }
 
-          // Fallback: direct in-process
+          // Fallback: direct in-process via atomic-agent
           if (!agentResult) {
-            agentResult = await runAutonomousAgentLoop(
-              agentInput,
-              async (tool, action, payload) => {
-                const result = await executeAutonomousToolAction({ tool, action, payload, orgId: orgId! });
-                return { status: result.status, data: result.data };
-              }
-            );
+            agentResult = await runAutonomousAgentDirect(agentInput);
           }
 
             aiReply = agentResult.replyMessage;

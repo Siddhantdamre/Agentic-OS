@@ -4,7 +4,7 @@
 
 ---
 
-## Current Phase: 3 (FULLY COMPLETED) → Phase 4 (COMPLETED) → Phase 5 (NOT STARTED)
+## Current Phase: 4 (FULLY COMPLETED) → Phase 5 (NOT STARTED)
 
 ## Atomic-Agent Migration Track (replaces Hermes)
 > Branch: `feat/atomic-agent-integration`. Goal: remove Hermes entirely; run the
@@ -23,9 +23,12 @@
   `activities` expose `runAgentTurnActivity`; `AutonomousAgentWorkflow` drives one atomic-agent
   turn then persists. `hermes-agent.ts` deleted. E2E PASSED via Temporal: deepseek emitted
   `mcp.darex.database_query` → Postgres → reply "1".
-- ⬜ **Migration Phase 4 — dashboard routes**: move `apps/dashboard/app/api/agent/*`, `ask-ai`,
-  `conversations`, whatsapp webhook to call the atomic-agent client / workflow directly; remove
-  LangGraph (`runAutonomousAgentLoop`) + `apps/dashboard/lib/hermes-agent.ts` + `agent-engine.ts`.
+- ✅ **Migration Phase 4 — dashboard routes** (this commit): `apps/dashboard/app/api/agent/run`,
+  `ask-ai`, `conversations`, `conversations/[id]/messages`, whatsapp webhook now call the atomic-agent
+  client directly (`runAutonomousAgentDirect`, fallback behind Temporal); LangGraph removed —
+  `agent-engine.ts` reduced to the shared `AgentTaskInput`/`AgentTaskResult` contract;
+  `apps/dashboard/lib/hermes-agent.ts` and `app/api/agent/hermes/route.ts` deleted; `agent/tools`
+  lists Atomic Agent tools instead of Hermes suites. Dashboard production build passes.
 - ⬜ **Migration Phase 5 — WhatsApp webhook wiring**.
 - ⬜ **Migration Phase 6 — worker launcher**: pass `ATOMIC_AGENT_URL`/`ATOMIC_AGENT_API_KEY`
   explicitly; update env docs.

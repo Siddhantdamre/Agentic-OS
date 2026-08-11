@@ -38,12 +38,10 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Prompt is required' }, { status: 400 });
     }
 
-    // Dynamically import to avoid circular deps at module load time
-    const { runAutonomousAgentLoop } = await import('@darex/workflows/dist/agent-engine');
-    const { executeAutonomousToolAction } = await import('@darex/workflows/dist/tool-executor');
+    // Run the atomic-agent loop with real tool dispatch (MCP + memory fabric)
+    const { runAutonomousAgentDirect } = await import('@darex/workflows/dist/atomic-agent-client');
 
-    // Run the full autonomous agent loop with REAL tool dispatch
-    const result = await runAutonomousAgentLoop(
+    const result = await runAutonomousAgentDirect(
       {
         orgId,
         employeeName: 'DareX Executive',
@@ -53,13 +51,9 @@ export async function POST(request: Request) {
           'gmail', 'google-calendar', 'github', 'whatsapp', 'hubspot',
           'meta-ads', 'google-ads', 'slack', 'notion', 'stripe',
           'shopify', 'zendesk', 'intercom', 'razorpay',
-          'sandbox', 'hermes_python_sandbox', 'code_execution',
+          'database_query', 'web_search', 'web_extract', 'file_ops',
         ],
         userMessage: prompt,
-      },
-      async (tool: string, action: string, payload: any) => {
-        const res = await executeAutonomousToolAction({ tool, action, payload, orgId });
-        return { status: res.status, data: res.data };
       }
     );
 
@@ -74,18 +68,15 @@ export async function POST(request: Request) {
 
     return NextResponse.json({
       answer: result.replyMessage,
-      provider: 'Hermes Autonomous Engine',
-      toolsAvailable: 15,
+      provider: 'Atomic Agent',
       usedTools: result.usedTools,
       executedSteps: result.executedSteps,
-      hermesTrajectory: result.executedSteps.map((s, i) => ({
+      trajectory: result.executedSteps.map((s, i) => ({
         step: s.step,
         thought: s.action,
         action: s.toolUsed || 'reason',
         observation: s.result,
       })),
-      learnedSkills: result.usedTools.map(t => `Executed: ${t}`),
-      activeHermesTools: result.usedTools,
       proposedAction: null,
     });
   } catch (error: any) {

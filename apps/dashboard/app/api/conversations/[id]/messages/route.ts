@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getScopedClient } from '@/lib/db';
-import { runAutonomousAgentLoop } from '@darex/workflows/dist/agent-engine';
+import { runAutonomousAgentDirect } from '@darex/workflows/dist/atomic-agent-client';
 
 // GET message history for a conversation
 export async function GET(
@@ -48,7 +48,7 @@ export async function GET(
   }
 }
 
-// POST message & trigger AI Model Response (Groq -> Gemini -> Mistral -> OpenRouter)
+// POST message & trigger AI Model Response (atomic-agent)
 export async function POST(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
@@ -95,18 +95,15 @@ export async function POST(
         const empRole = conv.employee_role || 'Sales & Support';
         const empPersona = conv.employee_persona || 'Helpful customer support assistant.';
 
-        const aiResult = await runAutonomousAgentLoop(
-          {
+        const aiResult = await runAutonomousAgentDirect({
             orgId,
             conversationId,
             employeeName: empName,
             employeeRole: empRole,
             employeePersona: empPersona,
-            toolAllowlist: ['gmail', 'whatsapp', 'google-calendar', 'hubspot'],
+            toolAllowlist: ['gmail', 'whatsapp', 'google-calendar', 'hubspot', 'database_query'],
             userMessage: content,
-          },
-          async (tool, action, payload) => ({ status: 'success', data: { tool } })
-        );
+          });
 
         const aiMsgRes = await client.query(
           `INSERT INTO messages (org_id, conversation_id, role, content, tool_calls, created_at)

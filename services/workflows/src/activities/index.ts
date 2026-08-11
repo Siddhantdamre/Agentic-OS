@@ -1,6 +1,6 @@
 import { Pool } from 'pg';
 import type { AgentTaskInput, AgentTaskResult } from '../agent-engine.js';
-import { runAgentTurn } from '../atomic-agent-client.js';
+import { runAgentTurn, mapTurnToResult } from '../atomic-agent-client.js';
 
 const pool = new Pool({
   host: process.env.DB_HOST || 'localhost',
@@ -11,37 +11,18 @@ const pool = new Pool({
 });
 
 export async function runAgentTurnActivity(input: AgentTaskInput): Promise<AgentTaskResult> {
-  const steps: AgentTaskResult['executedSteps'] = [];
-  const usedTools: string[] = [];
   try {
     const turn = await runAgentTurn(input);
-    turn.tools.forEach((t, i) => {
-      usedTools.push(t.tool);
-      steps.push({
-        step: i + 1,
-        action: `Execute Tool: ${t.tool}`,
-        toolUsed: t.tool,
-        result: t.argsLabel ? `args: ${t.argsLabel}` : 'tool executed',
-      });
-    });
-    steps.push({
-      step: steps.length + 1,
-      action: 'Final Response Synthesis',
-      result: `Generated reply: "${turn.reply.slice(0, 60)}..."`,
-    });
-    return { success: true, replyMessage: turn.reply, executedSteps: steps, usedTools };
+    return mapTurnToResult(turn);
   } catch (err: any) {
     console.error('[Temporal Activity] runAgentTurn failed:', err.message);
-    steps.push({
-      step: 1,
-      action: 'Agent Turn',
-      result: `Failed: ${err.message}`,
-    });
     return {
       success: false,
       replyMessage: `I encountered an issue processing your request. Please try again.`,
-      executedSteps: steps,
-      usedTools,
+      executedSteps: [
+        { step: 1, action: 'Agent Turn', result: `Failed: ${err.message}` },
+      ],
+      usedTools: [],
     };
   }
 }

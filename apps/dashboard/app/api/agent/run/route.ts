@@ -1,7 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getScopedClient } from '@/lib/db';
-import { runAutonomousAgentLoop } from '@darex/workflows/dist/agent-engine';
-import { executeAutonomousToolAction } from '@darex/workflows/dist/tool-executor';
+import { runAutonomousAgentDirect } from '@darex/workflows/dist/atomic-agent-client';
 import { logLangfuseTrace } from '@/lib/langfuse-trace';
 
 export async function POST(request: Request) {
@@ -72,16 +71,10 @@ export async function POST(request: Request) {
         console.warn('[Agent Run] Temporal unavailable, falling back to direct execution:', temporalErr.message);
       }
 
-      // Fallback: direct in-process execution
+      // Fallback: direct in-process execution via atomic-agent
       if (!result) {
-        result = await runAutonomousAgentLoop(
-          agentInput,
-          async (tool: string, action: string, payload: any) => {
-            const res = await executeAutonomousToolAction({ tool, action, payload, orgId });
-            return { status: res.status, data: res.data };
-          }
-        );
-        console.log('[Agent Run] Task executed via direct in-process loop');
+        result = await runAutonomousAgentDirect(agentInput);
+        console.log('[Agent Run] Task executed via direct atomic-agent loop');
       }
 
       // Save to DB if conversationId provided

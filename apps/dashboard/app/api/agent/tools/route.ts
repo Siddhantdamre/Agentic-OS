@@ -1,7 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getScopedClient } from '@/lib/db';
 import { executeAutonomousToolAction } from '@darex/workflows/dist/tool-executor';
-import { HERMES_TOOL_SUITE } from '@/lib/hermes-agent';
 
 export async function GET() {
   const platformTools = [
@@ -17,25 +16,17 @@ export async function GET() {
     { name: 'zendesk', category: 'Support', description: 'Create & update customer support tickets in Zendesk' },
   ];
 
-  const hermesTools = HERMES_TOOL_SUITE.map((t) => ({
-    name: t.name,
-    category: 'Hermes Engine',
-    description: t.description,
-  }));
-
-  const nativePythonToolsets = [
-    { name: 'web', category: 'Hermes Native', description: 'Web search & content extraction (web_search, web_extract)' },
-    { name: 'skills', category: 'Hermes Native', description: 'Dynamic skill management (skills_list, skill_view, skill_manage)' },
-    { name: 'files', category: 'Hermes Native', description: 'File & code manipulation (read_file, write_file, patch, search_files)' },
-    { name: 'planning', category: 'Hermes Native', description: 'Task planning & trajectory memory (todo, memory, session_search)' },
-    { name: 'code_execution', category: 'Hermes Native', description: 'Code execution & task delegation (execute_code, delegate_task)' },
-    { name: 'vision', category: 'Hermes Native', description: 'Multimodal image analysis (vision_analyze)' },
-    { name: 'browser', category: 'Hermes Native', description: 'Playwright & CDP browser automation (browser_navigate, click, snapshot)' },
+  const atomicTools = [
+    { name: 'database_query', category: 'Atomic Agent', description: 'Run a read-only SELECT query against the org-scoped business database' },
+    { name: 'web_search', category: 'Atomic Agent', description: 'Perform a live web search for a query' },
+    { name: 'web_extract', category: 'Atomic Agent', description: 'Extract clean text content from a web page URL' },
+    { name: 'sql_analytics', category: 'Atomic Agent', description: 'Business analytics queries against org data' },
+    { name: 'db_query', category: 'Atomic Agent', description: 'General database query alias for read-only access' },
   ];
 
   return NextResponse.json({
-    tools: [...platformTools, ...hermesTools, ...nativePythonToolsets],
-    totalCount: platformTools.length + hermesTools.length + nativePythonToolsets.length,
+    tools: [...platformTools, ...atomicTools],
+    totalCount: platformTools.length + atomicTools.length,
   });
 }
 

@@ -1,7 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getScopedClient } from '@/lib/db';
-import { runAutonomousAgentLoop } from '@darex/workflows/dist/agent-engine';
-import { executeAutonomousToolAction } from '@darex/workflows/dist/tool-executor';
+import { runAutonomousAgentDirect } from '@darex/workflows/dist/atomic-agent-client';
 
 export async function GET(request: Request) {
   try {
@@ -194,8 +193,8 @@ export async function POST(request: Request) {
           [orgId, conversation.id, initialMessage]
         );
 
-        // Call AI model (Groq -> Gemini -> Mistral -> OpenRouter)
-        const aiResult = await runAutonomousAgentLoop(
+        // Call AI model (atomic-agent)
+        const aiResult = await runAutonomousAgentDirect(
           {
             orgId,
             conversationId: conversation.id,
@@ -204,10 +203,6 @@ export async function POST(request: Request) {
             employeePersona: empPersona,
             toolAllowlist: empToolAllowlist,
             userMessage: initialMessage,
-          },
-          async (tool, action, payload) => {
-            const result = await executeAutonomousToolAction({ tool, action, payload, orgId });
-            return { status: result.status, data: result.data };
           }
         );
 

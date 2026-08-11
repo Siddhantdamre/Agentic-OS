@@ -1,4 +1,4 @@
-import type { AgentTaskInput } from './agent-engine.js';
+import type { AgentTaskInput, AgentTaskResult } from './agent-engine.js';
 
 export interface AgentToolStep {
   tool: string;
@@ -151,5 +151,42 @@ export async function runAgentTurn(input: AgentTaskInput): Promise<AgentTurnResu
     return await readSseStream(res.body, sessionId);
   } finally {
     clearTimeout(timeout);
+  }
+}
+
+export function mapTurnToResult(turn: AgentTurnResult): AgentTaskResult {
+  const steps: AgentTaskResult['executedSteps'] = [];
+  const usedTools: string[] = [];
+  turn.tools.forEach((t, i) => {
+    usedTools.push(t.tool);
+    steps.push({
+      step: i + 1,
+      action: `Execute Tool: ${t.tool}`,
+      toolUsed: t.tool,
+      result: t.argsLabel ? `args: ${t.argsLabel}` : 'tool executed',
+    });
+  });
+  steps.push({
+    step: steps.length + 1,
+    action: 'Final Response Synthesis',
+    result: `Generated reply: "${turn.reply.slice(0, 60)}..."`,
+  });
+  return { success: true, replyMessage: turn.reply, executedSteps: steps, usedTools };
+}
+
+export async function runAutonomousAgentDirect(input: AgentTaskInput): Promise<AgentTaskResult> {
+  try {
+    const turn = await runAgentTurn(input);
+    return mapTurnToResult(turn);
+  } catch (err: any) {
+    console.error('[atomic-agent] Direct execution failed:', err.message);
+    return {
+      success: false,
+      replyMessage: 'I encountered an issue processing your request. Please try again.',
+      executedSteps: [
+        { step: 1, action: 'Agent Turn', result: `Failed: ${err.message}` },
+      ],
+      usedTools: [],
+    };
   }
 }
