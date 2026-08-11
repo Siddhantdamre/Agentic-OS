@@ -1,7 +1,8 @@
 import { NextResponse } from 'next/server';
 import { getScopedClient } from '@/lib/db';
+import { nangoConnectionExists } from '@/lib/nango-server';
 
-// All 14 supported connectivity tools
+// All supported connectivity tools
 const ALL_INTEGRATIONS = [
   { id: 'whatsapp', name: 'WhatsApp Business', category: 'Messaging', icon: 'MessageSquare', desc: 'Meta Cloud API for inbound & outbound WhatsApp customer messaging' },
   { id: 'gmail', name: 'Gmail / Email', category: 'Email', icon: 'Mail', desc: 'Inbound email triage & outbound response drafting via Gmail API' },
@@ -17,6 +18,9 @@ const ALL_INTEGRATIONS = [
   { id: 'intercom', name: 'Intercom Inbox', category: 'Support', icon: 'MessageCircle', desc: 'Live customer chat sync & agent assignment' },
   { id: 'github', name: 'GitHub Code', category: 'Development', icon: 'Github', desc: 'Repository sync, pull request logs & issue tracking' },
   { id: 'razorpay', name: 'Razorpay Invoices', category: 'Payments', icon: 'CreditCard', desc: 'Instant payment link generation & invoice status queries' },
+  { id: 'google-drive', name: 'Google Drive', category: 'Productivity', icon: 'FolderOpen', desc: 'Search, read, upload & share files across Google Drive' },
+  { id: 'google-docs', name: 'Google Docs', category: 'Productivity', icon: 'FileText', desc: 'Create, read & append content in Google Docs documents' },
+  { id: 'google-sheets', name: 'Google Sheets', category: 'Productivity', icon: 'Table', desc: 'Read, create & append rows in Google Sheets spreadsheets' },
 ];
 
 // ── GET: Ultra-fast batch fetch of integrations for current orgId ─────────────
@@ -31,9 +35,21 @@ export async function GET() {
       );
       const dbChannelsMap = new Map(channelsRes.rows.map((r: any) => [r.channel_type, r]));
 
+      // Verify every DB-reported connection against Nango (source of truth for the agent tools).
+      // Only providers with an existing connection are reported as connected.
+      const candidates = ALL_INTEGRATIONS.filter(
+        (item) => dbChannelsMap.get(item.id) && (dbChannelsMap.get(item.id).status === 'active' || dbChannelsMap.get(item.id).status === 'connected')
+      );
+      const verifiedMap = new Map<string, boolean>();
+      await Promise.all(
+        candidates.map(async (item) => {
+          verifiedMap.set(item.id, await nangoConnectionExists(orgId, item.id));
+        })
+      );
+
       const integrations = ALL_INTEGRATIONS.map((item) => {
         const dbRecord = dbChannelsMap.get(item.id) as any;
-        const isConnected = dbRecord && (dbRecord.status === 'active' || dbRecord.status === 'connected');
+        const isConnected = verifiedMap.get(item.id) === true;
 
         return {
           ...item,
@@ -105,6 +121,18 @@ export async function POST(request: Request) {
       const nangoConnId = `${orgId}_${provider}`;
 
       if (action === 'connect') {
+        // Nango is the source of truth: never mark "connected" without a real OAuth connection.
+        const realConnection = await nangoConnectionExists(orgId, provider);
+        if (!realConnection) {
+          return NextResponse.json(
+            {
+              success: false,
+              message: `No real Nango OAuth connection found for ${provider}. Complete the OAuth popup first — the connection was not persisted.`,
+            },
+            { status: 400 }
+          );
+        }
+
         await client.query(
           `INSERT INTO channels (org_id, channel_type, status, nango_connection_id, connected_at)
            VALUES ($1, $2, 'connected', $3, NOW())

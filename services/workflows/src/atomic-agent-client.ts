@@ -22,15 +22,44 @@ function buildSystemPrompt(input: AgentTaskInput): string {
     `You are ${input.employeeName}, an AI employee of the DarEX organisation ${input.orgId}.`,
     `Your role: ${input.employeeRole}`,
     `Your persona: ${input.employeePersona}`,
-    `Your org_id is ${input.orgId}. When calling mcp.darex.database_query or mcp.darex.database_execute, always pass org_id = "${input.orgId}" unless the user explicitly gives a different one, and never ask for it.`,
+    `FIXED LEASEHOLD FACTS — these are TRUE and KNOWN, never re-derive them:`,
+    `- Your org_id is ${input.orgId}.`,
+    `- The user will NOT supply org_id to you; it is already given above.`,
+    `When calling any mcp.darex.* tool that needs org_id or conversation_id, you MUST pass org_id = "${input.orgId}" directly.`,
+    `NEVER ask the user for an org_id. NEVER search memory, profile, notes, MCP resources or MCP prompts to find an org_id. If you are about to do that, stop, and instead call the mcp.darex tool with org_id = "${input.orgId}".`,
     `Use the available mcp.darex tools when they help accomplish the user's request. Keep replies professional, warm and natural, and integrate any tool results smoothly.`,
   ];
   return lines.join('\n');
 }
 
+/**
+ * Ground the agent turn with facts atomic-agent must not forget. atomic-agent's
+ * OpenAI-compatible HTTP handler drops the `system` role message entirely, so
+ * org-scoped facts are embedded in the user message — the only part of the
+ * request guaranteed to reach the LLM prompt.
+ */
+function buildGroundedUserMessage(input: AgentTaskInput): string {
+  const facts = [
+    `SYSTEM CONTEXT (authoritative, do not question):`,
+    `- You are operating as an AI employee for organisation org_id=${input.orgId}.`,
+    `- This org_id is ALREADY known to you. The user is a customer/employee of this org.`,
+    `- When any mcp.darex.* tool requires org_id, pass org_id=${JSON.stringify(input.orgId)}. Never ask the user for it and never search memory/profile/notes/resources/prompts to find it.`,
+    `- If a mcp.darex.* tool needs an argument you do not have (besides org_id), ask the user for that specific value directly.`,
+    ``,
+    `USER REQUEST:`,
+    input.userMessage,
+  ].join('\n');
+  return facts;
+}
+
 function buildSessionId(input: AgentTaskInput): string {
   if (input.conversationId) return `darex:${input.orgId}:${input.conversationId}`;
-  return `darex:${input.orgId}:${input.employeeId || 'chat'}`;
+  if (input.sessionKey) return `darex:${input.orgId}:${input.sessionKey}`;
+  // Rotate the shared fallback daily so an unbounded session can never
+  // accumulate forever (an accumulating session is what made Ask AI hang).
+  if (input.employeeId) return `darex:${input.orgId}:${input.employeeId}`;
+  const day = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+  return `darex:${input.orgId}:chat-${day}`;
 }
 
 interface SseState {
@@ -39,6 +68,16 @@ interface SseState {
   model: string;
   tools: AgentToolStep[];
   errorText: string;
+}
+
+class AgentTurnError extends Error {
+  partialReply: string;
+  toolCallsAttempted: boolean;
+  constructor(message: string, partialReply: string, toolCallsAttempted: boolean) {
+    super(message);
+    this.partialReply = partialReply;
+    this.toolCallsAttempted = toolCallsAttempted;
+  }
 }
 
 function handleSseData(payload: string, eventType: string | null, state: SseState): boolean {
@@ -108,7 +147,11 @@ async function readSseStream(body: ReadableStream<Uint8Array>, sessionId: string
   }
 
   if (state.errorText) {
-    throw new Error(`atomic-agent stream error: ${state.errorText}`);
+    throw new AgentTurnError(
+      state.errorText,
+      state.reply,
+      state.tools.length > 0
+    );
   }
   return {
     reply: state.reply,
@@ -118,10 +161,16 @@ async function readSseStream(body: ReadableStream<Uint8Array>, sessionId: string
   };
 }
 
-export async function runAgentTurn(input: AgentTaskInput): Promise<AgentTurnResult> {
+export interface RunAgentOptions {
+  /** Override the process-level AGENT_TURN_TIMEOUT_MS for this single turn. */
+  timeoutMs?: number;
+}
+
+export async function runAgentTurn(input: AgentTaskInput, opts?: RunAgentOptions): Promise<AgentTurnResult> {
   const sessionId = buildSessionId(input);
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), AGENT_TURN_TIMEOUT_MS);
+  const timeoutMs = opts?.timeoutMs ?? AGENT_TURN_TIMEOUT_MS;
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const res = await fetch(`${ATOMIC_AGENT_URL}/v1/chat/completions`, {
       method: 'POST',
@@ -136,7 +185,7 @@ export async function runAgentTurn(input: AgentTaskInput): Promise<AgentTurnResu
         session_id: sessionId,
         messages: [
           { role: 'system', content: buildSystemPrompt(input) },
-          { role: 'user', content: input.userMessage },
+          { role: 'user', content: buildGroundedUserMessage(input) },
         ],
       }),
       signal: controller.signal,
@@ -174,19 +223,88 @@ export function mapTurnToResult(turn: AgentTurnResult): AgentTaskResult {
   return { success: true, replyMessage: turn.reply, executedSteps: steps, usedTools };
 }
 
-export async function runAutonomousAgentDirect(input: AgentTaskInput): Promise<AgentTaskResult> {
+/**
+ * Atomic-agent's internal tool-calling protocol encodes a reply as a JSON
+ * envelope like `["reply",{"text":"..."}]`. Some models emit that raw
+ * envelope in the content stream instead of plain text, which would otherwise
+ * leak the ugly JSON to the user. Detects those envelopes and extracts the
+ * human-readable text; returns the original string when there's nothing to
+ * unwrap.
+ */
+export function sanitizeAgentReply(content: string): string {
+  if (!content) return content;
+  const trimmed = content.trim();
+  if (!trimmed.startsWith('[') && !trimmed.startsWith('{')) return content;
+
+  const pickText = (obj: any): string | null => {
+    if (obj && typeof obj === 'object') {
+      for (const key of ['text', 'content', 'message', 'reply']) {
+        if (typeof obj[key] === 'string' && obj[key].trim()) return obj[key].trim();
+      }
+    }
+    return null;
+  };
+
   try {
-    const turn = await runAgentTurn(input);
+    const parsed = JSON.parse(trimmed);
+    if (Array.isArray(parsed) && typeof parsed[0] === 'string') {
+      const unwrapped = pickText(parsed[1]);
+      if (unwrapped) return unwrapped;
+    } else if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      const unwrapped = pickText(parsed);
+      if (unwrapped) return unwrapped;
+    }
+  } catch {
+    // not JSON — leave the content untouched
+  }
+  return content;
+}
+
+export async function runAutonomousAgentDirect(
+  input: AgentTaskInput,
+  opts?: RunAgentOptions
+): Promise<AgentTaskResult> {
+  try {
+    const turn = await runAgentTurn(input, opts);
+    turn.reply = sanitizeAgentReply(turn.reply);
     return mapTurnToResult(turn);
   } catch (err: any) {
-    console.error('[atomic-agent] Direct execution failed:', err.message);
+    console.error('[atomic-agent] Direct execution failed:', err?.message);
+    const aborted = err?.name === 'AbortError' || /abort|timed out|timeout/i.test(String(err?.message || ''));
+    const partialReply =
+      (typeof err?.partialReply === 'string' && err.partialReply.length > 0)
+        ? sanitizeAgentReply(err.partialReply)
+        : undefined;
+    const toolCallsAttempted = Boolean(err?.toolCallsAttempted);
+    const details = String(err?.message || 'atomic-agent request failed').replace(/^atomic-agent\s*/i, '');
+
+    let replyMessage = 'I encountered an issue processing your request.';
+    if (aborted && toolCallsAttempted) {
+      replyMessage =
+        'I was working through a tool action but the request timed out — likely a slow external API. ' +
+        (partialReply ? `Here is what I had so far:\n\n${partialReply}` : 'Please ask again, and I will retry.');
+    } else if (aborted) {
+      replyMessage = 'The request timed out before I could respond. Please try again.';
+    } else if (toolCallsAttempted && partialReply) {
+      replyMessage = `${partialReply}\n\n_Heads up: a tool step hit an error (${details}) — the request could not complete fully._`;
+    } else {
+      replyMessage = `I encountered an issue processing your request (${details}). Please try again.`;
+    }
+
     return {
       success: false,
-      replyMessage: 'I encountered an issue processing your request. Please try again.',
+      replyMessage,
       executedSteps: [
-        { step: 1, action: 'Agent Turn', result: `Failed: ${err.message}` },
+        {
+          step: 1,
+          action: 'Agent Turn',
+          result: `Failed: ${details}`,
+        },
       ],
-      usedTools: [],
+      usedTools: input.toolAllowlist || [],
+      error: details,
+      partialReply,
+      retryable: aborted,
     };
   }
 }

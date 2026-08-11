@@ -4,7 +4,109 @@
 
 ---
 
-## Current Phase: 4 (FULLY COMPLETED) → Phase 5 (NOT STARTED)
+## Documentation (2026-08-11)
+- Created `documentation/` (11 docs: 00–10) covering how to run, architecture, docker infra, DB schema, auth,
+  API reference, agent engine, realtime, verification checks, and feature roadmap — each written as
+  standalone context for an AI model / new engineer. `BUILD_STATE.md` remains the live source of truth.
+
+## Phase 3 check script fix (2026-08-11)
+- `infra/scripts/check-phase3.js` regressed to 4/6 FAIL after `CHATWOOT_WEBHOOK_SECRET` was enforced: its two
+  Chatwoot webhook POSTs (tests 2 + 6) sent no HMAC signature → 401 from the dashboard route.
+- **Fixed:** added `crypto` HMAC-SHA256 signing — `x-chatwoot-signature: sha256=<hex>` computed over the exact
+  `JSON.stringify(body)` using `CHATWOOT_WEBHOOK_SECRET` (fallback `darex-chatwoot-webhook-secret-dev`).
+- **Verified:** Phase 3 → **6/6 PASS**. Full re-run: Phase 0 (17/17) ✅ · Phase 2 (17/17) ✅ · Auth+Nango (3/3) ✅.
+
+## Nango Integration Truth Fix (2026-08-11)
+- **Symptom:** Integrations page showed apps as "Connected" but the agent tools reported `connected: false`
+  for Gmail, GitHub, Google Calendar, Slack, Intercom, Zendesk, Shopify, Notion, HubSpot, etc.
+- **Root causes:**
+  1. **Secret-key mismatch (the real bug).** Containers resolved `NANGO_SECRET_KEY=darex-nango-secret-dev-change-in-prod`
+     because `infra/.env` + `services/connectors/.env` (loaded last in the `env_file` chain) overrode the real
+     dev UUID (`0c2eb30a-...`) already present in `apps/dashboard/.env.local`. Nango rejects non-UUID keys
+     (`invalid_secret_key_format`), so `tool-executor.ts` and the bridge could never fetch OAuth tokens →
+     every tool returned `notConnected` / `connected: false`.
+  2. **Fabricated connection rows.** `POST /api/integrations` `connect` upserted `status='connected'` with a
+     guessed `nango_connection_id` — never creating a real Nango connection. `GET` trusted those rows → the UI
+     showed 14/14 connected while Nango actually had only 4 real connections (demo org `661e8333-...`).
+- **Fixes:**
+  1. Aligned `NANGO_SECRET_KEY` to the Nango **dev** environment UUID (`0c2eb30a-0ecd-42ea-8918-0c73eda41a47`)
+     in `infra/.env`, `services/connectors/.env`, and `infra/docker-compose.yml` (server env, inert post-seed).
+  2. `services/connectors/src/client.ts`: `getConnectionId` `darex_{org}_{provider}` → `{org}_{provider}`
+     (matches dashboard, tool-executor, and the real Nango connection ids).
+  3. `services/workflows/src/tool-executor.ts`: Meta Ads provider config key `facebook-ads` → `meta-ads`
+     (matches the Nango config key that exists in the DB).
+  4. `apps/dashboard/app/api/integrations/route.ts`: GET now verifies every DB-reported connection against
+     Nango in parallel (`lib/nango-server.ts`) — Nango is the source of truth. POST `connect` now returns 400
+     unless a real Nango connection exists (no more fabrication).
+  5. `apps/dashboard/app/api/integrations/nango-token/route.ts`: confirm (`POST`) verifies the connection
+     against Nango before persisting `connected`.
+  6. `apps/dashboard/app/(dashboard)/integrations/page.tsx`: removed the blind fake-connect fallback; OAuth
+     errors are surfaced instead of silently marking connected. Stats card corrected to `X / 14`.
+- **Verified live (containers recreated):** `gmail` tool-executor returned **3 real emails** via a Nango OAuth
+  token; GET `/api/integrations` reports 4 connected (gmail/google-calendar/google-ads/github = the real
+  connections for org `661e8333...`), everything else disconnected; POST connect → slack 400 / gmail 200;
+  confirm route → gmail success / slack "not confirmed".
+- **Rebuilt images:** `dashboard`, `worker`, `atomic-bridge`. Nango dev environment (env id 2) is the source
+  of truth; the env `.env*` files are gitignored (real UUID is never committed).
+- **Still manual:** providers with placeholder creds in Nango (hubspot/stripe/notion/slack/shopify/zendesk/
+  intercom and meta-ads/whatsapp if re-auth needed) require real OAuth client IDs/secrets set in the Nango UI
+  at `http://localhost:3003` before their OAuth popup can complete.
+
+## Current Phase: 5 (FULLY COMPLETED) — Real-Time Delivery
+- `/ask-ai` page + agent runtime ✅ (already done, verified working)
+- **Real-time `needs_attention` notifications ✅ (2026-08-11):**
+  - `apps/dashboard/lib/realtime-hub.ts` — in-process EventEmitter hub keyed by org (single `next start` process).
+  - `apps/dashboard/app/api/stream/events/route.ts` — SSE endpoint authenticated via `darex_session` cookie, resolves org via `getScopedClient`, streams `needs_attention` + `conversation_updated` + keep-alive; auto-aborts on disconnect.
+  - Publishers: WhatsApp webhook (inbound), Chatwoot webhook (inbound), `POST /api/conversations/[id]/messages` (customer message), `PATCH /api/conversations/[id]` (status change).
+  - Inbox UI (`(dashboard)/conversations/page.tsx`): `EventSource('/api/stream/events')` → on `needs_attention` auto-selects the conversation, refreshes the feed, shows an amber "Needs Attention" toast.
+  - **E2E verified live:** register→login→open SSE (event: connected) → trigger chatwoot webhook → `event: needs_attention` received with correct conversationId/contactId/orgId. Test data cleaned up afterward.
+- Remaining for Phase 5 (external/manual, no code):
+  - Configure Meta webhook URL in Meta Developer Console: `https://your-domain.com/api/webhooks/whatsapp`.
+  - ~~Set `CHATWOOT_WEBHOOK_SECRET` for webhook HMAC security~~ ✅ **DONE (2026-08-11)**:
+    `darex-chatwoot-webhook-secret-dev` added to root `.env` + `apps/dashboard/.env.local`, live in the
+    dashboard container. Verified: no signature → 401, wrong signature → 401, valid `sha256=` HMAC →
+    passes auth and reaches org resolution (400 only because 37 orgs exist — correct multi-tenant behavior).
+
+## Runtime Audit + Ask AI Fix (2026-08-11)
+- **Ask AI was hanging >200s.** Root cause (confirmed via atomic-agent traces): the
+  `ask-ai` route used one shared, never-rotating `darex:{org}:chat` session for every
+  user/prompt, and a single bad turn (model hunting for `org_id` via
+  `memory.notes.recall`/`memory.profile.list`/`mcp.resource.list`) poisoned that
+  session permanently — every later ask resumed the hanging loop.
+- **Fixes applied:**
+  1. `AgentTaskInput.sessionKey` added; `buildSessionId` now honors it and rotates the
+     bare fallback daily (`darex:{org}:chat-YYYYMMDD`) so a session can never grow unbounded.
+  2. `ask-ai` route passes `sessionKey = askai-{userId}-{YYYYMMDD}` (per-user + daily rotation).
+  3. **atomic-agent drops the OpenAI `system` role entirely** (verified in its
+     `openai-chat-completions.js`: `systemPrompt` is parsed but never forwarded to
+     `runTurn`). So org grounding is now embedded in the **user message**
+     (`buildGroundedUserMessage`) — the only content guaranteed to reach the LLM prompt.
+     This stops the model from asking the user for `org_id` / searching memory for it.
+  4. Cleared leftover debug profile fact (`magic_word: BLUEBERRY`) and stale session WAL/traces.
+- **Verified end-to-end via deployed dashboard:** DB query → answer "43" in ~7s
+  (was: >200s hang). GitHub query → honest "not connected via Nango" reply in ~15s,
+  no org_id loop.
+- **Langfuse stack was down + `langfuse-worker` crash-looped**: missing
+  `REDIS_CONNECTION_STRING` (langfuse reads this, not `REDIS_URL`). Added
+  `REDIS_CONNECTION_STRING: redis://redis:6379` + redis depends_on for
+  `langfuse-server`/`langfuse-worker`. Worker now stays up; health OK.
+- **Credential audit (read-only):** OpenRouter ✓, Groq ✓, Gemini ✓, Mistral ✓ all return
+  200. **`META_ACCESS_TOKEN` is EXPIRED** (session ended 2026-06-12; Graph API 401) —
+  needs rotation/reissue before outbound WhatsApp works. Google Ads / Shopify / Zendesk /
+  Razorpay keys are empty in dashboard `.env.local` (only needed when those connectors
+  are connected).
+- **`channel_logs` insert bug fixed** (2026-08-11 follow-up). Two callers inserted with
+  columns `(org_id, channel_id, log_type, payload)`, but schema (migration 003) has no
+  `channel_id`/`log_type` (it uses `channel_type, event_type, status, status_code, message,
+  payload, response`). Fixed in `services/workflows/src/activities/index.ts`
+  (`logChannelActivity`) and `apps/dashboard/app/api/agent/run/route.ts`. All other writers
+  already used correct columns.
+- **Temporal E2E verified after redeploy:** fresh `AutonomousAgentWorkflow`
+  (`agent-task-...-1786425113962`) returned correct answer ("52" = channel count) with
+  `mcp.darex.database_query`, and `logChannelActivity` wrote a clean `e2e/AGENT_EXECUTION`
+  row. A transient `fetch failed` on the MCP tool was a stale atomic-agent→bridge SSE
+  session (both healthy; handshake 200 now). Worker/dashboard images rebuilt → all suites
+  PASS (17/17, 17/17, 5/5, 3/3).
 
 ## Docker Runtime (the project now runs fully via `docker compose`)
 > All components are containerized in `infra/docker-compose.yml`; the host no longer

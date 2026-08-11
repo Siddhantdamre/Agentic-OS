@@ -19,6 +19,9 @@ import {
   AlertCircle,
   Play,
   Terminal,
+  FolderOpen,
+  FileText,
+  Table,
 } from 'lucide-react';
 
 interface Integration {
@@ -45,6 +48,9 @@ const ICON_MAP: Record<string, any> = {
   whatsapp: MessageSquare,
   gmail: Mail,
   'google-calendar': Calendar,
+  'google-drive': FolderOpen,
+  'google-docs': FileText,
+  'google-sheets': Table,
   hubspot: Database,
   razorpay: CreditCard,
   'meta-ads': Megaphone,
@@ -106,33 +112,27 @@ export default function IntegrationsPage() {
       // 2. Trigger Nango OAuth Popup
       await nango.auth(app.id, connectionId);
 
-      // 3. Persist connected status in Postgres
+      // 3. Persist connected status in Postgres (only after real OAuth completed)
       const res = await fetch('/api/integrations', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ provider: app.id, action: 'connect' }),
       });
+      const body = await res.json().catch(() => ({}));
 
-      if (res.ok) {
+      if (res.ok && body.success) {
         setNotification({ type: 'success', message: `${app.name} connected successfully via Nango OAuth!` });
+        fetchIntegrations();
+      } else {
+        setNotification({ type: 'error', message: body.message || `Failed to confirm ${app.name} connection` });
         fetchIntegrations();
       }
     } catch (err: any) {
-      console.warn('Nango OAuth popup trigger or fallback mode:', err);
-
-      // Direct connector confirmation endpoint
-      const res = await fetch('/api/integrations', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ provider: app.id, action: 'connect' }),
+      console.warn('Nango OAuth popup failed:', err);
+      setNotification({
+        type: 'error',
+        message: `${app.name} not connected — OAuth was cancelled or failed: ${err?.message || 'unknown error'}`,
       });
-
-      if (res.ok) {
-        setNotification({ type: 'success', message: `${app.name} connected successfully!` });
-        fetchIntegrations();
-      } else {
-        setNotification({ type: 'error', message: `Failed to connect ${app.name}` });
-      }
     } finally {
       setConnectingId(null);
     }
@@ -216,7 +216,7 @@ export default function IntegrationsPage() {
       <div className="grid grid-cols-4 gap-4">
         <div className="bg-cream-200/70 border border-cream-300 p-5 rounded-2xl space-y-1 shadow-sm">
           <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Connected Apps</span>
-          <div className="text-3xl font-bold text-heading">{stats.connectedApps} / 7</div>
+          <div className="text-3xl font-bold text-heading">{stats.connectedApps} / {integrations.length || 17}</div>
           <span className="text-xs text-emerald-600 font-medium">Nango OAuth active</span>
         </div>
 

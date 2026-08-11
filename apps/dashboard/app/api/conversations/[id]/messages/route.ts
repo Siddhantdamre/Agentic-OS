@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getScopedClient } from '@/lib/db';
+import { realtimeHub } from '@/lib/realtime-hub';
 import { runAutonomousAgentDirect } from '@darex/workflows/dist/atomic-agent-client';
 
 // GET message history for a conversation
@@ -65,8 +66,9 @@ export async function POST(
     try {
       // Check conversation exists & fetch assigned employee details
       const convRes = await client.query(
-        `SELECT c.id, c.channel_id, c.employee_id, e.name as employee_name, e.role as employee_role, e.persona as employee_persona
+        `SELECT c.id, c.channel_id, c.employee_id, c.contact_id, ch.channel_type, e.name as employee_name, e.role as employee_role, e.persona as employee_persona
          FROM conversations c
+         LEFT JOIN channels ch ON c.channel_id = ch.id
          LEFT JOIN ai_employees e ON c.employee_id = e.id
          WHERE c.org_id = $1 AND c.id = $2`,
         [orgId, conversationId]
@@ -119,6 +121,17 @@ export async function POST(
         `UPDATE conversations SET updated_at = NOW(), summary = $1 WHERE id = $2 AND org_id = $3`,
         [content.slice(0, 100), conversationId, orgId]
       );
+
+      // Publish real-time event (new customer message → needs_attention)
+      if (conv.channel_id) {
+        realtimeHub.publish(orgId, {
+          type: 'needs_attention',
+          conversationId,
+          message: content.slice(0, 200),
+          contactId: conv.contact_id ?? null,
+          channelType: conv.channel_type ?? 'dashboard',
+        });
+      }
 
       return NextResponse.json({
         success: true,

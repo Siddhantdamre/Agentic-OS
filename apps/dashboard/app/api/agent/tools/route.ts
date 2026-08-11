@@ -5,15 +5,21 @@ import { executeAutonomousToolAction } from '@darex/workflows/dist/tool-executor
 export async function GET() {
   const platformTools = [
     { name: 'whatsapp', category: 'Communication', description: 'Meta Cloud API WhatsApp messaging & auto-responder' },
-    { name: 'gmail', category: 'Communication', description: 'Fetch live emails & send outbound messages via Gmail API' },
-    { name: 'google-calendar', category: 'Productivity', description: 'Schedule events & check availability via Google Calendar API' },
-    { name: 'hubspot', category: 'CRM', description: 'Create leads & sync customer records in HubSpot CRM' },
-    { name: 'github', category: 'Development', description: 'Fetch repositories, commits, and pull requests via GitHub API' },
+    { name: 'gmail', category: 'Communication', description: 'Fetch emails (full body + attachments), triage inbox, extract OTP codes, parse PDF attachments, create drafts & send via Gmail API' },
+    { name: 'google-calendar', category: 'Productivity', description: 'Create events, check availability & find free time slots via Google Calendar API' },
+    { name: 'hubspot', category: 'CRM', description: 'Create & update leads/contacts and sync customer records in HubSpot CRM' },
+    { name: 'github', category: 'Development', description: 'Fetch repositories, create repos & issues, commits, and pull requests via GitHub API' },
     { name: 'meta-ads', category: 'Marketing', description: 'Track campaign impressions, CTR, and spend via Meta Ads API' },
     { name: 'slack', category: 'Communication', description: 'Send channel notifications & team alerts via Slack Web API' },
     { name: 'stripe', category: 'Finance', description: 'Create checkout payment links & process payments via Stripe API' },
-    { name: 'notion', category: 'Productivity', description: 'Search and sync database docs in Notion workspace' },
-    { name: 'zendesk', category: 'Support', description: 'Create & update customer support tickets in Zendesk' },
+    { name: 'notion', category: 'Productivity', description: 'Search, create pages & append content blocks in the Notion workspace' },
+    { name: 'zendesk', category: 'Support', description: 'Create, fetch & update customer support tickets in Zendesk' },
+    { name: 'shopify', category: 'E-Commerce', description: 'Order tracking, inventory queries & customer fulfillment sync' },
+    { name: 'intercom', category: 'Support', description: 'Live customer chat sync & agent assignment' },
+    { name: 'razorpay', category: 'Finance', description: 'Instant payment link generation & invoice status queries' },
+    { name: 'google-drive', category: 'Productivity', description: 'Search, read, upload & share files across Google Drive' },
+    { name: 'google-docs', category: 'Productivity', description: 'Create, read & append content in Google Docs documents' },
+    { name: 'google-sheets', category: 'Productivity', description: 'Read, create & append rows in Google Sheets spreadsheets' },
   ];
 
   const atomicTools = [
@@ -22,6 +28,7 @@ export async function GET() {
     { name: 'web_extract', category: 'Atomic Agent', description: 'Extract clean text content from a web page URL' },
     { name: 'sql_analytics', category: 'Atomic Agent', description: 'Business analytics queries against org data' },
     { name: 'db_query', category: 'Atomic Agent', description: 'General database query alias for read-only access' },
+    { name: 'file_ops', category: 'Atomic Agent', description: 'Read/write org workspace files (notes, scratch data)' },
   ];
 
   return NextResponse.json({

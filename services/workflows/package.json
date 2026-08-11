@@ -18,7 +18,8 @@
     "@temporalio/worker": "^1.10.0",
     "@temporalio/workflow": "^1.10.0",
     "dotenv": "^16.4.5",
-    "pg": "^8.11.0"
+    "pg": "^8.11.0",
+    "pdf-parse": "^1.1.1"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",

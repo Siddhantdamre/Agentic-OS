@@ -22,7 +22,7 @@ This boots:
 | **Postgres + pgvector** | `localhost:5432` | `darex / darex_dev_secret` |
 | **Temporal** | `localhost:7233` (gRPC) | — |
 | **Temporal UI** | http://localhost:8233 | — |
-| **Nango** | http://localhost:3003 | secret: `darex-nango-secret-dev-change-in-prod` |
+| **Nango** | http://localhost:3003 | secret key: see `apps/dashboard/.env.local` (`NANGO_SECRET_KEY` / `NEXT_PUBLIC_NANGO_PUBLIC_KEY`) |
 | **Langfuse** | http://localhost:3002 | `admin@darex.dev / darex_admin_dev` |
 | **LiteLLM** | http://localhost:4000 | master key: `sk-darex-litellm-dev-key` |
 

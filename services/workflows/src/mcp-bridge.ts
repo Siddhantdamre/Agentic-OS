@@ -45,6 +45,50 @@ const TOOLS: ToolDef[] = [
     action: 'send_email',
   },
   {
+    name: 'gmail_triage',
+    description:
+      'Fetch and categorize the latest emails (urgent, billing, security, customer-support, newsletter, automated, general).',
+    schema: { org_id: z.string(), count: z.number().optional() },
+    tool: 'gmail',
+    action: 'triage_emails',
+  },
+  {
+    name: 'gmail_extract_otp',
+    description:
+      'Scan the latest emails for OTP / verification codes and return the detected codes with surrounding context.',
+    schema: { org_id: z.string(), count: z.number().optional() },
+    tool: 'gmail',
+    action: 'extract_otp',
+  },
+  {
+    name: 'gmail_extract_attachment',
+    description:
+      'Find an attachment in recent email and extract its text content (PDF or text files supported).',
+    schema: {
+      org_id: z.string(),
+      count: z.number().optional(),
+      subject: z.string().optional(),
+      filename: z.string().optional(),
+    },
+    tool: 'gmail',
+    action: 'extract_attachment',
+  },
+  {
+    name: 'gmail_draft_email',
+    description:
+      'Create a Gmail draft (does NOT send) for the org-connected account. User reviews it before sending.',
+    schema: {
+      org_id: z.string(),
+      to: z.string(),
+      subject: z.string(),
+      body: z.string(),
+      cc: z.string().optional(),
+      bcc: z.string().optional(),
+    },
+    tool: 'gmail',
+    action: 'draft_email',
+  },
+  {
     name: 'calendar_list_events',
     description:
       'List upcoming events (next 7 days) from the org-connected Google Calendar.',
@@ -70,6 +114,21 @@ const TOOLS: ToolDef[] = [
     action: 'create_event',
   },
   {
+    name: 'calendar_check_availability',
+    description:
+      'Find free time slots for a given duration across a date window on the org-connected Google Calendar.',
+    schema: {
+      org_id: z.string(),
+      startTime: z.string().optional(),
+      endTime: z.string().optional(),
+      durationMinutes: z.number().optional(),
+      dayStart: z.string().optional(),
+      dayEnd: z.string().optional(),
+    },
+    tool: 'google-calendar',
+    action: 'check_availability',
+  },
+  {
     name: 'github_fetch_repos',
     description: 'Fetch the org-connected GitHub account repositories.',
     schema: { org_id: z.string() },
@@ -84,6 +143,19 @@ const TOOLS: ToolDef[] = [
     action: 'create_repo',
   },
   {
+    name: 'github_create_issue',
+    description: 'Create an issue on a repository of the org-connected GitHub account (repo as "owner/name" or just "name").',
+    schema: {
+      org_id: z.string(),
+      repo: z.string(),
+      title: z.string(),
+      body: z.string().optional(),
+      labels: z.array(z.string()).optional(),
+    },
+    tool: 'github',
+    action: 'create_issue',
+  },
+  {
     name: 'hubspot_create_contact',
     description: 'Create a contact in the org-connected HubSpot CRM.',
     schema: {
@@ -94,6 +166,23 @@ const TOOLS: ToolDef[] = [
     },
     tool: 'hubspot',
     action: 'create_crm_contact',
+  },
+  {
+    name: 'hubspot_update_contact',
+    description:
+      'Update an existing HubSpot contact by email (firstname, lastname, phone, jobtitle, lifecyclestage, company, etc.).',
+    schema: {
+      org_id: z.string(),
+      email: z.string(),
+      firstname: z.string().optional(),
+      lastname: z.string().optional(),
+      phone: z.string().optional(),
+      jobtitle: z.string().optional(),
+      lifecyclestage: z.string().optional(),
+      company: z.string().optional(),
+    },
+    tool: 'hubspot',
+    action: 'update_contact',
   },
   {
     name: 'meta_ads_metrics',
@@ -124,6 +213,13 @@ const TOOLS: ToolDef[] = [
     schema: { org_id: z.string(), title: z.string(), parentPageId: z.string().optional() },
     tool: 'notion',
     action: 'create_page',
+  },
+  {
+    name: 'notion_append_page_content',
+    description: 'Append paragraph blocks of content to an existing page in the org-connected Notion workspace.',
+    schema: { org_id: z.string(), pageId: z.string(), content: z.string() },
+    tool: 'notion',
+    action: 'append_page_content',
   },
   {
     name: 'notion_search',
@@ -178,6 +274,21 @@ const TOOLS: ToolDef[] = [
     action: 'create_support_ticket',
   },
   {
+    name: 'zendesk_update_ticket',
+    description: 'Update an existing Zendesk ticket (status, priority, subject, comment, assignee_id).',
+    schema: {
+      org_id: z.string(),
+      ticketId: z.string(),
+      status: z.string().optional(),
+      priority: z.string().optional(),
+      subject: z.string().optional(),
+      comment: z.string().optional(),
+      assignee_id: z.number().optional(),
+    },
+    tool: 'zendesk',
+    action: 'update_ticket',
+  },
+  {
     name: 'intercom_fetch_conversations',
     description: 'Fetch open conversations from the org-connected Intercom.',
     schema: { org_id: z.string() },
@@ -230,6 +341,92 @@ const TOOLS: ToolDef[] = [
     },
     tool: 'file_ops',
     action: 'auto_execute',
+  },
+  {
+    name: 'drive_search',
+    description:
+      'Search files in the org-connected Google Drive by name. Returns id, name, mimeType, size, webViewLink.',
+    schema: { org_id: z.string(), query: z.string().optional(), maxResults: z.number().optional() },
+    tool: 'google-drive',
+    action: 'drive_search',
+  },
+  {
+    name: 'drive_list',
+    description: 'List files inside a folder of the org-connected Google Drive.',
+    schema: { org_id: z.string(), folderId: z.string().optional(), maxResults: z.number().optional() },
+    tool: 'google-drive',
+    action: 'drive_list',
+  },
+  {
+    name: 'drive_get_text',
+    description:
+      'Extract text content from a file in the org-connected Google Drive (exports Docs/Sheets, downloads raw media).',
+    schema: { org_id: z.string(), fileId: z.string(), mimeType: z.string().optional() },
+    tool: 'google-drive',
+    action: 'drive_get_text',
+  },
+  {
+    name: 'drive_upload',
+    description: 'Upload a text file to the org-connected Google Drive (optionally into a folder).',
+    schema: { org_id: z.string(), name: z.string().optional(), content: z.string().optional(), parentId: z.string().optional() },
+    tool: 'google-drive',
+    action: 'drive_upload',
+  },
+  {
+    name: 'drive_share',
+    description: 'Share a file in the org-connected Google Drive with a user email or publicly.',
+    schema: { org_id: z.string(), fileId: z.string(), role: z.string().optional(), email: z.string().optional() },
+    tool: 'google-drive',
+    action: 'drive_share',
+  },
+  {
+    name: 'docs_create',
+    description: 'Create a new Google Docs document in the org-connected account.',
+    schema: { org_id: z.string(), title: z.string().optional() },
+    tool: 'google-docs',
+    action: 'docs_create',
+  },
+  {
+    name: 'docs_read',
+    description: 'Read the full text content of an org-connected Google Docs document.',
+    schema: { org_id: z.string(), documentId: z.string() },
+    tool: 'google-docs',
+    action: 'docs_read',
+  },
+  {
+    name: 'docs_append',
+    description: 'Append text content to an org-connected Google Docs document.',
+    schema: { org_id: z.string(), documentId: z.string(), content: z.string() },
+    tool: 'google-docs',
+    action: 'docs_append',
+  },
+  {
+    name: 'sheets_create',
+    description: 'Create a new Google Sheets spreadsheet in the org-connected account.',
+    schema: { org_id: z.string(), title: z.string().optional() },
+    tool: 'google-sheets',
+    action: 'sheets_create',
+  },
+  {
+    name: 'sheets_read',
+    description: 'Read rows from a range in an org-connected Google Sheets spreadsheet.',
+    schema: { org_id: z.string(), spreadsheetId: z.string(), range: z.string().optional() },
+    tool: 'google-sheets',
+    action: 'sheets_read',
+  },
+  {
+    name: 'sheets_append_row',
+    description: 'Append one or more rows to an org-connected Google Sheets spreadsheet.',
+    schema: {
+      org_id: z.string(),
+      spreadsheetId: z.string(),
+      range: z.string().optional(),
+      values: z.array(z.any()).optional(),
+      row: z.array(z.any()).optional(),
+      value: z.string().optional(),
+    },
+    tool: 'google-sheets',
+    action: 'sheets_append_row',
   },
 ];
 

@@ -123,6 +123,218 @@ async function fetchRealGmailMessages(accessToken: string, count: number = 10): 
   }
 }
 
+/**
+ * Decode Gmail base64url-encoded content
+ */
+function decodeGmailPayload(data?: string): string {
+  if (!data) return '';
+  try {
+    return Buffer.from(data, 'base64url').toString('utf8');
+  } catch {
+    try {
+      return Buffer.from(data, 'base64').toString('utf8');
+    } catch {
+      return '';
+    }
+  }
+}
+
+/**
+ * Recursively extract plain-text body from a Gmail message payload
+ */
+function extractGmailBody(payload: any): string {
+  if (!payload) return '';
+  if (payload.mimeType === 'text/plain' && payload.body?.data) {
+    return decodeGmailPayload(payload.body.data);
+  }
+  if (payload.mimeType === 'text/html' && payload.body?.data) {
+    return decodeGmailPayload(payload.body.data).replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+  }
+  let body = '';
+  for (const part of payload.parts || []) {
+    const child = extractGmailBody(part);
+    if (child && child.length > body.length) body = child;
+  }
+  return body;
+}
+
+interface GmailAttachmentMeta {
+  attachmentId: string;
+  filename: string;
+  mimeType: string;
+  size: number;
+}
+
+function collectGmailAttachments(payload: any, acc: GmailAttachmentMeta[] = []): GmailAttachmentMeta[] {
+  if (!payload) return acc;
+  if (payload.filename && payload.body?.attachmentId) {
+    acc.push({
+      attachmentId: payload.body.attachmentId,
+      filename: payload.filename,
+      mimeType: payload.mimeType,
+      size: parseInt(payload.body.size || '0', 10),
+    });
+  }
+  for (const part of payload.parts || []) collectGmailAttachments(part, acc);
+  return acc;
+}
+
+/**
+ * Fetch a single Gmail message with the full body + attachment metadata
+ */
+async function fetchGmailMessageFull(accessToken: string, msgId: string): Promise<any | null> {
+  try {
+    const msgRes = await fetch(
+      `https://gmail.googleapis.com/gmail/v1/users/me/messages/${msgId}?format=full`,
+      { headers: { Authorization: `Bearer ${accessToken}` } }
+    );
+    if (!msgRes.ok) return null;
+    const msgData = await msgRes.json();
+
+    const headers = msgData.payload?.headers || [];
+    const from = headers.find((h: any) => h.name === 'From')?.value || 'Unknown Sender';
+    const subject = headers.find((h: any) => h.name === 'Subject')?.value || '(No Subject)';
+    const date = headers.find((h: any) => h.name === 'Date')?.value || '';
+
+    return {
+      id: msgData.id,
+      threadId: msgData.threadId,
+      from,
+      subject,
+      date,
+      snippet: msgData.snippet || '',
+      body: extractGmailBody(msgData.payload),
+      attachments: collectGmailAttachments(msgData.payload),
+      labelIds: msgData.labelIds || [],
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Fetch latest Gmail messages with full bodies + attachment metadata
+ */
+async function fetchRealGmailMessagesFull(accessToken: string, count: number = 10): Promise<any[]> {
+  try {
+    const listRes = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages?maxResults=${count}`, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+    if (!listRes.ok) return [];
+    const listData = await listRes.json();
+    const messageList = listData.messages || [];
+    const results = await Promise.all(
+      messageList.map(async (m: any) => fetchGmailMessageFull(accessToken, m.id))
+    );
+    return results.filter(Boolean);
+  } catch (err) {
+    console.error('Gmail Full Fetch Error:', err);
+    return [];
+  }
+}
+
+/**
+ * Download and return the raw bytes of a Gmail attachment
+ */
+async function downloadGmailAttachment(accessToken: string, messageId: string, attachmentId: string): Promise<Buffer | null> {
+  try {
+    const res = await fetch(
+      `https://gmail.googleapis.com/gmail/v1/users/me/messages/${messageId}/attachments/${attachmentId}`,
+      { headers: { Authorization: `Bearer ${accessToken}` } }
+    );
+    if (!res.ok) return null;
+    const data = await res.json();
+    if (!data.data) return null;
+    return Buffer.from(data.data, 'base64url');
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Heuristic triage classification for a fetched email
+ */
+function classifyEmail(email: any): string {
+  const subject = (email.subject || '').toLowerCase();
+  const from = (email.from || '').toLowerCase();
+  const body = (email.body || '').toLowerCase();
+  const text = `${subject} ${from} ${body}`.slice(0, 2000);
+
+  if (/\b(urgent|asap|immediately|critical|account suspended|payment failed|data breach|security alert)\b/.test(text)) return 'urgent';
+  if (/\b(invoice|payment received|receipt|order confirmation|billing|refund|subscription)\b/.test(text)) return 'billing';
+  if (/\b(otp|verification code|login code|security code|sign in|password reset|2fa|authenticator)\b/.test(text)) return 'security';
+  if (/\b(issue|problem|help|support|question|complaint|bug)\b/.test(text)) return 'customer-support';
+  if (/\b(newsletter|promo|sale|discount|offer|unsubscribe|weekly digest|announcement)\b/.test(text)) return 'newsletter';
+  if (/no[- ]?reply@|noreply@|donotreply@|no.reply@/.test(from)) return 'automated';
+  return 'general';
+}
+
+/**
+ * Extract likely OTP/verification codes from a body (keyword-anchored to reduce noise)
+ */
+function extractOtpsFromText(text: string): Array<{ code: string; context: string }> {
+  const results: Array<{ code: string; context: string }> = [];
+  if (!text) return results;
+  const keywordRe = /otp|one[\s-]?time|verification|security code|login code|access code|2fa|passcode|sign.?in|valid for|expires|code is/i;
+  const codeRe = /(?<!\d)(\d{4,8})(?!\d)/g;
+  let m: RegExpExecArray | null;
+  while ((m = codeRe.exec(text)) !== null) {
+    const code = m[1];
+    if (!/^[0-9]{4,8}$/.test(code)) continue;
+    const start = Math.max(0, m.index - 90);
+    const window = text.slice(start, Math.min(text.length, m.index + m[0].length + 90));
+    if (keywordRe.test(window)) {
+      results.push({ code, context: window.replace(/\s+/g, ' ').trim() });
+      if (results.length >= 20) break;
+    }
+  }
+  return results;
+}
+
+/**
+ * Compute free time slots across a window given busy events
+ */
+function computeFreeSlots(
+  busyEvents: Array<{ start: Date; end: Date }>,
+  start: Date,
+  end: Date,
+  dayStartMin: number,
+  dayEndMin: number,
+  durationMin: number
+): Array<{ start: string; end: string }> {
+  const slots: Array<{ start: string; end: string }> = [];
+  const dayMs = 86400000;
+  const maxDays = 14;
+  let cursor = new Date(start);
+  cursor.setHours(0, 0, 0, 0);
+  let days = 0;
+  while (cursor <= end && days < maxDays) {
+    const workStart = new Date(cursor.getTime() + dayStartMin * 60000);
+    const workEnd = new Date(cursor.getTime() + dayEndMin * 60000);
+    const dayEvents = busyEvents
+      .filter((e) => e.end > workStart && e.start < workEnd)
+      .map((e) => ({
+        start: e.start < workStart ? workStart : e.start,
+        end: e.end > workEnd ? workEnd : e.end,
+      }))
+      .sort((a, b) => a.start.getTime() - b.start.getTime());
+
+    let freeFrom = workStart;
+    for (const ev of dayEvents) {
+      if (ev.start.getTime() - freeFrom.getTime() >= durationMin * 60000) {
+        slots.push({ start: freeFrom.toISOString(), end: ev.start.toISOString() });
+      }
+      if (ev.end > freeFrom) freeFrom = ev.end;
+    }
+    if (workEnd.getTime() - freeFrom.getTime() >= durationMin * 60000) {
+      slots.push({ start: freeFrom.toISOString(), end: workEnd.toISOString() });
+    }
+    cursor = new Date(cursor.getTime() + dayMs);
+    days += 1;
+  }
+  return slots;
+}
+
 export async function executeAutonomousToolAction(
   params: ToolExecutionParams
 ): Promise<ToolExecutionResult> {
@@ -345,14 +557,21 @@ export async function executeAutonomousToolAction(
       }
       
       case 'gmail': {
+        const gmailConnId = `${params.orgId}_gmail`;
+        let gmailToken: string | null = null;
+        for (const providerKey of ['gmail', 'google-mail', 'google']) {
+          gmailToken = await getNangoAccessToken(gmailConnId, providerKey);
+          if (gmailToken) break;
+        }
+        const accessToken = gmailToken;
+
+        // Fetch latest emails (full bodies + attachment metadata)
         if (actionName.includes('fetch') || actionName.includes('read') || actionName.includes('list')) {
           const count = params.payload.count || 10;
-          const connId = `${params.orgId}_gmail`;
-          const accessToken = await getNangoAccessToken(connId, 'gmail');
 
           if (accessToken) {
-            console.log(`[Gmail Tool] Fetching real live emails using OAuth access token for connection ${connId}...`);
-            const realEmails = await fetchRealGmailMessages(accessToken, count);
+            console.log(`[Gmail Tool] Fetching real live emails using OAuth access token for connection ${gmailConnId}...`);
+            const realEmails = await fetchRealGmailMessagesFull(accessToken, count);
 
             return {
               tool: 'gmail',
@@ -369,6 +588,206 @@ export async function executeAutonomousToolAction(
           }
 
           return notConnected('gmail', 'fetch_latest_emails', timestamp);
+        }
+
+        // Triage / classify inbox
+        if (actionName.includes('triage') || actionName.includes('classify')) {
+          const count = params.payload.count || 10;
+          if (accessToken) {
+            console.log('[Gmail Tool] Triaging inbox...');
+            const emails = await fetchRealGmailMessagesFull(accessToken, count);
+            const categorized = emails.map((e) => ({ ...e, category: classifyEmail(e) }));
+            const summary: Record<string, number> = {};
+            for (const em of categorized) summary[em.category] = (summary[em.category] || 0) + 1;
+            return {
+              tool: 'gmail',
+              action: 'triage_emails',
+              status: 'executed',
+              message: `Triaged ${emails.length} emails into ${Object.keys(summary).length} categories`,
+              data: {
+                totalTriaged: emails.length,
+                summary,
+                emails: categorized.map((em) => ({
+                  id: em.id,
+                  from: em.from,
+                  subject: em.subject,
+                  date: em.date,
+                  category: em.category,
+                  bodyPreview: (em.body || '').slice(0, 200),
+                })),
+              },
+              timestamp,
+            };
+          }
+          return notConnected('gmail', 'triage_emails', timestamp);
+        }
+
+        // Extract OTP / verification codes from recent mail
+        if (actionName.includes('otp') || actionName.includes('verification_code') || actionName.includes('extract_otp')) {
+          const count = params.payload.count || 10;
+          if (accessToken) {
+            console.log('[Gmail Tool] Scanning mail for OTP / verification codes...');
+            const emails = await fetchRealGmailMessagesFull(accessToken, count);
+            const found: Array<{ code: string; context: string; from: string; subject: string; date: string; messageId: string }> = [];
+            for (const em of emails) {
+              for (const hit of extractOtpsFromText(`${em.body}\n${em.subject}`)) {
+                found.push({ ...hit, from: em.from, subject: em.subject, date: em.date, messageId: em.id });
+              }
+            }
+            return {
+              tool: 'gmail',
+              action: 'extract_otp',
+              status: 'executed',
+              message: found.length
+                ? `Found ${found.length} verification code${found.length > 1 ? 's' : ''} in the latest ${emails.length} emails`
+                : `No verification codes found in the latest ${emails.length} emails`,
+              data: { scannedEmails: emails.length, codes: found },
+              timestamp,
+            };
+          }
+          return notConnected('gmail', 'extract_otp', timestamp);
+        }
+
+        // Extract + parse an attachment from recent mail (PDF/text)
+        if (actionName.includes('attachment') || actionName.includes('parse_attachment') || actionName.includes('read_attachment')) {
+          const count = params.payload.count || 10;
+          if (accessToken) {
+            console.log('[Gmail Tool] Locating and parsing attachments...');
+            const emails = await fetchRealGmailMessagesFull(accessToken, count);
+            const targetSubject = (params.payload.subject || '').toLowerCase();
+            const targetFilename = (params.payload.filename || '').toLowerCase();
+
+            const candidates = emails.filter(
+              (e) =>
+                e.attachments.length > 0 &&
+                (!targetSubject || (e.subject || '').toLowerCase().includes(targetSubject)) &&
+                (!targetFilename || e.attachments.some((a: any) => a.filename.toLowerCase().includes(targetFilename)))
+            );
+
+            if (candidates.length === 0) {
+              return {
+                tool: 'gmail',
+                action: 'extract_attachment',
+                status: 'error',
+                message: `No email with attachments found in the latest ${emails.length} emails${targetSubject ? ` matching subject "${targetSubject}"` : ''}`,
+                data: { scannedEmails: emails.length },
+                timestamp,
+              };
+            }
+
+            const em = candidates[0];
+            const att = em.attachments[0];
+            const buffer = await downloadGmailAttachment(accessToken, em.id, att.attachmentId);
+            if (!buffer) {
+              return {
+                tool: 'gmail', action: 'extract_attachment', status: 'error',
+                message: `Failed to download attachment "${att.filename}"`, data: null, timestamp,
+              };
+            }
+
+            let content = '';
+            let parseType = 'unsupported';
+            const isPdf = att.mimeType === 'application/pdf' || att.filename.toLowerCase().endsWith('.pdf');
+            const isText = att.mimeType.startsWith('text/') || /\.(txt|csv|md|json|log)$/i.test(att.filename);
+            if (isPdf) {
+              try {
+                const pdfParse = require('pdf-parse');
+                const parsed = await pdfParse(buffer);
+                content = (parsed && parsed.text) || '';
+                parseType = 'pdf';
+              } catch (e: any) {
+                console.error('[Gmail Tool] PDF parse error:', e.message);
+                content = `(PDF text extraction failed: ${e.message})`;
+              }
+            } else if (isText) {
+              content = buffer.toString('utf8');
+              parseType = 'text';
+            } else {
+              content = `Downloaded ${att.filename} (${att.mimeType}, ${buffer.length} bytes). Binary format — parsed inline on request.`;
+            }
+
+            return {
+              tool: 'gmail',
+              action: 'extract_attachment',
+              status: 'executed',
+              message: `Parsed attachment "${att.filename}" from "${em.subject}" (${parseType})`,
+              data: {
+                sourceEmail: { id: em.id, from: em.from, subject: em.subject },
+                fileName: att.filename,
+                mimeType: att.mimeType,
+                sizeBytes: buffer.length,
+                parseType,
+                contentPreview: content.slice(0, 6000),
+                totalCharacters: content.length,
+              },
+              timestamp,
+            };
+          }
+          return notConnected('gmail', 'extract_attachment', timestamp);
+        }
+
+        // Create a draft (does NOT send — user reviews first)
+        if (actionName.includes('draft') || actionName.includes('compose') || actionName.includes('write_email')) {
+          const toEmail = params.payload.to || params.payload.recipient;
+          const subject = params.payload.subject;
+          const bodyText = params.payload.body || params.payload.content || '';
+
+          if (!toEmail) return { tool: 'gmail', action: 'draft_email', status: 'error', message: 'Recipient email (to/recipient) is required.', data: null, timestamp };
+          if (!subject) return { tool: 'gmail', action: 'draft_email', status: 'error', message: 'Email subject is required.', data: null, timestamp };
+
+          if (!accessToken) return notConnected('gmail', 'draft_email', timestamp);
+
+          try {
+            const rawEmail = [
+              `To: ${toEmail}`,
+              `Subject: ${subject}`,
+              ...(params.payload.cc ? [`Cc: ${params.payload.cc}`] : []),
+              ...(params.payload.bcc ? [`Bcc: ${params.payload.bcc}`] : []),
+              'Content-Type: text/plain; charset=utf-8',
+              '',
+              bodyText,
+            ].join('\r\n');
+
+            const base64EncodedEmail = Buffer.from(rawEmail)
+              .toString('base64')
+              .replace(/\+/g, '-')
+              .replace(/\//g, '_')
+              .replace(/=+$/, '');
+
+            const draftRes = await fetch('https://gmail.googleapis.com/gmail/v1/users/me/drafts', {
+              method: 'POST',
+              headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+              body: JSON.stringify({ message: { raw: base64EncodedEmail } }),
+            });
+
+            if (draftRes.ok) {
+              const draftData = await draftRes.json();
+              return {
+                tool: 'gmail',
+                action: 'draft_email',
+                status: 'executed',
+                message: `Draft saved to Gmail for ${toEmail} — nothing has been sent yet`,
+                data: {
+                  draftId: draftData.id,
+                  messageId: draftData.message?.id,
+                  recipient: toEmail,
+                  subject,
+                },
+                timestamp,
+              };
+            }
+            return {
+              tool: 'gmail',
+              action: 'draft_email',
+              status: 'error',
+              message: `Gmail draft failed: HTTP ${draftRes.status} ${await draftRes.text().catch(() => '')}`,
+              data: null,
+              timestamp,
+            };
+          } catch (e: any) {
+            console.error('[Gmail Tool] Draft error:', e);
+            return { tool: 'gmail', action: 'draft_email', status: 'error', message: `Gmail draft error: ${e.message}`, data: null, timestamp };
+          }
         }
 
         // Outbound send_email
@@ -396,15 +815,6 @@ export async function executeAutonomousToolAction(
             timestamp,
           };
         }
-
-        // Try both common Nango provider key names for Gmail
-        const gmailConnId = `${params.orgId}_gmail`;
-        let gmailToken: string | null = null;
-        for (const providerKey of ['gmail', 'google-mail', 'google']) {
-          gmailToken = await getNangoAccessToken(gmailConnId, providerKey);
-          if (gmailToken) break;
-        }
-        const accessToken = gmailToken;
 
         if (accessToken) {
           try {
@@ -524,6 +934,48 @@ export async function executeAutonomousToolAction(
               }
             }
 
+            // CHECK AVAILABILITY / FREE BUSY
+            if (calAction === 'check_availability' || calAction === 'find_free_slots') {
+              const winStart = params.payload.startTime || params.payload.start || new Date().toISOString();
+              const winEnd = params.payload.endTime || params.payload.end || new Date(new Date(winStart).getTime() + 7 * 86400000).toISOString();
+              const durationMin = parseInt(params.payload.durationMinutes || params.payload.duration || '60', 10);
+              const parseHhmm = (val: any, fallback: number): number => {
+                if (val === undefined || val === null || val === '') return fallback;
+                const [h, m] = String(val).split(':').map(Number);
+                return (isNaN(h) ? 0 : h) * 60 + (isNaN(m) ? 0 : m);
+              };
+              const dayStartMin = parseHhmm(params.payload.dayStart, 540);
+              const dayEndMin = parseHhmm(params.payload.dayEnd, 1080);
+
+              const availRes = await fetch(
+                `https://www.googleapis.com/calendar/v3/calendars/primary/events?timeMin=${encodeURIComponent(winStart)}&timeMax=${encodeURIComponent(winEnd)}&singleEvents=true&orderBy=startTime&maxResults=100`,
+                { headers: { Authorization: `Bearer ${accessToken}` } }
+              );
+              if (!availRes.ok) {
+                return { tool: 'google-calendar', action: 'check_availability', status: 'error', message: `Google Calendar API error ${availRes.status}`, data: null, timestamp };
+              }
+              const availData = await availRes.json();
+              const events = (availData.items || []) as any[];
+              const busy = events
+                .map((e) => ({ start: new Date(e.start?.dateTime || e.start?.date), end: new Date(e.end?.dateTime || e.end?.date) }))
+                .filter((e) => !isNaN(e.start.getTime()) && !isNaN(e.end.getTime()));
+              const freeSlots = computeFreeSlots(busy, new Date(winStart), new Date(winEnd), dayStartMin, dayEndMin, durationMin);
+              return {
+                tool: 'google-calendar',
+                action: 'check_availability',
+                status: 'executed',
+                message: `Found ${freeSlots.length} free slot${freeSlots.length === 1 ? '' : 's'} of ${durationMin}min between ${winStart} and ${winEnd}`,
+                data: {
+                  windowStart: winStart,
+                  windowEnd: winEnd,
+                  durationMinutes: durationMin,
+                  freeSlots,
+                  busyEvents: busy.map((b) => ({ start: b.start.toISOString(), end: b.end.toISOString() })),
+                },
+                timestamp,
+              };
+            }
+
             // CREATE event
             if (!summary) {
               return {
@@ -621,6 +1073,55 @@ export async function executeAutonomousToolAction(
 
         if (accessToken) {
           try {
+            // CREATE ISSUE
+            if (actionName.includes('issue')) {
+              const repoArg = params.payload.repo || params.payload.repository || params.payload.full_name;
+              const title = params.payload.title;
+              if (!repoArg) {
+                return { tool: 'github', action: 'create_issue', status: 'error', message: 'Repository (repo or owner/repo) is required.', data: null, timestamp };
+              }
+              if (!title) {
+                return { tool: 'github', action: 'create_issue', status: 'error', message: 'Issue title is required.', data: null, timestamp };
+              }
+
+              const repoParts = repoArg.split('/');
+              let fullRepo = repoArg;
+              if (repoParts.length === 1) {
+                const meRes = await fetch('https://api.github.com/user', { headers: { Authorization: `Bearer ${accessToken}`, 'User-Agent': 'DareX-AI-Agent' } });
+                const me = await meRes.json();
+                fullRepo = `${me.login}/${repoParts[0]}`;
+              }
+
+              const issueRes = await fetch(`https://api.github.com/repos/${fullRepo}/issues`, {
+                method: 'POST',
+                headers: {
+                  Authorization: `Bearer ${accessToken}`,
+                  'User-Agent': 'DareX-AI-Agent',
+                  'Content-Type': 'application/json',
+                  'Accept': 'application/vnd.github.v3+json',
+                },
+                body: JSON.stringify({
+                  title,
+                  body: params.payload.body || params.payload.description || '',
+                  labels: params.payload.labels || [],
+                }),
+              });
+
+              if (issueRes.ok) {
+                const issue = await issueRes.json();
+                return {
+                  tool: 'github',
+                  action: 'create_issue',
+                  status: 'executed',
+                  message: `Created issue #${issue.number} in ${fullRepo}`,
+                  data: { number: issue.number, title: issue.title, url: issue.html_url, state: issue.state },
+                  timestamp,
+                };
+              }
+              const issueErr = await issueRes.json().catch(() => ({}));
+              return { tool: 'github', action: 'create_issue', status: 'error', message: `GitHub issue creation failed: ${issueRes.status} ${issueErr.message || ''}`, data: null, timestamp };
+            }
+
             if (actionName.includes('create')) {
               // CREATE REPO
               const repoName = params.payload.name || params.payload.repoName || 'new-repo';
@@ -811,8 +1312,68 @@ export async function executeAutonomousToolAction(
 
       case 'hubspot': {
         const contactEmail = params.payload.email;
-        const firstname = params.payload.firstname || '';
-        const lastname = params.payload.lastname || '';
+
+        if (actionName.includes('update') || actionName.includes('edit')) {
+          if (!contactEmail) {
+            return {
+              tool: 'hubspot', action: 'update_contact', status: 'error',
+              message: 'Contact email is required to update a contact in HubSpot', data: null, timestamp,
+            };
+          }
+          const connId = `${params.orgId}_hubspot`;
+          const accessToken = await getNangoAccessToken(connId, 'hubspot');
+          if (accessToken) {
+            try {
+              // Resolve contact id by email
+              const searchRes = await fetch('https://api.hubapi.com/crm/v3/objects/contacts/search', {
+                method: 'POST',
+                headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  filterGroups: [{ filters: [{ propertyName: 'email', operator: 'EQ', value: contactEmail }] }],
+                  limit: 1,
+                }),
+              });
+              if (!searchRes.ok) {
+                return { tool: 'hubspot', action: 'update_contact', status: 'error', message: `HubSpot search failed: HTTP ${searchRes.status}`, data: null, timestamp };
+              }
+              const searchData = await searchRes.json();
+              const contactId = searchData.results?.[0]?.id;
+              if (!contactId) {
+                return { tool: 'hubspot', action: 'update_contact', status: 'error', message: `No HubSpot contact found with email ${contactEmail}`, data: null, timestamp };
+              }
+
+              const properties: Record<string, string> = {};
+              const editable = ['firstname', 'lastname', 'phone', 'jobtitle', 'lifecyclestage', 'company', 'website', 'address', 'city', 'country', 'notes_last_contacted', 'hs_lead_status'];
+              for (const key of editable) {
+                if (params.payload[key] !== undefined && params.payload[key] !== null) properties[key] = String(params.payload[key]);
+              }
+              if (Object.keys(properties).length === 0) {
+                return { tool: 'hubspot', action: 'update_contact', status: 'error', message: 'No updatable fields supplied (try firstname, lastname, phone, jobtitle, lifecyclestage, company)', data: null, timestamp };
+              }
+
+              const updateRes = await fetch(`https://api.hubapi.com/crm/v3/objects/contacts/${contactId}`, {
+                method: 'PATCH',
+                headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+                body: JSON.stringify({ properties }),
+              });
+              if (updateRes.ok) {
+                const hsData = await updateRes.json();
+                return {
+                  tool: 'hubspot', action: 'update_contact', status: 'executed',
+                  message: `Updated HubSpot contact ${contactEmail}`,
+                  data: { contactId: hsData.id, email: contactEmail, updatedProperties: properties },
+                  timestamp,
+                };
+              }
+              const errBody = await updateRes.json().catch(() => ({}));
+              return { tool: 'hubspot', action: 'update_contact', status: 'error', message: `HubSpot update failed: HTTP ${updateRes.status} ${errBody?.message || ''}`, data: null, timestamp };
+            } catch (e: any) {
+              console.error('[HubSpot Tool] update error:', e);
+              return { tool: 'hubspot', action: 'update_contact', status: 'error', message: `HubSpot update error: ${e.message}`, data: null, timestamp };
+            }
+          }
+          return notConnected('hubspot', 'update_contact', timestamp);
+        }
 
         if (!contactEmail) {
           return {
@@ -833,7 +1394,12 @@ export async function executeAutonomousToolAction(
               method: 'POST',
               headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
               body: JSON.stringify({
-                properties: { email: contactEmail, firstname, lastname, lifecyclestage: 'lead' },
+                properties: {
+                  email: contactEmail,
+                  firstname: params.payload.firstname || '',
+                  lastname: params.payload.lastname || '',
+                  lifecyclestage: 'lead',
+                },
               }),
             });
 
@@ -847,8 +1413,8 @@ export async function executeAutonomousToolAction(
                 data: {
                   vid: hsData.id,
                   email: contactEmail,
-                  firstname,
-                  lastname,
+                  firstname: params.payload.firstname || '',
+                  lastname: params.payload.lastname || '',
                   lifecycleStage: 'lead',
                 },
                 timestamp,
@@ -865,7 +1431,7 @@ export async function executeAutonomousToolAction(
 
       case 'meta-ads': {
         const metaAdsConnId = `${params.orgId}_meta-ads`;
-        const metaAdsToken = await getNangoAccessToken(metaAdsConnId, 'facebook-ads');
+        const metaAdsToken = await getNangoAccessToken(metaAdsConnId, 'meta-ads');
         if (metaAdsToken) {
           try {
             const adAccountId = params.payload.adAccountId || process.env.META_AD_ACCOUNT_ID;
@@ -975,6 +1541,46 @@ export async function executeAutonomousToolAction(
         const notionToken = await getNangoAccessToken(notionConnId, 'notion');
         if (notionToken) {
           try {
+            // APPEND CONTENT TO EXISTING PAGE
+            if (actionName.includes('append') || actionName.includes('add_content') || actionName.includes('update_content')) {
+              const pageId = params.payload.pageId || params.payload.page_id || params.payload.parentId;
+              const content = params.payload.content || params.payload.text || '';
+              if (!pageId) {
+                return { tool: 'notion', action: 'append_page_content', status: 'error', message: 'Page id (pageId) is required to append content.', data: null, timestamp };
+              }
+              if (!content) {
+                return { tool: 'notion', action: 'append_page_content', status: 'error', message: 'Content text is required to append.', data: null, timestamp };
+              }
+              const lines = content.split('\n').filter((l: string) => l.trim().length > 0);
+              const children = lines.map((l: string) => ({
+                object: 'block' as const,
+                type: 'paragraph' as const,
+                paragraph: { rich_text: [{ type: 'text', text: { content: l.slice(0, 2000) } }] },
+              }));
+              const appendRes = await fetch(`https://api.notion.com/v1/blocks/${pageId}/children`, {
+                method: 'PATCH',
+                headers: {
+                  Authorization: `Bearer ${notionToken}`,
+                  'Content-Type': 'application/json',
+                  'Notion-Version': '2022-06-28',
+                },
+                body: JSON.stringify({ children }),
+              });
+              if (appendRes.ok) {
+                const appended = await appendRes.json();
+                return {
+                  tool: 'notion',
+                  action: 'append_page_content',
+                  status: 'executed',
+                  message: `Appended ${children.length} block${children.length === 1 ? '' : 's'} to Notion page ${pageId}`,
+                  data: { pageId, blocksAppended: children.length, blockIds: (appended.results || []).map((b: any) => b.id) },
+                  timestamp,
+                };
+              }
+              const appendErr = await appendRes.json().catch(() => ({}));
+              return { tool: 'notion', action: 'append_page_content', status: 'error', message: `Notion append failed: ${appendRes.status} ${appendErr.message || ''}`, data: null, timestamp };
+            }
+
             if (actionName.includes('create') || actionName.includes('add')) {
               const title = params.payload.title || 'Untitled Page';
               const parentPageId = params.payload.parentPageId || params.payload.parentId;
@@ -1153,6 +1759,39 @@ export async function executeAutonomousToolAction(
           try {
             const subdomain = params.payload.subdomain || process.env.ZENDESK_SUBDOMAIN;
             if (subdomain) {
+              if (actionName.includes('update') || actionName.includes('edit')) {
+                const ticketId = params.payload.ticketId || params.payload.id;
+                if (!ticketId) {
+                  return { tool: 'zendesk', action: 'update_ticket', status: 'error', message: 'Ticket id (ticketId) is required to update.', data: null, timestamp };
+                }
+                const ticket: any = {};
+                if (params.payload.status) ticket.status = params.payload.status;
+                if (params.payload.priority) ticket.priority = params.payload.priority;
+                if (params.payload.subject) ticket.subject = params.payload.subject;
+                if (params.payload.assignee_id) ticket.assignee_id = params.payload.assignee_id;
+                if (params.payload.comment) ticket.comment = { body: params.payload.comment };
+                if (Object.keys(ticket).length === 0) {
+                  return { tool: 'zendesk', action: 'update_ticket', status: 'error', message: 'No updatable fields supplied (try status, priority, subject, comment, assignee_id)', data: null, timestamp };
+                }
+                const zdRes = await fetch(`https://${subdomain}.zendesk.com/api/v2/tickets/${ticketId}.json`, {
+                  method: 'PUT',
+                  headers: { Authorization: `Bearer ${zendeskToken}`, 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ ticket }),
+                });
+                if (zdRes.ok) {
+                  const zdData = await zdRes.json();
+                  return {
+                    tool: 'zendesk',
+                    action: 'update_ticket',
+                    status: 'executed',
+                    message: `Updated Zendesk ticket #${ticketId}`,
+                    data: { ticketId: zdData.ticket?.id, status: zdData.ticket?.status, priority: zdData.ticket?.priority, subject: zdData.ticket?.subject },
+                    timestamp,
+                  };
+                }
+                const zdErr = await zdRes.text();
+                return { tool: 'zendesk', action: 'update_ticket', status: 'error', message: `Zendesk update failed: ${zdRes.status} ${zdErr.slice(0, 200)}`, data: null, timestamp };
+              }
               if (actionName.includes('list') || actionName.includes('fetch')) {
                 const zdRes = await fetch(`https://${subdomain}.zendesk.com/api/v2/tickets.json?sort_by=updated_at&sort_order=desc&per_page=10`, {
                   headers: { Authorization: `Bearer ${zendeskToken}`, Accept: 'application/json' },
@@ -1253,6 +1892,355 @@ export async function executeAutonomousToolAction(
           }
         }
         return notConnected('razorpay', actionName, timestamp);
+      }
+
+      case 'google-drive':
+      case 'google-docs':
+      case 'google-sheets': {
+        const gTool = params.tool.toLowerCase();
+        const gConnId = `${params.orgId}_${gTool}`;
+        let gToken: string | null = null;
+        for (const providerKey of [gTool, 'google']) {
+          gToken = await getNangoAccessToken(gConnId, providerKey);
+          if (gToken) break;
+        }
+
+        if (!gToken) {
+          return notConnected(gTool, actionName, timestamp);
+        }
+
+        try {
+          // ── GOOGLE DRIVE ────────────────────────────────────────────────
+          if (gTool === 'google-drive') {
+            if (actionName.includes('search') || actionName.includes('find')) {
+              const query = params.payload.query || params.payload.name || '';
+              const qClause = query
+                ? `name contains '${query.replace(/'/g, "\\'")}'`
+                : `trashed = false`;
+              const driveRes = await fetch(
+                `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(qClause)}&fields=files(id,name,mimeType,modifiedTime,size,webViewLink)&pageSize=${params.payload.maxResults || 25}`,
+                { headers: { Authorization: `Bearer ${gToken}` } }
+              );
+              if (!driveRes.ok) {
+                return { tool: 'google-drive', action: 'drive_search', status: 'error', message: `Drive API error ${driveRes.status}: ${await driveRes.text()}`, data: null, timestamp };
+              }
+              const driveData = await driveRes.json();
+              return {
+                tool: 'google-drive',
+                action: 'drive_search',
+                status: 'executed',
+                message: `Found ${driveData.files?.length || 0} file${(driveData.files || []).length === 1 ? '' : 's'} in Google Drive`,
+                data: { query, files: driveData.files || [] },
+                timestamp,
+              };
+            }
+
+            if (actionName.includes('list')) {
+              const folderId = params.payload.folderId || params.payload.parentId || 'root';
+              const driveRes = await fetch(
+                `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(`'${folderId}' in parents and trashed = false`)}&fields=files(id,name,mimeType,modifiedTime,size,webViewLink)&pageSize=${params.payload.maxResults || 50}`,
+                { headers: { Authorization: `Bearer ${gToken}` } }
+              );
+              if (!driveRes.ok) {
+                return { tool: 'google-drive', action: 'drive_list', status: 'error', message: `Drive API error ${driveRes.status}: ${await driveRes.text()}`, data: null, timestamp };
+              }
+              const driveData = await driveRes.json();
+              return {
+                tool: 'google-drive',
+                action: 'drive_list',
+                status: 'executed',
+                message: `Listed ${driveData.files?.length || 0} files under "${folderId}"`,
+                data: { folderId, files: driveData.files || [] },
+                timestamp,
+              };
+            }
+
+            if (actionName.includes('share') || actionName.includes('permission')) {
+              const fileId = params.payload.fileId || params.payload.id;
+              if (!fileId) {
+                return { tool: 'google-drive', action: 'drive_share', status: 'error', message: 'fileId is required to share a Drive file.', data: null, timestamp };
+              }
+              const role = params.payload.role || 'reader';
+              const emailAddress = params.payload.email;
+              const permBody = emailAddress
+                ? { role, type: 'user', emailAddress }
+                : { role, type: 'anyone' };
+              const permRes = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}/permissions`, {
+                method: 'POST',
+                headers: { Authorization: `Bearer ${gToken}`, 'Content-Type': 'application/json' },
+                body: JSON.stringify(permBody),
+              });
+              if (!permRes.ok) {
+                return { tool: 'google-drive', action: 'drive_share', status: 'error', message: `Drive share error ${permRes.status}: ${await permRes.text()}`, data: null, timestamp };
+              }
+              const permData = await permRes.json();
+              return {
+                tool: 'google-drive',
+                action: 'drive_share',
+                status: 'executed',
+                message: `Shared file ${fileId} with ${emailAddress || 'anyone'} (${role})`,
+                data: { fileId, role, emailAddress: emailAddress || 'anyone', permissionId: permData.id },
+                timestamp,
+              };
+            }
+
+            // drive_get_text: export Google-native files or download raw media
+            if (actionName.includes('get_text') || actionName.includes('read')) {
+              const fileId = params.payload.fileId || params.payload.id;
+              if (!fileId) {
+                return { tool: 'google-drive', action: 'drive_get_text', status: 'error', message: 'fileId is required to read a Drive file.', data: null, timestamp };
+              }
+              const mimeType = params.payload.mimeType || '';
+              const exportMime = mimeType === 'application/vnd.google-apps.document' ? 'text/plain'
+                : mimeType === 'application/vnd.google-apps.spreadsheet' ? 'text/csv'
+                : mimeType === 'application/vnd.google-apps.presentation' ? 'text/plain'
+                : null;
+              const url = exportMime
+                ? `https://www.googleapis.com/drive/v3/files/${fileId}/export?mimeType=${encodeURIComponent(exportMime)}`
+                : `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`;
+              const contentRes = await fetch(url, { headers: { Authorization: `Bearer ${gToken}` } });
+              if (!contentRes.ok) {
+                return { tool: 'google-drive', action: 'drive_get_text', status: 'error', message: `Drive read error ${contentRes.status}: ${await contentRes.text()}`, data: null, timestamp };
+              }
+              const text = (exportMime ? await contentRes.text() : Buffer.from(await contentRes.arrayBuffer()).toString('utf8'));
+              return {
+                tool: 'google-drive',
+                action: 'drive_get_text',
+                status: 'executed',
+                message: `Extracted ${text.length} characters from Drive file ${fileId}`,
+                data: { fileId, mimeType: exportMime || mimeType || 'application/octet-stream', content: text.slice(0, 8000), totalCharacters: text.length },
+                timestamp,
+              };
+            }
+
+            // drive_upload
+            if (actionName.includes('upload') || actionName.includes('create_file')) {
+              const name = params.payload.name || params.payload.filename || `darex-file-${Date.now()}.txt`;
+              const content = params.payload.content || params.payload.text || '';
+              const parentId = params.payload.parentId || params.payload.folderId;
+              const metadata: any = { name };
+              if (parentId) metadata.parents = [parentId];
+
+              const boundary = `drx${Date.now()}`;
+              const bodyParts = [
+                `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(metadata)}\r\n`,
+                `--${boundary}\r\nContent-Type: text/plain\r\n\r\n${content}\r\n`,
+                `--${boundary}--\r\n`,
+              ];
+              const body = bodyParts.join('');
+
+              const upRes = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart', {
+                method: 'POST',
+                headers: {
+                  Authorization: `Bearer ${gToken}`,
+                  'Content-Type': `multipart/related; boundary=${boundary}`,
+                },
+                body,
+              });
+              if (!upRes.ok) {
+                return { tool: 'google-drive', action: 'drive_upload', status: 'error', message: `Drive upload error ${upRes.status}: ${await upRes.text()}`, data: null, timestamp };
+              }
+              const upData = await upRes.json();
+              return {
+                tool: 'google-drive',
+                action: 'drive_upload',
+                status: 'executed',
+                message: `Uploaded "${name}" to Google Drive`,
+                data: { fileId: upData.id, name, webViewLink: upData.webViewLink || null, size: Buffer.byteLength(content) },
+                timestamp,
+              };
+            }
+
+            return { tool: 'google-drive', action: actionName, status: 'error', message: `Unsupported Drive action "${actionName}". Try drive_search, drive_list, drive_get_text, drive_upload, drive_share.`, data: null, timestamp };
+          }
+
+          // ── GOOGLE DOCS ─────────────────────────────────────────────────
+          if (gTool === 'google-docs') {
+            if (actionName.includes('create')) {
+              const title = params.payload.title || params.payload.name || 'Untitled Document';
+              const docRes = await fetch('https://docs.googleapis.com/v1/documents', {
+                method: 'POST',
+                headers: { Authorization: `Bearer ${gToken}`, 'Content-Type': 'application/json' },
+                body: JSON.stringify({ title }),
+              });
+              if (!docRes.ok) {
+                return { tool: 'google-docs', action: 'docs_create', status: 'error', message: `Docs create error ${docRes.status}: ${await docRes.text()}`, data: null, timestamp };
+              }
+              const docData = await docRes.json();
+              return {
+                tool: 'google-docs',
+                action: 'docs_create',
+                status: 'executed',
+                message: `Created Google Doc "${docData.title}"`,
+                data: { documentId: docData.documentId, title: docData.title, url: `https://docs.google.com/document/d/${docData.documentId}/edit` },
+                timestamp,
+              };
+            }
+
+            if (actionName.includes('read') || actionName.includes('get') || actionName.includes('fetch')) {
+              const documentId = params.payload.documentId || params.payload.id;
+              if (!documentId) {
+                return { tool: 'google-docs', action: 'docs_read', status: 'error', message: 'documentId is required to read a Docs document.', data: null, timestamp };
+              }
+              const docRes = await fetch(`https://docs.googleapis.com/v1/documents/${documentId}`, {
+                headers: { Authorization: `Bearer ${gToken}` },
+              });
+              if (!docRes.ok) {
+                return { tool: 'google-docs', action: 'docs_read', status: 'error', message: `Docs read error ${docRes.status}: ${await docRes.text()}`, data: null, timestamp };
+              }
+              const docData = await docRes.json();
+              const text = (docData.body?.content || [])
+                .filter((el: any) => el.paragraph)
+                .map((el: any) => (el.paragraph.elements || [])
+                  .map((e: any) => e.textRun?.content || '')
+                  .join(''))
+                .join('\n');
+              return {
+                tool: 'google-docs',
+                action: 'docs_read',
+                status: 'executed',
+                message: `Read Google Doc "${docData.title}" (${text.length} chars)`,
+                data: { documentId, title: docData.title, content: text.slice(0, 8000), totalCharacters: text.length, url: `https://docs.google.com/document/d/${documentId}/edit` },
+                timestamp,
+              };
+            }
+
+            if (actionName.includes('append') || actionName.includes('write')) {
+              const documentId = params.payload.documentId || params.payload.id;
+              const content = params.payload.content || params.payload.text || '';
+              if (!documentId) {
+                return { tool: 'google-docs', action: 'docs_append', status: 'error', message: 'documentId is required to append to a Docs document.', data: null, timestamp };
+              }
+              if (!content) {
+                return { tool: 'google-docs', action: 'docs_append', status: 'error', message: 'Content text is required to append.', data: null, timestamp };
+              }
+              const batched = await fetch(`https://docs.googleapis.com/v1/documents/${documentId}:batchUpdate`, {
+                method: 'POST',
+                headers: { Authorization: `Bearer ${gToken}`, 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  requests: [{ insertText: { location: { index: 1 }, text: `${content}\n` } }],
+                }),
+              });
+              if (!batched.ok) {
+                return { tool: 'google-docs', action: 'docs_append', status: 'error', message: `Docs append error ${batched.status}: ${await batched.text()}`, data: null, timestamp };
+              }
+              return {
+                tool: 'google-docs',
+                action: 'docs_append',
+                status: 'executed',
+                message: `Appended ${content.length} characters to Google Doc ${documentId}`,
+                data: { documentId, appendedCharacters: content.length + 1 },
+                timestamp,
+              };
+            }
+
+            return { tool: 'google-docs', action: actionName, status: 'error', message: `Unsupported Docs action "${actionName}". Try docs_create, docs_read, docs_append.`, data: null, timestamp };
+          }
+
+          // ── GOOGLE SHEETS ───────────────────────────────────────────────
+          if (gTool === 'google-sheets') {
+            if (actionName.includes('create')) {
+              const title = params.payload.title || params.payload.name || 'Untitled Spreadsheet';
+              const sheetRes = await fetch('https://sheets.googleapis.com/v4/spreadsheets', {
+                method: 'POST',
+                headers: { Authorization: `Bearer ${gToken}`, 'Content-Type': 'application/json' },
+                body: JSON.stringify({ properties: { title } }),
+              });
+              if (!sheetRes.ok) {
+                return { tool: 'google-sheets', action: 'sheets_create', status: 'error', message: `Sheets create error ${sheetRes.status}: ${await sheetRes.text()}`, data: null, timestamp };
+              }
+              const sheetData = await sheetRes.json();
+              return {
+                tool: 'google-sheets',
+                action: 'sheets_create',
+                status: 'executed',
+                message: `Created Google Sheet "${sheetData.properties?.title}"`,
+                data: { spreadsheetId: sheetData.spreadsheetId, title: sheetData.properties?.title, url: sheetData.spreadsheetUrl },
+                timestamp,
+              };
+            }
+
+            const spreadsheetId = params.payload.spreadsheetId || params.payload.id || params.payload.sheetId;
+            if (!spreadsheetId) {
+              return { tool: 'google-sheets', action: actionName, status: 'error', message: 'spreadsheetId is required for Sheets actions.', data: null, timestamp };
+            }
+            const range = params.payload.range || 'Sheet1!A1:Z500';
+
+            if (actionName.includes('read') || actionName.includes('get') || actionName.includes('fetch')) {
+              const valRes = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(range)}`, {
+                headers: { Authorization: `Bearer ${gToken}` },
+              });
+              if (!valRes.ok) {
+                return { tool: 'google-sheets', action: 'sheets_read', status: 'error', message: `Sheets read error ${valRes.status}: ${await valRes.text()}`, data: null, timestamp };
+              }
+              const valData = await valRes.json();
+              return {
+                tool: 'google-sheets',
+                action: 'sheets_read',
+                status: 'executed',
+                message: `Read ${valData.values?.length || 0} rows from ${range}`,
+                data: { spreadsheetId, range, rows: valData.values || [] },
+                timestamp,
+              };
+            }
+
+            if (actionName.includes('append') || actionName.includes('add_row') || actionName.includes('insert')) {
+              const rawValues = params.payload.values || params.payload.rows;
+              const row = params.payload.row;
+              let values: any[][];
+              if (Array.isArray(rawValues)) {
+                values = rawValues.length && Array.isArray(rawValues[0]) ? rawValues : [rawValues];
+              } else if (Array.isArray(row)) {
+                values = [row];
+              } else {
+                values = [[params.payload.value ?? params.payload.content ?? '']];
+              }
+
+              if (!values.length || !values[0].length) {
+                return { tool: 'google-sheets', action: 'sheets_append_row', status: 'error', message: 'Provide values (array) or row array to append data.', data: null, timestamp };
+              }
+
+              const appendRes = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(range)}:append?valueInputOption=USER_ENTERED`, {
+                method: 'POST',
+                headers: { Authorization: `Bearer ${gToken}`, 'Content-Type': 'application/json' },
+                body: JSON.stringify({ values }),
+              });
+              if (!appendRes.ok) {
+                return { tool: 'google-sheets', action: 'sheets_append_row', status: 'error', message: `Sheets append error ${appendRes.status}: ${await appendRes.text()}`, data: null, timestamp };
+              }
+              const appendData = await appendRes.json();
+              return {
+                tool: 'google-sheets',
+                action: 'sheets_append_row',
+                status: 'executed',
+                message: `Appended ${appendData.updates?.updatedRows || values.length} row(s) to ${range}`,
+                data: { spreadsheetId, range, updatedRange: appendData.updates?.updatedRange, values: values.slice(0, 10) },
+                timestamp,
+              };
+            }
+
+            return { tool: 'google-sheets', action: actionName, status: 'error', message: `Unsupported Sheets action "${actionName}". Try sheets_create, sheets_read, sheets_append_row.`, data: null, timestamp };
+          }
+
+          return {
+            tool: gTool,
+            action: actionName,
+            status: 'error',
+            message: `Unhandled Google tool "${gTool}"`,
+            data: null,
+            timestamp,
+          };
+        } catch (e: any) {
+          console.error(`[${gTool}] API error:`, e.message);
+          return {
+            tool: gTool,
+            action: actionName,
+            status: 'error',
+            message: `${gTool} request failed: ${e.message}`,
+            data: null,
+            timestamp,
+          };
+        }
       }
 
       default: {

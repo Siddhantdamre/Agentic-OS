@@ -46,6 +46,21 @@ if (process.env.GEMINI_API_KEY) {
   });
 }
 
+// LiteLLM proxy route — owns the model fallback chain (infra/litellm/config.yaml).
+// The agent always asks for model "atomic-agent"; LiteLLM picks the first
+// healthy model in the chain (nemotron free -> deepseek-v4-flash-latest).
+if (process.env.LITELLM_BASE_URL) {
+  providers.push({
+    id: 'darex-litellm',
+    kind: 'openai-compatible',
+    baseUrl: process.env.LITELLM_BASE_URL,
+    apiKey: process.env.LITELLM_API_KEY || 'sk-darex-litellm-dev-key',
+    defaultChatModel: process.env.LITELLM_MODEL || 'atomic-agent',
+    supportsTools: true,
+    supportsVision: true,
+  });
+}
+
 const active =
   providers.find((p) => p.id === activeProvider) || providers[0];
 

@@ -88,6 +88,42 @@ export default function ConversationsPage() {
 
   const chatEndRef = useRef<HTMLDivElement>(null);
 
+  // Realtime notification toast
+  const [notif, setNotif] = useState<string | null>(null);
+  const [notifVisible, setNotifVisible] = useState(false);
+  const notifTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    const es = new EventSource('/api/stream/events');
+    es.addEventListener('needs_attention', (e: MessageEvent) => {
+      try {
+        const payload = JSON.parse(e.data);
+        if (payload.conversationId) {
+          setSelectedConvId(payload.conversationId);
+        }
+        fetchConversations();
+        const sender = payload.contactId?.toString() || 'Customer';
+        const preview = (payload.message?.toString() || '').slice(0, 80);
+        setNotif(`${sender}: ${preview}`);
+        setNotifVisible(true);
+        if (notifTimer.current) clearTimeout(notifTimer.current);
+        notifTimer.current = setTimeout(() => setNotifVisible(false), 6000);
+      } catch (err) {
+        console.error('Failed to parse realtime event:', err);
+      }
+    });
+    es.addEventListener('conversation_updated', () => {
+      fetchConversations();
+    });
+    es.addEventListener('connected', () => {
+      console.log('[Realtime] SSE stream connected');
+    });
+    es.onerror = () => {
+      // EventSource auto-reconnects; nothing to do.
+    };
+    return () => es.close();
+  }, []);
+
   // Fetch conversation list
   const fetchConversations = async () => {
     try {
@@ -248,6 +284,21 @@ export default function ConversationsPage() {
 
   return (
     <div className="flex h-[calc(100vh-4rem)] bg-[#121917] text-[#FAF9F0] overflow-hidden">
+      {/* Real-time needs_attention toast */}
+      {notifVisible && notif && (
+        <div className="fixed top-4 right-4 z-50 bg-amber-950/95 border border-amber-600/40 text-amber-100 rounded-xl px-4 py-3 shadow-2xl max-w-sm flex items-start gap-3">
+          <ShieldAlert className="w-5 h-5 text-amber-400 shrink-0 mt-0.5" />
+          <div className="min-w-0">
+            <div className="text-xs font-bold text-amber-300 uppercase tracking-wider mb-0.5">
+              Needs Attention
+            </div>
+            <p className="text-xs text-amber-100/90 break-words">{notif}</p>
+          </div>
+          <button onClick={() => setNotifVisible(false)} className="text-amber-400 hover:text-amber-200 shrink-0">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
       {/* ───────────────────────────────────────────────────────────── */}
       {/* PANE 1: FILTER & CHANNEL SIDEBAR */}
       {/* ───────────────────────────────────────────────────────────── */}

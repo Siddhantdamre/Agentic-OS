@@ -21,6 +21,9 @@ import {
   Headphones,
   MessageCircle,
   Github,
+  FolderOpen,
+  FileText,
+  Table,
   Check,
   ExternalLink,
   AlertCircle,
@@ -181,6 +184,9 @@ export default function ConnectorsPage() {
       case 'Headphones': return <Headphones className="w-6 h-6 text-emerald-800" />;
       case 'MessageCircle': return <MessageCircle className="w-6 h-6 text-blue-500" />;
       case 'Github': return <Github className="w-6 h-6 text-slate-800" />;
+      case 'FolderOpen': return <FolderOpen className="w-6 h-6 text-sky-700" />;
+      case 'FileText': return <FileText className="w-6 h-6 text-blue-700" />;
+      case 'Table': return <Table className="w-6 h-6 text-emerald-700" />;
       default: return <Plug className="w-6 h-6 text-amber-600" />;
     }
   };

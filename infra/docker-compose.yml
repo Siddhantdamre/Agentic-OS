@@ -143,7 +143,7 @@ services:
       - NANGO_DB_SSL=false
       - NANGO_REDIS_URL=redis://redis:6379
       - SERVER_RUN_MODE=PROD
-      - NANGO_SECRET_KEY=darex-nango-secret-dev-change-in-prod
+      - NANGO_SECRET_KEY=0c2eb30a-0ecd-42ea-8918-0c73eda41a47
       - NANGO_SERVER_URL=http://localhost:3003
       - WEBHOOK_TRACER_URL=http://localhost:3003
       - LOG_LEVEL=info
@@ -208,10 +208,13 @@ services:
         condition: service_healthy
       langfuse-clickhouse:
         condition: service_healthy
+      redis:
+        condition: service_healthy
     ports:
       - "3002:3000"   # Langfuse UI + API
     environment:
       DATABASE_URL: postgresql://darex:darex_dev_secret@postgres:5432/langfuse
+      REDIS_CONNECTION_STRING: redis://redis:6379
       NEXTAUTH_URL: http://localhost:3002
       NEXTAUTH_SECRET: darex-langfuse-nextauth-secret-dev
       SALT: darex-langfuse-salt-dev-change-in-prod
@@ -256,8 +259,11 @@ services:
     depends_on:
       langfuse-server:
         condition: service_healthy
+      redis:
+        condition: service_healthy
     environment:
       DATABASE_URL: postgresql://darex:darex_dev_secret@postgres:5432/langfuse
+      REDIS_CONNECTION_STRING: redis://redis:6379
       SALT: darex-langfuse-salt-dev-change-in-prod
       CLICKHOUSE_URL: http://darex-langfuse-clickhouse:8123
       CLICKHOUSE_MIGRATION_URL: clickhouse://langfuse:langfuse_dev_secret@darex-langfuse-clickhouse:9000/langfuse
@@ -317,6 +323,8 @@ services:
     environment:
       - LITELLM_MASTER_KEY=sk-darex-litellm-dev-key
       - DATABASE_URL=postgresql://darex:darex_dev_secret@postgres:5432/litellm
+      # OpenRouter key used by the model fallback chain in config.yaml
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
     depends_on:
       postgres:
         condition: service_healthy
@@ -390,9 +398,13 @@ services:
       # .env.local pins the (dead) ":free" OpenRouter slug — override to the
       # slug the API currently accepts. `environment` wins over env_file.
       - OPENROUTER_MODEL=${ATOMIC_AGENT_OPENROUTER_MODEL:-deepseek/deepseek-v4-flash-0731}
-      # Default active LLM provider is OpenRouter (funded key in .env); other
-      # providers can be selected per-run via ATOMIC_AGENT_ACTIVE_PROVIDER.
-      - ATOMIC_AGENT_ACTIVE_PROVIDER=${ATOMIC_AGENT_ACTIVE_PROVIDER:-darex-openrouter}
+      # Route through the LiteLLM proxy: it owns the model fallback chain
+      # (infra/litellm/config.yaml) — nemotron free -> deepseek-v4-flash-latest.
+      - LITELLM_BASE_URL=http://litellm:4000/v1
+      - LITELLM_MODEL=atomic-agent
+      # Default active LLM provider is LiteLLM; other providers can be selected
+      # per-run via ATOMIC_AGENT_ACTIVE_PROVIDER.
+      - ATOMIC_AGENT_ACTIVE_PROVIDER=${ATOMIC_AGENT_ACTIVE_PROVIDER:-darex-litellm}
     env_file:
       - ../.env
       - ../apps/dashboard/.env.local

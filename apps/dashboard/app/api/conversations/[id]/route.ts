@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getScopedClient } from '@/lib/db';
+import { realtimeHub } from '@/lib/realtime-hub';
 
 export async function PATCH(
   request: Request,
@@ -43,6 +44,12 @@ export async function PATCH(
       if (res.rows.length === 0) {
         return NextResponse.json({ error: 'Conversation not found' }, { status: 404 });
       }
+
+      realtimeHub.publish(orgId, {
+        type: 'conversation_updated',
+        conversationId,
+        channelType: res.rows[0].channel_type || 'unknown',
+      });
 
       return NextResponse.json({
         success: true,

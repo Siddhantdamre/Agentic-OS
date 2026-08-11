@@ -1,34 +1,59 @@
-# LiteLLM Proxy Config — Phase 0 Placeholder
-# Full model routing and fallbacks are wired in Phase 4.
-# This config just starts the proxy and keeps the healthcheck green.
+# LiteLLM Proxy Config — DareX model router
+# Routes the atomic-agent through LiteLLM. Primary model is the fast, reliable
+# tool-calling workhorse; the free nemotron models are fallbacks:
+#   1) deepseek/deepseek-v4-flash-0731                 (primary)
+#   2) nvidia/nemotron-3-super-120b-a12b:free          (fallback)
+#   3) nvidia/nemotron-3-ultra-550b-a55b:free          (final fallback)
+# The atomic-agent always calls model "atomic-agent"; LiteLLM owns failover.
 # File: infra/litellm/config.yaml
 
 model_list:
-  # Placeholder — replace with real model configs in Phase 4
-  - model_name: gpt-4o
+  - model_name: atomic-agent
     litellm_params:
-      model: openai/gpt-4o
-      api_key: os.environ/OPENAI_API_KEY
+      model: openrouter/deepseek/deepseek-v4-flash-0731
+      api_key: os.environ/OPENROUTER_API_KEY
+    model_info:
+      mode: chat
 
-  - model_name: claude-3-5-sonnet
+  - model_name: atomic-agent-fallback
     litellm_params:
-      model: anthropic/claude-3-5-sonnet-20241022
-      api_key: os.environ/ANTHROPIC_API_KEY
+      model: openrouter/nvidia/nemotron-3-super-120b-a12b:free
+      api_key: os.environ/OPENROUTER_API_KEY
+    model_info:
+      mode: chat
 
-  # Default fallback
-  - model_name: default
+  - model_name: atomic-agent-deepseek
     litellm_params:
-      model: openai/gpt-4o-mini
-      api_key: os.environ/OPENAI_API_KEY
+      model: openrouter/nvidia/nemotron-3-ultra-550b-a55b:free
+      api_key: os.environ/OPENROUTER_API_KEY
+    model_info:
+      mode: chat
 
 litellm_settings:
-  # Tag every call with org_id for per-tenant cost tracking (wired in Phase 4)
+  # Tag every call with org_id for per-tenant cost tracking.
   default_team_id: darex-default
   success_callback: ["langfuse"]
   failure_callback: ["langfuse"]
 
-  # Langfuse integration (wired in Phase 8, placeholder here)
+  # Langfuse integration.
   langfuse_host: http://darex-langfuse-server:3000
+
+router_settings:
+  enable_pre_call_checks: true
+  # Fail a model that hangs (the free nemotron-ultra is often unresponsive)
+  # and let LiteLLM move down the chain immediately.
+  request_timeout: 30
+  fallbacks:
+    - atomic-agent:
+        - atomic-agent-fallback
+        - atomic-agent-deepseek
+  retry_policy:
+    timeout: 0
+    RateLimitError: 1
+    InternalServerError: 1
+    BadRequestError: 0
+    AuthenticationError: 0
+    ContentPolicyViolationError: 0
 
 general_settings:
   master_key: os.environ/LITELLM_MASTER_KEY

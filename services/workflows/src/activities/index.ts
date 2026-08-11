@@ -62,10 +62,10 @@ export async function logChannelActivity(params: {
   try {
     await client.query("SELECT set_config('app.current_org_id', $1, true)", [params.orgId]);
     const res = await client.query(
-      `INSERT INTO channel_logs (org_id, channel_id, log_type, payload)
-       VALUES ($1, $2, $3, $4)
+      `INSERT INTO channel_logs (org_id, channel_type, event_type, status, status_code, message, payload)
+       VALUES ($1, $2, $3, 'success', 200, $4, $5)
        RETURNING id`,
-      [params.orgId, params.channelId || null, params.logType, JSON.stringify(params.payload)]
+      [params.orgId, params.channelId || 'agent', params.logType, params.logType, JSON.stringify(params.payload)]
     );
     return { logId: res.rows[0].id };
   } catch (err) {

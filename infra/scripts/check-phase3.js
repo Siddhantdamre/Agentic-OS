@@ -1,4 +1,5 @@
 const http = require('http');
+const crypto = require('crypto');
 const path = require('path');
 let Pool;
 try {
@@ -20,7 +21,17 @@ const pool = new Pool({
   database: process.env.DB_NAME || 'darex',
 });
 
-function makeRequest(url, method = 'GET', body = null, cookie = null) {
+const CHATWOOT_SECRET = process.env.CHATWOOT_WEBHOOK_SECRET || 'darex-chatwoot-webhook-secret-dev';
+
+function chatwootSignature(body) {
+  const sig = crypto
+    .createHmac('sha256', CHATWOOT_SECRET)
+    .update(JSON.stringify(body))
+    .digest('hex');
+  return { 'x-chatwoot-signature': `sha256=${sig}` };
+}
+
+function makeRequest(url, method = 'GET', body = null, cookie = null, extraHeaders = {}) {
   return new Promise((resolve, reject) => {
     const parsedUrl = new URL(url);
     const postData = body ? JSON.stringify(body) : null;
@@ -34,6 +45,7 @@ function makeRequest(url, method = 'GET', body = null, cookie = null) {
         'Content-Type': 'application/json',
         ...(cookie ? { Cookie: cookie } : {}),
         ...(postData ? { 'Content-Length': Buffer.byteLength(postData) } : {}),
+        ...extraHeaders,
       },
     };
 
@@ -109,14 +121,15 @@ async function runPhase3Checks() {
     console.log('\n--- 2. Testing Webhook Ingestion Endpoint (/api/webhooks/chatwoot) ---');
     const startTime = Date.now();
     const testConvId = Math.floor(100000 + Math.random() * 900000);
-    const webhookRes = await makeRequest(webhookBase, 'POST', {
+    const webhookPayload = {
       event: 'message_created',
       channel_type: 'whatsapp',
       chatwoot_conv_id: testConvId,
       contact_id: '+14155559988',
       sender_name: 'Alex Johnson',
       content: 'Hello! I need assistance with my order pricing.',
-    });
+    };
+    const webhookRes = await makeRequest(webhookBase, 'POST', webhookPayload, null, chatwootSignature(webhookPayload));
 
     const elapsed = Date.now() - startTime;
     let createdConvId = null;
@@ -193,14 +206,15 @@ async function runPhase3Checks() {
 
     // 6. Test Email Channel Webhook Ingestion
     console.log('\n--- 6. Testing Email Channel Webhook Ingestion ---');
-    const emailRes = await makeRequest(webhookBase, 'POST', {
+    const emailPayload = {
       event: 'message_created',
       channel_type: 'gmail',
       chatwoot_conv_id: Math.floor(100000 + Math.random() * 900000),
       contact_id: 'support-client@enterprise.com',
       sender_name: 'Enterprise Support Client',
       content: 'Subject: Urgent API access inquiry',
-    });
+    };
+    const emailRes = await makeRequest(webhookBase, 'POST', emailPayload, null, chatwootSignature(emailPayload));
 
     if (emailRes.statusCode === 200 && emailRes.body.success) {
       console.log(`  [PASS] Inbound Email message ingested & logged successfully`);

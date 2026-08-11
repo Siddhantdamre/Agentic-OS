@@ -17,7 +17,7 @@ export class NangoConnectorClient {
    * Generates connection ID scoped to org_id and provider
    */
   public getConnectionId(orgId: string, provider: ConnectorType): string {
-    return `darex_${orgId}_${provider}`;
+    return `${orgId}_${provider}`;
   }
 
   /**

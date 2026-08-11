@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getScopedClient } from '@/lib/db';
+import { nangoConnectionExists } from '@/lib/nango-server';
 
 /**
  * GET /api/integrations/nango-token
@@ -49,7 +50,10 @@ export async function POST(request: Request) {
       }
 
       const nangoConnId = connectionId || `${orgId}_${provider}`;
-      const status = success ? 'connected' : 'failed';
+
+      // Only trust a successful claim if Nango actually has the connection (source of truth).
+      let status = success && (await nangoConnectionExists(orgId, provider)) ? 'connected' : 'failed';
+      const effectiveSuccess = status === 'connected';
 
       // Upsert channel record strictly scoped to current orgId
       await client.query(
@@ -67,17 +71,17 @@ export async function POST(request: Request) {
         [
           orgId,
           provider,
-          success ? 'success' : 'error',
-          success ? 200 : 400,
-          `Nango OAuth ${success ? 'completed' : 'failed'} for ${provider}`,
+          effectiveSuccess ? 'success' : 'error',
+          effectiveSuccess ? 200 : 400,
+          `Nango OAuth ${effectiveSuccess ? 'completed' : 'not confirmed'} for ${provider}`,
           JSON.stringify({ connectionId: nangoConnId, provider }),
         ]
       );
 
       return NextResponse.json({
-        success,
+        success: effectiveSuccess,
         connectionId: nangoConnId,
-        message: `${provider} ${success ? 'connected via Nango' : 'connection failed'}`,
+        message: `${provider} ${effectiveSuccess ? 'connected via Nango' : 'connection not confirmed (no real Nango OAuth connection found)'}`,
       });
     } finally {
       client.release();

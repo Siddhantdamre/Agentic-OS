@@ -99,8 +99,8 @@ export async function POST(request: Request) {
 
       try {
         await client.query(
-          `INSERT INTO channel_logs (org_id, channel_id, log_type, payload) VALUES ($1, $2, 'AGENT_EXECUTION', $3)`,
-          [orgId, channelId || null, JSON.stringify({ employeeName, tools: result.usedTools })]
+          `INSERT INTO channel_logs (org_id, channel_type, event_type, status, status_code, message, payload) VALUES ($1, $2, $3, 'success', 200, $4, $5)`,
+          [orgId, channelId || 'agent', 'AGENT_EXECUTION', 'AGENT_EXECUTION', JSON.stringify({ employeeName, tools: result.usedTools })]
         );
       } catch (e) { /* non-critical */ }
 

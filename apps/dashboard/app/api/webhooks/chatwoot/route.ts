@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { pool } from '@/lib/db';
+import { realtimeHub } from '@/lib/realtime-hub';
 import crypto from 'crypto';
 
 /**
@@ -189,6 +190,17 @@ export async function POST(request: Request) {
     );
 
     const latencyMs = Date.now() - startTime;
+
+    // Publish real-time needs_attention event
+    if (orgId) {
+      realtimeHub.publish(orgId, {
+        type: 'needs_attention',
+        conversationId,
+        message: content.slice(0, 200),
+        contactId: contact_id ?? 'unknown',
+        channelType: channel_type,
+      });
+    }
 
     return NextResponse.json({
       success: true,

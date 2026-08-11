@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { pool } from '@/lib/db';
+import { realtimeHub } from '@/lib/realtime-hub';
 import { runAutonomousAgentDirect } from '@darex/workflows/dist/atomic-agent-client';
 
 /**
@@ -186,6 +187,15 @@ export async function POST(req: Request) {
              VALUES ($1, 'whatsapp', 'inbound_message', 'success', 200, $2, $3)`,
             [orgId, `Inbound WhatsApp from ${from}`, JSON.stringify({ from, messageId, text })]
           );
+
+          // ── 7b. Publish real-time needs_attention event ────────────────────
+          realtimeHub.publish(orgId, {
+            type: 'needs_attention',
+            conversationId,
+            message: text.slice(0, 200),
+            contactId: from,
+            channelType: 'whatsapp',
+          });
 
           // ── 8. Run AI response via Temporal (durable) or direct fallback ──
           let aiReply = `Hello! I received your message and will get back to you shortly.`;

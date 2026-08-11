@@ -1,0 +1,155 @@
+import { getScopedClient } from '@/lib/db';
+
+export const dynamic = 'force-dynamic';
+
+/**
+ * GET /api/ask-ai/execute?planId=...
+ * SSE stream that executes an APPROVED plan step-by-step through the real
+ * tool-execution backend. Emits:
+ *   event: execution_start  { planId, totalSteps }
+ *   event: step_start       { stepIndex, description, tool, action }
+ *   event: step_done        { stepIndex, status, message, data }
+ *   event: step_error       { stepIndex, message }
+ *   event: execution_done   { planId, status, results }
+ * Updates agent_plans status/current_step/draft as it runs so a refresh
+ * reflects what actually happened.
+ */
+export async function GET(request: Request) {
+  let client: any = null;
+  try {
+    const scoped = await getScopedClient();
+    client = scoped.client;
+    const { orgId } = scoped;
+
+    const url = new URL(request.url);
+    const planId = url.searchParams.get('planId');
+    if (!planId) {
+      return new Response('planId is required', { status: 400 });
+    }
+
+    const rows = (await client.query(
+      `SELECT * FROM agent_plans WHERE id = $1 AND org_id = $2`,
+      [planId, orgId]
+    )).rows;
+    if (rows.length === 0) {
+      return new Response('Plan not found', { status: 404 });
+    }
+    const plan = rows[0];
+    let steps = Array.isArray(plan.steps) ? plan.steps : [];
+    const enabledSteps = steps.filter((s: any) => s.enabled !== false);
+
+    if (plan.status !== 'approved') {
+      // Allow re-execution only after approval; anything else is invalid.
+      if (plan.status !== 'running' && plan.status !== 'completed') {
+        return new Response(`Plan must be approved before execution (status: ${plan.status})`, { status: 409 });
+      }
+    }
+
+    await client.query(
+      `UPDATE agent_plans SET status = 'running', updated_at = NOW() WHERE id = $1 AND org_id = $2`,
+      [planId, orgId]
+    );
+
+    const encoder = new TextEncoder();
+    const stream = new ReadableStream<Uint8Array>({
+      async start(controller) {
+        const send = (event: string, data: unknown) => {
+          try {
+            controller.enqueue(encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`));
+          } catch {
+            // client disconnected
+          }
+        };
+
+        send('execution_start', { planId, totalSteps: enabledSteps.length });
+        const results: any[] = [];
+        try {
+          const { executeAutonomousToolAction } = await import('@darex/workflows/dist/tool-executor');
+
+          for (let i = 0; i < steps.length; i++) {
+            const step = steps[i];
+            if (step.enabled === false) {
+              send('step_done', {
+                stepIndex: i,
+                status: 'skipped',
+                message: 'Step disabled by user',
+                data: null,
+              });
+              results.push({ stepIndex: i, status: 'skipped', message: step.description });
+              continue;
+            }
+
+            send('step_start', {
+              stepIndex: i,
+              description: step.description,
+              tool: step.tool,
+              action: step.action,
+            });
+
+            try {
+              const result = await executeAutonomousToolAction({
+                tool: step.tool,
+                action: step.action,
+                payload: step.payload || {},
+                orgId,
+              });
+              results.push({ stepIndex: i, status: result.status, message: result.message, data: result.data });
+              send('step_done', {
+                stepIndex: i,
+                status: result.status,
+                message: result.message,
+                data: result.data,
+              });
+            } catch (err: any) {
+              const msg = String(err?.message || 'step execution failed');
+              results.push({ stepIndex: i, status: 'error', message: msg });
+              send('step_error', { stepIndex: i, message: msg });
+            }
+
+            await client.query(
+              `UPDATE agent_plans SET current_step = $3, updated_at = NOW() WHERE id = $1 AND org_id = $2`,
+              [planId, orgId, i + 1]
+            );
+          }
+
+          const failed = results.filter((r) => r.status === 'error').length;
+          const finalStatus = failed > 0 ? 'completed_with_errors' : 'completed';
+          await client.query(
+            `UPDATE agent_plans SET status = $3, updated_at = NOW() WHERE id = $1 AND org_id = $2`,
+            [planId, orgId, finalStatus]
+          );
+
+          send('execution_done', { planId, status: finalStatus, results });
+        } catch (err: any) {
+          console.error('SSE execution failed:', err);
+          try {
+            await client.query(
+              `UPDATE agent_plans SET status = 'completed_with_errors', updated_at = NOW() WHERE id = $1 AND org_id = $2`,
+              [planId, orgId]
+            );
+          } catch {}
+          send('execution_error', { message: String(err?.message || 'execution failed') });
+        } finally {
+          try { controller.close(); } catch {}
+          client.release();
+        }
+      },
+    });
+
+    return new Response(stream, {
+      headers: {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache, no-transform',
+        Connection: 'keep-alive',
+        'X-Accel-Buffering': 'no',
+      },
+    });
+  } catch (error: any) {
+    if (client) client.release();
+    if (error.message === 'Unauthorized') {
+      return new Response('Unauthorized', { status: 401 });
+    }
+    console.error('GET /api/ask-ai/execute Error:', error);
+    return new Response('Internal Server Error', { status: 500 });
+  }
+}
