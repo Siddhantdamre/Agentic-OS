@@ -6,6 +6,26 @@
 
 ## Current Phase: 4 (FULLY COMPLETED) → Phase 5 (NOT STARTED)
 
+## Docker Runtime (the project now runs fully via `docker compose`)
+> All components are containerized in `infra/docker-compose.yml`; the host no longer
+> needs `pnpm dev`/`worker-launcher.js`.
+- `worker` service (`infra/docker/worker/Dockerfile`): Temporal worker built from the
+  monorepo (`@darex/workflows`), connects to `temporal:7233`, DB `postgres`, agent
+  `atomic-agent:8787`. `worker.ts` now passes `NativeConnection` address from
+  `TEMPORAL_ADDRESS` (previously hardcoded `localhost:7233`).
+- `dashboard` service (`infra/docker/dashboard/Dockerfile`): Next.js production build
+  (workspace deps compiled in-image: connectors + workflows), served via `next start`
+  on `:3000`. Env (`environment` block overrides `env_file`) wired to service names:
+  `postgres`, `supertokens:3567`, `temporal:7233`, `atomic-agent:8787`,
+  `nango-server:3003`, `langfuse-server:3000`.
+- atomic-agent healthcheck switched from `node -e` HTTP probe (timeouts in node:25
+  container) to fast bash TCP check `</dev/tcp/127.0.0.1/8787`.
+- `ATOMIC_AGENT_TIMEOUT_MS` default raised to 300000 for worker + dashboard (SSE
+  client turns can exceed 180s on resumed long sessions).
+- **E2E PASSED (all-Docker):** Temporal `AutonomousAgentWorkflow` → worker activity →
+  atomic-agent (OpenRouter `deepseek/deepseek-v4-flash-0731`) → `mcp.darex.database_query`
+  → Postgres → reply "1" in ~6s.
+
 ## Atomic-Agent Migration Track (replaces Hermes)
 > Branch: `feat/atomic-agent-integration`. Goal: remove Hermes entirely; run the
 > full agent loop in AtomicBot-ai/atomic-agent v0.1.73 (Docker, node:25) with a

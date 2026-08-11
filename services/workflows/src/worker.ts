@@ -1,5 +1,5 @@
 import 'dotenv/config';
-import { Worker } from '@temporalio/worker';
+import { Worker, NativeConnection } from '@temporalio/worker';
 import * as activities from './activities/index.js';
 
 async function runWorker() {
@@ -7,7 +7,9 @@ async function runWorker() {
   console.log(`🚀 Starting DareX Temporal Autonomous Agent Worker connecting to ${temporalHost}...`);
 
   try {
+    const connection = await NativeConnection.connect({ address: temporalHost });
     const worker = await Worker.create({
+      connection,
       workflowsPath: require.resolve('./workflows/AutonomousAgentWorkflow.js'),
       activities,
       taskQueue: 'darex-agent-tasks',
