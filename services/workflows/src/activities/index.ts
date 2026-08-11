@@ -1,6 +1,6 @@
 import { Pool } from 'pg';
-import { executeAutonomousToolAction } from '../tool-executor.js';
-import { HermesAgentAdapter } from '../hermes-agent.js';
+import type { AgentTaskInput, AgentTaskResult } from '../agent-engine.js';
+import { runAgentTurn } from '../atomic-agent-client.js';
 
 const pool = new Pool({
   host: process.env.DB_HOST || 'localhost',
@@ -10,89 +10,39 @@ const pool = new Pool({
   database: process.env.DB_NAME || 'darex',
 });
 
-export async function executeToolActivity(
-  tool: string,
-  action: string,
-  payload: any,
-  orgId?: string
-): Promise<{ status: string; data: any }> {
-  if (!orgId) {
-    console.warn(`[Temporal Activity] executeToolActivity called without orgId for tool: ${tool}`);
-  }
-  console.log(`[Temporal Activity] Executing tool: ${tool}, action: ${action}, org: ${orgId || 'unknown'}`);
-
-  // Special virtual tools for Hermes planning and reply synthesis
-  if (tool === 'hermes_plan') {
-    try {
-      const adapter = new HermesAgentAdapter(orgId || '', orgId || '');
-      const planningPrompt = `You are the decision-making brain of AI employee ${payload.employeeName} (${payload.employeeRole}).
-Available Tools in Allowlist: ${JSON.stringify(payload.toolAllowlist)}
-
-Analyze the user's message and decide if any tool from the allowlist should be called.
-Respond ONLY with a JSON object:
-{
-  "targetTool": "<tool_name_from_allowlist or null>",
-  "actionRequired": "<action_name or 'reply'>",
-  "toolParams": { ...extracted_parameters... }
-}`;
-      const hermesRes = await adapter.executeTask({
-        prompt: `SYSTEM:\n${planningPrompt}\n\nUSER MESSAGE:\n${payload.userMessage}`,
-        provider: 'openrouter',
-        mode: 'reason',
-        employeeName: payload.employeeName,
-        employeeRole: payload.employeeRole,
-        employeePersona: payload.employeePersona,
-        toolAllowlist: payload.toolAllowlist,
-      });
-      try {
-        const parsed = JSON.parse(hermesRes.finalResponse.replace(/```json|```/g, '').trim());
-        return { status: 'success', data: parsed };
-      } catch {
-        return { status: 'success', data: { targetTool: null, actionRequired: 'reply', toolParams: {} } };
-      }
-    } catch (err: any) {
-      console.warn('[Temporal] hermes_plan failed:', err.message);
-      return { status: 'success', data: { targetTool: null, actionRequired: 'reply', toolParams: {} } };
-    }
-  }
-
-  if (tool === 'hermes_reply') {
-    try {
-      const adapter = new HermesAgentAdapter(orgId || '', orgId || '');
-      const replyPrompt = `You are AI employee ${payload.employeeName} (${payload.employeeRole}).
-Persona: ${payload.employeePersona}
-
-Tool execution history:
-${JSON.stringify(payload.executedSteps, null, 2)}
-
-Generate a professional, helpful response to the user message: "${payload.userMessage}"`;
-      const hermesRes = await adapter.executeTask({
-        prompt: replyPrompt,
-        provider: 'gemini',
-        mode: 'reason',
-        employeeName: payload.employeeName,
-        employeeRole: payload.employeeRole,
-        employeePersona: payload.employeePersona,
-      });
-      return { status: 'success', data: { reply: hermesRes.finalResponse } };
-    } catch (err: any) {
-      console.warn('[Temporal] hermes_reply failed:', err.message);
-      return { status: 'success', data: { reply: `Hello! I am ${payload.employeeName}. I have processed your request.` } };
-    }
-  }
-
-  // Standard tool execution
+export async function runAgentTurnActivity(input: AgentTaskInput): Promise<AgentTaskResult> {
+  const steps: AgentTaskResult['executedSteps'] = [];
+  const usedTools: string[] = [];
   try {
-    const result = await executeAutonomousToolAction({
-      tool,
-      action,
-      payload: payload || {},
-      orgId: orgId || '',
+    const turn = await runAgentTurn(input);
+    turn.tools.forEach((t, i) => {
+      usedTools.push(t.tool);
+      steps.push({
+        step: i + 1,
+        action: `Execute Tool: ${t.tool}`,
+        toolUsed: t.tool,
+        result: t.argsLabel ? `args: ${t.argsLabel}` : 'tool executed',
+      });
     });
-    return { status: result.status, data: result.data };
+    steps.push({
+      step: steps.length + 1,
+      action: 'Final Response Synthesis',
+      result: `Generated reply: "${turn.reply.slice(0, 60)}..."`,
+    });
+    return { success: true, replyMessage: turn.reply, executedSteps: steps, usedTools };
   } catch (err: any) {
-    console.error(`[Temporal Activity Error] Tool ${tool} failed:`, err.message);
-    return { status: 'error', data: { message: err.message } };
+    console.error('[Temporal Activity] runAgentTurn failed:', err.message);
+    steps.push({
+      step: 1,
+      action: 'Agent Turn',
+      result: `Failed: ${err.message}`,
+    });
+    return {
+      success: false,
+      replyMessage: `I encountered an issue processing your request. Please try again.`,
+      executedSteps: steps,
+      usedTools,
+    };
   }
 }
 

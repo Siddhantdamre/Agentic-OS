@@ -33,6 +33,7 @@ const workerPath = path.join(root, 'services', 'workflows', 'dist', 'worker.js')
 console.log('🚀 Launching DareX Temporal Worker with merged env...');
 console.log('   API keys present:', ['GROQ_API_KEY', 'GEMINI_API_KEY', 'OPENROUTER_API_KEY']
   .filter((k) => process.env[k]).join(', ') || 'NONE');
+console.log(`   Atomic agent: ${process.env.ATOMIC_AGENT_URL || 'http://localhost:8787'} (api-key ${process.env.ATOMIC_AGENT_API_KEY ? 'set' : 'dev default'})`);
 console.log(`   DB: ${process.env.DB_USER || 'darex'}@${process.env.DB_HOST || 'localhost'}:${process.env.DB_PORT || '5432'}/${process.env.DB_NAME || 'darex'}${process.env.DB_PASSWORD ? ' (password set)' : ' (NO PASSWORD)'}`);
 
 const child = spawn(process.execPath, [workerPath], {

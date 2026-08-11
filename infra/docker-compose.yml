@@ -388,11 +388,11 @@ services:
       - ATOMIC_AGENT_STATE_DIR=/data
       - ATOMIC_AGENT_API_KEY=${ATOMIC_AGENT_API_KEY:-darex-atomic-agent-dev-key}
       # .env.local pins the (dead) ":free" OpenRouter slug — override to the
-      # paid slug that the API currently accepts. `environment` wins over env_file.
-      - OPENROUTER_MODEL=${ATOMIC_AGENT_OPENROUTER_MODEL:-meta-llama/llama-3.3-70b-instruct}
-      # Default active LLM provider is Gemini (working key in .env); other
+      # slug the API currently accepts. `environment` wins over env_file.
+      - OPENROUTER_MODEL=${ATOMIC_AGENT_OPENROUTER_MODEL:-deepseek/deepseek-v4-flash-0731}
+      # Default active LLM provider is OpenRouter (funded key in .env); other
       # providers can be selected per-run via ATOMIC_AGENT_ACTIVE_PROVIDER.
-      - ATOMIC_AGENT_ACTIVE_PROVIDER=${ATOMIC_AGENT_ACTIVE_PROVIDER:-darex-gemini}
+      - ATOMIC_AGENT_ACTIVE_PROVIDER=${ATOMIC_AGENT_ACTIVE_PROVIDER:-darex-openrouter}
     env_file:
       - ../.env
       - ../apps/dashboard/.env.local

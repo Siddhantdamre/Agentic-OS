@@ -134,8 +134,7 @@ export async function executeAutonomousToolAction(
     switch (params.tool.toLowerCase()) {
       case 'sandbox':
       case 'code_execution':
-      case 'execute_code':
-      case 'hermes_python_sandbox': {
+      case 'execute_code': {
         console.log(`[Agent-Infra Sandbox] Executing secure cloud sandbox code for ${params.orgId}...`);
         try {
           const { SandboxClient } = await import('@agent-infra/sandbox');

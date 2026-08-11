@@ -6,6 +6,30 @@
 
 ## Current Phase: 3 (FULLY COMPLETED) → Phase 4 (COMPLETED) → Phase 5 (NOT STARTED)
 
+## Atomic-Agent Migration Track (replaces Hermes)
+> Branch: `feat/atomic-agent-integration`. Goal: remove Hermes entirely; run the
+> full agent loop in AtomicBot-ai/atomic-agent v0.1.73 (Docker, node:25) with a
+> self-hosted MCP tool bridge over the existing connector stack.
+- ✅ **Migration Phase 1 — atomic-agent service** (`193f0b9`): Docker service `atomic-agent`
+  (OpenAI-compatible HTTP serve on :8787), config rendered from env at boot, memory fabric on,
+  cloud LLM providers (OpenRouter/Groq/Gemini). Session continuity verified.
+- ✅ **Migration Phase 2 — MCP bridge** (`8ad26d4`, `45079f6`): `atomic-bridge` Docker service
+  (SSE MCP on :8790) exposing 24 `mcp.darex.<tool>` connectors backed by `executeAutonomousToolAction`;
+  `.dockerignore`; per-connection `McpServer`. Fixed cloud-LLM tool naming: MCP server is
+  hyphen-free (`darex`) so both dotted and `__`-escaped tool names resolve. Default provider is
+  OpenRouter (`deepseek/deepseek-v4-flash-0731`).
+- ✅ **Migration Phase 3 — Temporal workflow swap** (this commit): new `atomic-agent-client.ts`
+  (streaming OpenAI-compatible client with SSE `tool_progress` harvest, multi-tenant session IDs);
+  `activities` expose `runAgentTurnActivity`; `AutonomousAgentWorkflow` drives one atomic-agent
+  turn then persists. `hermes-agent.ts` deleted. E2E PASSED via Temporal: deepseek emitted
+  `mcp.darex.database_query` → Postgres → reply "1".
+- ⬜ **Migration Phase 4 — dashboard routes**: move `apps/dashboard/app/api/agent/*`, `ask-ai`,
+  `conversations`, whatsapp webhook to call the atomic-agent client / workflow directly; remove
+  LangGraph (`runAutonomousAgentLoop`) + `apps/dashboard/lib/hermes-agent.ts` + `agent-engine.ts`.
+- ⬜ **Migration Phase 5 — WhatsApp webhook wiring**.
+- ⬜ **Migration Phase 6 — worker launcher**: pass `ATOMIC_AGENT_URL`/`ATOMIC_AGENT_API_KEY`
+  explicitly; update env docs.
+
 ## Phases Completed
 - ✅ **Phase 0 — Foundations** (Completed: 2026-08-05)
 - ✅ **Phase 1 — Multi-Tenant Core** (Completed: 2026-08-05)
