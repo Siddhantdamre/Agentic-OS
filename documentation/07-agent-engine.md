@@ -99,16 +99,35 @@ Resolves Nango access tokens (`NANGO_HOST`/`NANGO_SECRET_KEY`), then executes pe
 
 ## How agent execution is invoked from the dashboard
 
-- **`/api/ask-ai`**: `runAutonomousAgentDirect` directly (no Temporal). Session key `askai-{userId}-{YYYYMMDD}` so sessions rotate daily.
+- **`/api/ask-ai`**: classifies the prompt (`apps/dashboard/lib/classify.ts`) via **LiteLLM direct**
+  (`apps/dashboard/lib/litellm-client.ts`, `reasoning: {enabled:false}`) — not atomic-agent, whose
+  agent loop injects the tool grammar and tries to execute tools for what should be a bare JSON tag.
+  - `simple` → `runAutonomousAgentDirect` (streaming agent loop). Session key `askai-{user}-{day}-{uuid8}` rotates per request.
+  - `complex` → `apps/dashboard/lib/plan-generator.ts` (LiteLLM direct) → persists an `agent_plans` row
+    (`status='pending'`) → returns the plan + draft for user approval.
+  - `PATCH /api/ask-ai/plan` approves/cancels/toggles steps; `GET /api/ask-ai/execute` streams the
+    approved plan step-by-step through `tool-executor.ts` (`execution_start`/`step_start`/`step_done`/`execution_error`/`execution_done`).
+  - `POST /api/ask-ai/revise` regenerates a draft from feedback (`reviseDraft`).
 - **`/api/agent/run`**: `triggerAutonomousAgentWorkflow` first; if it returns null, `runAutonomousAgentDirect`. Persists user + assistant messages when `conversationId` is given, logs `AGENT_EXECUTION` to `channel_logs`, and traces to Langfuse.
 - **`/api/webhooks/whatsapp`**: resolves org → upserts conversation → runs AI (Temporal first, direct fallback) → sends the real reply via Meta → logs inbound/outbound.
 
 ## Langfuse tracing
 
-`logLangfuseTrace` in `apps/dashboard/lib/langfuse-trace.ts` POSTs a `trace-create` event to `LANGFUSE_HOST/api/public/ingestion` (Basic auth `pk:sk`). Non-blocking (3s timeout, errors swallowed). `AskAI-AutonomousExecution` and `AgentExecution-<name>` traces are recorded.
+`logLangfuseTrace` in `apps/dashboard/lib/langfuse-trace.ts` POSTs a `trace-create` event to `LANGFUSE_HOST/api/public/ingestion` (Basic auth `pk:sk`). Non-blocking (3s timeout, errors swallowed). `AskAI-AutonomousExecution`, `AskAI-PlanFallback` and `AgentExecution-<name>` traces are recorded.
+
+## LiteLLM routing for the dashboard
+
+- LiteLLM (`http://litellm:4000/v1`, master key `sk-darex-litellm-dev-key`) owns model failover:
+  `atomic-agent` → `deepseek/deepseek-v4-flash-0731` primary, fallbacks `nemotron-3-super-120b:free`
+  then `nemotron-3-ultra-550b:free` (`infra/litellm/config.yaml`).
+- `apps/dashboard/lib/litellm-client.ts` is used by classify/plan/revise. It sends
+  `reasoning: {enabled:false}` — deepseek-v4-flash otherwise burns the token budget on
+  `reasoning_content` (empty `content` on small budgets, multi-minute "reasoning" on large ones).
 
 ## Troubleshooting
 
 - **Temporal workflow "fetch failed"**: usually a stale atomic-agent↔bridge SSE session. Restart `atomic-agent` + `atomic-bridge` and retry. Fresh runs succeed (verified E2E: answer `52` via `mcp.darex.database_query`).
-- **Ask AI hangs**: check the session isn't accumulating (should be `askai-{user}-{day}`). If the model is looping searching memory for org_id, the grounding in the user message was stripped — don't rely on the system message.
-- **Tool returns `simulated/not connected`**: the org's Nango connection for that provider is missing; authorize at `/integrations` (Nango OAuth). For `database_query`/`web_search`/`web_extract`/`file_ops` no Nango is needed.
+- **Ask AI hangs**: check the session isn't accumulating (should be `askai-{user}-{day}-{uuid8}`). If the model is looping searching memory for org_id, the grounding in the user message was stripped — don't rely on the system message.
+- **Complex prompts return `simple` or hang**: the classifier must reach LiteLLM (check dashboard `NODE_ENV=production` → base URL `http://litellm:4000/v1`). If atomic-agent is being called instead, the tool grammar + parse loop stalls it. Never route classify/plan/revise through atomic-agent.
+- **Tool returns `simulated/not connected`**: the org's Nango connection for that provider is missing; authorize at `/connectors` (Nango OAuth). For `database_query`/`web_search`/`web_extract`/`file_ops` no Nango is needed.
+- **Gmail `draft_email` 403 insufficient scopes**: the stored token predates `gmail.compose`. Re-connect gmail (disconnect → Connect OAuth on `/connectors`) after `infra/scripts/seed-nango-configs.sql` has updated the config, then retry.

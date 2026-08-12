@@ -3,6 +3,42 @@ import { getScopedClient } from '@/lib/db';
 export const dynamic = 'force-dynamic';
 
 /**
+ * Fill params a step needs but that could not be known at plan time, using the
+ * output of a previously executed step (e.g. sheets_append_row needs the
+ * spreadsheetId returned by an earlier sheets_create; docs_append and
+ * docs_read need documentId from docs_create; drive_get_text needs fileId
+ * from drive_upload / drive_search). Missing fields are filled in-place so the
+ * plan's payloads stay human-readable but the executor always gets real IDs.
+ */
+function wireDependencies(step: any, previousResults: any[]): any {
+  const payload = { ...(step.payload || {}) };
+  const lastNonFailed = previousResults.filter((r) => r.status === 'executed').map((r) => r.data || {});
+  const pick = (keys: string[]): string | undefined => {
+    for (const result of lastNonFailed) {
+      for (const key of keys) {
+        const value = result?.[key];
+        if (value) return String(value);
+      }
+    }
+    return undefined;
+  };
+
+  if (step.tool === 'google-sheets' && !payload.spreadsheetId && (step.action === 'sheets_read' || step.action === 'sheets_append_row')) {
+    const spreadsheetId = pick(['spreadsheetId', 'spreadsheet_id', 'id']);
+    if (spreadsheetId) payload.spreadsheetId = spreadsheetId;
+  }
+  if (step.tool === 'google-docs' && !payload.documentId && (step.action === 'docs_read' || step.action === 'docs_append')) {
+    const documentId = pick(['documentId', 'document_id', 'id']);
+    if (documentId) payload.documentId = documentId;
+  }
+  if (step.tool === 'google-drive' && !payload.fileId && (step.action === 'drive_get_text' || step.action === 'drive_share')) {
+    const fileId = pick(['fileId', 'file_id', 'id']);
+    if (fileId) payload.fileId = fileId;
+  }
+  return payload;
+}
+
+/**
  * GET /api/ask-ai/execute?planId=...
  * SSE stream that executes an APPROVED plan step-by-step through the real
  * tool-execution backend. Emits:
@@ -87,10 +123,11 @@ export async function GET(request: Request) {
             });
 
             try {
+              const payload = wireDependencies(step, results);
               const result = await executeAutonomousToolAction({
                 tool: step.tool,
                 action: step.action,
-                payload: step.payload || {},
+                payload,
                 orgId,
               });
               results.push({ stepIndex: i, status: result.status, message: result.message, data: result.data });

@@ -4,6 +4,50 @@
 
 ---
 
+## Phase D: Plan-Confirm-Execute live + LiteLLM routing + Nango scope fixes (2026-08-11)
+
+### Classifier/planner hang fixed — now call LiteLLM directly
+- **Symptom:** complex Ask AI prompts returned `type:"simple"` or hung 90s+. Root cause: `lib/classify.ts`
+  + `lib/plan-generator.ts` + `reviseDraft` called **atomic-agent's** `/v1/chat/completions`
+  non-streaming. atomic-agent's agent loop injects the full GBNF tool grammar + all tool
+  descriptors, so the model tried to emit real tool calls (gmail/drive) with malformed
+  concatenated JSON → `Failed to parse tool call arguments` → parse/repair loop → hang.
+- **Fix:** new `apps/dashboard/lib/litellm-client.ts` (OpenAI-compatible client, base URL
+  `http://litellm:4000/v1` in prod / `localhost:4000` in dev, model `atomic-agent`).
+  classify/plan/revise now call LiteLLM directly for plain JSON completions.
+- **Second hang:** deepseek-v4-flash-0731 is a **reasoning model** — it burned the whole
+  `max_tokens` budget on `reasoning_content` (returns empty `content`), and with a large
+  budget it reasoned for minutes. Fix: `reasoning: { enabled: false }` in `litellm-client.ts`
+  + `max_tokens: 300` (classify) / `800` (plan) / `1000` (revise).
+- **Verified live:** complex prompt → `type:"complex"` (confidence 0.75) → plan with gmail
+  `draft_email` step + 291-char draft → planId persisted → PATCH approve → SSE execute
+  stream (`execution_start`/`step_start`/`step_done`/`execution_done`) in ~13s total.
+  Simple prompt → `type:"simple"` clean answer in ~6s.
+- **Remaining:** gmail `draft_email` execution returned 403 `insufficient scopes` — the
+  existing gmail OAuth token was minted before `gmail.compose` was added. **Re-connect gmail
+  in the browser** (disconnect + Connect OAuth on `/connectors`) to mint a token with the new
+  scopes, then `draft_email`/`send_email` work.
+
+### Nango integration config + scope fixes
+- **gmail config** now includes `gmail.send gmail.readonly gmail.compose gmail.modify`
+  (was missing `compose` → `drafts.create` 403). Requires the browser re-connect above.
+- **intercom + notion** configs had **empty `oauth_scopes`** (OAuth would fail) — set to
+  `read write`.
+- **google-drive/docs/sheets** configs verified present with correct scopes (seeded from the
+  gmail client creds).
+- **`infra/scripts/seed-nango-configs.sql`** updated to apply all of the above idempotently
+  (gmail scope repair + intercom/notion fill + drive/docs/sheets upsert). Run it, then
+  `docker compose restart nango-server`.
+- **Verified:** `/api/integrations` lists all 17 apps, 6 connected via real Nango OAuth
+  (gmail, google-calendar, google-ads, github, google-docs, google-sheets). google-docs
+  `docs_create` + google-sheets `sheets_create` still work live. google-drive correctly
+  reports `simulated: google-drive not connected` (needs browser OAuth).
+- **Still manual:** connect google-drive + re-connect gmail via browser OAuth on `/connectors`;
+  whatsapp uses BYOK modal; slack/hubspot/stripe/notion/shopify/zendesk/intercom need real
+  OAuth client IDs in the Nango UI (`http://localhost:3003`) before their popups complete.
+
+---
+
 ## Documentation (2026-08-11)
 - Created `documentation/` (11 docs: 00–10) covering how to run, architecture, docker infra, DB schema, auth,
   API reference, agent engine, realtime, verification checks, and feature roadmap — each written as

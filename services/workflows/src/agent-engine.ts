@@ -16,6 +16,10 @@ export interface AgentTaskInput {
   employeeRole: string;
   employeePersona: string;
   toolAllowlist: string[];
+  /** Connectors confirmed connected for this org (from the channels table).
+   *  Rendered into the grounded user message so the LLM never has to guess
+   *  what it can use — the persona/system role is dropped by atomic-agent. */
+  connectedChannels?: string[];
   userMessage: string;
   /** Optional caller-supplied session key used to build the atomic-agent session id
    *  when no conversationId/employeeId is available. Lets stateless callers (e.g.

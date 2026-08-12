@@ -1,14 +1,12 @@
 // Classifier for the Reasoning + Plan-Confirm-Execute flow.
 //
 // Strategy (per product decision):
-//   - Prefer atomic-agent as a LOW-TOKEN classifier that returns a strict JSON
+//   - Prefer LiteLLM as a LOW-TOKEN classifier that returns a strict JSON
 //     tag {"type":"SIMPLE"} / {"type":"COMPLEX"}. One tiny turn, fast.
 //   - If the classifier call fails/times out, fall back to cheap heuristics.
 //   - When uncertain, bias to SIMPLE (avoids over-triggering the plan flow).
 
-const ATOMIC_AGENT_URL = process.env.ATOMIC_AGENT_URL || 'http://localhost:8787';
-const ATOMIC_AGENT_API_KEY = process.env.ATOMIC_AGENT_API_KEY || 'darex-atomic-agent-dev-key';
-const ATOMIC_AGENT_MODEL = process.env.ATOMIC_AGENT_MODEL || 'atomic-agent';
+import { chatCompletion } from './litellm-client';
 
 export interface ClassifyResult {
   type: 'simple' | 'complex';
@@ -46,55 +44,37 @@ const SIMPLE_HINTS = new RegExp(
 );
 
 /**
- * Runs a tiny, non-streaming atomic-agent turn that responds with ONLY a JSON
- * tag. Uses a throwaway session so classification never pollutes the assistant.
+ * Runs a tiny, non-streaming LiteLLM turn that responds with ONLY a JSON tag.
+ * The deepseek reasoning model burns small budgets in `reasoning_content`, so
+ * we allow a modest completion budget and check the final content.
  */
 async function classifyWithAgent(prompt: string, orgId: string): Promise<'simple' | 'complex' | 'unknown'> {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 20000);
   try {
     const systemPrompt = [
       'You are a strict router for a business AI assistant.',
       `Organisation org_id=${orgId}; never ask about it.`,
       'Classify the user request.',
-      'Reply with ONLY a JSON object, no prose, no code fences.',
+      'Reply with ONLY a JSON object, no prose, no code fences, no preamble.',
       'Use exactly {"type":"SIMPLE"} or {"type":"COMPLEX"}.',
       'SIMPLE = plain Q&A / explanation / greeting / knowledge-only. No tool execution, no record changes.',
       'COMPLEX = any request that should use connected tools (gmail, calendar, drive, docs, sheets, hubspot, zendesk, notion, github, ads, whatsapp, slack, stripe, sql) or requires multi-step work: read/triage inbox, draft/send email, OTP/attachment extraction, schedule/book, availability check, create/update/find records, upload/share/append files, analytics over data, or any action needing approval before running.',
       'When in doubt, choose SIMPLE.',
+      'Begin your reply with the JSON object directly.',
     ].join('\n');
 
-    const res = await fetch(`${ATOMIC_AGENT_URL}/v1/chat/completions`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${ATOMIC_AGENT_API_KEY}`,
-        'X-Atomic-Extensions': 'on',
-      },
-      body: JSON.stringify({
-        model: ATOMIC_AGENT_MODEL,
-        stream: false,
-        max_tokens: 24,
-        temperature: 0,
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: `User request: ${prompt}` },
-        ],
-      }),
-      signal: controller.signal,
-    });
-
-    if (!res.ok) return 'unknown';
-    const data = await res.json();
-    const content: string = data?.choices?.[0]?.message?.content || '';
+    const content = await chatCompletion(
+      [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: `User request: ${prompt}` },
+      ],
+      { maxTokens: 300, temperature: 0, timeoutMs: 20000 }
+    );
     if (/COMPLEX/i.test(content)) return 'complex';
     if (/SIMPLE/i.test(content)) return 'simple';
     return 'unknown';
   } catch (err) {
-    console.warn('[Classifier] atomic-agent call failed:', (err as Error)?.message);
+    console.warn('[Classifier] LiteLLM call failed:', (err as Error)?.message);
     return 'unknown';
-  } finally {
-    clearTimeout(timeout);
   }
 }
 

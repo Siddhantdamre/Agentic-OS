@@ -45,11 +45,23 @@ function buildGroundedUserMessage(input: AgentTaskInput): string {
     `- This org_id is ALREADY known to you. The user is a customer/employee of this org.`,
     `- When any mcp.darex.* tool requires org_id, pass org_id=${JSON.stringify(input.orgId)}. Never ask the user for it and never search memory/profile/notes/resources/prompts to find it.`,
     `- If a mcp.darex.* tool needs an argument you do not have (besides org_id), ask the user for that specific value directly.`,
+  ];
+  if (input.connectedChannels && input.connectedChannels.length > 0) {
+    facts.push(
+      `- CONNECTED CONNECTORS for this org (authoritative, already OAuth-authorized): ${input.connectedChannels.join(', ')}. Use these tools directly.`,
+      `- A tool response saying "not connected" for one connector (e.g. google-drive) does NOT mean other connectors are unavailable — each connector is independent. Verify per-connector by calling its tool.`,
+    );
+  } else {
+    facts.push(
+      `- No connectors are confirmed connected for this org yet — do not assume any external connector is available.`,
+    );
+  }
+  facts.push(
     ``,
     `USER REQUEST:`,
     input.userMessage,
-  ].join('\n');
-  return facts;
+  );
+  return facts.join('\n');
 }
 
 function buildSessionId(input: AgentTaskInput): string {

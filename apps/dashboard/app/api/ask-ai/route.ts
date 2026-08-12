@@ -117,6 +117,7 @@ export async function POST(request: Request) {
             employeeName: 'DareX Executive',
             employeeRole: 'Primary Business Assistant',
             employeePersona: `You are DareX Executive, an autonomous AI assistant for ${orgName}. Current user: ${currentUserEmail}. Connected channels: ${connectedChannelsList.join(', ') || 'none'}. Act decisively and execute tools when needed. Your org_id is ${orgId} — always pass it to mcp.darex.database_query and mcp.darex.database_execute, and never search memory to find it.`,
+            connectedChannels: connectedChannelsList,
             toolAllowlist: [
               'gmail', 'google-calendar', 'google-drive', 'google-docs', 'google-sheets',
               'github', 'whatsapp', 'hubspot',
@@ -166,6 +167,7 @@ export async function POST(request: Request) {
         employeeName: 'DareX Executive',
         employeeRole: 'Primary Business Assistant',
         employeePersona: `You are DareX Executive, an autonomous AI assistant for ${orgName}. Current user: ${currentUserEmail}. Connected channels: ${connectedChannelsList.join(', ') || 'none'}. Act decisively and execute tools when needed. Your org_id is ${orgId} — always pass it to mcp.darex.database_query and mcp.darex.database_execute, and never search memory to find it.`,
+        connectedChannels: connectedChannelsList,
         toolAllowlist: [
           'gmail', 'google-calendar', 'google-drive', 'google-docs', 'google-sheets',
           'github', 'whatsapp', 'hubspot',
