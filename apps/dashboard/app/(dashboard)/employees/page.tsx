@@ -16,6 +16,7 @@ import {
   MessageSquare,
 } from 'lucide-react';
 import { AutonomousActionConsole } from '@/components/agent/AutonomousActionConsole';
+import { CrewSpawnPanel } from '@/components/agent/CrewSpawnPanel';
 
 interface AIEmployee {
   id: string;
@@ -364,6 +365,8 @@ export default function EmployeesPage() {
           })}
         </div>
       )}
+
+      <CrewSpawnPanel />
 
       {/* Autonomous Tool Action Console */}
       <AutonomousActionConsole />
