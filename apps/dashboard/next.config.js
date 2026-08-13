@@ -1,6 +1,10 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
+  // Required on Next 14 so apps/dashboard/instrumentation.ts runs boot-guards.
+  experimental: {
+    instrumentationHook: true,
+  },
   // tsconfig paths point at shared-types/connectors TS sources that use ESM
   // `.js` specifiers. Webpack needs this alias or `next build` cannot resolve them.
   transpilePackages: ['@darex/shared-types', '@darex/connectors'],

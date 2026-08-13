@@ -153,6 +153,7 @@ export function isPublicApiPath(pathname: string): boolean {
   if (pathname === '/api/auth/signup' || pathname === '/api/auth/register') return true;
   if (pathname === '/api/auth/forgot-password' || pathname === '/api/auth/reset-password') return true;
   if (pathname.startsWith('/api/auth/oauth/')) return true;
+  if (pathname.startsWith('/api/auth/sso')) return true;
   if (pathname.startsWith('/api/auth/invite/')) return true;
   return false;
 }

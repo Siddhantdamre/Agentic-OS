@@ -5,6 +5,10 @@ import { acceptInviteToken, lookupInviteByToken, lookupUserById } from '@/lib/au
 import { applySessionCookies, parseSessionCookie, SESSION_COOKIE } from '@/lib/session-cookie';
 import { normalizeEmail } from '@/lib/password';
 
+function inviteExpired(expiresAt: Date | string): boolean {
+  return new Date(expiresAt).getTime() < Date.now();
+}
+
 export async function GET(
   _request: Request,
   { params }: { params: Promise<{ token: string }> }
@@ -19,8 +23,8 @@ export async function GET(
     if (invite.accepted_at) {
       return NextResponse.json({ error: 'Invite already accepted' }, { status: 409 });
     }
-    if (new Date(invite.expires_at).getTime() < Date.now()) {
-      return NextResponse.json({ error: 'Invite expired' }, { status: 410 });
+    if (inviteExpired(invite.expires_at)) {
+      return NextResponse.json({ error: 'Invite expired', expired: true }, { status: 410 });
     }
     return NextResponse.json({
       email: invite.email,
@@ -50,6 +54,13 @@ export async function POST(
     if (!invite) {
       return NextResponse.json({ error: 'Invite not found' }, { status: 404 });
     }
+    if (invite.accepted_at) {
+      return NextResponse.json({ error: 'Invite already accepted' }, { status: 409 });
+    }
+    if (inviteExpired(invite.expires_at)) {
+      return NextResponse.json({ error: 'Invite expired', expired: true }, { status: 410 });
+    }
+
     const user = await lookupUserById(client, userId);
     if (!user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
@@ -60,7 +71,12 @@ export async function POST(
         { status: 403 }
       );
     }
+
     const accepted = await acceptInviteToken(client, token, userId);
+    if (accepted.orgId !== invite.org_id) {
+      return NextResponse.json({ error: 'Invite org mismatch' }, { status: 409 });
+    }
+
     const res = NextResponse.json({
       status: 'OK',
       orgId: accepted.orgId,
@@ -76,7 +92,7 @@ export async function POST(
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Failed to accept invite';
     if (message.includes('INVITE_EXPIRED')) {
-      return NextResponse.json({ error: 'Invite expired' }, { status: 410 });
+      return NextResponse.json({ error: 'Invite expired', expired: true }, { status: 410 });
     }
     if (message.includes('INVITE_ALREADY_ACCEPTED')) {
       return NextResponse.json({ error: 'Invite already accepted' }, { status: 409 });
@@ -92,6 +108,9 @@ export async function POST(
         { error: 'This invite was sent to a different email address.' },
         { status: 403 }
       );
+    }
+    if (message.includes('INVITE_NOT_FOUND')) {
+      return NextResponse.json({ error: 'Invite not found' }, { status: 404 });
     }
     console.error('Accept invite error:', err);
     return NextResponse.json({ error: 'Failed to accept invite' }, { status: 500 });

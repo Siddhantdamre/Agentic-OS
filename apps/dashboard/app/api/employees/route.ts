@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getScopedClient } from '@/lib/db';
+import { canDisableEmployee, loadHumanRole } from '@/lib/rbac';
 
 const DEFAULT_ROSTER = [
   {
@@ -23,7 +24,33 @@ const DEFAULT_ROSTER = [
     tool_allowlist: ['meta-ads', 'google-ads', 'gmail'],
     status: 'active',
   },
+  {
+    name: 'Research',
+    role: 'Research',
+    persona: {
+      text: 'Read-heavy researcher. Cite web and Drive/Notion docs. Never invent sources or listings.',
+      rosterKey: 'research',
+      confirmClasses: [],
+    },
+    tool_allowlist: ['web_search', 'web_extract', 'google-drive', 'notion'],
+    status: 'active',
+  },
+  {
+    name: 'Finance',
+    role: 'Finance',
+    persona: {
+      text: 'Invoices and payment links. Always confirm before pay. Never create a charge or payout without owner confirmation.',
+      rosterKey: 'finance',
+      confirmClasses: ['pay'],
+    },
+    tool_allowlist: ['stripe', 'razorpay'],
+    status: 'active',
+  },
 ];
+
+function encodePersona(persona: (typeof DEFAULT_ROSTER)[number]['persona']): string {
+  return JSON.stringify(typeof persona === 'string' ? persona : persona);
+}
 
 export async function GET() {
   try {
@@ -49,7 +76,7 @@ export async function GET() {
               orgId,
               emp.name,
               emp.role,
-              JSON.stringify(emp.persona),
+              encodePersona(emp.persona),
               emp.tool_allowlist,
               `default-${emp.name.toLowerCase()}`,
               emp.status,
@@ -60,7 +87,28 @@ export async function GET() {
         return NextResponse.json({ employees: seeded });
       }
 
-      return NextResponse.json({ employees: res.rows });
+      const existingNames = new Set(res.rows.map((row: { name: string }) => String(row.name).toLowerCase()));
+      const employees = [...res.rows];
+      for (const emp of DEFAULT_ROSTER.filter((e) => e.name === 'Research' || e.name === 'Finance')) {
+        if (existingNames.has(emp.name.toLowerCase())) continue;
+        const insertRes = await client.query(
+          `INSERT INTO ai_employees (org_id, name, role, persona, tool_allowlist, graph_id, status)
+           VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7)
+           RETURNING id, name, role, persona, tool_allowlist, graph_id, status, created_at, updated_at`,
+          [
+            orgId,
+            emp.name,
+            emp.role,
+            encodePersona(emp.persona),
+            emp.tool_allowlist,
+            `default-${emp.name.toLowerCase()}`,
+            emp.status,
+          ]
+        );
+        employees.push(insertRes.rows[0]);
+      }
+
+      return NextResponse.json({ employees });
     } finally {
       client.release();
     }
@@ -106,6 +154,53 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
     console.error('API /api/employees POST Error:', error);
+    return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
+  }
+}
+
+export async function PATCH(request: Request) {
+  try {
+    const { client, orgId, userId } = await getScopedClient();
+    try {
+      const role = await loadHumanRole(client, userId);
+      if (!canDisableEmployee(role)) {
+        return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+      }
+
+      const body = await request.json();
+      const id = typeof body?.id === 'string' ? body.id : '';
+      const name = typeof body?.name === 'string' ? body.name : '';
+      const status = body?.status === 'paused' ? 'paused' : body?.status === 'active' ? 'active' : '';
+      if (!status || (!id && !name)) {
+        return NextResponse.json({ error: 'id or name, and status, are required' }, { status: 400 });
+      }
+
+      const res = id
+        ? await client.query(
+            `UPDATE ai_employees SET status = $3, updated_at = NOW()
+             WHERE id = $1 AND org_id = $2
+             RETURNING id, name, role, persona, tool_allowlist, graph_id, status, created_at, updated_at`,
+            [id, orgId, status]
+          )
+        : await client.query(
+            `UPDATE ai_employees SET status = $3, updated_at = NOW()
+             WHERE org_id = $1 AND lower(name) = lower($2)
+             RETURNING id, name, role, persona, tool_allowlist, graph_id, status, created_at, updated_at`,
+            [orgId, name, status]
+          );
+
+      if (res.rows.length === 0) {
+        return NextResponse.json({ error: 'Employee not found' }, { status: 404 });
+      }
+      return NextResponse.json({ employee: res.rows[0] });
+    } finally {
+      client.release();
+    }
+  } catch (error: any) {
+    if (error.message === 'Unauthorized') {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+    console.error('API /api/employees PATCH Error:', error);
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
   }
 }
