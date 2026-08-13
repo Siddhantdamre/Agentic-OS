@@ -14,6 +14,7 @@ import {
   Mail,
   UserPlus,
 } from 'lucide-react';
+import { LiveRegion } from '@/components/a11y';
 
 interface Member {
   id: string;
@@ -144,17 +145,18 @@ export default function SettingsPage() {
   };
 
   return (
-    <div className="max-w-6xl mx-auto space-y-8 pb-12">
+    <div className="max-w-6xl mx-auto space-y-8 pb-20 md:pb-12">
+      <LiveRegion message={savedSuccess ? 'Organization updated' : ''} />
       {/* Header */}
       <div>
-        <h1 className="text-3xl font-serif font-bold text-heading">Organization Settings</h1>
+        <h1 className="text-2xl sm:text-3xl font-serif font-bold text-heading">Organization Settings</h1>
         <p className="text-slate-500 text-sm mt-1">
           Manage your business profile, team members, integration webhooks, and security.
         </p>
       </div>
 
       {/* Tabs */}
-      <div className="flex items-center space-x-2 border-b border-cream-300 pb-3">
+      <div className="flex items-center flex-wrap gap-2 border-b border-cream-300 pb-3">
         {[
           { id: 'general', label: 'General & Profile', icon: Building },
           { id: 'team', label: 'Team Members', icon: Users },
