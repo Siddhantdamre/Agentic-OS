@@ -3,6 +3,7 @@ import { pool, getOrgScopedClient } from '@/lib/db';
 import { assertChatwootWebhookSignature } from '@/lib/webhook-crypto';
 import { replyTargetFromChannelMeta, sendChannelReply } from '@/lib/channel-outbound';
 import { realtimeHub } from '@/lib/realtime-hub';
+import { denyWebhookIfLimited, isRateLimitError, responseFromRateLimit } from '@/lib/rate-limit';
 
 /**
  * POST /api/webhooks/outbound
@@ -43,6 +44,11 @@ export async function POST(request: Request) {
 
   if (!orgId) {
     return NextResponse.json({ error: 'Conversation not found' }, { status: 404 });
+  }
+
+  const webhookLimited = denyWebhookIfLimited(orgId);
+  if (webhookLimited) {
+    return webhookLimited;
   }
 
   const { client } = await getOrgScopedClient(orgId);
@@ -105,6 +111,9 @@ export async function POST(request: Request) {
       conversationId,
     });
   } catch (err: unknown) {
+    if (isRateLimitError(err)) {
+      return responseFromRateLimit(err);
+    }
     const message = err instanceof Error ? err.message : String(err);
     console.error('[outbound webhook]', message);
     return NextResponse.json({ success: false, error: message }, { status: 500 });

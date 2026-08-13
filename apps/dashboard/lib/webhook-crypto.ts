@@ -76,3 +76,90 @@ export function assertChatwootWebhookSignature(rawBody: string, signatureHeader:
   }
   return { ok: true, status: 200 };
 }
+
+export type WebhookSigResult = { ok: boolean; status: number; error?: string };
+
+function unsignedAllowed(label: string): WebhookSigResult {
+  if (process.env.NODE_ENV === 'production') {
+    return { ok: false, status: 401, error: 'Webhook signature secret is not configured' };
+  }
+  console.warn(`[${label}] signature secret unset — skipping signature check (non-production)`);
+  return { ok: true, status: 200 };
+}
+
+/**
+ * Twilio `X-Twilio-Signature` — HMAC-SHA1 of the public URL + sorted POST params,
+ * Base64, using TWILIO_AUTH_TOKEN. See https://www.twilio.com/docs/usage/security
+ */
+export function verifyTwilioSignature(
+  authToken: string,
+  url: string,
+  params: Record<string, string>,
+  signatureHeader: string | null
+): boolean {
+  if (!signatureHeader) return false;
+  const keys = Object.keys(params).sort();
+  let data = url;
+  for (const key of keys) {
+    data += key + params[key];
+  }
+  const expected = crypto.createHmac('sha1', authToken).update(data, 'utf8').digest('base64');
+  return timingSafeEqualString(signatureHeader, expected);
+}
+
+export function parseFormBody(rawBody: string): Record<string, string> {
+  const params = new URLSearchParams(rawBody);
+  const out: Record<string, string> = {};
+  params.forEach((value, key) => {
+    out[key] = value;
+  });
+  return out;
+}
+
+export function twilioWebhookUrl(requestUrl: string): string {
+  const configured = process.env.TWILIO_WEBHOOK_URL?.trim();
+  if (configured) return configured;
+  const publicBase = (process.env.NEXT_PUBLIC_APP_URL || '').replace(/\/$/, '');
+  if (publicBase) return `${publicBase}/api/webhooks/sms`;
+  return requestUrl.split('?')[0];
+}
+
+export function assertTwilioWebhookSignature(
+  rawBody: string,
+  signatureHeader: string | null,
+  requestUrl: string
+): WebhookSigResult {
+  const token = process.env.TWILIO_AUTH_TOKEN;
+  if (!token) {
+    return unsignedAllowed('SMS Webhook');
+  }
+  const params = parseFormBody(rawBody);
+  const url = twilioWebhookUrl(requestUrl);
+  if (!verifyTwilioSignature(token, url, params, signatureHeader)) {
+    return { ok: false, status: 401, error: 'Invalid webhook signature' };
+  }
+  return { ok: true, status: 200 };
+}
+
+/**
+ * Gmail Pub/Sub push. Require `Authorization: Bearer <GMAIL_PUSH_TOKEN>` or
+ * `?token=` matching GMAIL_PUSH_TOKEN. Production always requires it.
+ */
+export function assertGmailPushToken(
+  request: Request,
+  rawBody: string
+): WebhookSigResult {
+  void rawBody;
+  const expected = process.env.GMAIL_PUSH_TOKEN?.trim() || process.env.GMAIL_PUBSUB_VERIFICATION_TOKEN?.trim() || '';
+  if (!expected) {
+    return unsignedAllowed('Gmail Push');
+  }
+  const auth = request.headers.get('authorization') || '';
+  const bearer = auth.replace(/^Bearer\s+/i, '').trim();
+  const urlToken = new URL(request.url).searchParams.get('token') || '';
+  const provided = bearer || urlToken;
+  if (!provided || !timingSafeEqualString(provided, expected)) {
+    return { ok: false, status: 401, error: 'Invalid webhook signature' };
+  }
+  return { ok: true, status: 200 };
+}

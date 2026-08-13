@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getScopedClient } from '@/lib/db';
 import { realtimeHub } from '@/lib/realtime-hub';
+import { startMemoryWriteBackWorkflow, signalNurtureCancelled } from '@darex/workflows/dist/workflow-client';
 
 export async function PATCH(
   request: Request,
@@ -50,6 +51,20 @@ export async function PATCH(
         conversationId,
         channelType: res.rows[0].channel_type || 'unknown',
       });
+
+      if (status === 'resolved' || status === 'closed') {
+        void startMemoryWriteBackWorkflow({
+          orgId,
+          conversationId,
+          closed: true,
+          businessKey: `closed:${conversationId}`,
+        });
+        void signalNurtureCancelled({
+          orgId,
+          conversationId,
+          reason: 'takeover',
+        });
+      }
 
       return NextResponse.json({
         success: true,

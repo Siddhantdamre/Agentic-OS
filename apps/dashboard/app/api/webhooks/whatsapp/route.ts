@@ -8,10 +8,14 @@ import {
   parseToolAllowlist,
 } from '@/lib/inbound-agent';
 import { replyTargetFromChannelMeta } from '@/lib/channel-outbound';
+import { denyWebhookIfLimited, isRateLimitError, responseFromRateLimit } from '@/lib/rate-limit';
+import { resolveChannelByMeta } from '@/lib/channel-normalize';
 
 /**
  * GET /api/webhooks/whatsapp
  * Meta webhook verification challenge handler.
+ * H1 Meta token rotation is ops — see infra/scripts/OPERATOR_HYGIENE.md §4.
+ * Never commit META_ACCESS_TOKEN. Revoked Graph ≠ {success:true}.
  */
 export async function GET(req: Request) {
   try {
@@ -164,7 +168,19 @@ export async function POST(req: Request) {
             continue;
           }
 
+          const ownerChannel =
+            (await resolveChannelByMeta('owner_whatsapp', 'phone_number_id', inboundPhoneNumberId || '')) ||
+            (await resolveChannelByMeta('owner_whatsapp', 'phoneNumberId', inboundPhoneNumberId || ''));
+          if (ownerChannel) {
+            console.warn('[WhatsApp Webhook] Owner number delivered here — skipping customer ingest');
+            continue;
+          }
+
           const orgId = matched.org_id;
+          const webhookLimited = denyWebhookIfLimited(orgId);
+          if (webhookLimited) {
+            return webhookLimited;
+          }
           let channelId = matched.id;
           const chanMeta = (matched.meta || {}) as Record<string, unknown>;
           const { client } = await getOrgScopedClient(orgId);
@@ -239,8 +255,8 @@ export async function POST(req: Request) {
             if (inserted) {
               try {
                 await client.query(
-                  `INSERT INTO messages (org_id, conversation_id, role, content, chatwoot_msg_id, created_at)
-                   VALUES ($1, $2, 'user', $3, $4, NOW())`,
+                  `INSERT INTO messages (org_id, conversation_id, role, content, chatwoot_msg_id, channel_key, created_at)
+                   VALUES ($1, $2, 'user', $3, $4, 'whatsapp', NOW())`,
                   [orgId, conversationId, text, messageId || null]
                 );
               } catch (insertErr: unknown) {
@@ -282,12 +298,17 @@ export async function POST(req: Request) {
               toolAllowlist: parseToolAllowlist(employee?.tool_allowlist),
               connectedChannels,
               userMessage: text,
+              inboundEventId: messageId || undefined,
+              channelKey: 'whatsapp',
               replyTarget: replyTargetFromChannelMeta('whatsapp', from, chanMeta),
             });
           } finally {
             client.release();
           }
         } catch (dbErr: unknown) {
+          if (isRateLimitError(dbErr)) {
+            return responseFromRateLimit(dbErr);
+          }
           const message = dbErr instanceof Error ? dbErr.message : String(dbErr);
           console.error('[WhatsApp Webhook] Processing error:', message);
         }
