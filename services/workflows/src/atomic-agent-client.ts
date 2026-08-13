@@ -92,8 +92,8 @@ function buildGroundedUserMessage(input: AgentTaskInput): string {
 }
 
 function buildSessionId(input: AgentTaskInput): string {
-  if (input.conversationId) return `darex:${input.orgId}:${input.conversationId}`;
   if (input.sessionKey) return `darex:${input.orgId}:${input.sessionKey}`;
+  if (input.conversationId) return `darex:${input.orgId}:${input.conversationId}`;
   // Rotate the shared fallback daily so an unbounded session can never
   // accumulate forever (an accumulating session is what made Ask AI hang).
   if (input.employeeId) return `darex:${input.orgId}:${input.employeeId}`;

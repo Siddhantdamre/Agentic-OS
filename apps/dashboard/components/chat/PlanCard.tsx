@@ -3,15 +3,9 @@
 import React, { useState } from 'react';
 import { motion } from 'framer-motion';
 import { ListChecks, ArrowRight, X, CheckSquare, Square, Plus, Edit3, CircleDashed } from 'lucide-react';
+import type { PlanStep } from '@darex/shared-types';
 
-export interface PlanStep {
-  id: string;
-  description: string;
-  tool: string;
-  action: string;
-  payload?: Record<string, any>;
-  enabled: boolean;
-}
+export type { PlanStep };
 
 interface PlanCardProps {
   planId: string;

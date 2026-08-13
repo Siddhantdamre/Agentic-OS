@@ -7,22 +7,9 @@
 // never tool execution.
 
 import { chatCompletion } from './litellm-client';
+import type { GeneratedPlan, PlanStep } from '@darex/shared-types';
 
-export interface PlanStep {
-  id: string;
-  description: string;
-  tool: string;
-  action: string;
-  payload: Record<string, any>;
-  enabled: boolean;
-}
-
-export interface GeneratedPlan {
-  reasoning: string;
-  steps: PlanStep[];
-  draft: string;
-  summary: string;
-}
+export type { GeneratedPlan, PlanStep };
 
 /** Always-available tools (no OAuth). Planner may use these even if no connector is connected. */
 export const CORE_PLAN_TOOLS = [
@@ -35,6 +22,7 @@ export const CORE_PLAN_TOOLS = [
 
 export const VALID_TOOLS = new Set<string>([
   'gmail', 'google-calendar', 'google-drive', 'google-docs', 'google-sheets',
+  'google-slides', 'google-forms', 'google-contacts', 'google-tasks',
   'github', 'whatsapp', 'hubspot', 'meta-ads', 'google-ads', 'slack', 'notion',
   'stripe', 'shopify', 'zendesk', 'intercom', 'razorpay',
   'google-analytics', 'google-chat', 'google-meet', 'google-search-console',

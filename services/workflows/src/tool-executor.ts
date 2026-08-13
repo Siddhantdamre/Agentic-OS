@@ -1,34 +1,10 @@
 import fs from 'fs';
 import path from 'path';
-import { Pool } from 'pg';
+import { Pool, PoolClient } from 'pg';
 import pdfParse from 'pdf-parse';
+import type { ToolCatalogEntry, ToolExecutionParams, ToolExecutionResult } from '@darex/shared-types';
 
-export interface ToolExecutionParams {
-  tool: string;
-  action: string;
-  payload: Record<string, any>;
-  orgId: string;
-  /** Optional allowlist of base tool keys (e.g. 'gmail'). When set, tools not
-   *  on the list are rejected before execution. */
-  toolAllowlist?: string[];
-}
-
-export interface ToolExecutionResult {
-  tool: string;
-  action: string;
-  status: 'executed' | 'simulated' | 'error';
-  message: string;
-  data: any;
-  timestamp: string;
-}
-
-export interface ToolCatalogEntry {
-  name: string;
-  category: string;
-  description: string;
-  mcpName?: string;
-  oauth: boolean;
-}
+export type { ToolCatalogEntry, ToolExecutionParams, ToolExecutionResult };
 
 const NANGO_HOST = process.env.NANGO_HOST || 'http://localhost:3003';
 const NANGO_SECRET_KEY = process.env.NANGO_SECRET_KEY; // Must be set — no insecure fallback
@@ -39,11 +15,30 @@ const TOOL_HTTP_TIMEOUT_MS = parseInt(process.env.TOOL_HTTP_TIMEOUT_MS || '20000
 const dbPool = new Pool({
   host: process.env.DB_HOST || 'localhost',
   port: parseInt(process.env.DB_PORT || '5432'),
-  user: process.env.DB_USER || 'darex',
+  user: process.env.DB_USER || 'darex_app',
   password: process.env.DB_PASSWORD,
   database: process.env.DB_NAME || 'darex',
   max: 10,
 });
+
+/**
+ * Session-level RLS (is_local=false). Transaction-local set_config dies at
+ * autocommit, so the next query on darex_app would run with no org GUC.
+ */
+async function withOrgScopedClient<T>(orgId: string, fn: (client: PoolClient) => Promise<T>): Promise<T> {
+  const client = await dbPool.connect();
+  try {
+    await client.query("SELECT set_config('app.current_org_id', $1, false)", [orgId]);
+    return await fn(client);
+  } finally {
+    try {
+      await client.query('RESET app.current_org_id');
+    } catch {
+      // always release the pool slot
+    }
+    client.release();
+  }
+}
 
 // Tools that are safe to run for every org regardless of per-employee config.
 // These are the agent's own atomic capabilities (web search/extract, scoped SQL,
@@ -101,9 +96,7 @@ async function resolveOrgToolAllowlist(orgId: string): Promise<string[]> {
 
   const union = new Set<string>(ALWAYS_ALLOWED_CORE_TOOLS);
   try {
-    const client = await dbPool.connect();
-    try {
-      await client.query("SELECT set_config('app.current_org_id', $1, true)", [orgId]);
+    await withOrgScopedClient(orgId, async (client) => {
       const res = await client.query(
         `SELECT tool_allowlist FROM ai_employees WHERE org_id = $1 AND status = 'active'`,
         [orgId]
@@ -117,7 +110,6 @@ async function resolveOrgToolAllowlist(orgId: string): Promise<string[]> {
         for (const t of list) union.add(String(t).toLowerCase());
       }
 
-      // Add every connector the org has actually connected (Nango channels).
       const chanRes = await client.query(
         `SELECT channel_type FROM channels WHERE org_id = $1 AND status IN ('connected','active')`,
         [orgId]
@@ -125,9 +117,7 @@ async function resolveOrgToolAllowlist(orgId: string): Promise<string[]> {
       for (const c of chanRes.rows) {
         if (typeof c.channel_type === 'string') union.add(c.channel_type.toLowerCase());
       }
-    } finally {
-      client.release();
-    }
+    });
   } catch (err: any) {
     console.warn(`[Tool Executor] Failed to resolve allowlist for ${orgId}:`, err.message);
   }
@@ -693,29 +683,27 @@ export async function executeAutonomousToolAction(
         }
 
         try {
-          const client = await dbPool.connect();
-          try {
+          return await withOrgScopedClient(params.orgId, async (client) => {
             await client.query('BEGIN');
-            await client.query("SELECT set_config('app.current_org_id', $1, true)", [params.orgId]);
-            const limitedSql = /\blimit\b/i.test(sql) ? sql : `${sql} LIMIT 26`;
-            const dbRes = await client.query(limitedSql);
-            await client.query('COMMIT');
-            const truncated = dbRes.rows.length > 25;
-            const rows = dbRes.rows.slice(0, 25);
-            return {
-              tool: 'database_query',
-              action: 'query',
-              status: 'executed',
-              message: `✅ SQL query executed safely. Returned ${rows.length} rows${truncated ? ' (truncated to 25)' : ''}`,
-              data: { rows, totalRows: dbRes.rows.length, truncated },
-              timestamp,
-            };
-          } catch (execErr) {
-            await client.query('ROLLBACK').catch(() => {});
-            throw execErr;
-          } finally {
-            client.release();
-          }
+            try {
+              const limitedSql = /\blimit\b/i.test(sql) ? sql : `${sql} LIMIT 26`;
+              const dbRes = await client.query(limitedSql);
+              await client.query('COMMIT');
+              const truncated = dbRes.rows.length > 25;
+              const rows = dbRes.rows.slice(0, 25);
+              return {
+                tool: 'database_query',
+                action: 'query',
+                status: 'executed' as const,
+                message: `✅ SQL query executed safely. Returned ${rows.length} rows${truncated ? ' (truncated to 25)' : ''}`,
+                data: { rows, totalRows: dbRes.rows.length, truncated },
+                timestamp,
+              };
+            } catch (execErr) {
+              await client.query('ROLLBACK').catch(() => {});
+              throw execErr;
+            }
+          });
         } catch (err: any) {
           return { tool: 'database_query', action: 'query', status: 'error', message: `Database query failed: ${err.message}`, data: null, timestamp };
         }
@@ -1426,17 +1414,13 @@ export async function executeAutonomousToolAction(
         let metaAccessToken = null;
         let phoneNumberId = params.payload.phoneNumberId;
         let channel: any = null;
-        const waClient = await dbPool.connect();
-        try {
-          await waClient.query("SELECT set_config('app.current_org_id', $1, true)", [params.orgId]);
+        await withOrgScopedClient(params.orgId, async (waClient) => {
           const dbRes = await waClient.query(
             'SELECT meta, nango_connection_id FROM channels WHERE org_id = $1 AND channel_type = $2',
             [params.orgId, 'whatsapp']
           );
           channel = dbRes.rows[0];
-        } finally {
-          waClient.release();
-        }
+        });
 
         if (channel?.meta?.accessToken) {
           metaAccessToken = channel.meta.accessToken;
@@ -2162,9 +2146,7 @@ export async function executeAutonomousToolAction(
       case 'razorpay': {
         let razorpayKeyId = '';
         let razorpayKeySecret = '';
-        const rzpClient = await dbPool.connect();
-        try {
-          await rzpClient.query("SELECT set_config('app.current_org_id', $1, true)", [params.orgId]);
+        await withOrgScopedClient(params.orgId, async (rzpClient) => {
           const rzpChan = await rzpClient.query(
             `SELECT meta FROM channels WHERE org_id = $1 AND channel_type = 'razorpay' AND status IN ('connected', 'active')`,
             [params.orgId]
@@ -2172,9 +2154,7 @@ export async function executeAutonomousToolAction(
           const meta = rzpChan.rows[0]?.meta || {};
           razorpayKeyId = String(meta.keyId || meta.key_id || '');
           razorpayKeySecret = String(meta.keySecret || meta.key_secret || '');
-        } finally {
-          rzpClient.release();
-        }
+        });
         if (!razorpayKeyId || !razorpayKeySecret) {
           razorpayKeyId = process.env.RAZORPAY_KEY_ID || '';
           razorpayKeySecret = process.env.RAZORPAY_KEY_SECRET || '';

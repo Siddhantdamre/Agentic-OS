@@ -7,15 +7,9 @@
 //   - When uncertain, bias to SIMPLE (avoids over-triggering the plan flow).
 
 import { chatCompletion } from './litellm-client';
+import type { ClassifyResult, ClassifyType } from '@darex/shared-types';
 
-export type ClassifyType = 'simple' | 'complex';
-
-export interface ClassifyResult {
-  type: ClassifyType;
-  confidence: number;
-  usedFallback: boolean;
-  model?: string;
-}
+export type { ClassifyResult, ClassifyType };
 
 const COMPLEX_HINTS = new RegExp(
   [
