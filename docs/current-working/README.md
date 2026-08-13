@@ -29,14 +29,24 @@ and **confirm before running multi-step plans**.
 | [13-what-works.md](./13-what-works.md) | Verified working paths (from code + BUILD_STATE) |
 | [14-what-does-not-work.md](./14-what-does-not-work.md) | Gaps, stubs, expired tokens, missing files |
 | [15-env-and-run.md](./15-env-and-run.md) | Commands to boot and verify |
-| [16-updates-2026-08-13.md](./16-updates-2026-08-13.md) | Changelog: last commit → 13 Aug working tree |
+| [16-updates-2026-08-13.md](./16-updates-2026-08-13.md) | Changelog: last commit → 13 Aug working tree (includes plan wrap-up) |
+
+Path from today to the complete OS (documentation only, not shipped):
+[`docs/plan/`](../plan/README.md). Written later on 13 Aug. Start at
+that README. What was written and the first five build items are in
+[16](./16-updates-2026-08-13.md) (last follow-up).
 
 ## Source of truth order
 
 1. **This folder** — current working map.
 2. **`BUILD_STATE.md`** — session log of fixes and live verifications.
 3. **`AGENTS.md`** — short agent cheat-sheet.
-4. **`documentation/`** — older standalone docs (some claims are stale).
+4. **`docs/future-scope/`** — what we intend to become.
+5. **`docs/plan/`** — how we get there. If this folder and future-scope
+   disagree on **what exists**, this folder wins. If they disagree on
+   **what to build next**, future-scope wins (memory first; never skip
+   Phase 6).
+6. **`documentation/`** — older standalone docs (some claims are stale).
 
 ## Quick status (2026-08-13)
 
@@ -46,7 +56,5 @@ updates all exist and have been live-verified at least once.
 
 **Not production-ready:** several OAuth providers need real client IDs in the
 Nango UI; Meta WhatsApp outbound token is expired; Insight is rule-based, not
-LLM; realtime SSE is in-process only (one Node process). Sandbox Docker context
-and custom atomic-agent SKILL.md playbooks are in this working tree (see
-[16](./16-updates-2026-08-13.md)). Operator must still run `pnpm db:migrate`
-for 009–011.
+LLM; realtime SSE is in-process only (one Node process). Runtime DB role is
+`darex_app`. Operator must still run `pnpm db:migrate` for 009–011 on older DBs.

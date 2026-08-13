@@ -25,8 +25,8 @@ Knowledge / shop: notion, shopify
 Dev: github  
 Google productivity: drive, docs, sheets, slides, forms, contacts, tasks  
 Also listed: google-analytics, google-search-console, google-business-profile,
-google-cloud, google-meet, google-chat — **executors exist**; UI catalog may
-still say `catalog_only` (see [08](./08-tools-catalog.md)).
+google-cloud, google-meet, google-chat — executors and UI catalog are **live**
+(see [08](./08-tools-catalog.md)).
 
 ## Connect flow (real OAuth)
 
@@ -75,7 +75,5 @@ import `@darex/connectors`.
   **real OAuth client IDs** in the Nango UI (`http://localhost:3003`) before
   the popup can finish.
 - WhatsApp outbound needs a rotated `META_ACCESS_TOKEN`.
-- Several Google products have executors now; the UI catalog may still say
-  `catalog_only` (see [08](./08-tools-catalog.md) and [16](./16-updates-2026-08-13.md)).
 - `POST /api/integrations/webhooks` is an authenticated **logger**, not Meta’s
   public webhook.

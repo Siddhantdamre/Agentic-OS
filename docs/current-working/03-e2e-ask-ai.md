@@ -127,5 +127,5 @@ re-connected with `gmail.compose`.
 - Classifier can still mis-tag; fallback prefers simple (user may not see a
   plan when they expected one).
 - No multi-user shared Ask AI thread.
-- Google Chat/Meet/Analytics/etc. are in `VALID_TOOLS` and have executors, but
-  still need a live Nango token (UI catalog may still say catalog_only).
+- Google Chat/Meet/Analytics/etc. are in `VALID_TOOLS` and have executors; they
+  still need a live Nango token.

@@ -11,7 +11,7 @@ Insight, Analytics, Integrations, Connectors; Settings via profile area).
 | `/` | `(dashboard)/page.tsx` | `/api/dashboard/stats`, `/api/conversations?status=needs_attention` | **Works** — real KPIs. Quick Ask AI redirects to `/ask-ai?q=`. `?warmup=true` is a fake progress bar. |
 | `/ask-ai` | `(dashboard)/ask-ai/page.tsx` | `/api/ask-ai`, plan PATCH, revise, execute SSE | **Works** — see [03](./03-e2e-ask-ai.md) |
 | `/conversations` | `(dashboard)/conversations/page.tsx` | conversations APIs + SSE | **Works** |
-| `/employees` | `(dashboard)/employees/page.tsx` | `/api/employees`, stats, `AutonomousActionConsole` | **Works** — auto-seeds Sarah/Emma/Marcus |
+| `/employees` | `(dashboard)/employees/page.tsx` | `/api/employees`, stats, `CrewSpawnPanel`, `AutonomousActionConsole` | **Works** — auto-seeds Sarah/Emma/Marcus; crew spawn is explicit |
 | `/insight` | `(dashboard)/insight/page.tsx` | `/api/insight` | **Partial** — rule templates, not LLM |
 | `/analytics` | `(dashboard)/analytics/page.tsx` | `/api/analytics` | **Works** — real SQL. Fallback numbers (`99.4%`) only until fetch returns. |
 | `/integrations` | `(dashboard)/integrations/page.tsx` | integrations + Nango + test | **Works if connected** |
@@ -52,4 +52,5 @@ from DB state (uses onboarding cookie).
 | `ActionPermissionCard` | Per-action approve → `/api/agent/tools` |
 | `ReasoningStrip` | Planner reasoning |
 | `FormattedMarkdownResponse` | AI markdown |
+| `CrewSpawnPanel` | Employees-page multi-agent spawn (`POST /api/agent/crew`) |
 | `AutonomousActionConsole` | Employee-page agent run |

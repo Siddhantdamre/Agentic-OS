@@ -35,6 +35,7 @@ webhooks. **Never** trust body `org_id`.
 | Method | Path | Real? | Notes |
 |--------|------|-------|-------|
 | POST | `/api/agent/run` | Yes | Temporal then direct; may save messages |
+| POST | `/api/agent/crew` | Yes | LiteLLM crew plan → Temporal `CrewWorkflow` (cap 3) or direct; inbound webhooks never call this |
 | POST SSE | `/api/agent/stream` | Yes | Temporal then direct fallback |
 | GET | `/api/agent/tools` | Yes | Session required |
 | POST | `/api/agent/tools` | Yes | One `executeAutonomousToolAction` |

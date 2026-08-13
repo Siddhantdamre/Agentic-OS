@@ -1,21 +1,12 @@
-# apps/inbox — Chatwoot Fork (Phase 3)
+# apps/inbox — HMAC Chatwoot gateway
 
-This directory will contain the Darex-branded fork of [Chatwoot](https://github.com/chatwoot/chatwoot).
+Express proxy on `:3004`. It is **not** a Chatwoot fork.
 
-**Status:** Placeholder. Populated in **Phase 3**.
+Inbound `POST /webhook/inbound` HMAC-signs the body and forwards to
+`POST /api/webhooks/chatwoot`. Outbound `POST /api/inbox/send` forwards to
+`POST /api/webhooks/outbound`, which sends on the real channel.
 
-## What goes here
-- Full Chatwoot Ruby on Rails backend (forked, not rebuilt)
-- Darex branding applied to the Chatwoot Vue frontend
-- WhatsApp Cloud API + Email inbound/outbound channels
-- Webhook configuration pointing to `/services/workflows` for AI routing
+`GET /health` returns `{ status: 'ok', service: 'darex-inbox-chatwoot-gateway' }`.
 
-## Why Chatwoot (not a custom inbox)
-Chatwoot already solves: org/agent model, multi-channel ingestion (WhatsApp/Email/FB/IG), conversation assignment, canned responses, and a dashboard shell. Forking saves months over a from-scratch inbox.
-
-## Phase 3 Entry Checklist
-- [ ] `git clone --depth 1 https://github.com/chatwoot/chatwoot .`
-- [ ] Apply Darex brand overrides (colors, logos, wordmark)
-- [ ] Strip unused features (unnecessary integrations, non-needed channels)
-- [ ] Configure WhatsApp Cloud API webhook
-- [ ] Configure outbound webhook → `services/workflows`
+Set `CHATWOOT_WEBHOOK_SECRET` (same value as the dashboard) and
+`DASHBOARD_URL` (compose: `http://dashboard:3000`).

@@ -32,7 +32,7 @@ Must be aligned across `infra/.env`, `apps/dashboard/.env.local`, compose
 `environment` (compose **wins** over env_file; env_file is `required: false`).
 Root `.env.example` lists names only.
 
-- DB: `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, `DB_NAME`
+- DB: `DB_HOST`, `DB_PORT`, `DB_USER` (runtime default `darex_app`), `DB_PASSWORD`, `DB_NAME`. Compose dashboard/worker: `APP_DB_USER` / `APP_DB_PASSWORD`. Migrations use superuser `darex`.
 - Auth: `SUPERTOKENS_CONNECTION_URI`, `SUPERTOKENS_API_KEY`
 - Nango: `NANGO_HOST`, `NANGO_SECRET_KEY` (UUID), `NEXT_PUBLIC_NANGO_PUBLIC_KEY`,
   `NEXT_PUBLIC_NANGO_HOST`

@@ -23,8 +23,7 @@ and treats `_` / `-` as equal.
 | `file_ops`, `file_system`, `workspace_file` | read_file, write_file | Yes | `workspace_storage/{orgId}/` basename-only |
 
 Sandbox is on MCP as `code_execution`. Plan execute and `POST /api/agent/tools`
-can still call it. Compose service exists; **`infra/docker/sandbox/` is in this
-working tree** (untracked vs commit `99b5f04`).
+can still call it. Compose service exists; `infra/docker/sandbox/` is in the tree.
 
 ---
 
@@ -110,9 +109,8 @@ Executors are **real HTTP** (Nango token or `notConnected`). MCP names:
 `analytics_report`, `search_console_sites`, `search_console_query`,
 `business_list_locations`, `cloud_list_projects`.
 
-The `/integrations` catalog still labels several of these `catalog_only` with
-stale “no executor” hints. Trust this file and `tool-executor.ts`. Google Cloud
-has no OAuth popup (`service_account` in the UI).
+The `/integrations` catalog marks these **live**. Google Cloud uses the same
+Nango Google OAuth popup as the other Google apps (`cloud-platform` scope).
 
 Unknown tool → `"Unknown tool — no executor registered"`.
 

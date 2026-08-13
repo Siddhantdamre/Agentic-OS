@@ -51,8 +51,10 @@ WITH CHECK (org_id = current_setting('app.current_org_id', true)::UUID)
 **session** level and reset on release. Pool `max: 10` — do not hold a client
 across SSE.
 
-Role `darex_app` exists (password in init SQL). App still defaults to superuser
-`darex`. Switching `DB_USER=darex_app` is optional hardening, not done.
+Role `darex_app` exists (password in init SQL). Dashboard, worker, and
+`tool-executor` default to `darex_app` with **session-level** `set_config`
+(transaction-local GUCs were a bug: they vanished at autocommit). Migrations
+still run as superuser `darex`.
 
 ## agent_plans columns
 
@@ -69,6 +71,4 @@ Role `darex_app` exists (password in init SQL). App still defaults to superuser
 
 ## What does not
 
-- App still connects as `darex` superuser by default (011 grants `darex_app`;
-  switching `DB_USER=darex_app` is optional).
-- `pgvector` enabled, no embeddings tables/pipeline.
+- `pgvector` enabled, no embeddings tables/pipeline (Phase 6).

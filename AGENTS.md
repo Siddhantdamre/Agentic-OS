@@ -28,16 +28,17 @@ Quick per-workspace commands:
 ```
 apps/dashboard        Next.js app server (API routes in app/api, lib/, components/)
   app/api/ask-ai/     Classify → plan-confirm-execute flow (streaming NDJSON)
-  app/api/agent/      Direct atomic-agent run/stream/tools
+  app/api/agent/      Direct atomic-agent run/stream/tools + crew spawn
   app/api/webhooks/   WhatsApp + Chatwoot inbound webhooks → Temporal agent
   app/api/conversations|integrations|employees|settings|analytics|dashboard
   lib/                db.ts (pool + getScopedClient RLS), classify.ts, plan-generator.ts,
-                      litellm-client.ts, nango-*.ts, supertokens.ts, realtime-hub.ts, langfuse-trace.ts
+                      crew-planner.ts, litellm-client.ts, nango-*.ts, supertokens.ts,
+                      realtime-hub.ts, langfuse-trace.ts
 services/workflows    Temporal worker + shared agent runtime (imported by dashboard via dist/)
   src/atomic-agent-client.ts   OpenAI-compatible SSE client → atomic-agent :8787
   src/tool-executor.ts         49 real connector+DB+web tool executors (+ per-org allowlist)
   src/mcp-bridge.ts            SSE MCP server :8790 exposing mcp.darex.* tools to atomic-agent
-  src/workflows/               AutonomousAgentWorkflow (durable wrapper)
+  src/workflows/               AutonomousAgentWorkflow + CrewWorkflow (child spawns, cap 3)
 services/connectors   Nango-based connector SDK (mostly used by /integrations/test diagnostic)
 packages/shared-types Shared TS types
 infra/                docker-compose.yml, db/migrations + init, litellm config, scripts
@@ -49,7 +50,10 @@ infra/                docker-compose.yml, db/migrations + init, litellm config, 
 - **complex**: `generatePlan` → `agent_plans` row → page shows PlanCard → `PATCH approve` → `GET /api/ask-ai/execute` SSE runs steps (independent steps run in **parallel** via stageSteps), then `execution_done`.
 
 ### Data flow (Webhook)
-WhatsApp inbound → persist message + conversation (fast) → return 200 immediately → fire-and-forget Temporal `AutonomousAgentWorkflow` (or direct) → AI reply saved + sent back.
+WhatsApp inbound → persist message + conversation (fast) → return 200 immediately → fire-and-forget Temporal `AutonomousAgentWorkflow` (or direct) → AI reply saved + sent back. Inbound is **always solo** — never auto-spawns a crew.
+
+### Data flow (Crew spawn)
+`employees/page.tsx` CrewSpawnPanel → `POST /api/agent/crew` → `planCrew` (LiteLLM JSON, heuristic fallback) → Temporal `CrewWorkflow` (or `runCrewDirect`) → up to 3 child `AutonomousAgentWorkflow`s in parallel → manager synthesis. Cap 3. Greetings stay solo.
 
 ## 3. Key Rules / Conventions
 
@@ -64,7 +68,7 @@ WhatsApp inbound → persist message + conversation (fast) → return 200 immedi
 ## 4. Status (2026-08)
 - Phases 0–4.6 and Phase 5 (real-time delivery) complete; Ask AI plan-confirm-execute live.
 - Agent runtime = **atomic-agent** (external, v0.1.73) via MCP bridge — NOT LangGraph/Hermes anymore.
-- Known manual items: real OAuth client IDs for some providers in Nango UI; Meta token rotation; `DB_USER=darex_app` switch still optional (RLS hardened in migration 008 but app still defaults to `darex` superuser).
+- Known manual items: real OAuth client IDs for some providers in Nango UI; Meta token rotation. Runtime defaults to `DB_USER=darex_app`; migrations still run as superuser `darex`.
 
 ## 5. Inspect / Debug
 - `BUILD_STATE.md` — live source of truth, per-phase decisions & gotchas.

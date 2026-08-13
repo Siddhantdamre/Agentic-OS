@@ -1,7 +1,7 @@
 {
   "name": "@darex/inbox",
   "version": "0.1.0",
-  "description": "Darex Chatwoot Fork & Multi-Channel Inbox Service Gateway",
+  "description": "Darex HMAC inbox gateway — forwards Chatwoot-shaped webhooks to the dashboard",
   "main": "dist/index.js",
   "scripts": {
     "build": "tsc",

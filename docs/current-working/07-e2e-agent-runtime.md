@@ -12,9 +12,12 @@ Ask AI **plan execute** skips atomic-agent and calls the executor per step.
 | File | Role |
 |------|------|
 | `src/worker.ts` | Temporal worker, queue `darex-agent-tasks` |
-| `src/workflows/AutonomousAgentWorkflow.ts` | Only workflow |
+| `src/workflows/AutonomousAgentWorkflow.ts` | Solo durable wrapper |
+| `src/workflows/CrewWorkflow.ts` | Parallel child spawns (cap 3) + manager synthesis |
+| `src/workflows/index.ts` | Worker bundle entry (both workflows) |
 | `src/activities/index.ts` | `runAgentTurnActivity`, `saveMessageActivity`, `logChannelActivity` |
-| `src/workflow-client.ts` | `triggerAutonomousAgentWorkflow`, `startAutonomousAgentWorkflow` |
+| `src/workflow-client.ts` | `triggerAutonomousAgentWorkflow`, `triggerCrewWorkflow` |
+| `src/crew-runner.ts` | Direct parallel spawn when Temporal is down |
 | `src/atomic-agent-client.ts` | SSE client |
 | `src/mcp-bridge.ts` | MCP SSE server |
 | `src/tool-executor.ts` | All tool implementations |
@@ -29,7 +32,8 @@ Ask AI **plan execute** skips atomic-agent and calls the executor per step.
 | Ask AI simple stream | Never | Always `runAutonomousAgentDirect` |
 | Ask AI execute | Never | Direct `executeAutonomousToolAction` |
 | `POST /api/agent/run` | First | If Temporal returns null |
-| WhatsApp / Chatwoot webhooks | First (`fireInboundAgent`) | Fire-and-forget after 200 |
+| `POST /api/agent/crew` | `CrewWorkflow` first | `runCrewDirect` if Temporal returns null |
+| WhatsApp / Chatwoot webhooks | First (`fireInboundAgent`) | Fire-and-forget after 200. **Always solo.** |
 | Conversations create / message | `startAutonomousAgentWorkflow` | Persist reply locally |
 | `POST /api/agent/stream` | First | Direct SSE if Temporal is down |
 
@@ -44,6 +48,14 @@ Ask AI **plan execute** skips atomic-agent and calls the executor per step.
 Timeouts: 12 min start-to-close, 20 min schedule-to-close, max 2 retries.
 Activities use `idempotency_keys`. `isDone` and `priorToolResults` are wired
 (max 3 durable turns). Worker reconnects with backoff 2s–30s.
+
+## CrewWorkflow
+
+Explicit spawn only (`POST /api/agent/crew`). Planner is LiteLLM JSON with a
+heuristic fallback. Greetings stay solo. Fan-out is capped at **3** child
+`AutonomousAgentWorkflow`s, each with its own `sessionKey` and that employee's
+tool allowlist (plus core tools). Manager synthesis combines reports. Direct
+fallback: `runCrewDirect`. WhatsApp/Chatwoot inbound never calls this.
 
 ## atomic-agent client
 

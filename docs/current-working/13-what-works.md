@@ -40,7 +40,9 @@ This is the honest “green” list. Live dates are from `BUILD_STATE.md`.
 - MCP bridge 62 tools, server name `darex`, `GET /health`.
 - Temporal `AutonomousAgentWorkflow` uses `isDone`, `priorToolResults`, and
   `idempotency_keys` (max 3 durable turns).
-- Direct fallback when Temporal is down (`/api/agent/run` **and** `/stream`).
+- `CrewWorkflow` spawns up to 3 child agent loops, then manager synthesis.
+  Explicit `POST /api/agent/crew` only — inbound WhatsApp stays solo.
+- Direct fallback when Temporal is down (`/api/agent/run`, `/stream`, `/crew`).
 - Tool allowlist = union of all active employees + connected channels + core
   tools (fixed 2026-08-13; sheets_create and drive_list executed live after).
 
