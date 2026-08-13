@@ -1,6 +1,6 @@
 /**
  * Pack install helpers for HTTP. Session org only — never body org_id.
- * Keep employee templates aligned with packs/*/pack.yaml.
+ * Keep employee templates aligned with packs/{id}/pack.yaml.
  */
 
 import type { PoolClient } from 'pg';

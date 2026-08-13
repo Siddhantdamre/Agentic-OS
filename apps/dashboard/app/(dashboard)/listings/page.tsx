@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { Building2 } from 'lucide-react';
 import { LiveRegion, StatusBadge } from '@/components/a11y';
 import { isRealEstateBrokerage } from '@/app/(onboarding)/pack-recommendations';
+import { BookShowingControl, RentChargesPanel } from '@/components/re/SchedulePanel';
 
 interface ListingRow {
   id: string;
@@ -13,6 +14,8 @@ interface ListingRow {
   price?: string | number | null;
   area?: string | null;
   source?: string | null;
+  sourceRef?: string | null;
+  bhk?: number | null;
 }
 
 async function fetchJson(url: string): Promise<unknown | null> {
@@ -31,7 +34,7 @@ function rowsFromPayload(payload: unknown): ListingRow[] {
   const raw = obj.listings ?? obj.rows ?? obj.items;
   if (!Array.isArray(raw)) return [];
   return raw
-    .map((item) => {
+    .map((item): ListingRow | null => {
       if (!item || typeof item !== 'object') return null;
       const row = item as Record<string, unknown>;
       const id = typeof row.id === 'string' ? row.id : '';
@@ -43,9 +46,11 @@ function rowsFromPayload(payload: unknown): ListingRow[] {
         price: (row.price ?? row.list_price ?? null) as string | number | null,
         area: typeof row.area === 'string' ? row.area : typeof row.locality === 'string' ? row.locality : null,
         source: typeof row.source === 'string' ? row.source : null,
+        sourceRef: typeof row.sourceRef === 'string' ? row.sourceRef : typeof row.source_ref === 'string' ? row.source_ref : null,
+        bhk: typeof row.bhk === 'number' ? row.bhk : null,
       };
     })
-    .filter((r): r is ListingRow => Boolean(r));
+    .filter((r): r is ListingRow => r != null);
 }
 
 export default function ListingsPage() {
@@ -53,21 +58,34 @@ export default function ListingsPage() {
   const [loading, setLoading] = useState(true);
   const [packReady, setPackReady] = useState<boolean | null>(null);
   const [liveMessage, setLiveMessage] = useState('');
+  const [bhk, setBhk] = useState('');
+  const [locality, setLocality] = useState('');
+  const [maxPrice, setMaxPrice] = useState('');
+
+  const loadListings = async (filters: { bhk: string; locality: string; maxPrice: string }) => {
+    const params = new URLSearchParams();
+    if (filters.bhk) params.set('bhk', filters.bhk);
+    if (filters.locality) params.set('locality', filters.locality);
+    if (filters.maxPrice) params.set('maxPrice', filters.maxPrice);
+    const qs = params.toString();
+    const [listingsA, listingsB] = await Promise.all([
+      fetchJson(`/api/listings${qs ? `?${qs}` : ''}`),
+      qs ? Promise.resolve(null) : fetchJson('/api/packs/listings'),
+    ]);
+    const fromA = rowsFromPayload(listingsA);
+    const fromB = rowsFromPayload(listingsB);
+    return fromA.length > 0 || qs ? fromA : fromB;
+  };
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      const [listingsA, listingsB, packs, onboarding] = await Promise.all([
-        fetchJson('/api/listings'),
-        fetchJson('/api/packs/listings'),
+      const [fromApi, packs, onboarding] = await Promise.all([
+        loadListings({ bhk: '', locality: '', maxPrice: '' }),
         fetchJson('/api/packs'),
         fetchJson('/api/org/onboarding'),
       ]);
       if (cancelled) return;
-
-      const fromA = rowsFromPayload(listingsA);
-      const fromB = rowsFromPayload(listingsB);
-      const fromApi = fromA.length > 0 ? fromA : fromB;
       setRows(fromApi);
 
       const packObj = packs && typeof packs === 'object' ? (packs as Record<string, unknown>) : {};
@@ -113,6 +131,57 @@ export default function ListingsPage() {
         </p>
       </div>
 
+      <form
+        className="bg-white border border-cream-300 rounded-2xl p-4 flex flex-wrap gap-3 items-end"
+        onSubmit={async (event) => {
+          event.preventDefault();
+          setLoading(true);
+          const fromApi = await loadListings({ bhk, locality, maxPrice });
+          setRows(fromApi);
+          setLiveMessage(
+            fromApi.length === 0
+              ? 'No matching listings — will not invent inventory'
+              : `${fromApi.length} listing${fromApi.length === 1 ? '' : 's'} matched`
+          );
+          setLoading(false);
+        }}
+      >
+        <label className="text-xs text-slate-500">
+          BHK
+          <input
+            value={bhk}
+            onChange={(e) => setBhk(e.target.value)}
+            placeholder="2"
+            inputMode="numeric"
+            className="mt-1 block w-20 text-sm border border-cream-300 rounded-lg px-2 py-1.5 bg-white"
+          />
+        </label>
+        <label className="text-xs text-slate-500">
+          Locality
+          <input
+            value={locality}
+            onChange={(e) => setLocality(e.target.value)}
+            placeholder="Koramangala"
+            className="mt-1 block w-44 text-sm border border-cream-300 rounded-lg px-2 py-1.5 bg-white"
+          />
+        </label>
+        <label className="text-xs text-slate-500">
+          Max price
+          <input
+            value={maxPrice}
+            onChange={(e) => setMaxPrice(e.target.value)}
+            placeholder="1.2 Cr"
+            className="mt-1 block w-32 text-sm border border-cream-300 rounded-lg px-2 py-1.5 bg-white"
+          />
+        </label>
+        <button
+          type="submit"
+          className="px-3 py-1.5 text-xs font-bold rounded-lg bg-amber-500 hover:bg-amber-600 text-heading focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
+        >
+          Filter sheet rows
+        </button>
+      </form>
+
       {packReady === false ? (
         <div className="bg-cream-50 border border-cream-300 rounded-2xl p-4 text-sm text-slate-600">
           This module is gated by the real-estate pack. Recommended connectors stay disconnected until you
@@ -135,18 +204,19 @@ export default function ListingsPage() {
                 <th className="px-4 py-3 font-semibold">Price</th>
                 <th className="px-4 py-3 font-semibold">Status</th>
                 <th className="px-4 py-3 font-semibold">Source</th>
+                <th className="px-4 py-3 font-semibold">Showing</th>
               </tr>
             </thead>
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan={5} className="px-4 py-10 text-center text-slate-500">
+                  <td colSpan={6} className="px-4 py-10 text-center text-slate-500">
                     Loading listings…
                   </td>
                 </tr>
               ) : rows.length === 0 ? (
                 <tr>
-                  <td colSpan={5} className="px-4 py-12 text-center">
+                  <td colSpan={6} className="px-4 py-12 text-center">
                     <Building2 className="w-8 h-8 text-slate-300 mx-auto mb-2" />
                     <p className="font-medium text-heading">No listings</p>
                     <p className="text-xs text-slate-500 mt-1">
@@ -165,7 +235,10 @@ export default function ListingsPage() {
                     <td className="px-4 py-3">
                       <StatusBadge label={row.status || 'unknown'} tone="neutral" />
                     </td>
-                    <td className="px-4 py-3 text-slate-500 font-mono text-xs">{row.source || '—'}</td>
+                    <td className="px-4 py-3 text-slate-500 font-mono text-xs">{row.sourceRef || row.source || '—'}</td>
+                    <td className="px-4 py-3">
+                      <BookShowingControl listingId={row.id} title={row.title || row.sourceRef || row.id} />
+                    </td>
                   </tr>
                 ))
               )}
@@ -173,6 +246,8 @@ export default function ListingsPage() {
           </table>
         </div>
       </div>
+
+      <RentChargesPanel />
     </div>
   );
 }

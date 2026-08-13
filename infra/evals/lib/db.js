@@ -34,13 +34,17 @@ function appRoleName() {
   return process.env.APP_DB_USER || 'darex_app';
 }
 
-async function missingMemoryTables(client) {
+async function missingTables(client, names) {
   const missing = [];
-  for (const table of MEMORY_TABLES) {
+  for (const table of names) {
     const res = await client.query(`SELECT to_regclass($1) AS t`, [`public.${table}`]);
     if (!res.rows[0] || !res.rows[0].t) missing.push(table);
   }
   return missing;
+}
+
+async function missingMemoryTables(client) {
+  return missingTables(client, MEMORY_TABLES);
 }
 
 async function tableColumns(client, table) {
@@ -95,6 +99,7 @@ module.exports = {
   loadPg,
   superuserConfig,
   appRoleName,
+  missingTables,
   missingMemoryTables,
   tableColumns,
   vectorDims,

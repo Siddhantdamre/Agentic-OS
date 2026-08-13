@@ -5,6 +5,7 @@
  * Never calls Ask AI or any product request path.
  *
  * Usage: node infra/evals/runner.js
+ *        node infra/evals/runner.js re-brokerage.yaml
  */
 
 const fs = require('fs');
@@ -23,6 +24,12 @@ const CASE_FILES = [
   'skill-playbook.yaml',
   're-brokerage.yaml',
 ];
+
+function requestedFiles() {
+  const extra = process.argv.slice(2).filter((arg) => arg.endsWith('.yaml') || arg.endsWith('.yml'));
+  if (extra.length === 0) return CASE_FILES;
+  return extra.map((arg) => path.basename(arg));
+}
 
 function loadTests(relPath) {
   const abs = path.join(EVAL_ROOT, relPath);
@@ -112,7 +119,7 @@ async function runOne(test) {
 }
 
 async function main() {
-  console.log('\n=== Darex Phase 6 evals (A2 / M6 / R4) ===');
+  console.log('\n=== Darex evals (A2 / M6 / R4 / P3) ===');
   console.log('  Provider: offline fixtures + DB probes. Ask AI path is not called.\n');
 
   let pass = 0;
@@ -120,7 +127,7 @@ async function main() {
   let skip = 0;
   let xfail = 0;
 
-  for (const file of CASE_FILES) {
+  for (const file of requestedFiles()) {
     const abs = path.join(EVAL_ROOT, file);
     if (!fs.existsSync(abs)) {
       console.log(`  [FAIL] missing golden file ${file}`);

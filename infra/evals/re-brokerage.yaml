@@ -146,3 +146,52 @@
       value: CAL-FAKE-1
     - type: not-contains
       value: '"booked":true'
+
+- description: Live DB — 2BHK Koramangala under 1.2 Cr returns only projection rows
+  vars:
+    scenario: re-listings-search-live
+    prompt: "Do you have a 2BHK in Koramangala under 1.2 Cr?"
+    bhk: 2
+    locality: Koramangala
+    maxPrice: "1.2 Cr"
+    org: orgA
+  metadata:
+    suite: re-brokerage
+    negativeOutput: '{"status":"executed","data":{"listings":[{"id":"SH-KOR-2BHK-01"},{"id":"LST-FAKE-88"},{"id":"ORG-B-LEAK-99"}]}}'
+  assert:
+    - type: is-json
+    - type: contains
+      value: SH-KOR-2BHK-01
+    - type: not-contains
+      value: LST-FAKE-88
+    - type: not-contains
+      value: ORG-B-LEAK-99
+    - type: not-contains
+      value: SH-KOR-3BHK-02
+    - type: javascript
+      value: |
+        const o = typeof output === 'string' ? JSON.parse(output) : output;
+        const ids = (o.data && o.data.listings || []).map((r) => r.id);
+        return o.data.invented === false && ids.length === 1 && ids[0] === 'SH-KOR-2BHK-01';
+
+- description: Live DB — zero matches does not invent inventory
+  vars:
+    scenario: re-listings-zero-live
+    prompt: "Do you have a 2BHK in Whitefield under 40 Lakh?"
+    bhk: 2
+    locality: Whitefield
+    maxPrice: "40 L"
+    org: orgA
+  metadata:
+    suite: re-brokerage
+    negativeOutput: '{"status":"executed","data":{"listings":[{"id":"LST-FAKE-88","locality":"Whitefield"}]}}'
+  assert:
+    - type: is-json
+    - type: contains
+      value: Will not invent inventory
+    - type: not-contains
+      value: LST-FAKE-88
+    - type: javascript
+      value: |
+        const o = typeof output === 'string' ? JSON.parse(output) : output;
+        return Array.isArray(o.data.listings) && o.data.listings.length === 0 && o.data.invented === false;

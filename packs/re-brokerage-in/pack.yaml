@@ -3,7 +3,8 @@ name: Real estate brokerage
 version: 1.0.0
 extends: core-b2b
 markets: [IN, US]
-live: true
+# installable via LIVE_PACK_IDS; live=true only after 03 §11 live-verify on a real DB + Calendar
+live: false
 entities: [re.listing, re.inquiry, re.showing]
 connectors:
   required: []

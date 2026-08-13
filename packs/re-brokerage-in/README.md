@@ -1,7 +1,9 @@
 # Real estate brokerage — India wedge (v1)
 
 Pack id: `real-estate-brokerage`. Directory: `packs/re-brokerage-in/`.
-Extends Core B2B. Markets documented in `MARKETS.md` (IN live, US documented).
+Extends Core B2B. Markets documented in `MARKETS.md` (IN documented, US documented).
+`pack.yaml` **`live: false`** until §11 live-verify is green on a migrated DB
+and a Calendar-connected showing is booked from the listings UI.
 
 ## Quality bar (`03` §11)
 
@@ -9,10 +11,33 @@ Extends Core B2B. Markets documented in `MARKETS.md` (IN live, US documented).
 2. Three employees with distinct allowlists: Aisha (ISA), Kabir (showings), Meera (listings).
 3. Five golden conversations in `goldens/` + `infra/evals/re-brokerage.yaml`.
 4. Disconnected Sheets/Calendar → `notConnected` + `/connectors`.
-5. Two durable workflows: `ShowingScheduleWorkflow`, `RentReminderWorkflow`.
+5. Two durable workflows: `ShowingScheduleWorkflow`, `RentReminderWorkflow`
+   (started from `/listings` and `/inquiries` UI, not YAML-only).
 6. Memory write-back stores `re.listing` / `re.inquiry` entity facts.
 7. Compliance validator catches the known-bad fair-housing draft.
 8. This README + connector list + what we never invent.
+
+## How to run goldens
+
+```bash
+node infra/evals/runner.js re-brokerage.yaml
+# or the full suite:
+node infra/evals/runner.js
+bash infra/scripts/run-evals.sh
+```
+
+Fixture cases always run (matcher + compliance + Calendar `notConnected`).
+`re-listings-search-live` / `re-listings-zero-live` seed `re_listings` under two
+orgs and query as `darex_app` + RLS. They **skip** only if Postgres is
+unreachable; missing `015_packs.sql` **fails**.
+
+Remaining operator live-verify (does not flip `live: true` until done):
+
+1. Migrated DB with `015_packs.sql`; live listing evals `[PASS]` not `[SKIP]`.
+2. Connect Google Calendar on `/connectors`; book a showing from `/listings` or
+   `/inquiries`; confirm a real Calendar event (not a handwritten success).
+3. Disconnect Calendar; the same UI path returns `connected: false` + `/connectors`.
+4. Ask AI / `re.listings_search` “2BHK in X under Y” returns only projection rows.
 
 ## Inventory SoR
 

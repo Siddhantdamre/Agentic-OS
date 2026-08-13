@@ -25,10 +25,17 @@ export async function GET(request: Request) {
           FROM re_listings
          WHERE org_id = $1`;
       let i = 2;
+      const searching = Boolean(bhk || locality || city || maxPrice);
+      if (searching) {
+        sql += ` AND status IN ('active', 'under_offer', 'stale')`;
+      }
       if (bhk) {
-        sql += ` AND bhk = $${i}`;
-        params.push(parseInt(bhk, 10));
-        i += 1;
+        const bhkN = parseInt(bhk, 10);
+        if (Number.isInteger(bhkN)) {
+          sql += ` AND bhk = $${i}`;
+          params.push(bhkN);
+          i += 1;
+        }
       }
       if (locality) {
         sql += ` AND (locality ILIKE $${i} OR city ILIKE $${i})`;

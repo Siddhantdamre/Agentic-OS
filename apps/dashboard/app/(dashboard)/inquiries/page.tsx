@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { Inbox } from 'lucide-react';
 import { LiveRegion, StatusBadge, type StatusTone } from '@/components/a11y';
 import { isRealEstateBrokerage } from '@/app/(onboarding)/pack-recommendations';
+import { BookShowingControl, RentChargesPanel } from '@/components/re/SchedulePanel';
 
 type InquiryStatus = 'new' | 'contacted' | 'showing' | 'closed' | string;
 
@@ -40,7 +41,7 @@ function rowsFromPayload(payload: unknown): InquiryRow[] {
   const raw = obj.inquiries ?? obj.workItems ?? obj.items ?? obj.rows;
   if (!Array.isArray(raw)) return [];
   return raw
-    .map((item) => {
+    .map((item): InquiryRow | null => {
       if (!item || typeof item !== 'object') return null;
       const row = item as Record<string, unknown>;
       const id = typeof row.id === 'string' ? row.id : '';
@@ -56,7 +57,7 @@ function rowsFromPayload(payload: unknown): InquiryRow[] {
         updatedAt: typeof row.updatedAt === 'string' ? row.updatedAt : typeof row.updated_at === 'string' ? row.updated_at : undefined,
       };
     })
-    .filter((r): r is InquiryRow => Boolean(r));
+    .filter((r): r is InquiryRow => r != null);
 }
 
 export default function InquiriesPage() {
@@ -153,6 +154,11 @@ export default function InquiriesPage() {
                         {item.listingRef ? (
                           <p className="font-mono text-[10px] text-slate-400">{item.listingRef}</p>
                         ) : null}
+                        <BookShowingControl
+                          inquiryId={item.id}
+                          listingId={item.listingRef || undefined}
+                          title={item.contact || item.id}
+                        />
                       </li>
                     ))}
                   </ul>
@@ -162,6 +168,8 @@ export default function InquiriesPage() {
           })}
         </div>
       )}
+
+      <RentChargesPanel />
     </div>
   );
 }

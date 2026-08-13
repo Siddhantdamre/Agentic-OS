@@ -2,7 +2,7 @@
 
 const fs = require('fs');
 const path = require('path');
-const { loadPg, superuserConfig, missingMemoryTables, setOrg, resetRole, setAppRole } = require('./db');
+const { loadPg, superuserConfig, missingMemoryTables, missingTables, setOrg, resetRole, setAppRole } = require('./db');
 const { loadRetrieveModule } = require('./retrieve-load');
 const { KAPOOR, seedReturningContact, cleanupEvalOrg } = require('../seed-returning-contact');
 const {
@@ -63,6 +63,109 @@ async function memoryStatus() {
 
 function tablesMissingError(missing) {
   return `M1 not applied — missing tables: ${missing.join(', ')}. Need infra/db/migrations/013_memory_rag.sql`;
+}
+
+function reTablesMissingError(missing) {
+  return `015_packs.sql not applied — missing tables: ${missing.join(', ')}. Will not invent inventory.`;
+}
+
+async function liveReListingsSearch(vars) {
+  const inventory = readJsonFixture('sheet-inventory.json');
+  const stamp = Date.now();
+  try {
+    return await withDb(async (client) => {
+      const missing = await missingTables(client, ['re_listings']);
+      if (missing.length > 0) {
+        return { skip: false, error: reTablesMissingError(missing) };
+      }
+
+      await resetRole(client);
+      const orgARes = await client.query(
+        `INSERT INTO orgs (name, slug, plan, status) VALUES ($1, $2, 'enterprise', 'active') RETURNING id`,
+        ['Eval RE Org A', `eval-re-a-${stamp}`],
+      );
+      const orgBRes = await client.query(
+        `INSERT INTO orgs (name, slug, plan, status) VALUES ($1, $2, 'enterprise', 'active') RETURNING id`,
+        ['Eval RE Org B', `eval-re-b-${stamp}`],
+      );
+      const orgA = orgARes.rows[0].id;
+      const orgB = orgBRes.rows[0].id;
+
+      const insertRow = async (orgId, row) => {
+        await client.query(
+          `INSERT INTO re_listings (
+             org_id, source, source_ref, title, locality, city, bhk, list_price, currency, status, last_source_sync_at
+           ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+          [
+            orgId,
+            row.source || 'sheets',
+            row.sourceRef || row.id,
+            row.title,
+            row.locality,
+            row.city,
+            row.bhk,
+            row.listPrice,
+            row.currency || 'INR',
+            row.status || 'active',
+            row.lastSourceSyncAt || '2026-08-01T00:00:00.000Z',
+          ],
+        );
+      };
+
+      try {
+        for (const row of inventory.orgA || []) await insertRow(orgA, row);
+        for (const row of inventory.orgB || []) await insertRow(orgB, row);
+
+        await setOrg(client, orgA);
+        await setAppRole(client);
+        const res = await client.query(
+          `SELECT source_ref, source, title, locality, city, bhk, list_price, currency, rera_id, status, last_source_sync_at
+             FROM re_listings`,
+        );
+        await resetRole(client);
+
+        const ids = res.rows.map((r) => r.source_ref);
+        if (ids.includes('ORG-B-LEAK-99')) {
+          throw new Error('two-org listings leaked: ORG-B-LEAK-99 visible under orgA RLS');
+        }
+        if (ids.includes('LST-FAKE-88')) {
+          throw new Error('invented listing LST-FAKE-88 appeared in projection');
+        }
+
+        const rows = res.rows.map((row) => ({
+          id: row.source_ref,
+          source: row.source,
+          sourceRef: row.source_ref,
+          title: row.title,
+          locality: row.locality,
+          city: row.city,
+          bhk: row.bhk == null ? null : Number(row.bhk),
+          listPrice: row.list_price == null ? null : Number(row.list_price),
+          currency: row.currency || 'INR',
+          reraId: row.rera_id,
+          status: row.status || 'active',
+          lastSourceSyncAt: row.last_source_sync_at,
+        }));
+        const filters = {
+          bhk: parseBhk(vars.bhk),
+          locality: vars.locality,
+          maxPrice: parseBudget(vars.maxPrice),
+        };
+        return { skip: false, output: JSON.stringify(searchOutput(rows, filters)), orgId: orgA };
+      } finally {
+        await resetRole(client).catch(() => {});
+        await cleanupEvalOrg(client, orgA).catch(() => {});
+        await cleanupEvalOrg(client, orgB).catch(() => {});
+      }
+    });
+  } catch (err) {
+    const code = err && typeof err === 'object' && 'code' in err ? String(err.code) : '';
+    const message = err instanceof Error ? err.message || code || err.name : String(err);
+    if (code === 'ECONNREFUSED' || /ECONNREFUSED|connect|timeout|unreachable/i.test(message + code)) {
+      return { skip: true, reason: `database unreachable: ${message || code}` };
+    }
+    return { skip: false, error: message || 'live listing search failed' };
+  }
 }
 
 async function liveEmptyOrgOutput() {
@@ -267,6 +370,14 @@ async function resolveScenarioOutput(vars) {
         maxPrice: parseBudget(vars.maxPrice),
       };
       return { skip: false, output: JSON.stringify(searchOutput(rows, filters)) };
+    }
+    case 're-listings-search-live':
+    case 're-listings-zero-live': {
+      try {
+        return await liveReListingsSearch(vars);
+      } catch (err) {
+        return { skip: false, error: err.message };
+      }
     }
     case 're-fair-housing':
     case 're-rera-missing': {
