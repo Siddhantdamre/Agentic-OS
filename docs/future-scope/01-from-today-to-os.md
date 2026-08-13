@@ -228,7 +228,7 @@ memory ourselves; do not buy a second agent OS.
 
 | # | Alternative | Why it can be better | Why we still do ours | Refs |
 |---|-------------|----------------------|----------------------|------|
-| 1 | **Mastra + Vercel AI SDK** on Next.js | TS-native agents, memory, MCP, Studio; 1.0 in 2026 | We already left LangGraph for atomic-agent; dual loop = the hang class | [mastra-ai/mastra](https://github.com/mastra-ai/mastra) listed in `00` |
+| 1 | **Mastra + Vercel AI SDK** on Next.js | TS-native agents, memory, MCP, Studio; 1.0 in 2026 | We already left LangGraph for atomic-agent; dual loop = the hang class | Repo listed once in `00` |
 | 2 | **Promptfoo / Phoenix / Ragas in CI** as the gap-closer | Fastest honest proof that hygiene + memory work | We still implement tables ourselves; evals do not *be* the brain | This file GitHub list |
 | 3 | **Langfuse Cloud** instead of self-host Redis pain | Traces that actually persist | Self-host is the residency story; fix Redis split (Phase 8). Langfuse KEEP in `15` §1 | Langfuse Cloud vs self-host |
 | 4 | **Buy a memory SaaS** (hosted Mem0/Zep) to skip Phase 6 | “Returning customer remembers” in a week | Tenant facts must live in *our* RLS tables — details in `10` | `10` |

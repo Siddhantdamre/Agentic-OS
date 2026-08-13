@@ -194,7 +194,7 @@ inbound = persist + 200 + workflow; HITL = signal.
 | 2 | **Restate** | Lighter ops; virtual object = work_item | BSL; migration; Temporal MIT | [restatedev/restate](https://github.com/restatedev/restate) |
 | 3 | **Inngest AgentKit** | TS, events, MCP, no cluster | Serverless gravity; we self-host | inngest.com AgentKit |
 | 4 | **Hatchet / DBOS** | Workflows in Postgres we already run | Less mature HITL/signals | hatchet-dev/hatchet; dbos-inc/dbos-transact |
-| 5 | **n8n / Windmill / Trigger.dev** | Fast visual or TS jobs | Not confirm-class OS; use later as customer iPaaS | n8n; windmill-labs/windmill |
+| 5 | **Windmill / Trigger.dev / Prefect** as job runners | Fast TS/Python jobs | Not confirm-class OS; embed-worker later. n8n is `06` | This file GitHub list |
 
 **Five things to steal anyway**
 
@@ -204,16 +204,25 @@ inbound = persist + 200 + workflow; HITL = signal.
 4. Playbook matcher (skip free-form plan) — CrewAI Flows idea.
 5. Never unbounded fan-out from a model-produced list.
 
-### Open-source GitHub (at least 5) — same job as this file
+### Open-source GitHub — this file only (durable jobs)
+
+Temporal KEEP → `15` §1. n8n → `06`. pg-boss / Graphile → `02`.
 
 | Repo | Similar to | We take |
 |------|------------|---------|
-| [temporalio/temporal](https://github.com/temporalio/temporal) | Durable workflows | **KEEP** |
 | [temporal-community/temporal-ai-agent](https://github.com/temporal-community/temporal-ai-agent) | Agent + MCP inside Temporal | Activity wrap + goals dir |
-| [temporal-sa/durable-agentic-harness](https://github.com/temporal-sa/durable-agentic-harness) | Temporal as durable OS under an agent SDK | Same pattern we use |
-| [restatedev/restate](https://github.com/restatedev/restate) | Virtual objects | WATCH |
+| [temporal-sa/durable-agentic-harness](https://github.com/temporal-sa/durable-agentic-harness) | Temporal under an agent SDK | Same pattern we use |
+| [restatedev/restate](https://github.com/restatedev/restate) | Virtual objects | WATCH; BSL |
 | [inngest/inngest](https://github.com/inngest/inngest) | TS durable steps + AgentKit | Router ideas |
-| [hatchet-dev/hatchet](https://github.com/hatchet-dev/hatchet) | PG-native jobs | STUDY |
-| [n8n-io/n8n](https://github.com/n8n-io/n8n) | Visual HITL + agents | Customer iPaaS |
+| [hatchet-dev/hatchet](https://github.com/hatchet-dev/hatchet) | PG-native jobs | STUDY if Temporal ops explode |
 | [windmill-labs/windmill](https://github.com/windmill-labs/windmill) | Script jobs | embed-worker later |
 | [triggerdotdev/trigger.dev](https://github.com/triggerdotdev/trigger.dev) | TS background | Same |
+| [PrefectHQ/prefect](https://github.com/PrefectHQ/prefect) | Python flows | Sync/embed DAGs |
+| [dagster-io/dagster](https://github.com/dagster-io/dagster) | Asset jobs | Ingest lineage |
+| [uber/cadence](https://github.com/uber/cadence) | Temporal ancestor | HITL signal ideas |
+| [riverqueue/river](https://github.com/riverqueue/river) | PG jobs (Go) | Compare with `02` pg-boss |
+| [taskforcesh/bullmq](https://github.com/taskforcesh/bullmq) | Redis jobs | Not HITL; skip for confirm |
+| [langchain-ai/langgraph](https://github.com/langchain-ai/langgraph) | Interrupt/HITL graphs | Pattern only; do not dual-run |
+| [Netflix/conductor](https://github.com/Netflix/conductor) | Microservice workflows | WATCH |
+| [argoproj/argo-workflows](https://github.com/argoproj/argo-workflows) | K8s DAGs | Only if we k8s the workers |
+| [dbos-inc/dbos-transact-py](https://github.com/dbos-inc/dbos-transact-py) | Workflows in Postgres | STUDY with Hatchet |

@@ -233,16 +233,20 @@ prefix. Not Mem0 Cloud. Not Letta server.
 4. Two-org RLS vector test in CI — our LongMemEval.
 5. Inspector UI or memory is a ghost (`10` §6).
 
-### Open-source GitHub (at least 5) — same job as this file
+### Open-source GitHub — this file only (memory)
+
+pgvector KEEP → `15` §1. GraphRAG → `07`. Letta / Mem0 / Graphiti listed **only here**.
 
 | Repo | Similar to | We take |
 |------|------------|---------|
-| [pgvector/pgvector](https://github.com/pgvector/pgvector) | Vectors + HNSW in Postgres | **KEEP**; tenant filter |
-| [mem0ai/mem0](https://github.com/mem0ai/mem0) | Fact extract + hybrid | Extract JSON + FTS |
-| [getzep/graphiti](https://github.com/getzep/graphiti) | Temporal KG | Validity columns |
+| [mem0ai/mem0](https://github.com/mem0ai/mem0) | Fact extract + hybrid | Extract JSON + FTS in *our* tables |
+| [getzep/graphiti](https://github.com/getzep/graphiti) | Temporal KG | `valid_from` / `invalidated_at` |
 | [topoteretes/cognee](https://github.com/topoteretes/cognee) | Company brain on PG | ECL ingest |
-| [letta-ai/letta](https://github.com/letta-ai/letta) | Core vs archival | Grounded user message |
-| [microsoft/graphrag](https://github.com/microsoft/graphrag) | Static corpus graph | SOP backfill |
+| [letta-ai/letta](https://github.com/letta-ai/letta) | Core vs archival (MemGPT) | Hierarchy in grounded user message |
 | [qdrant/qdrant](https://github.com/qdrant/qdrant) | Dedicated hybrid search | Only if pgvector fails |
-| [chroma-core/chroma](https://github.com/chroma-core/chroma) | Embedded vectors | Dev only |
 | [weaviate/weaviate](https://github.com/weaviate/weaviate) | Hybrid + tenant concepts | Same WATCH |
+| [chroma-core/chroma](https://github.com/chroma-core/chroma) | Embedded vectors | Dev only |
+| [lancedb/lancedb](https://github.com/lancedb/lancedb) | Embedded ANN | Dev |
+| [milvus-io/milvus](https://github.com/milvus-io/milvus) | Scale-out vectors | Only after RLS-safe pgvector fails |
+| [OSU-NLP-Group/HippoRAG](https://github.com/OSU-NLP-Group/HippoRAG) | Hippocampal RAG | Entity overlap retrieve |
+| [getzep/zep](https://github.com/getzep/zep) | Cloud memory sibling of Graphiti | **REJECT** hosted as SoR |

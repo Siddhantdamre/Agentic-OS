@@ -11,7 +11,7 @@ a new session cannot “helpfully” fork the architecture.
 1. `AGENTS.md`
 2. `docs/current-working/README.md` + `00-status-at-a-glance.md`
 3. `BUILD_STATE.md`
-4. This pack (`docs/futuer-scope/`), especially `01`, `02`, `12`,
+4. This pack (`docs/future-scope/`), especially `01`, `02`, `12`,
    `15` (libraries/people — so you do not swap the kernel),
    and the phase in `13` you are on
 5. Vertical file if the task is RE (`05`) or another pack (`04`)
@@ -151,16 +151,7 @@ packs. Read `15` before adding a framework.
 4. Temporal activities around every LLM (`09`).
 5. Dust/Glean permission dual-layer (`12`).
 
-### Open-source GitHub (at least 5) — same job as this file
+### Open-source GitHub
 
-Repos whose **code encodes similar standing orders**:
-
-| Repo | Similar invariant | We take |
-|------|-------------------|---------|
-| [temporalio/temporal](https://github.com/temporalio/temporal) | Side effects in activities | Never await LLM in webhook |
-| [pgvector/pgvector](https://github.com/pgvector/pgvector) | Tenant-aware ANN | RLS vector tests |
-| [NangoHQ/nango](https://github.com/NangoHQ/nango) | Tokens not in git | KEEP OAuth plane |
-| [openfga/openfga](https://github.com/openfga/openfga) | Explicit authz | Allowlists as data |
-| [langfuse/langfuse](https://github.com/langfuse/langfuse) | Every call traced | Span on tools |
-| [promptfoo/promptfoo](https://github.com/promptfoo/promptfoo) | Evals before ship | Golden + disconnected |
-| [supertokens/supertokens-core](https://github.com/supertokens/supertokens-core) | Session, not body org_id | KEEP |
+This file is **invariants**, not a shopping list. Kernel KEEP is `15` §1.
+Authz extras → `12`. Evals → `01`. Packs → `03`. Do not paste those tables here.

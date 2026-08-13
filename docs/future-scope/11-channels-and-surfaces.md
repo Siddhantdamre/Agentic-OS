@@ -140,7 +140,7 @@ unify on WorkItemWorkflow; owner WhatsApp separate from customer.
 | # | Alternative | Why it can be better | Why we still do ours | Refs |
 |---|-------------|----------------------|----------------------|------|
 | 1 | **Twilio Conversations / Flex** | One omnichannel API (SMS, WhatsApp, chat, voice) | Cost + US gravity; IN is Meta Cloud + Exotel | Twilio Conversations docs |
-| 2 | **Chatwoot as the product** (fork/full) | Inbox UI, agents, labels, OSS | We wrap it thin; forking Chatwoot is a second app | [chatwoot/chatwoot](https://github.com/chatwoot/chatwoot) |
+| 2 | **Chatwoot as the product** (fork/full) | Inbox UI, agents, labels, OSS | We wrap it thin; forking Chatwoot is a second app | KEEP in `15` §1 |
 | 3 | **LiveKit Agents** for voice as primary | Realtime voice OS, Apache-2.0, MCP tools | Phase 17; text WhatsApp is the IN wedge | [livekit/agents](https://github.com/livekit/agents) |
 | 4 | **Intercom Fin / Zendesk AI / Crisp** | Polished widget + help center RAG | Closed CX; we need CRM+listings+confirm | Intercom Fin; Crisp |
 | 5 | **Papercups** OSS widgets | Embeddable chat without Chatwoot | Widget is later; inbox already exists | [papercups-io/papercups](https://github.com/papercups-io/papercups) |
@@ -153,15 +153,21 @@ unify on WorkItemWorkflow; owner WhatsApp separate from customer.
 4. Redis pub/sub — Phase 8, not in-process hub.
 5. Public widget allowlist = no admin APIs on the embed token.
 
-### Open-source GitHub (at least 5) — same job as this file
+### Open-source GitHub — this file only (channels / voice / widgets)
+
+Chatwoot KEEP → `15` §1 (thin gateway). Do not list it again as a competitor product here.
 
 | Repo | Similar to | We take |
 |------|------------|---------|
-| [chatwoot/chatwoot](https://github.com/chatwoot/chatwoot) | Omnichannel inbox | Thin gateway; wire agent |
 | [livekit/agents](https://github.com/livekit/agents) | Voice employee | Phase 17 |
 | [livekit/livekit](https://github.com/livekit/livekit) | WebRTC SFU | Same |
 | [papercups-io/papercups](https://github.com/papercups-io/papercups) | Embeddable widget | Public chat later |
-| [typebot-io/typebot](https://github.com/baptisteArno/typebot.io) | Website chat/forms | Listing ask-box |
-| [botpress/botpress](https://github.com/botpress/botpress) | Bot studio + channels | Steal channel adapters, not studio |
+| [baptisteArno/typebot.io](https://github.com/baptisteArno/typebot.io) | Website chat/forms | Listing ask-box |
+| [botpress/botpress](https://github.com/botpress/botpress) | Bot studio + channels | Channel adapters, not studio |
 | [mattermost/mattermost](https://github.com/mattermost/mattermost) | Team chat OSS | Owner Slack-like later |
-| [RocketChat/Rocket.Chat](https://github.com/RocketChat/Rocket.Chat) | Omnichannel OSS | Same WATCH |
+| [RocketChat/Rocket.Chat](https://github.com/RocketChat/Rocket.Chat) | Omnichannel OSS | WATCH |
+| [matrix-org/synapse](https://github.com/matrix-org/synapse) | Matrix homeserver | Federation WATCH |
+| [element-hq/element-web](https://github.com/element-hq/element-web) | Matrix client | Owner surface later |
+| [RasaHQ/rasa](https://github.com/RasaHQ/rasa) | NLU + dialogue | Classifier ideas; LiteLLM stays |
+| [jitsi/jitsi-meet](https://github.com/jitsi/jitsi-meet) | Video rooms | Showing walkthrough later |
+| [signalapp/Signal-Server](https://github.com/signalapp/Signal-Server) | Private messaging | **REJECT** unofficial WA clones (ToS) |

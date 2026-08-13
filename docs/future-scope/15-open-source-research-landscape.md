@@ -580,64 +580,69 @@ list**, the keep list wins until BUILD_STATE records a deviation.
 
 ---
 
-## 17. Per-file “instead of this” index (all pack files)
+## 17. Unique GitHub catalog (each repo once)
 
-Every numbered file now has the same honest table: Darex choice,
-**5 existing alternatives**, why they can be better, why we keep
-ours, refs, and **five things to steal**. Use this index:
+**Rule:** a cloneable repo appears in **one** layer file. This section is
+the union + KEEP + extras that do not belong to a layer. Odoo is only
+`03`. Mem0 is only `10`. n8n is only `06`. Chatwoot is KEEP below, not
+re-sold as an alternative in `11`.
 
-| File | Darex choice | 5 better-existing (see that file) |
-|------|--------------|-----------------------------------|
-| `00` | Brain OS + packs | Dust, Glean, Odoo/ERPNext, Letta, specialist employees |
-| `01` | Close gaps on our kernel | Mastra, Mem0/Graphiti, n8n/Inngest, Langfuse Cloud, skip-to-RE |
-| `02` | Next+Temporal+atomic-agent | LangGraph Cloud, Restate, Supabase, Agno, PydanticAI+Temporal |
-| `03` | YAML packs | Odoo modules, ERPNext DocTypes, Salesforce Industry, Twenty, fork-per-vertical |
-| `04` | Many packs in waves | Point AI (Harvey/Sierra/11x), industry ERPs, HubSpot-only, n8n templates, Medusa/Saleor |
-| `05` | RE packs + Sheets wedge | EliseAI, Funnel+Sierra, Lofty/FUB/kvCORE, AppFolio/Yardi, RESO/IDX |
-| `06` | Nango + TS executors | Composio, Zapier/Pipedream, unified.to, n8n, raw SDKs |
-| `07` | Class A–H ingest | Unstructured, LlamaParse, Docling/Tika, Airbyte/dlt, GraphRAG |
-| `08` | Employees as config | CrewAI, Magentic-One, OpenAI Agents SDK, Letta, Lindy/Relevance |
-| `09` | Temporal WorkItemWorkflow | LangGraph, Restate, Inngest, Hatchet/DBOS, n8n/Windmill |
-| `10` | Own pgvector tables | Mem0, Graphiti/Zep, Cognee, Letta, Qdrant/Weaviate |
-| `11` | WhatsApp+Chatwoot+SSE | Twilio Conversations, Chatwoot-full, LiveKit, Intercom Fin, Papercups |
-| `12` | RLS + SuperTokens | Schema-per-tenant, Citus/Neon, OpenFGA, Keycloak, Dust/Glean ACL |
-| `13` | Memory first | RE-first, buy Mastra, Insight-first, logo spray, voice-first |
-| `14` | These invariants | Tutorial-driven, skip RLS, await in webhook, fabricate, Composio+LangGraph |
+### 17.1 Kernel KEEP (already running — do not re-list in layer files)
 
-**Extra code/article refs added this pass**
+| Repo | Role |
+|------|------|
+| [AtomicBot-ai/atomic-agent](https://github.com/AtomicBot-ai/atomic-agent) | Employee loop v0.1.73 |
+| [BerriAI/litellm](https://github.com/BerriAI/litellm) | JSON classify / plan / embed |
+| [NangoHQ/nango](https://github.com/NangoHQ/nango) | OAuth / token plane |
+| [temporalio/temporal](https://github.com/temporalio/temporal) | Durable HITL |
+| [langfuse/langfuse](https://github.com/langfuse/langfuse) | Traces |
+| [supertokens/supertokens-core](https://github.com/supertokens/supertokens-core) | Sessions |
+| [chatwoot/chatwoot](https://github.com/chatwoot/chatwoot) | Thin inbox gateway |
+| [pgvector/pgvector](https://github.com/pgvector/pgvector) | Vectors in Postgres |
+| [jina-ai/reader](https://github.com/jina-ai/reader) | World extract; cite, not SoR |
+| [modelcontextprotocol/specification](https://github.com/modelcontextprotocol/specification) | MCP grammar for `mcp.darex.*` |
 
-- [Unstructured-IO/unstructured](https://github.com/Unstructured-IO/unstructured)
-- [docling-project/docling](https://github.com/docling-project/docling)
-- [airbytehq/airbyte](https://github.com/airbytehq/airbyte), [dlt-hub/dlt](https://github.com/dlt-hub/dlt)
-- [livekit/agents](https://github.com/livekit/agents)
-- [chatwoot/chatwoot](https://github.com/chatwoot/chatwoot)
-- [twentyhq/twenty](https://github.com/twentyhq/twenty)
-- [frappe/erpnext](https://github.com/frappe/erpnext), [odoo/odoo](https://github.com/odoo/odoo)
-- [openfga/openfga](https://github.com/openfga/openfga)
-- [medusajs/medusa](https://github.com/medusajs/medusa)
-- RESO Web API / Elise vs Funnel (Hargreaves 2026)
-- LlamaIndex “Beyond raw text” (LlamaParse)
-- Glean agent-orchestration comparison (2026)
+### 17.2 Where the rest live (open that file for the table)
+
+| File | Owns |
+|------|------|
+| `00` | OpenFang, Agno, OpenHands, Dust, Continue, Cline, Goose, Skyvern, Browser Use, Eliza, AutoGPT, DSPy, Mastra |
+| `01` | Promptfoo, Phoenix, Ragas, DeepEval, Giskard, OpenAI evals, anthropics/skills, OpenLLMetry, Promptflow, Weave, AIConfig, HELM |
+| `02` | NATS, Apache AGE, ParadeDB, Cube, DuckDB, pg-boss, Graphile Worker, PgBouncer, E2B, Daytona, OTel JS, Unleash, MinIO, Traefik, ElectricSQL + Valkey, Infisical, ClamAV, Caddy, Envoy, CNPG, Dragonfly, Redpanda Connect |
+| `03` | **Odoo, ERPNext, Frappe, Twenty**, SuiteCRM, EspoCRM, Dolibarr, Akaunting, Invoice Ninja, Budibase, Appsmith, NocoDB, Baserow, Directus |
+| `04` | Medusa, Saleor, WooCommerce, Magento, PostHog, Outline, Strapi, Ghost, Moodle, OpenEMR, Plane, Listmonk, Plausible, Umami, Pretix |
+| `05` | RESO metadata, Nominatim, OSM, MapLibre, Leaflet, Turf, Pelias, Photon, OpenAddresses, **Cal.com, Documenso**, geopy |
+| `06` | **n8n**, Activepieces, Huginn, Pipedream, MCP servers/SDKs, Firecrawl, Crawl4AI, Scrapy, Crawlee, Camel, Svix, Playwright |
+| `07` | Unstructured, Docling, Tika, LlamaIndex, Haystack, Airbyte, dlt, **GraphRAG**, RAGFlow, Marker, MinerU, PyMuPDF, Typesense, Meilisearch, Vespa |
+| `08` | CrewAI, AutoGen, **Google ADK**, MetaGPT, ChatDev, Swarms, Langroid, Camel, smolagents, OpenAI Agents, PydanticAI, Reflexion, ToT, Semantic Kernel, STORM |
+| `09` | temporal-ai-agent, durable-agentic-harness, Restate, Inngest, **Hatchet**, Windmill, Trigger.dev, Prefect, Dagster, Cadence, River, BullMQ, LangGraph, Conductor, Argo, DBOS |
+| `10` | **Mem0, Graphiti, Cognee, Letta**, Qdrant, Weaviate, Chroma, LanceDB, Milvus, HippoRAG, Zep (reject hosted) |
+| `11` | LiveKit, Papercups, Typebot, Botpress, Mattermost, Rocket.Chat, Synapse, Element, Rasa, Jitsi |
+| `12` | **OpenFGA**, Casbin, Cerbos, OPA, Keto, Hydra, Keycloak, Zitadel, Authentik, Citus, Vault, oauth2-proxy, SOPS, Gitleaks, TruffleHog |
+| `13`/`14` | No GitHub dump — order and invariants only |
+
+### 17.3 Extras (not a layer — LLM serving / studios / REJECT)
+
+These are **not** kernel and **not** repeated in `00`–`12`. Steal or ignore.
+
+| Repo | Call |
+|------|------|
+| [vllm-project/vllm](https://github.com/vllm-project/vllm) | WATCH self-host decode; LiteLLM stays the gateway |
+| [sgl-project/sglang](https://github.com/sgl-project/sglang) | Same |
+| [ggml-org/llama.cpp](https://github.com/ggml-org/llama.cpp) | Local fallback; not production brain |
+| [ollama/ollama](https://github.com/ollama/ollama) | Dev only |
+| [open-webui/open-webui](https://github.com/open-webui/open-webui) | Chat UI — we have Ask AI |
+| [Mintplex-Labs/anything-llm](https://github.com/Mintplex-Labs/anything-llm) | Desktop RAG — tenancy no |
+| [langgenius/dify](https://github.com/langgenius/dify) | Studio OS; dual loop = hang |
+| [langflow-ai/langflow](https://github.com/langflow-ai/langflow) | Visual graphs; same REJECT as LangGraph kernel |
+| [FlowiseAI/Flowise](https://github.com/FlowiseAI/Flowise) | Same |
+| [vercel/ai](https://github.com/vercel/ai) | SSE helpers for Ask AI; not a runtime |
+| [instructor-ai/instructor](https://github.com/instructor-ai/instructor) | Structured JSON; LiteLLM already |
+| [dottxt-ai/outlines](https://github.com/dottxt-ai/outlines) | Constrained decode; WATCH |
+| [cloudflare/agents](https://github.com/cloudflare/agents) | Durable objects agents; WATCH edge |
+| [ComposioHQ/composio](https://github.com/ComposioHQ/composio) | **REJECT** credential runtime |
+| [ToolJet/ToolJet](https://github.com/ToolJet/ToolJet) | Internal apps; Budibase is `03` |
+
+Remote APIs (not GitHub): WhatsApp Cloud, Twilio, Meta, HubSpot, Stripe, Razorpay, Jina, OpenRouter — always via Nango/LiteLLM/BYOK, never as the brain.
 
 Steal patterns. Do not swap the kernel.
-
-### Open-source GitHub master list (cloneable — we take patterns)
-
-Minimum five per layer; this is the union. Every numbered file also
-has its own table.
-
-| Layer | Repos (GitHub) |
-|-------|----------------|
-| Agent OS | `letta-ai/letta`, `RightNow-AI/openfang`, `agno-agi/agno`, `All-Hands-AI/OpenHands`, `dust-tt/dust`, `AtomicBot-ai/atomic-agent` |
-| Agent loop | `crewAIInc/crewAI`, `microsoft/autogen`, `langchain-ai/langgraph`, `mastra-ai/mastra`, `pydantic/pydantic-ai`, `openai/openai-agents-python` |
-| Memory | `pgvector/pgvector`, `mem0ai/mem0`, `getzep/graphiti`, `topoteretes/cognee`, `microsoft/graphrag`, `qdrant/qdrant` |
-| Durable | `temporalio/temporal`, `restatedev/restate`, `inngest/inngest`, `hatchet-dev/hatchet`, `temporal-community/temporal-ai-agent` |
-| OAuth/tools | `NangoHQ/nango`, `modelcontextprotocol/servers`, `n8n-io/n8n`, `activepieces/activepieces`, `microsoft/playwright` |
-| Knowledge | `Unstructured-IO/unstructured`, `docling-project/docling`, `run-llama/llama_index`, `airbytehq/airbyte`, `deepset-ai/haystack` |
-| Channels | `chatwoot/chatwoot`, `livekit/agents`, `papercups-io/papercups`, `botpress/botpress` |
-| Packs/ERP | `odoo/odoo`, `frappe/erpnext`, `twentyhq/twenty`, `medusajs/medusa`, `calcom/cal.com`, `documenso/documenso` |
-| Authz | `supertokens/supertokens-core`, `openfga/openfga`, `casbin/casbin`, `keycloak/keycloak`, `zitadel/zitadel` |
-| Eval | `promptfoo/promptfoo`, `langfuse/langfuse`, `Arize-ai/phoenix` |
-| Gateway | `BerriAI/litellm` |
-
-Remote APIs (not GitHub, still related): WhatsApp Cloud, Twilio, Meta, HubSpot, Stripe, Razorpay, Jina, OpenRouter — always via Nango/LiteLLM/BYOK, never as the brain.

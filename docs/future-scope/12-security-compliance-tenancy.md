@@ -226,15 +226,24 @@ confirm classes; no body `org_id`.
 4. Retrieval uses same RLS as tools (Glean).
 5. Webhook signatures + never await LLM (`AGENTS.md`).
 
-### Open-source GitHub (at least 5) — same job as this file
+### Open-source GitHub — this file only (authz / IdP / vault)
+
+SuperTokens + pgvector KEEP → `15` §1. OpenFGA listed **only here**.
 
 | Repo | Similar to | We take |
 |------|------------|---------|
-| [supertokens/supertokens-core](https://github.com/supertokens/supertokens-core) | Sessions we already run | **KEEP**; SAML on top |
 | [openfga/openfga](https://github.com/openfga/openfga) | Zanzibar ReBAC | `/brain` ACLs if RLS is not enough |
 | [casbin/casbin](https://github.com/casbin/casbin) | Policy engine | Allowlist as policy later |
+| [cerbos/cerbos](https://github.com/cerbos/cerbos) | Policy PDP | Same |
+| [open-policy-agent/opa](https://github.com/open-policy-agent/opa) | Rego policies | Compliance.yaml compile later |
+| [ory/keto](https://github.com/ory/keto) | Zanzibar | Alt to OpenFGA |
+| [ory/hydra](https://github.com/ory/hydra) | OAuth2/OIDC server | Not a SuperTokens replace |
 | [keycloak/keycloak](https://github.com/keycloak/keycloak) | Full IdP | SAML recipes, not a replace |
 | [zitadel/zitadel](https://github.com/zitadel/zitadel) | Modern IdP | Same |
 | [goauthentik/authentik](https://github.com/goauthentik/authentik) | Self-host IdP | Same |
 | [citusdata/citus](https://github.com/citusdata/citus) | PG scale-out + tenant | Hosting later |
-| [pgvector/pgvector](https://github.com/pgvector/pgvector) | Vector tenancy notes | Partition/filter |
+| [hashicorp/vault](https://github.com/hashicorp/vault) | Secrets | BYOK; Infisical is `02` |
+| [oauth2-proxy/oauth2-proxy](https://github.com/oauth2-proxy/oauth2-proxy) | Auth sidecar | Split ingest hosts |
+| [getsops/sops](https://github.com/getsops/sops) | Encrypted env files | Secrets not in git |
+| [gitleaks/gitleaks](https://github.com/gitleaks/gitleaks) | Secret scan CI | Pre-commit |
+| [trufflesecurity/trufflehog](https://github.com/trufflesecurity/trufflehog) | Same | Same |

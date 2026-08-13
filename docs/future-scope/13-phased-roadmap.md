@@ -245,17 +245,8 @@ billing, connectors, RE pack. Never skip memory.
 4. Sheets wedge for RE IN — do not wait on MLS license.
 5. Absorb shipped rows into `01` with dates.
 
-### Open-source GitHub (at least 5) — same job as this file
+### Open-source GitHub
 
-Repos that **accelerate a phase** without changing order:
-
-| Repo | Phase it helps | We take |
-|------|----------------|---------|
-| [pgvector/pgvector](https://github.com/pgvector/pgvector) | 6 memory | Tables + HNSW |
-| [promptfoo/promptfoo](https://github.com/promptfoo/promptfoo) | 6 eval CI | Golden YAML |
-| [langfuse/langfuse](https://github.com/langfuse/langfuse) | 6–7 learning | KEEP; Redis split in 8 |
-| [NangoHQ/nango](https://github.com/NangoHQ/nango) | 10 connectors | Finish stubs |
-| [temporalio/temporal](https://github.com/temporalio/temporal) | 8–13 durable | WorkItemWorkflow |
-| [chatwoot/chatwoot](https://github.com/chatwoot/chatwoot) | 6 hygiene | Agent on webhook |
-| [livekit/agents](https://github.com/livekit/agents) | 17 voice | After APIs |
-| [calcom/cal.com](https://github.com/calcom/cal.com) | 11 RE showings | Calendar SoR |
+This file is **phase order**, not a repo dump. Kernel KEEP is `15` §1.
+Phase 6 evals → `01`. Memory → `10`. Connectors → `06`. Voice → `11`.
+Showings → `05`. Durable → `09`. Do not paste those GitHub tables here.
