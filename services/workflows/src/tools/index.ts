@@ -40,6 +40,9 @@ import { salesforce } from './salesforce.js';
 import { docusign } from './docusign.js';
 import { maps } from './maps.js';
 import { twilio } from './twilio.js';
+import { zoho } from './zoho.js';
+import { leegality } from './leegality.js';
+import { quickbooks } from './quickbooks.js';
 import { metrics } from './metrics.js';
 import { mls, realestate } from './realestate/index.js';
 import { rera } from './public/rera.js';
@@ -91,6 +94,9 @@ export const TOOL_MODULES = {
   docusign,
   maps,
   twilio,
+  zoho,
+  leegality,
+  quickbooks,
   metrics,
   realestate,
   rera,
@@ -138,6 +144,11 @@ export const PROVIDER_KEYS = [
   'maps',
   'google-maps',
   'twilio',
+  'zoho',
+  'zoho-crm',
+  'leegality',
+  'quickbooks',
+  'quick-books',
   'metrics',
   'metrics_query',
   're',
@@ -241,6 +252,14 @@ export function moduleForProvider(key: ProviderKey): ToolModule {
       return maps;
     case 'twilio':
       return twilio;
+    case 'zoho':
+    case 'zoho-crm':
+      return zoho;
+    case 'leegality':
+      return leegality;
+    case 'quickbooks':
+    case 'quick-books':
+      return quickbooks;
     case 'metrics':
     case 'metrics_query':
       return metrics;

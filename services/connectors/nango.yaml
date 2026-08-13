@@ -1091,6 +1091,56 @@ integrations:
       mode: none
       entities: []
 
+  zoho-crm:
+    display_name: "Zoho CRM"
+    dashboard_status_ref: "Zoho CRM — CRM"
+    auth_mode: OAUTH2
+    categories: [crm, sales, india]
+    scopes:
+      - ZohoCRM.modules.contacts.ALL
+      - ZohoCRM.modules.leads.ALL
+      - ZohoCRM.users.READ
+    capabilities:
+      - contacts.read
+      - contacts.write
+      - leads.read
+      - leads.write
+    sync:
+      mode: incremental
+      entities: [contacts, leads]
+
+  leegality:
+    display_name: "Leegality"
+    dashboard_status_ref: "Leegality — E-SIGN"
+    auth_mode: API_KEY
+    categories: [documents, esign, india]
+    credentials:
+      - auth_token
+      - profile_id
+    capabilities:
+      - documents.read
+      - documents.write
+      - envelopes.send
+    sync:
+      mode: webhook
+      entities: [documents]
+      webhook_events: [document_created]
+
+  quickbooks:
+    display_name: "QuickBooks"
+    dashboard_status_ref: "QuickBooks — FINANCE"
+    auth_mode: OAUTH2
+    categories: [finance, accounting]
+    scopes:
+      - com.intuit.quickbooks.accounting
+    capabilities:
+      - customers.read
+      - customers.write
+      - invoices.read
+    sync:
+      mode: incremental
+      entities: [customers, invoices]
+
 
 # ==============================================================
 # GLOBAL CAPABILITY MATRIX
