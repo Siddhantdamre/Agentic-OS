@@ -22,6 +22,11 @@ only.
 
 Optional: `domain_name` (enables ACM + ALB). Empty skips HTTPS resources.
 
+Secrets Manager shells (no values in git): `db-master`, `app-db`,
+`darex-billing` (B2 Stripe/Razorpay **platform** keys), `darex-sso`
+(S7 SuperTokens IdP). Paste live values in the AWS console. These are
+not customer PSP payment-link credentials.
+
 ## Usage
 
 ```bash

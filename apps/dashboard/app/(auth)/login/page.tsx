@@ -16,14 +16,33 @@ function LoginForm() {
   const [loading, setLoading] = useState(false);
   const [oauthLoading, setOauthLoading] = useState<string | null>(null);
   const [error, setError] = useState('');
+  const [ssoProviders, setSsoProviders] = useState<
+    Array<{ id: string; name: string; configured: boolean }>
+  >([]);
 
-  // Read error from OAuth redirect (e.g. ?error=OAuth+denied)
+  // Read error from OAuth/SSO redirect (e.g. ?error=OAuth+denied)
   useEffect(() => {
     const oauthError = searchParams?.get('error');
     if (oauthError) {
       setError(decodeURIComponent(oauthError));
     }
   }, [searchParams]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void fetch('/api/auth/sso')
+      .then((res) => (res.ok ? res.json() : null))
+      .then((json: { providers?: Array<{ id: string; name: string; configured: boolean }> } | null) => {
+        if (cancelled || !json?.providers) return;
+        setSsoProviders(json.providers.filter((p) => p.configured));
+      })
+      .catch(() => {
+        // Password login still works when the SSO catalog is unavailable.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -67,6 +86,14 @@ function LoginForm() {
     const invite = searchParams?.get('invite');
     const qs = invite ? `?invite=${encodeURIComponent(invite)}` : '';
     window.location.href = `/api/auth/oauth/${provider}${qs}`;
+  };
+
+  const handleSsoLogin = (provider: string) => {
+    setOauthLoading(`sso:${provider}`);
+    setError('');
+    const invite = searchParams?.get('invite');
+    const qs = invite ? `?invite=${encodeURIComponent(invite)}` : '';
+    window.location.href = `/api/auth/sso/${provider}${qs}`;
   };
 
   const demoEmail = process.env.NEXT_PUBLIC_DEMO_EMAIL;
@@ -114,6 +141,31 @@ function LoginForm() {
       {error && (
         <div className="p-3 bg-red-950/60 border border-red-800/60 text-red-300 rounded-2xl text-xs font-medium text-center">
           {error}
+        </div>
+      )}
+
+      {ssoProviders.length > 0 && (
+        <div className="space-y-2">
+          {ssoProviders.map((p) => (
+            <button
+              key={p.id}
+              type="button"
+              id={`login-sso-${p.id}-btn`}
+              onClick={() => handleSsoLogin(p.id)}
+              disabled={!!oauthLoading || loading}
+              className="w-full flex items-center justify-center gap-2.5 py-2.5 px-3 bg-[#1C2825] hover:bg-[#23322E] border border-emerald-900/80 rounded-xl text-xs text-emerald-100 font-semibold transition shadow-sm hover:border-emerald-700 disabled:opacity-50"
+            >
+              {oauthLoading === `sso:${p.id}` ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : null}
+              <span>
+                {oauthLoading === `sso:${p.id}` ? 'Redirecting...' : `Continue with ${p.name}`}
+              </span>
+            </button>
+          ))}
+          <p className="text-[10px] text-emerald-600 text-center">
+            SSO is optional. Email and password still work.
+          </p>
         </div>
       )}
 

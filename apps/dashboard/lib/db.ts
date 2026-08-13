@@ -103,7 +103,7 @@ export async function createOrgForEmail(client: PoolClient, email: string): Prom
   const name = `${(email || 'user').split('@')[0]}'s Organization`;
   const slug = `org-${(email || 'user').replace(/[^a-z0-9]+/gi, '-').slice(0, 24)}-${Date.now()}`;
   const res = await client.query(
-    `INSERT INTO orgs (name, slug, plan, status) VALUES ($1, $2, 'starter', 'provisioning') RETURNING id`,
+    `INSERT INTO orgs (name, slug, plan, status) VALUES ($1, $2, 'free', 'provisioning') RETURNING id`,
     [name, slug]
   );
   return res.rows[0].id;

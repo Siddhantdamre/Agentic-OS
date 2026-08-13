@@ -2,10 +2,13 @@ import { NextResponse } from 'next/server';
 import { getScopedClient } from '@/lib/db';
 import { appBaseUrl } from '@/lib/mail';
 import {
+  assertPortalReady,
   BillingConfigError,
+  CLIENT_ORG_ID_ERROR,
   createStripePortal,
   listSubscriptions,
-  providerConfigured,
+  requestHasClientCustomerId,
+  requestHasClientOrgId,
   requireBillingManager,
 } from '../_lib';
 
@@ -17,10 +20,13 @@ export const dynamic = 'force-dynamic';
  */
 export async function POST(request: Request) {
   try {
-    const body = await request.json().catch(() => ({}));
-    if (body?.orgId || body?.org_id) {
+    const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
+    if (requestHasClientOrgId(request, body)) {
+      return NextResponse.json({ error: CLIENT_ORG_ID_ERROR }, { status: 400 });
+    }
+    if (requestHasClientCustomerId(body)) {
       return NextResponse.json(
-        { error: 'org_id is not accepted from the client; it is resolved from the session.' },
+        { error: 'customer_id is not accepted from the client; it is resolved from the session org.' },
         { status: 400 }
       );
     }
@@ -33,11 +39,13 @@ export async function POST(request: Request) {
       if ('error' in gate) {
         return NextResponse.json({ error: gate.error }, { status: gate.status });
       }
-      if (!providerConfigured('stripe')) {
-        return NextResponse.json(
-          { error: 'Darex Stripe billing is not configured', connected: false },
-          { status: 503 }
-        );
+      try {
+        assertPortalReady();
+      } catch (cfg) {
+        if (cfg instanceof BillingConfigError) {
+          return NextResponse.json({ error: cfg.message, connected: false }, { status: 503 });
+        }
+        throw cfg;
       }
       const subs = await listSubscriptions(scoped.client, orgId);
       customerId = subs.find((s) => s.provider === 'stripe')?.provider_customer_id ?? null;

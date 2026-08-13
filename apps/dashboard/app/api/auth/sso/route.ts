@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { ensureSuperTokensInit, listSsoProviders } from '@/lib/supertokens';
+import { ensureSuperTokensInit, listSsoProviders, samlTestIdpEnabled } from '@/lib/supertokens';
 
 export const dynamic = 'force-dynamic';
 
@@ -11,5 +11,6 @@ export async function GET() {
   return NextResponse.json({
     providers: listSsoProviders(),
     passwordEnabled: true,
+    testIdp: samlTestIdpEnabled(),
   });
 }

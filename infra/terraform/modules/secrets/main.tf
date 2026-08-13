@@ -1,10 +1,9 @@
-# Secret *containers* only. Values come from terraform.tfvars (gitignored)
-# or from the AWS console/CLI. This module never hardcodes passwords.
+# Secret *containers* only. Values are pasted in AWS console / CI — never in .tf.
+# Darex platform billing (B2) and SuperTokens SSO (S7) are app env, not customer PSP.
 
 resource "aws_secretsmanager_secret" "db_master" {
   name        = "${var.name_prefix}/${var.environment}/db-master"
-  description = "RDS master password (migrations as darex). Value not in git."
-  recovery_window_in_days = 7
+  description = "RDS master password (migrations). Runtime uses darex_app."
 }
 
 resource "aws_secretsmanager_secret_version" "db_master" {
@@ -15,8 +14,7 @@ resource "aws_secretsmanager_secret_version" "db_master" {
 
 resource "aws_secretsmanager_secret" "app_db" {
   name        = "${var.name_prefix}/${var.environment}/app-db"
-  description = "Runtime DB_USER=darex_app password. Value not in git."
-  recovery_window_in_days = 7
+  description = "darex_app runtime password."
 }
 
 resource "aws_secretsmanager_secret_version" "app_db" {
@@ -25,14 +23,12 @@ resource "aws_secretsmanager_secret_version" "app_db" {
   secret_string = var.app_db_password
 }
 
-resource "aws_secretsmanager_secret" "nango" {
-  name        = "${var.name_prefix}/${var.environment}/nango"
-  description = "Nango UUID secret key. Set the value out of band; never commit."
-  recovery_window_in_days = 7
+resource "aws_secretsmanager_secret" "darex_billing" {
+  name        = "${var.name_prefix}/${var.environment}/darex-billing"
+  description = "Darex platform Stripe/Razorpay keys (B2). Paste DAREX_STRIPE_* / DAREX_RAZORPAY_* in the console. Not org payment-link tools."
 }
 
-resource "aws_secretsmanager_secret" "litellm" {
-  name        = "${var.name_prefix}/${var.environment}/litellm"
-  description = "LiteLLM master key + provider keys. Set out of band."
-  recovery_window_in_days = 7
+resource "aws_secretsmanager_secret" "darex_sso" {
+  name        = "${var.name_prefix}/${var.environment}/darex-sso"
+  description = "SuperTokens SAML/OIDC IdP credentials (S7). Paste SUPERTOKENS_SAML_* / Workspace / Okta / Azure values in the console."
 }

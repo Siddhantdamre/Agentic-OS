@@ -13,3 +13,7 @@ environment       = "staging"
 # Set to enable ACM + ALB. Leave empty to skip HTTPS resources.
 domain_name     = ""
 route53_zone_id = ""
+
+# Billing (B2) and SSO (S7) secret *values* are not Terraform variables.
+# After apply, paste DAREX_STRIPE_* / DAREX_RAZORPAY_* and SUPERTOKENS_SAML_*
+# into the darex-billing / darex-sso Secrets Manager shells. See .env.example.

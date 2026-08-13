@@ -1,6 +1,6 @@
 /** Shared domain shapes. Callers: dashboard + workflows. Not a DB schema. */
 
-export type OrgPlan = 'starter' | 'growth' | 'enterprise' | string;
+export type OrgPlan = 'free' | 'starter' | 'growth' | 'enterprise' | string;
 export type OrgStatus = 'provisioning' | 'active' | 'paused' | 'deleted' | string;
 export type UserRole = 'owner' | 'admin' | 'member' | string;
 export type EmployeeStatus = 'active' | 'paused' | 'archived' | string;

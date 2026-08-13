@@ -3,13 +3,16 @@ import { getOrgScopedClient, getScopedClient } from '@/lib/db';
 import { lookupUserById } from '@/lib/auth-user';
 import { appBaseUrl } from '@/lib/mail';
 import {
+  assertCheckoutReady,
   BillingConfigError,
+  CLIENT_ORG_ID_ERROR,
   createRazorpaySubscription,
   createStripeCheckout,
   isBillingProvider,
   isCheckoutPlan,
   listSubscriptions,
-  providerConfigured,
+  requestHasClientCustomerId,
+  requestHasClientOrgId,
   requireBillingManager,
   seatMax,
   upsertSubscription,
@@ -23,17 +26,20 @@ export const dynamic = 'force-dynamic';
  */
 export async function POST(request: Request) {
   try {
-    const body = await request.json().catch(() => ({}));
-    if (body?.orgId || body?.org_id) {
+    const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
+    if (requestHasClientOrgId(request, body)) {
+      return NextResponse.json({ error: CLIENT_ORG_ID_ERROR }, { status: 400 });
+    }
+    if (requestHasClientCustomerId(body)) {
       return NextResponse.json(
-        { error: 'org_id is not accepted from the client; it is resolved from the session.' },
+        { error: 'customer_id / subscription_id are not accepted from the client; they are resolved from the session org.' },
         { status: 400 }
       );
     }
 
-    const provider = body?.provider;
-    const plan = body?.plan;
-    const seatsRaw = body?.seats;
+    const provider = body.provider;
+    const plan = body.plan;
+    const seatsRaw = body.seats;
     if (!isBillingProvider(provider)) {
       return NextResponse.json({ error: 'provider must be stripe or razorpay' }, { status: 400 });
     }
@@ -44,11 +50,13 @@ export async function POST(request: Request) {
     if (seats < 1 || seats > seatMax()) {
       return NextResponse.json({ error: `seats must be between 1 and ${seatMax()}` }, { status: 400 });
     }
-    if (!providerConfigured(provider)) {
-      return NextResponse.json(
-        { error: `Darex ${provider} billing is not configured`, connected: false },
-        { status: 503 }
-      );
+    try {
+      assertCheckoutReady(provider, plan);
+    } catch (cfg) {
+      if (cfg instanceof BillingConfigError) {
+        return NextResponse.json({ error: cfg.message, connected: false }, { status: 503 });
+      }
+      throw cfg;
     }
 
     const scoped = await getScopedClient();

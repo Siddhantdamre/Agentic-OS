@@ -32,6 +32,7 @@ import {
   type OrgWeeklyCost,
 } from '@/lib/org-cost';
 import { LangfuseConfigError } from '@/lib/langfuse-trace';
+import { isProductionEnv } from '@/lib/boot-guards';
 import { getOrgScopedClient, pool } from '@/lib/db';
 import { loadHumanRole, type HumanRole } from '@/lib/rbac';
 import {
@@ -285,6 +286,86 @@ export function providerConfigured(provider: BillingProvider): boolean {
       return _exhaustive;
     }
   }
+}
+
+export const CLIENT_ORG_ID_ERROR =
+  'org_id is not accepted from the client; it is resolved from the session.';
+
+export function requestHasClientOrgId(
+  request: Request,
+  body?: Record<string, unknown> | null
+): boolean {
+  const url = new URL(request.url);
+  if (url.searchParams.get('org_id') || url.searchParams.get('orgId')) return true;
+  if (!body) return false;
+  return Boolean(body.orgId || body.org_id);
+}
+
+export function requestHasClientCustomerId(body?: Record<string, unknown> | null): boolean {
+  if (!body) return false;
+  return Boolean(body.customerId || body.customer_id || body.subscriptionId || body.subscription_id);
+}
+
+/**
+ * Env names a human must paste for this Darex PSP (not org payment-link tools).
+ * Production also requires the webhook secret so paid sessions can be reconciled.
+ */
+export function missingProviderEnv(
+  provider: BillingProvider,
+  plan?: CheckoutPlanKey
+): string[] {
+  const missing: string[] = [];
+  const prod = isProductionEnv();
+  switch (provider) {
+    case 'stripe':
+      if (!stripeSecretKey()) missing.push('DAREX_STRIPE_SECRET_KEY');
+      if (prod && !stripeWebhookSecret()) missing.push('DAREX_STRIPE_WEBHOOK_SECRET');
+      if (plan) {
+        if (!stripePriceId(plan)) missing.push(`DAREX_STRIPE_PRICE_${plan.toUpperCase()}`);
+      } else if (!stripePriceId('starter') && !stripePriceId('growth') && !stripePriceId('enterprise')) {
+        missing.push('DAREX_STRIPE_PRICE_STARTER|GROWTH|ENTERPRISE');
+      }
+      break;
+    case 'razorpay':
+      if (!razorpayKeyId()) missing.push('DAREX_RAZORPAY_KEY_ID');
+      if (!razorpayKeySecret()) missing.push('DAREX_RAZORPAY_KEY_SECRET');
+      if (prod && !razorpayWebhookSecret()) missing.push('DAREX_RAZORPAY_WEBHOOK_SECRET');
+      if (plan) {
+        if (!razorpayPlanId(plan)) missing.push(`DAREX_RAZORPAY_PLAN_${plan.toUpperCase()}`);
+      } else if (!razorpayPlanId('starter') && !razorpayPlanId('growth') && !razorpayPlanId('enterprise')) {
+        missing.push('DAREX_RAZORPAY_PLAN_STARTER|GROWTH|ENTERPRISE');
+      }
+      break;
+    default: {
+      const _exhaustive: never = provider;
+      return _exhaustive;
+    }
+  }
+  return missing;
+}
+
+export function billingProviderGaps(): { stripe: string[]; razorpay: string[] } {
+  return {
+    stripe: missingProviderEnv('stripe'),
+    razorpay: missingProviderEnv('razorpay'),
+  };
+}
+
+export function assertCheckoutReady(provider: BillingProvider, plan: CheckoutPlanKey): void {
+  const missing = missingProviderEnv(provider, plan);
+  if (missing.length === 0) return;
+  const mode = isProductionEnv() ? 'production fail-fast' : 'dev';
+  throw new BillingConfigError(
+    `Darex ${provider} billing is not configured (${mode}). Missing: ${missing.join(', ')}. See .env.example. No invoice was created.`
+  );
+}
+
+export function assertPortalReady(): void {
+  if (stripeSecretKey()) return;
+  const mode = isProductionEnv() ? 'production fail-fast' : 'dev';
+  throw new BillingConfigError(
+    `Darex Stripe billing is not configured (${mode}). Missing: DAREX_STRIPE_SECRET_KEY. See .env.example.`
+  );
 }
 
 export type CatalogPlan = {

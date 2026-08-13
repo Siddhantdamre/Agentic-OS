@@ -55,4 +55,76 @@ export function assertProductionBoot(): void {
   if (!process.env.DB_HOST) {
     throw new Error('DB_HOST must be set in production');
   }
+
+  assertProductionBillingConfig();
+  assertProductionSsoConfig();
+}
+
+function envSet(name: string): boolean {
+  const raw = process.env[name];
+  return raw != null && raw.trim() !== '';
+}
+
+function stripeBillingComplete(): boolean {
+  return (
+    envSet('DAREX_STRIPE_SECRET_KEY') &&
+    envSet('DAREX_STRIPE_WEBHOOK_SECRET') &&
+    (envSet('DAREX_STRIPE_PRICE_STARTER') ||
+      envSet('DAREX_STRIPE_PRICE_GROWTH') ||
+      envSet('DAREX_STRIPE_PRICE_ENTERPRISE'))
+  );
+}
+
+function razorpayBillingComplete(): boolean {
+  return (
+    envSet('DAREX_RAZORPAY_KEY_ID') &&
+    envSet('DAREX_RAZORPAY_KEY_SECRET') &&
+    envSet('DAREX_RAZORPAY_WEBHOOK_SECRET') &&
+    (envSet('DAREX_RAZORPAY_PLAN_STARTER') ||
+      envSet('DAREX_RAZORPAY_PLAN_GROWTH') ||
+      envSet('DAREX_RAZORPAY_PLAN_ENTERPRISE'))
+  );
+}
+
+/**
+ * Darex platform billing (B2) — not org payment-link tools.
+ * Partial PSP config in production refuses boot. Staging sets
+ * DAREX_BILLING_REQUIRED=true so missing keys also refuse boot.
+ * Checkout still 503s honestly when keys are absent and the flag is off.
+ */
+export function assertProductionBillingConfig(): void {
+  if (!isProductionEnv() || isNextProductionBuild()) return;
+
+  if (envSet('DAREX_STRIPE_SECRET_KEY') && !stripeBillingComplete()) {
+    throw new Error(
+      'Partial Darex Stripe billing config in production. Set DAREX_STRIPE_WEBHOOK_SECRET and at least one DAREX_STRIPE_PRICE_*. No silent invoices.'
+    );
+  }
+  if (envSet('DAREX_RAZORPAY_KEY_ID') && !razorpayBillingComplete()) {
+    throw new Error(
+      'Partial Darex Razorpay billing config in production. Set DAREX_RAZORPAY_KEY_SECRET, DAREX_RAZORPAY_WEBHOOK_SECRET, and at least one DAREX_RAZORPAY_PLAN_*.'
+    );
+  }
+  if (
+    process.env.DAREX_BILLING_REQUIRED === 'true' &&
+    !stripeBillingComplete() &&
+    !razorpayBillingComplete()
+  ) {
+    throw new Error(
+      'DAREX_BILLING_REQUIRED=true but neither Stripe nor Razorpay is fully configured. See .env.example DAREX_STRIPE_* / DAREX_RAZORPAY_*.'
+    );
+  }
+}
+
+/**
+ * S7 — test IdP localhost defaults are forbidden in production.
+ * Password login stays enabled regardless of SSO env.
+ */
+export function assertProductionSsoConfig(): void {
+  if (!isProductionEnv() || isNextProductionBuild()) return;
+  if (process.env.SUPERTOKENS_SAML_TEST_IDP === 'true') {
+    throw new Error(
+      'SUPERTOKENS_SAML_TEST_IDP=true is forbidden when NODE_ENV=production. Set SUPERTOKENS_SAML_BOXY_URL, SUPERTOKENS_SAML_CLIENT_ID, and SUPERTOKENS_SAML_CLIENT_SECRET for a real IdP.'
+    );
+  }
 }

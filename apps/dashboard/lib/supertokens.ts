@@ -80,26 +80,29 @@ function samlConfigured(): boolean {
   const boxyURL = process.env.SUPERTOKENS_SAML_BOXY_URL;
   const clientId = process.env.SUPERTOKENS_SAML_CLIENT_ID;
   const clientSecret = process.env.SUPERTOKENS_SAML_CLIENT_SECRET;
-  const testIdp = process.env.SUPERTOKENS_SAML_TEST_IDP === 'true';
   if (isProduction() && !isNextBuild()) {
     return Boolean(boxyURL && clientId && clientSecret);
   }
-  return testIdp || Boolean(boxyURL && clientId);
+  if (samlTestIdpEnabled()) return true;
+  return Boolean(boxyURL && clientId && clientSecret);
+}
+
+/** Localhost Boxy + mocksaml defaults only when the operator opts in. Never in production. */
+export function samlTestIdpEnabled(): boolean {
+  return process.env.SUPERTOKENS_SAML_TEST_IDP === 'true' && !isProduction();
 }
 
 function buildSamlProvider(): ProviderInput | null {
   if (!samlConfigured()) return null;
-  const boxyURL =
-    process.env.SUPERTOKENS_SAML_BOXY_URL ||
-    (isProduction() ? '' : 'http://localhost:5225');
-  const clientId = process.env.SUPERTOKENS_SAML_CLIENT_ID || (isProduction() ? '' : 'mock-saml');
-  const clientSecret =
-    process.env.SUPERTOKENS_SAML_CLIENT_SECRET || (isProduction() ? '' : 'mock-saml-secret');
+  const test = samlTestIdpEnabled();
+  const boxyURL = process.env.SUPERTOKENS_SAML_BOXY_URL || (test ? 'http://localhost:5225' : '');
+  const clientId = process.env.SUPERTOKENS_SAML_CLIENT_ID || (test ? 'mock-saml' : '');
+  const clientSecret = process.env.SUPERTOKENS_SAML_CLIENT_SECRET || (test ? 'mock-saml-secret' : '');
   if (!boxyURL || !clientId || !clientSecret) return null;
   return {
     config: {
       thirdPartyId: 'boxy-saml',
-      name: 'SAML (test IdP)',
+      name: test ? 'SAML (test IdP)' : 'SAML',
       clients: [
         {
           clientId,

@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getScopedClient } from '@/lib/db';
-import { refreshOrgMeters } from '../_lib';
+import { CLIENT_ORG_ID_ERROR, refreshOrgMeters, requestHasClientOrgId } from '../_lib';
 
 export const dynamic = 'force-dynamic';
 
@@ -9,7 +9,10 @@ export const dynamic = 'force-dynamic';
  * LLM (Langfuse cost API) + WhatsApp conversations + seats for the session org.
  * notConnected / disconnected tools are metered separately and do not count as success.
  */
-export async function GET() {
+export async function GET(request: Request) {
+  if (requestHasClientOrgId(request)) {
+    return NextResponse.json({ error: CLIENT_ORG_ID_ERROR }, { status: 400 });
+  }
   let orgId = '';
   try {
     const scoped = await getScopedClient();

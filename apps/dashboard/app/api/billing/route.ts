@@ -3,12 +3,15 @@ import { getScopedClient } from '@/lib/db';
 import { loadHumanRole } from '@/lib/rbac';
 import {
   BillingConfigError,
+  billingProviderGaps,
   catalogPlans,
+  CLIENT_ORG_ID_ERROR,
   listInvoices,
   listSubscriptions,
   loadOrgPlan,
   providerConfigured,
   refreshOrgMeters,
+  requestHasClientOrgId,
 } from './_lib';
 
 export const dynamic = 'force-dynamic';
@@ -17,7 +20,10 @@ export const dynamic = 'force-dynamic';
  * GET /api/billing
  * Session org only — never a body/query org_id. Invoices are RLS-scoped.
  */
-export async function GET() {
+export async function GET(request: Request) {
+  if (requestHasClientOrgId(request)) {
+    return NextResponse.json({ error: CLIENT_ORG_ID_ERROR }, { status: 400 });
+  }
   let orgId = '';
   try {
     const scoped = await getScopedClient();
@@ -45,6 +51,7 @@ export async function GET() {
         stripe: providerConfigured('stripe'),
         razorpay: providerConfigured('razorpay'),
       },
+      providerGaps: billingProviderGaps(),
       catalog: catalogPlans(),
       subscriptions: subscriptions.map((s) => ({
         id: s.id,

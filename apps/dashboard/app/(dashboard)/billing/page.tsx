@@ -68,6 +68,7 @@ type BillingPayload = {
   role: string;
   neverEscrow: boolean;
   providers: { stripe: boolean; razorpay: boolean };
+  providerGaps?: { stripe: string[]; razorpay: string[] };
   catalog: CatalogPlan[];
   subscriptions: Subscription[];
   invoices: Invoice[];
@@ -256,6 +257,13 @@ export default function BillingPage() {
               <div className="text-sm font-semibold text-heading space-y-1">
                 <p>Stripe: {data.providers.stripe ? 'configured' : 'not configured'}</p>
                 <p>Razorpay: {data.providers.razorpay ? 'configured' : 'not configured'}</p>
+                {data.providerGaps &&
+                  (data.providerGaps.stripe.length > 0 || data.providerGaps.razorpay.length > 0) && (
+                    <p className="text-xs font-medium text-slate-500 pt-1">
+                      Missing env:{' '}
+                      {[...data.providerGaps.stripe, ...data.providerGaps.razorpay].join(', ')}
+                    </p>
+                  )}
               </div>
             </div>
           </div>
