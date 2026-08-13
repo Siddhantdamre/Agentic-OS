@@ -150,7 +150,7 @@ async function runPhase3Checks() {
     try {
       // Use the same org the webhook wrote to (the session user's org)
       const orgId = orgIdFromCookie || ((await client.query(`SELECT id FROM orgs LIMIT 1`)).rows[0].id);
-      await client.query(`SELECT set_config('app.current_org_id', $1, true)`, [orgId]);
+      await client.query(`SELECT set_config('app.current_org_id', $1, false)`, [orgId]);
 
       const convCheck = await client.query(
         `SELECT id, status, contact_id FROM conversations WHERE org_id = $1 AND id = $2`,

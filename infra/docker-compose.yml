@@ -558,10 +558,10 @@ services:
       # `environment` wins over env_file.
       - TEMPORAL_ADDRESS=temporal:7233
       - DB_HOST=postgres
-      - DB_USER=${DB_USER:-darex}
+      - DB_USER=${APP_DB_USER:-darex_app}
       - DB_PORT=5432
       - DB_NAME=${DB_NAME:-darex}
-      - DB_PASSWORD=${DB_PASSWORD:-darex_dev_secret}
+      - DB_PASSWORD=${APP_DB_PASSWORD:-darex_app_dev_secret}
       - NANGO_HOST=http://nango-server:3003
       - ATOMIC_AGENT_URL=http://atomic-agent:8787
       - ATOMIC_AGENT_API_KEY=${ATOMIC_AGENT_API_KEY:-darex-atomic-agent-dev-key}
@@ -611,10 +611,10 @@ services:
     environment:
       # `environment` wins over env_file.
       - DB_HOST=postgres
-      - DB_USER=${DB_USER:-darex}
+      - DB_USER=${APP_DB_USER:-darex_app}
       - DB_PORT=5432
       - DB_NAME=${DB_NAME:-darex}
-      - DB_PASSWORD=${DB_PASSWORD:-darex_dev_secret}
+      - DB_PASSWORD=${APP_DB_PASSWORD:-darex_app_dev_secret}
       - NANGO_HOST=http://nango-server:3003
       - TEMPORAL_ADDRESS=temporal:7233
       - SUPERTOKENS_CONNECTION_URI=http://supertokens:3567

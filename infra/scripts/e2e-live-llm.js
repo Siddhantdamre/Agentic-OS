@@ -179,7 +179,7 @@ async function run() {
     console.log('\n--- 4. Verify AI reply persisted in DB (real LLM, not canned fallback) ---');
     const client = await pool.connect();
     try {
-      await client.query(`SELECT set_config('app.current_org_id', $1, true)`, [orgIdFromCookie]);
+      await client.query(`SELECT set_config('app.current_org_id', $1, false)`, [orgIdFromCookie]);
       const convRes = await client.query(
         `SELECT id, contact_id, summary FROM conversations WHERE org_id = $1 AND contact_id = $2 ORDER BY started_at DESC LIMIT 1`,
         [orgIdFromCookie, from]
@@ -217,7 +217,7 @@ async function run() {
     console.log('\n--- 5. Verify outbound_message channel_log (real Meta send attempt) ---');
     const logClient = await pool.connect();
     try {
-      await logClient.query(`SELECT set_config('app.current_org_id', $1, true)`, [orgIdFromCookie]);
+      await logClient.query(`SELECT set_config('app.current_org_id', $1, false)`, [orgIdFromCookie]);
       const logRes = await logClient.query(
         `SELECT event_type, status, status_code, message, payload FROM channel_logs
          WHERE org_id = $1 ORDER BY created_at DESC LIMIT 10`,

@@ -6,7 +6,7 @@ import { runAutonomousAgentDirect } from '../atomic-agent-client.js';
 const pool = new Pool({
   host: process.env.DB_HOST || 'localhost',
   port: parseInt(process.env.DB_PORT || '5432'),
-  user: process.env.DB_USER || 'darex',
+  user: process.env.DB_USER || 'darex_app',
   password: process.env.DB_PASSWORD,
   database: process.env.DB_NAME || 'darex',
 });
@@ -14,9 +14,14 @@ const pool = new Pool({
 async function withOrgClient<T>(orgId: string, fn: (client: PoolClient) => Promise<T>): Promise<T> {
   const client = await pool.connect();
   try {
-    await client.query("SELECT set_config('app.current_org_id', $1, true)", [orgId]);
+    await client.query("SELECT set_config('app.current_org_id', $1, false)", [orgId]);
     return await fn(client);
   } finally {
+    try {
+      await client.query('RESET app.current_org_id');
+    } catch {
+      // always release
+    }
     client.release();
   }
 }
