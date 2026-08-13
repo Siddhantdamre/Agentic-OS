@@ -3,20 +3,27 @@ import { cookies } from 'next/headers';
 import { parseSessionCookie, SESSION_COOKIE } from '@/lib/session-cookie';
 import { attachUserToOrg, lookupUserById } from '@/lib/auth-user';
 
+function readEnv(key: string): string | undefined {
+  return process.env[key];
+}
+
 function createPool(): Pool {
-  const isProd = process.env.NODE_ENV === 'production';
-  if (isProd && !process.env.DB_PASSWORD) {
+  const isProd = readEnv('NODE_ENV') === 'production';
+  // `next build` sets NODE_ENV=production while collecting page data. That is
+  // not a running app — Docker/CI must compile without runtime DB secrets.
+  const isNextBuild = readEnv('NEXT_PHASE') === 'phase-production-build';
+  if (isProd && !isNextBuild && !readEnv('DB_PASSWORD')) {
     throw new Error('DB_PASSWORD must be set in production');
   }
-  if (isProd && !process.env.DB_HOST) {
+  if (isProd && !isNextBuild && !readEnv('DB_HOST')) {
     throw new Error('DB_HOST must be set in production');
   }
   return new Pool({
-    host: process.env.DB_HOST || 'localhost',
-    port: parseInt(process.env.DB_PORT || '5432', 10),
-    user: process.env.DB_USER || 'darex_app',
-    password: process.env.DB_PASSWORD,
-    database: process.env.DB_NAME || 'darex',
+    host: readEnv('DB_HOST') || 'localhost',
+    port: parseInt(readEnv('DB_PORT') || '5432', 10),
+    user: readEnv('DB_USER') || 'darex_app',
+    password: readEnv('DB_PASSWORD'),
+    database: readEnv('DB_NAME') || 'darex',
     max: 10,
     idleTimeoutMillis: 30000,
   });
