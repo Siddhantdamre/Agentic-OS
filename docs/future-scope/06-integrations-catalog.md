@@ -428,15 +428,23 @@ honest `notConnected`. MCP names `mcp.darex.*`.
 4. Playwright last-resort (`08` computer-use), confirm every write.
 5. E2B/Daytona as *ideas* for sandbox isolation vs our Docker image.
 
-### Open-source GitHub (at least 5) — same job as this file
+### Open-source GitHub — this file only (iPaaS / MCP / scrape)
+
+Nango + Jina KEEP → `15` §1. Windmill / Trigger → `09`. n8n is listed **only here**.
 
 | Repo | Similar to | We take |
 |------|------------|---------|
-| [NangoHQ/nango](https://github.com/NangoHQ/nango) | OAuth + 400 APIs | **KEEP** token plane |
-| [modelcontextprotocol/servers](https://github.com/modelcontextprotocol/servers) | Official MCP server examples | `mcp.darex.*` design |
-| [n8n-io/n8n](https://github.com/n8n-io/n8n) | 1500+ integrations + MCP | Customer iPaaS later |
-| [PipedreamHQ/pipedream](https://github.com/PipedreamHQ/pipedream) | Source-available iPaaS | Connector coverage, not kernel |
+| [n8n-io/n8n](https://github.com/n8n-io/n8n) | Visual iPaaS + MCP nodes | Customer automation later; not kernel executor |
 | [activepieces/activepieces](https://github.com/activepieces/activepieces) | MIT Zapier-class | Same |
-| [windmill-labs/windmill](https://github.com/windmill-labs/windmill) | Scripts as jobs | Embed/sync workers later |
-| [microsoft/playwright](https://github.com/microsoft/playwright) | Browser last-resort | Phase 17 sandbox |
-| [jina-ai/reader](https://github.com/jina-ai/reader) / Jina search | World-sense we already use | KEEP cite-not-SoR |
+| [huginn/huginn](https://github.com/huginn/huginn) | Self-host agent iPaaS | Trigger list, not a runtime |
+| [PipedreamHQ/pipedream](https://github.com/PipedreamHQ/pipedream) | Source-available iPaaS | Connector coverage ideas |
+| [modelcontextprotocol/servers](https://github.com/modelcontextprotocol/servers) | Official MCP server examples | `mcp.darex.*` design |
+| [modelcontextprotocol/typescript-sdk](https://github.com/modelcontextprotocol/typescript-sdk) | MCP TS SDK | Bridge, not a second server per vertical |
+| [modelcontextprotocol/python-sdk](https://github.com/modelcontextprotocol/python-sdk) | MCP Python SDK | Only if a worker is Python |
+| [firecrawl/firecrawl](https://github.com/firecrawl/firecrawl) | Crawl → markdown | WATCH if Jina extract fails |
+| [unclecode/crawl4ai](https://github.com/unclecode/crawl4ai) | OSS crawl for LLMs | Same; cite, not SoR |
+| [scrapy/scrapy](https://github.com/scrapy/scrapy) | Classic crawler | **REJECT** for portals (ToS); email-parse is Gmail |
+| [apify/crawlee](https://github.com/apify/crawlee) | Browser crawler | Phase 17 last resort |
+| [apache/camel](https://github.com/apache/camel) | Enterprise integration patterns | Sync-worker recipes |
+| [svix/svix-webhooks](https://github.com/svix/svix-webhooks) | Outbound webhook delivery | Signed org webhooks |
+| [microsoft/playwright](https://github.com/microsoft/playwright) | Browser last-resort | Phase 17 sandbox; confirm every write |

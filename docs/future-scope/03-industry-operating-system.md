@@ -290,7 +290,9 @@ workflows + skills + KPIs + compliance) on one kernel. Not 40 apps.
 
 Article: “Open Source CRM & ERP 2026” (Odoo, ERPNext, Twenty, SuiteCRM, EspoCRM).
 
-### Open-source GitHub (at least 5) — same job as this file
+### Open-source GitHub — this file only (packs / ERP / CRM modules)
+
+Cal.com / Documenso → `05`. Medusa / Saleor → `04`. Chatwoot → `11`. Odoo is listed **only here**.
 
 | Repo | Similar to | We take |
 |------|------------|---------|

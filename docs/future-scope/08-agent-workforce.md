@@ -262,7 +262,7 @@ orchestrates multi-agent; critic is LiteLLM JSON.
 | 1 | **CrewAI Crews + Flows** | Role/goal/backstory; human review; MCP adapter | Would be a second orchestrator; copy YAML only | [crewAIInc/crewAI](https://github.com/crewAIInc/crewAI) |
 | 2 | **Magentic-One / Microsoft Agent Framework** | Orchestrator ledger + specialists; AutoGen lineage | Azure gravity; we have manager + Temporal ledger | arXiv:2411.04468, AutoGen |
 | 3 | **OpenAI Agents SDK** handoffs + guardrails | Clean API; tracing | Vendor lock-in; our router + critic already map | OpenAI Agents SDK |
-| 4 | **Letta** long-lived employees with memory | Identity survives process death | Letta *is* a runtime; Temporal + our memory do that | [letta-ai/letta](https://github.com/letta-ai/letta) |
+| 4 | **Google ADK 2.0** (graph workflows + A2A) | GCP-native graphs; 2026 competitor to LangGraph | Azure/GCP gravity; we keep atomic-agent + Temporal | [google/adk-python](https://github.com/google/adk-python) |
 | 5 | **Relevance AI / Lindy** no-code workforces | Buyers get “hire Sarah” in a day | We sell an OS + packs, not a Zapier | relevanceai.com; lindy.ai |
 
 **Five things to steal anyway**
@@ -270,18 +270,27 @@ orchestrates multi-agent; critic is LiteLLM JSON.
 1. CrewAI role cards → pack `employees/*.yaml`.
 2. Magentic-One progress ledger → WorkItemWorkflow state.
 3. Guardrails → confirm classes + critic (not a new SDK).
-4. τ-bench domain evals → golden WhatsApp+CRM (`promptfoo/promptfoo`).
-5. Default solo + memory; never 8 agents per “hi”.
+4. τ-bench domain evals → golden WhatsApp+CRM (Promptfoo lives in `01`).
+5. Default solo + memory; never 8 agents per “hi”. Letta memory hierarchy is `10`.
 
-### Open-source GitHub (at least 5) — same job as this file
+### Open-source GitHub — this file only (multi-agent crews)
+
+atomic-agent KEEP → `15` §1. Letta → `10`. Promptfoo → `01`. Agno / OpenHands → `00`.
 
 | Repo | Similar to | We take |
 |------|------------|---------|
-| [AtomicBot-ai/atomic-agent](https://github.com/AtomicBot-ai/atomic-agent) | Employee loop we pin | **KEEP** v0.1.73; mount skills |
 | [crewAIInc/crewAI](https://github.com/crewAIInc/crewAI) | Role + task + crew | YAML personas |
 | [microsoft/autogen](https://github.com/microsoft/autogen) | Multi-agent actors | Magentic-One ledger |
-| [letta-ai/letta](https://github.com/letta-ai/letta) | Long-lived employee memory | Hierarchy, not runtime |
-| [agno-agi/agno](https://github.com/agno-agi/agno) | Teams + AgentOS | Roster UI |
+| [google/adk-python](https://github.com/google/adk-python) | ADK 2.0 graph + A2A | STUDY routing; not a kernel |
+| [FoundationAgents/MetaGPT](https://github.com/FoundationAgents/MetaGPT) | SOP-driven company of agents | Playbook → skill promotion |
+| [OpenBMB/ChatDev](https://github.com/OpenBMB/ChatDev) | Role chat waterfall | Never unbounded roles |
+| [kyegomez/swarms](https://github.com/kyegomez/swarms) | Swarm patterns | Fan-out bounds |
+| [langroid/langroid](https://github.com/langroid/langroid) | Typed multi-agent | Critic JSON types |
+| [camel-ai/camel](https://github.com/camel-ai/camel) | Role-playing agents | Eval dialogues |
+| [huggingface/smolagents](https://github.com/huggingface/smolagents) | Minimal tool agents | Keep atomic-agent smaller |
 | [openai/openai-agents-python](https://github.com/openai/openai-agents-python) | Handoffs + guardrails | Router + critic |
-| [promptfoo/promptfoo](https://github.com/promptfoo/promptfoo) | Golden conversations | Eval-runner |
+| [pydantic/pydantic-ai](https://github.com/pydantic/pydantic-ai) | Typed agents on Temporal | Activity wrap lesson |
 | [noahshinn024/reflexion](https://github.com/noahshinn024/reflexion) | Verbal critic | Write-back + critic JSON |
+| [princeton-nlp/tree-of-thought-llm](https://github.com/princeton-nlp/tree-of-thought-llm) | Branching search | Plan revise, not 8 employees |
+| [microsoft/semantic-kernel](https://github.com/microsoft/semantic-kernel) | Plugins + planners | Skill plugins, not a runtime |
+| [stanford-oval/storm](https://github.com/stanford-oval/storm) | Research multi-agent | `/brain` SOP synthesis only |

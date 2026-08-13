@@ -226,15 +226,24 @@ pgvector second, cite, forget. Embed-worker off the webhook.
 4. Virus scan + hash before embed (Unstructured partition step).
 5. Source health UI like Airbyte connections page → `/brain`.
 
-### Open-source GitHub (at least 5) — same job as this file
+### Open-source GitHub — this file only (parse / RAG / SoR sync)
+
+pgvector KEEP → `15` §1. Mem0 / Graphiti → `10`. GraphRAG is listed **only here**.
 
 | Repo | Similar to | We take |
 |------|------------|---------|
 | [Unstructured-IO/unstructured](https://github.com/Unstructured-IO/unstructured) | File ETL for agents | Call from embed-worker |
 | [docling-project/docling](https://github.com/docling-project/docling) | Local PDF/Office parse | Default parser |
-| [run-llama/llama_index](https://github.com/run-llama/llama_index) | RAG + LlamaParse | Table-preserving chunks |
+| [apache/tika](https://github.com/apache/tika) | Java MIME/parse | Fallback for odd Office |
+| [run-llama/llama_index](https://github.com/run-llama/llama_index) | RAG + LlamaParse | Table-preserving chunks (OMs, rent rolls) |
 | [deepset-ai/haystack](https://github.com/deepset-ai/haystack) | Production RAG pipelines | Hybrid + eval metrics |
 | [airbytehq/airbyte](https://github.com/airbytehq/airbyte) | SoR sync cursors | `sync_cursors` |
 | [dlt-hub/dlt](https://github.com/dlt-hub/dlt) | Python ingest | Same, lighter |
-| [microsoft/graphrag](https://github.com/microsoft/graphrag) | Static SOP communities | `/brain` backfill only |
-| [pgvector/pgvector](https://github.com/pgvector/pgvector) | Vectors in Postgres | **KEEP** |
+| [microsoft/graphrag](https://github.com/microsoft/graphrag) | Static SOP communities | `/brain` backfill only; never live listings |
+| [infiniflow/ragflow](https://github.com/infiniflow/ragflow) | Deep-doc RAG UI | Inspector ideas; not SoR |
+| [datalab-to/marker](https://github.com/datalab-to/marker) | PDF → markdown | RE OM parse |
+| [opendatalab/MinerU](https://github.com/opendatalab/MinerU) | PDF extract | Same |
+| [pymupdf/PyMuPDF](https://github.com/pymupdf/PyMuPDF) | Fast PDF | Chunk worker |
+| [typesense/typesense](https://github.com/typesense/typesense) | Typo-tolerant search | WATCH if FTS fails listings |
+| [meilisearch/meilisearch](https://github.com/meilisearch/meilisearch) | Same | Same |
+| [vespa-engine/vespa](https://github.com/vespa-engine/vespa) | Serving + ranking | Only if pgvector+FTS dies at scale |
