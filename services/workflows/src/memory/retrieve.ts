@@ -100,6 +100,24 @@ export function emptyMemoryResult(orgId: string): RetrieveMemoryResult {
   return { orgId, citations: [], emptyIndex: true };
 }
 
+/** Parent WorkItem activity shape. Facts are citation snippets only — never invented. */
+export type RetrieveMemoryActivityResult = {
+  facts: string[];
+  citations: string[];
+  noOp: boolean;
+  emptyIndex: boolean;
+};
+
+export function toRetrieveActivityResult(memory: RetrieveMemoryResult): RetrieveMemoryActivityResult {
+  const citations = Array.isArray(memory.citations) ? memory.citations : [];
+  return {
+    facts: citations.map((c) => String(c.snippet || '').trim()).filter((s) => s.length > 0),
+    citations: citations.map((c) => String(c.id || '')).filter((id) => id.length > 0),
+    noOp: false,
+    emptyIndex: memory.emptyIndex === true || citations.length === 0,
+  };
+}
+
 /**
  * Cited-facts block injected into the grounded **user** message (atomic-agent
  * drops `system`). Empty citations always emit "no stored memory" — never

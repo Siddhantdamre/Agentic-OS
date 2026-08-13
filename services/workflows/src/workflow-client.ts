@@ -7,6 +7,8 @@ import type { OwnerBriefingWorkflowInput } from './workflows/OwnerBriefingWorkfl
 import type { StaleChaseWorkflowInput } from './workflows/StaleChaseWorkflow.js';
 import type { NurtureWorkflowInput } from './workflows/NurtureWorkflow.js';
 import type { InsightActionWorkflowInput } from './workflows/InsightActionWorkflow.js';
+import type { ShowingScheduleWorkflowInput } from './workflows/ShowingScheduleWorkflow.js';
+import type { RentReminderWorkflowInput } from './workflows/RentReminderWorkflow.js';
 import type { NurtureCancelReason } from './quiet-hours.js';
 import {
   insightActionWorkflowId,
@@ -164,7 +166,8 @@ export async function startWorkItemWorkflow(input: WorkItemWorkflowInput) {
       taskQueue: 'darex-agent-tasks',
       workflowId,
       args,
-      workflowExecutionTimeout: '25 minutes',
+      // O7 HITL wait can outlive a 25-minute agent turn.
+      workflowExecutionTimeout: '7 days',
     });
     console.log(`Temporal WorkItemWorkflow started: ${handle.workflowId}`);
     return handle;
@@ -382,6 +385,58 @@ export async function startInsightActionWorkflow(input: InsightActionWorkflowInp
     if (isAlreadyStarted(err)) return client.workflow.getHandle(workflowId);
     const message = err instanceof Error ? err.message : String(err);
     console.error(`[Temporal Start Error] InsightActionWorkflow ${workflowId} start failed:`, message);
+    return null;
+  }
+}
+
+function showingWorkflowId(input: ShowingScheduleWorkflowInput): string {
+  if (input.idempotencyKey) return `showing-${input.orgId}-${input.idempotencyKey}`;
+  const slot = String(input.startTime || '').replace(/[^0-9T]/g, '');
+  const target = input.listingId || input.inquiryId || 'open';
+  return `showing-${input.orgId}-${target}-${slot}`;
+}
+
+function rentReminderWorkflowId(input: RentReminderWorkflowInput): string {
+  if (input.idempotencyKey) return `rent-${input.orgId}-${input.idempotencyKey}`;
+  return `rent-${input.orgId}-${input.chargeId}`;
+}
+
+/** Book a showing via ShowingScheduleWorkflow. Null if Temporal is down. */
+export async function startShowingScheduleWorkflow(input: ShowingScheduleWorkflowInput) {
+  const client = await getTemporalClient();
+  if (!client) return null;
+  const workflowId = showingWorkflowId(input);
+  try {
+    return await client.workflow.start('ShowingScheduleWorkflow', {
+      taskQueue: 'darex-agent-tasks',
+      workflowId,
+      args: [{ ...input, idempotencyKey: input.idempotencyKey || workflowId }],
+      workflowExecutionTimeout: '8 minutes',
+    });
+  } catch (err: unknown) {
+    if (isAlreadyStarted(err)) return client.workflow.getHandle(workflowId);
+    const message = err instanceof Error ? err.message : String(err);
+    console.error(`[Temporal Start Error] ShowingScheduleWorkflow ${workflowId} start failed:`, message);
+    return null;
+  }
+}
+
+/** Rent reminder via RentReminderWorkflow. Null if Temporal is down. */
+export async function startRentReminderWorkflow(input: RentReminderWorkflowInput) {
+  const client = await getTemporalClient();
+  if (!client) return null;
+  const workflowId = rentReminderWorkflowId(input);
+  try {
+    return await client.workflow.start('RentReminderWorkflow', {
+      taskQueue: 'darex-agent-tasks',
+      workflowId,
+      args: [{ ...input, idempotencyKey: input.idempotencyKey || workflowId }],
+      workflowExecutionTimeout: '8 minutes',
+    });
+  } catch (err: unknown) {
+    if (isAlreadyStarted(err)) return client.workflow.getHandle(workflowId);
+    const message = err instanceof Error ? err.message : String(err);
+    console.error(`[Temporal Start Error] RentReminderWorkflow ${workflowId} start failed:`, message);
     return null;
   }
 }

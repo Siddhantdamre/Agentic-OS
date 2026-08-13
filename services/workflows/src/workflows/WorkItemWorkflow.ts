@@ -6,12 +6,14 @@ import {
   defineSignal,
   setHandler,
   workflowInfo,
+  condition,
 } from '@temporalio/workflow';
 import type * as activities from '../activities/index.js';
 import type { AgentTaskInput, AgentTaskResult } from '../agent-engine.js';
 import { AutonomousAgentWorkflow } from './AutonomousAgentWorkflow.js';
 import { MemoryWriteBackWorkflow } from './MemoryWriteBackWorkflow.js';
 import { isHumanDestination } from '../route-employee.js';
+import { resolveInboundHitlGate } from '../inbound-hitl.js';
 
 // Local types (WS-10 owns packages/shared-types — do not add work-item types there).
 export type WorkItemChannel = 'whatsapp' | 'chatwoot' | 'inbox' | 'ask_ai' | 'unknown';
@@ -64,11 +66,12 @@ export interface WorkItemWorkflowResult {
   savedByWorkflow: boolean;
   success: boolean;
   error?: string;
+  hitlDecision?: WorkItemConfirmDecision;
 }
 
 export type WorkItemConfirmDecision = 'approved' | 'rejected';
 
-/** HOOK(ws-07/O7): inbound-confirm — PlanCard approve/reject will signal this. Do not wait yet. */
+/** O7: PlanCard / owner-WhatsApp approve/reject signals this; inbound send/pay/sign waits before tools. */
 export const approveWorkItemSignal = defineSignal<[WorkItemConfirmDecision?]>('approveWorkItem');
 export const rejectWorkItemSignal = defineSignal('rejectWorkItem');
 
@@ -96,7 +99,7 @@ function sessionKeyForWorkItem(workItemId: string): string {
   return workItemId;
 }
 
-function nextStatus(event: 'start' | 'done' | 'fail' | 'await_confirm'): WorkItemStatus {
+function nextStatus(event: 'start' | 'done' | 'fail' | 'await_confirm' | 'cancel'): WorkItemStatus {
   switch (event) {
     case 'start':
       return 'in_progress';
@@ -106,6 +109,8 @@ function nextStatus(event: 'start' | 'done' | 'fail' | 'await_confirm'): WorkIte
       return 'needs_attention';
     case 'await_confirm':
       return 'waiting_approval';
+    case 'cancel':
+      return 'cancelled';
     default: {
       const _exhaustive: never = event;
       return _exhaustive;
@@ -136,8 +141,6 @@ export async function WorkItemWorkflow(input: WorkItemWorkflowInput): Promise<Wo
   const businessKey = input.idempotencyKey || input.inboundEventId || parentId;
   let lastConfirm: WorkItemConfirmDecision | undefined;
 
-  // HOOK(ws-07/O7): inbound-confirm — handlers record the signal; this workflow
-  // does not `condition()`/wait on HITL. PlanExecute / O7 will wait here later.
   setHandler(approveWorkItemSignal, (decision) => {
     lastConfirm = decision === 'rejected' ? 'rejected' : 'approved';
   });
@@ -172,11 +175,12 @@ export async function WorkItemWorkflow(input: WorkItemWorkflowInput): Promise<Wo
     businessKey: `${businessKey}:inbound_received`,
   });
 
-  // HOOK(ws-05): retrieveMemory is a no-op until memory retrieve ships.
   const memory = await retrieveMemoryActivity({
     orgId: input.orgId,
     workItemId,
     conversationId: input.conversationId,
+    query: input.userMessage,
+    employeeId: input.employeeId,
     businessKey: `${businessKey}:retrieveMemory`,
   });
   await appendWorkEventActivity({
@@ -258,6 +262,68 @@ export async function WorkItemWorkflow(input: WorkItemWorkflowInput): Promise<Wo
     payload: { enqueued: embed.enqueued, noOp: embed.noOp },
     businessKey: `${businessKey}:embed_enqueued`,
   });
+
+  // O7: PlanExecute pattern — wait BEFORE executeChild so send/pay/sign
+  // tools cannot run until approveWorkItem. Greetings / read-only skip.
+  const preHitl = resolveInboundHitlGate({ userMessage: input.userMessage });
+  if (preHitl.wait) {
+    await updateWorkItemStatusActivity({
+      orgId: input.orgId,
+      workItemId,
+      status: nextStatus('await_confirm'),
+      conversationId: input.conversationId,
+      conversationStatus: 'needs_attention',
+      businessKey: `${businessKey}:status_waiting_approval`,
+    });
+    await appendWorkEventActivity({
+      orgId: input.orgId,
+      workItemId,
+      kind: 'confirm_requested',
+      actor: 'system',
+      payload: { classes: preHitl.classes, phase: 'before_tools' },
+      businessKey: `${businessKey}:confirm_requested`,
+    });
+    await condition(() => lastConfirm !== undefined);
+    if (lastConfirm === 'rejected') {
+      await appendWorkEventActivity({
+        orgId: input.orgId,
+        workItemId,
+        kind: eventKindForConfirm('rejected'),
+        actor: 'owner',
+        payload: { decision: 'rejected', classes: preHitl.classes },
+        businessKey: `${businessKey}:confirm_rejected`,
+      });
+      await markNeedsAttentionActivity({
+        orgId: input.orgId,
+        workItemId,
+        conversationId: input.conversationId,
+        reason: 'hitl_rejected',
+        businessKey: `${businessKey}:needs_attention`,
+      });
+      await updateWorkItemStatusActivity({
+        orgId: input.orgId,
+        workItemId,
+        status: nextStatus('cancel'),
+        businessKey: `${businessKey}:status_cancelled`,
+      });
+      return {
+        workItemId,
+        status: nextStatus('cancel'),
+        savedByWorkflow: true,
+        success: false,
+        hitlDecision: 'rejected',
+        error: 'hitl_rejected',
+      };
+    }
+    await appendWorkEventActivity({
+      orgId: input.orgId,
+      workItemId,
+      kind: eventKindForConfirm('approved'),
+      actor: 'owner',
+      payload: { decision: 'approved', classes: preHitl.classes },
+      businessKey: `${businessKey}:confirm_approved`,
+    });
+  }
 
   await appendWorkEventActivity({
     orgId: input.orgId,
@@ -404,6 +470,75 @@ export async function WorkItemWorkflow(input: WorkItemWorkflowInput): Promise<Wo
     };
   }
 
+  // Reply-class safety net only when we did not already wait before tools.
+  // Leftover: agent-initiated send/pay/sign without user-message intent may
+  // have already executed; this still withholds the customer-facing reply.
+  const postHitl = resolveInboundHitlGate({
+    userMessage: input.userMessage,
+    reply,
+    executedSteps: childResult.executedSteps,
+    usedTools: childResult.usedTools,
+  });
+  if (!preHitl.wait && postHitl.wait) {
+    await updateWorkItemStatusActivity({
+      orgId: input.orgId,
+      workItemId,
+      status: nextStatus('await_confirm'),
+      conversationId: input.conversationId,
+      conversationStatus: 'needs_attention',
+      businessKey: `${businessKey}:status_waiting_approval`,
+    });
+    await appendWorkEventActivity({
+      orgId: input.orgId,
+      workItemId,
+      kind: 'confirm_requested',
+      actor: 'system',
+      payload: { classes: postHitl.classes, phase: 'after_reply' },
+      businessKey: `${businessKey}:confirm_requested`,
+    });
+    await condition(() => lastConfirm !== undefined);
+    if (lastConfirm === 'rejected') {
+      await appendWorkEventActivity({
+        orgId: input.orgId,
+        workItemId,
+        kind: eventKindForConfirm('rejected'),
+        actor: 'owner',
+        payload: { decision: 'rejected', classes: postHitl.classes },
+        businessKey: `${businessKey}:confirm_rejected`,
+      });
+      await markNeedsAttentionActivity({
+        orgId: input.orgId,
+        workItemId,
+        conversationId: input.conversationId,
+        reason: 'hitl_rejected',
+        businessKey: `${businessKey}:needs_attention`,
+      });
+      await updateWorkItemStatusActivity({
+        orgId: input.orgId,
+        workItemId,
+        status: nextStatus('cancel'),
+        businessKey: `${businessKey}:status_cancelled`,
+      });
+      return {
+        workItemId,
+        status: nextStatus('cancel'),
+        executedSteps: childResult.executedSteps,
+        savedByWorkflow: true,
+        success: false,
+        hitlDecision: 'rejected',
+        error: 'hitl_rejected',
+      };
+    }
+    await appendWorkEventActivity({
+      orgId: input.orgId,
+      workItemId,
+      kind: eventKindForConfirm('approved'),
+      actor: 'owner',
+      payload: { decision: 'approved', classes: postHitl.classes },
+      businessKey: `${businessKey}:confirm_approved`,
+    });
+  }
+
   // M4: MemoryWriteBack as a child — off the webhook HTTP thread, not awaited.
   await startChild(MemoryWriteBackWorkflow, {
     workflowId: `${parentId}-writeback`,
@@ -429,18 +564,6 @@ export async function WorkItemWorkflow(input: WorkItemWorkflowInput): Promise<Wo
     businessKey: `${businessKey}:memory_writeback`,
   });
 
-  // lastConfirm is recorded if a HITL signal arrived during the turn; O7 will wait on it.
-  if (lastConfirm) {
-    await appendWorkEventActivity({
-      orgId: input.orgId,
-      workItemId,
-      kind: eventKindForConfirm(lastConfirm),
-      actor: 'owner',
-      payload: { decision: lastConfirm },
-      businessKey: `${businessKey}:confirm_${lastConfirm}`,
-    });
-  }
-
   await updateWorkItemStatusActivity({
     orgId: input.orgId,
     workItemId,
@@ -455,5 +578,6 @@ export async function WorkItemWorkflow(input: WorkItemWorkflowInput): Promise<Wo
     executedSteps: childResult.executedSteps,
     savedByWorkflow: true,
     success: true,
+    hitlDecision: preHitl.wait || postHitl.wait ? 'approved' : undefined,
   };
 }

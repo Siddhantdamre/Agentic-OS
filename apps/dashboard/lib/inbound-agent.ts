@@ -3,6 +3,7 @@ import { realtimeHub } from '@/lib/realtime-hub';
 import { sendChannelReply, type ChannelReplyTarget } from '@/lib/channel-outbound';
 import { evaluateInboundConfirm } from '@/lib/inbound-confirm';
 import { runAutonomousAgentDirect } from '@darex/workflows/dist/atomic-agent-client';
+import { runInboundDirectFallback } from '@darex/workflows/dist/inbound-hitl';
 import { startWorkItemWorkflow, signalNurtureCancelled } from '@darex/workflows/dist/workflow-client';
 
 export type InboundAgentJob = {
@@ -48,6 +49,7 @@ type WorkItemTaskResult = AgentTaskResult & {
   workItemId?: string;
   savedByWorkflow?: boolean;
   success?: boolean;
+  hitlDecision?: 'approved' | 'rejected';
 };
 
 export function parseToolAllowlist(value: unknown, fallback: string[] = ['whatsapp', 'gmail']): string[] {
@@ -91,6 +93,8 @@ function workItemChannelFrom(channelType: string | undefined): WorkItemChannel {
       return 'chatwoot';
     case 'inbox':
     case 'dashboard':
+    case 'widget':
+    case 'embed':
       return 'inbox';
     case 'ask_ai':
       return 'ask_ai';
@@ -104,9 +108,9 @@ function workItemChannelFrom(channelType: string | undefined): WorkItemChannel {
 
 /**
  * Fire-and-forget: HTTP handlers must return 200 before this work finishes.
- * Prefer Temporal WorkItemWorkflow (wraps AutonomousAgentWorkflow); fall back
- * to a direct atomic-agent turn when Temporal is down. Then send the reply
- * on the inbound channel and publish inbox SSE so the UI updates.
+ * Prefer Temporal WorkItemWorkflow (wraps AutonomousAgentWorkflow). When
+ * Temporal is down, greetings/read/draft still run immediately; send/pay/sign
+ * persist `waiting_approval` and do not execute tools or send the action reply.
  */
 export function fireInboundAgent(job: InboundAgentJob): void {
   void signalNurtureCancelled({
@@ -138,6 +142,7 @@ async function runInboundAgent(job: InboundAgentJob): Promise<void> {
   let executedSteps: unknown[] = [];
   let workflowId: string | undefined;
   let startedWorkflow = false;
+  let hitlDecision: 'approved' | 'rejected' | undefined;
 
   try {
     const handle = await startWorkItemWorkflow({
@@ -163,6 +168,7 @@ async function runInboundAgent(job: InboundAgentJob): Promise<void> {
       reply = (result?.replyMessage || '').trim();
       executedSteps = result?.executedSteps || [];
       savedByWorkflow = result?.savedByWorkflow !== false;
+      hitlDecision = result?.hitlDecision;
     }
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
@@ -175,12 +181,41 @@ async function runInboundAgent(job: InboundAgentJob): Promise<void> {
 
   if (!savedByWorkflow && !startedWorkflow) {
     try {
-      const result = (await runAutonomousAgentDirect(agentInput)) as AgentTaskResult;
-      reply = (result?.replyMessage || '').trim();
-      executedSteps = result?.executedSteps || [];
+      const fallback = await runInboundDirectFallback(job.userMessage, {
+        queueHitl: async (classes) => {
+          console.warn(
+            '[inbound-agent] Temporal down — queued send/pay/sign for HITL (did not execute tools). Retry WorkItemWorkflow start or signal approve later.',
+            {
+              conversationId: job.conversationId,
+              classes,
+              inboundEventId: job.inboundEventId,
+            }
+          );
+          await persistTemporalDownHitlWait(job, channel, classes);
+        },
+        execute: async () => {
+          const result = (await runAutonomousAgentDirect(agentInput)) as AgentTaskResult;
+          return {
+            reply: (result?.replyMessage || '').trim(),
+            executedSteps: result?.executedSteps || [],
+          };
+        },
+      });
+      switch (fallback.kind) {
+        case 'queued_hitl':
+          return;
+        case 'executed':
+          reply = fallback.result.reply;
+          executedSteps = fallback.result.executedSteps;
+          break;
+        default: {
+          const _exhaustive: never = fallback;
+          return _exhaustive;
+        }
+      }
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
-      console.error('[inbound-agent] Direct agent error:', message);
+      console.error('[inbound-agent] Direct agent error (did not send):', message);
       return;
     }
   }
@@ -190,7 +225,7 @@ async function runInboundAgent(job: InboundAgentJob): Promise<void> {
     return;
   }
 
-  // HOOK(ws-22/S2): inbound-confirm — pause send/pay/sign/publish/price/legal.
+  // S2: inbound-confirm — pause send/pay/sign unless WorkItem HITL already approved.
   const confirm = await evaluateInboundConfirm({
     orgId: job.orgId,
     conversationId: job.conversationId,
@@ -201,7 +236,7 @@ async function runInboundAgent(job: InboundAgentJob): Promise<void> {
     contactId: job.replyTarget?.contactId,
     channelType: job.replyTarget?.channelType,
   });
-  if (confirm.pause) {
+  if (confirm.pause && hitlDecision !== 'approved') {
     if (!savedByWorkflow) {
       await persistAssistantMessage(job.orgId, job.conversationId, reply, executedSteps, job.channelKey);
     }
@@ -275,6 +310,104 @@ async function persistWorkflowId(orgId: string, conversationId: string, workflow
   } finally {
     client.release();
   }
+}
+
+async function persistTemporalDownHitlWait(
+  job: InboundAgentJob,
+  channel: WorkItemChannel,
+  classes: string[]
+): Promise<void> {
+  const { client } = await getOrgScopedClient(job.orgId);
+  let workItemId: string | null = null;
+  const metadata = {
+    temporalDown: true,
+    hitlClasses: classes,
+    inboundEventId: job.inboundEventId || null,
+    phase: 'before_tools',
+  };
+  try {
+    await client.query(
+      `UPDATE conversations
+          SET status = 'needs_attention', updated_at = NOW()
+        WHERE id = $1 AND org_id = $2`,
+      [job.conversationId, job.orgId]
+    );
+
+    const existing = await client.query<{ id: string }>(
+      `SELECT id FROM work_items WHERE org_id = $1 AND conversation_id = $2 LIMIT 1`,
+      [job.orgId, job.conversationId]
+    );
+    if (existing.rows[0]?.id) {
+      workItemId = existing.rows[0].id;
+      await client.query(
+        `UPDATE work_items
+            SET status = 'waiting_approval',
+                assignee_employee_id = COALESCE($1::uuid, assignee_employee_id),
+                channel = COALESCE($2, channel),
+                metadata = metadata || $3::jsonb
+          WHERE id = $4 AND org_id = $5`,
+        [job.employeeId || null, channel, JSON.stringify(metadata), workItemId, job.orgId]
+      );
+    } else {
+      try {
+        const inserted = await client.query<{ id: string }>(
+          `INSERT INTO work_items (
+             org_id, type, status, assignee_employee_id, conversation_id, channel, metadata
+           ) VALUES ($1, 'conversation', 'waiting_approval', $2, $3, $4, $5)
+           RETURNING id`,
+          [job.orgId, job.employeeId || null, job.conversationId, channel, JSON.stringify(metadata)]
+        );
+        workItemId = inserted.rows[0]?.id ?? null;
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : String(err);
+        if (!/unique|duplicate/i.test(message)) throw err;
+        const again = await client.query<{ id: string }>(
+          `SELECT id FROM work_items WHERE org_id = $1 AND conversation_id = $2 LIMIT 1`,
+          [job.orgId, job.conversationId]
+        );
+        workItemId = again.rows[0]?.id ?? null;
+        if (workItemId) {
+          await client.query(
+            `UPDATE work_items
+                SET status = 'waiting_approval',
+                    metadata = metadata || $1::jsonb
+              WHERE id = $2 AND org_id = $3`,
+            [JSON.stringify(metadata), workItemId, job.orgId]
+          );
+        }
+      }
+    }
+
+    if (workItemId) {
+      try {
+        await client.query(
+          `INSERT INTO work_events (org_id, work_item_id, kind, payload, actor, idempotency_key)
+           VALUES ($1, $2, 'confirm_requested', $3::jsonb, 'system', $4)`,
+          [
+            job.orgId,
+            workItemId,
+            JSON.stringify({ classes, phase: 'before_tools', temporalDown: true }),
+            `inbound-agent:temporal-down:${job.conversationId}:${job.inboundEventId || 'no-event'}`,
+          ]
+        );
+      } catch {
+        // Duplicate confirm_requested for the same inbound event is fine.
+      }
+    }
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error('[inbound-agent] Temporal down — HITL persist failed (did not execute tools):', message);
+  } finally {
+    client.release();
+  }
+
+  realtimeHub.publish(job.orgId, {
+    type: 'needs_attention',
+    conversationId: job.conversationId,
+    message: `HITL wait (Temporal down): ${classes.join(',')}`.slice(0, 200),
+    contactId: job.replyTarget?.contactId,
+    channelType: job.replyTarget?.channelType,
+  });
 }
 
 async function persistAssistantMessage(

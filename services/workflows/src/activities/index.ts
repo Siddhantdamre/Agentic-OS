@@ -2,7 +2,8 @@ import { ApplicationFailure, Context } from '@temporalio/activity';
 import { Pool, PoolClient } from 'pg';
 import type { AgentTaskInput, AgentTaskResult } from '../agent-engine.js';
 import { runAutonomousAgentDirect } from '../atomic-agent-client.js';
-import { retrieveMemory } from '../memory/retrieve.js';
+import { retrieveMemory, toRetrieveActivityResult } from '../memory/retrieve.js';
+import type { RetrieveMemoryActivityResult } from '../memory/retrieve.js';
 import { enqueueEmbedJobFromWorker } from './embed.js';
 import { criticCheck as runCriticCheck } from './critic-check.js';
 import {
@@ -318,6 +319,8 @@ export async function updateWorkItemStatusActivity(params: {
   workItemId: string;
   status: WorkItemStatus;
   businessKey: string;
+  conversationId?: string;
+  conversationStatus?: 'needs_attention';
 }): Promise<{ workItemId: string; status: WorkItemStatus }> {
   const orgId = requireOrgId(params.orgId);
   const key = sideEffectKey(orgId, 'updateWorkItemStatus', params.businessKey);
@@ -343,6 +346,23 @@ export async function updateWorkItemStatusActivity(params: {
       `UPDATE work_items SET status = $1 WHERE id = $2 AND org_id = $3`,
       [params.status, params.workItemId, orgId]
     );
+    if (params.conversationId && params.conversationStatus) {
+      switch (params.conversationStatus) {
+        case 'needs_attention':
+          await client.query(
+            `UPDATE conversations SET status = 'needs_attention', updated_at = NOW() WHERE id = $1 AND org_id = $2`,
+            [params.conversationId, orgId]
+          );
+          break;
+        default: {
+          const _exhaustive: never = params.conversationStatus;
+          throw ApplicationFailure.nonRetryable(
+            `Unknown conversation status: ${_exhaustive}`,
+            'InvalidArgumentError'
+          );
+        }
+      }
+    }
     return { workItemId: params.workItemId, status: params.status };
   });
 
@@ -414,20 +434,29 @@ export async function appendWorkEventActivity(params: {
   return saved;
 }
 
-/** HOOK(ws-05): no-op until retrieveMemory / M3 ships. Do not invent facts. */
+/** M6 parent path: same retrieveMemory as Ask AI / child turn. Never invent facts. */
 export async function retrieveMemoryActivity(params: {
   orgId: string;
   workItemId: string;
   conversationId: string;
   businessKey: string;
-}): Promise<{ facts: string[]; citations: string[]; noOp: true }> {
-  requireOrgId(params.orgId);
-  const result = { facts: [] as string[], citations: [] as string[], noOp: true as const };
-  await writeIdempotent(
-    params.orgId,
-    sideEffectKey(params.orgId, 'retrieveMemory', params.businessKey),
-    result
-  );
+  query?: string;
+  employeeId?: string;
+}): Promise<RetrieveMemoryActivityResult> {
+  const orgId = requireOrgId(params.orgId);
+  const key = sideEffectKey(orgId, 'retrieveMemory', params.businessKey);
+  const cached = await readIdempotent<RetrieveMemoryActivityResult>(orgId, key);
+  if (cached) return cached;
+
+  const retrieved = await retrieveMemory({
+    orgId,
+    query: params.query || '',
+    employeeId: params.employeeId,
+    conversationId: params.conversationId,
+    workItemId: params.workItemId,
+  });
+  const result = toRetrieveActivityResult(retrieved);
+  await writeIdempotent(orgId, key, result);
   return result;
 }
 
