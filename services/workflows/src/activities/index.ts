@@ -12,7 +12,29 @@ const pool = new Pool({
 
 export async function runAgentTurnActivity(input: AgentTaskInput): Promise<AgentTaskResult> {
   try {
-    const turn = await runAgentTurn(input);
+    let priorMessages: { role: string; content: string }[] = [];
+    if (input.conversationId) {
+      const client = await pool.connect();
+      try {
+        await client.query("SELECT set_config('app.current_org_id', $1, true)", [input.orgId]);
+        const res = await client.query(
+          `SELECT role, content FROM (
+             SELECT role, content, created_at 
+             FROM messages 
+             WHERE org_id = $1 AND conversation_id = $2 
+             ORDER BY created_at DESC 
+             LIMIT 10
+           ) sub ORDER BY created_at ASC`,
+          [input.orgId, input.conversationId]
+        );
+        priorMessages = res.rows.map(r => ({ role: r.role, content: r.content }));
+      } catch (e) {
+        console.error('Failed to load prior messages', e);
+      } finally {
+        client.release();
+      }
+    }
+    const turn = await runAgentTurn(input, { priorMessages });
     return mapTurnToResult(turn);
   } catch (err: any) {
     console.error('[Temporal Activity] runAgentTurn failed:', err.message);

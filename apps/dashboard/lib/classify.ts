@@ -85,13 +85,28 @@ export async function classifyRequest(prompt: string, orgId: string): Promise<Cl
   const trimmed = (prompt || '').trim();
   if (trimmed.length === 0) return { type: 'simple', confidence: 1, usedFallback: true };
 
+  // 1. Fast-path heuristics: Check simple hints first.
+  // If a request clearly matches simple patterns (greetings, simple Q&A) and NOT complex action verbs,
+  // bypass the LLM entirely for a 0ms response time.
+  const complex = COMPLEX_HINTS.test(trimmed);
+  const simple = SIMPLE_HINTS.test(trimmed);
+
+  if (simple && !complex) {
+    return { type: 'simple', confidence: 0.9, usedFallback: true };
+  }
+
+  if (complex && !simple && trimmed.length < 150) {
+    // If it's short and explicitly uses action words (like "send email to..."), 
+    // it's highly likely to be complex. Skip LLM.
+    return { type: 'complex', confidence: 0.85, usedFallback: true };
+  }
+
+  // 2. Slow-path: If ambiguous, ask the LLM router.
   const agentType = await classifyWithAgent(trimmed, orgId);
   if (agentType === 'complex') return { type: 'complex', confidence: 0.75, usedFallback: false, model: 'atomic-agent' };
   if (agentType === 'simple') return { type: 'simple', confidence: 0.7, usedFallback: false, model: 'atomic-agent' };
 
-  // Fallback heuristics — bias to SIMPLE on any ambiguity.
-  const complex = COMPLEX_HINTS.test(trimmed);
-  const simple = SIMPLE_HINTS.test(trimmed);
-  if (complex && !simple) return { type: 'complex', confidence: 0.6, usedFallback: true };
+  // 3. Fallback if LLM fails: bias to SIMPLE on any remaining ambiguity to prevent getting stuck.
+  if (complex) return { type: 'complex', confidence: 0.6, usedFallback: true };
   return { type: 'simple', confidence: 0.5, usedFallback: true };
 }

@@ -12,7 +12,7 @@ if (process.env.OPENROUTER_API_KEY) {
     id: 'darex-openrouter',
     kind: 'openrouter',
     apiKey: process.env.OPENROUTER_API_KEY,
-    defaultChatModel: process.env.OPENROUTER_MODEL || 'openrouter/auto',
+    defaultChatModel: process.env.OPENROUTER_MODEL || 'deepseek/deepseek-chat',
     supportsTools: true,
     supportsVision: true,
   });

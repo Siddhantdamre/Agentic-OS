@@ -67,7 +67,7 @@ API routes / webhooks (dashboard)
 
 ### `mcp-bridge.ts` — the MCP SSE server (container `darex-atomic-bridge`, :8790)
 - HTTP server with `GET /sse` (SSEServerTransport per connection) and `POST /messages?sessionId=`.
-- **24 MCP tools** registered (server name `darex-connectors`). Each tool handler calls `executeAutonomousToolAction({tool, action, payload, orgId})` and formats `{status, message, data}` as text content.
+- **24+ MCP tools** registered (server name `darex-connectors`). Each tool handler calls `executeAutonomousToolAction({tool, action, payload, orgId})` and formats `{status, message, data}` as text content. Rejects missing / non-UUID `org_id`.
 
 ### `tool-executor.ts` — the tool dispatcher
 Resolves Nango access tokens (`NANGO_HOST`/`NANGO_SECRET_KEY`), then executes per tool:
@@ -88,12 +88,19 @@ Resolves Nango access tokens (`NANGO_HOST`/`NANGO_SECRET_KEY`), then executes pe
 | `zendesk_fetch_tickets` / `zendesk_create_ticket` | fetch_tickets / create_support_ticket | Zendesk API v2 |
 | `intercom_fetch_conversations` | fetch_conversations | Intercom v2.11 |
 | `razorpay_create_payment_link` | create_payment_link | Razorpay (env keys, amount in paise) |
-| `web_search` | search | DuckDuckGo HTML scrape |
-| `web_extract` | extract | fetch + strip HTML (4KB) |
+| `web_search` | search | Jina `s.jina.ai` (sends `Bearer $JINA_API_KEY` when set) |
+| `web_extract` | extract | Jina Reader `r.jina.ai` (sends `Bearer $JINA_API_KEY` when set) |
 | `database_query` | query | **read-only SELECT** against `darex` DB (RLS-scoped, max 25 rows; rejects non-SELECT) |
 | `file_ops` | read_file / write_file | workspace_storage dir under `services/workflows` (basename-sanitized) |
-| sandbox/code_execution (hidden) | code exec | optional `@agent-infra/sandbox` if `SANDBOX_API_URL` set |
+| sandbox / code_execution / execute_code | code exec | self-hosted `sandbox` service (`POST /execute`, `SANDBOX_API_URL=http://sandbox:8080`) |
 
+- **Per-org allowlist enforcement:** before any tool runs, `executeAutonomousToolAction` checks the
+  tool against the org's effective allowlist = **always-allowed core tools** (`web_search`, `web_extract`,
+  `database_query`, `db_query`, `sql_analytics`, `file_ops`, `file_system`, `workspace_file`, `sandbox`,
+  `code_execution`, `execute_code`) **∪ union of all active employees' tool_allowlists** **∪ every
+  connector the org has connected (`channels`)**. This guarantees tools the org *owns* execute even when
+  no single employee names them, while never-connected connectors stay gated. The plan-execute path
+  additionally passes an explicit allowlist = the plan's own step tools + core tools.
 - **Not-connected handling:** tools without a Nango token return `status:'simulated'` with `{connected:false, setupUrl:'/connectors'}` — they never fake success.
 - **`database_query` security:** only `SELECT` allowed; runs under `app.current_org_id` RLS context.
 
@@ -113,7 +120,7 @@ Resolves Nango access tokens (`NANGO_HOST`/`NANGO_SECRET_KEY`), then executes pe
 
 ## Langfuse tracing
 
-`logLangfuseTrace` in `apps/dashboard/lib/langfuse-trace.ts` POSTs a `trace-create` event to `LANGFUSE_HOST/api/public/ingestion` (Basic auth `pk:sk`). Non-blocking (3s timeout, errors swallowed). `AskAI-AutonomousExecution`, `AskAI-PlanFallback` and `AgentExecution-<name>` traces are recorded.
+`logLangfuseTrace` in `apps/dashboard/lib/langfuse-trace.ts` POSTs a `trace-create` event to `LANGFUSE_HOST/api/public/ingestion` (Basic auth `pk:sk`). **Note (Langfuse v3):** the `timestamp` field must sit at the **event level**, not inside `body`, or ingestion rejects the batch with 400 (fixed 2026-08-13). Errors surface in logs instead of being swallowed. Traces recorded: `AskAI-AutonomousExecution`, `AskAI-PlanFallback`, `AgentExecution-<name>`, `PlanGenerated`, `PlanExecution-<tool>` (per step), `PlanExecutionSummary`.
 
 ## LiteLLM routing for the dashboard
 

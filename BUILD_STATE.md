@@ -4,6 +4,66 @@
 
 ---
 
+## Runtime Fixes — Tool Allowlist, Code Sandbox, Langfuse v3 (2026-08-13)
+
+### 🔴 Tool allowlist regression — plans/agents failing "not in allowed tool list"
+- **Symptom:** approved plans failed every tool step with `Tool "web_search" is not in this
+  employee's allowed tool list`. Steps stayed `Pending`.
+- **Root cause:** `tool-executor.ts` started enforcing an allowlist, but the fallback
+  `resolveOrgToolAllowlist` used `SELECT ... FROM ai_employees WHERE status='active' LIMIT 1` —
+  it grabbed **whichever employee came first** (e.g. Sarah: `[gmail,whatsapp,hubspot]`), blocking
+  web_search / google-sheets / google-drive that the **org actually owns**.
+- **Fixes (org-wide union, not one employee):**
+  1. `resolveOrgToolAllowlist` now returns the **union of ALL active employees** tool_allowlists
+     **plus** ALWAYS-allowed core tools (`web_search, web_extract, database_query, db_query,
+     sql_analytics, file_ops, file_system, workspace_file, sandbox, code_execution, execute_code`).
+  2. **Also unions every connector the org has connected** (`channels` where status in
+     connected/active) — so google-sheets/google-drive/etc. run for the org even when no single
+     employee lists them, while never-connected connectors stay gated.
+  3. Plan-execute path (`ask-ai/execute/route.ts`) now passes an explicit `toolAllowlist` =
+     the plan's own step tools + core tools (belt-and-suspenders).
+- **Verified live (worker rebuilt):** `google-sheets sheets_create` → **executed** (real Sheet),
+  `google-drive drive_list` → **executed** (27 files), `web_search` passes allowlist.
+
+### 🟢 Sandboxed code execution — `code_execution` / `sandbox` / `execute_code`
+- **Before:** pointed at dead `@agent-infra/sandbox` → `http://localhost:8080` = Temporal UI, not a
+  sandbox. Code execution never worked.
+- **After:** new self-hosted **`sandbox`** Docker service (`infra/docker/sandbox`, node:20 + python3).
+  Runs untrusted code as an unprivileged user, hard timeout, no outbound network, no DB access,
+  `POST /execute {language, code, timeoutMs}` → `{result:{stdout,stderr,exitCode}}`. Supports
+  `node` / `python` / `bash`. Added `SANDBOX_API_URL=http://sandbox:8080` to worker + dashboard env.
+- **Verified:** python `6*7=42`, node `1+1=2`, bash `hi there` — all real output.
+
+### 🟡 Langfuse observations now actually land (was silently 0 traces)
+- **Symptoms:** Langfuse DB always empty; "what is the agent doing" invisible.
+- **Fixes:**
+  1. **Ingestion payload schema (the real bug):** hand-rolled trace sent `timestamp` inside
+     `body` — Langfuse v3.225 rejects that (400 / 207 with `timestamp expected string`).
+     `lib/langfuse-trace.ts` now puts `timestamp` at the **event level** (correct schema).
+     Verified: ingestion returns `201` and the batch is accepted.
+  2. Stopped swallowing errors (`.catch(()=>{})` removed) so misconfig is visible in logs.
+  3. **worker `LANGFUSE_HOST` was `http://localhost:3002`** (wrong inside Docker) →
+     fixed to `http://langfuse-server:3000`.
+  4. Expanded tracing: added traces to plan-generation (`PlanGenerated`), each plan-execute
+     step (`PlanExecution-<tool>`), and plan summary (`PlanExecutionSummary`).
+- **Note (pre-existing infra):** the `langfuse-worker`'s BullMQ side-queues hit intermittent
+  Redis socket timeouts under the shared Redis (100 clients); ingestion queue drains but some
+  total persistence to ClickHouse is flaky. Trace *ingestion* is now correct; the upstream
+  worker/Redis stability is a separate ops item (consider a dedicated Redis for langfuse).
+
+### 🟢 web_search / web_extract
+- Now send `Authorization: Bearer $JINA_API_KEY` when `JINA_API_KEY` is set (Jina now requires one;
+  unset → honest error, no fake results). Set it in `infra/.env`. Added to worker/dashboard env.
+
+### Docker / tenancy
+- Compose secrets moved to `${VAR:-dev}` env-driven form; migration `008_rls_with_check.sql`
+  adds `WITH CHECK` to all org policies + `darex_app` grants.
+- Full rebuild (`pnpm build`) green; worker/bridge/dashboard/sandbox images rebuilt and recreated.
+
+---
+
+
+
 ## Phase D: Plan-Confirm-Execute live + LiteLLM routing + Nango scope fixes (2026-08-11)
 
 ### Classifier/planner hang fixed — now call LiteLLM directly

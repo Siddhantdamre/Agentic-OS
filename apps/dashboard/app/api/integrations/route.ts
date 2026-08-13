@@ -21,6 +21,16 @@ const ALL_INTEGRATIONS = [
   { id: 'google-drive', name: 'Google Drive', category: 'Productivity', icon: 'FolderOpen', desc: 'Search, read, upload & share files across Google Drive' },
   { id: 'google-docs', name: 'Google Docs', category: 'Productivity', icon: 'FileText', desc: 'Create, read & append content in Google Docs documents' },
   { id: 'google-sheets', name: 'Google Sheets', category: 'Productivity', icon: 'Table', desc: 'Read, create & append rows in Google Sheets spreadsheets' },
+  { id: 'google-slides', name: 'Google Slides', category: 'Productivity', icon: 'Presentation', desc: 'Create & present slide decks in Google Slides' },
+  { id: 'google-forms', name: 'Google Forms', category: 'Productivity', icon: 'FileCheck', desc: 'Read & capture form structure and responses' },
+  { id: 'google-chat', name: 'Google Chat', category: 'Messaging', icon: 'MessageSquare', desc: 'Send & receive messages in Google Chat spaces' },
+  { id: 'google-meet', name: 'Google Meet', category: 'Meetings', icon: 'Video', desc: 'Schedule and manage Google Meet video spaces' },
+  { id: 'google-contacts', name: 'Google Contacts', category: 'Contacts', icon: 'Users', desc: 'Sync & query organization contacts and directory' },
+  { id: 'google-tasks', name: 'Google Tasks', category: 'Productivity', icon: 'CheckSquare', desc: 'Create and manage task lists in Google Tasks' },
+  { id: 'google-analytics', name: 'Google Analytics', category: 'Analytics', icon: 'TrendingUp', desc: 'Fetch web & app property traffic reports and conversions' },
+  { id: 'google-search-console', name: 'Google Search Console', category: 'SEO', icon: 'Search', desc: 'Analyze search performance, sitemaps & URL inspection' },
+  { id: 'google-business-profile', name: 'Google Business Profile', category: 'Marketing', icon: 'Store', desc: 'Manage Google business locations, posts & reviews' },
+  { id: 'google-cloud', name: 'Google Cloud Platform', category: 'Infrastructure', icon: 'Cloud', desc: 'Cloud resources, BigQuery & infrastructure management' },
 ];
 
 // ── GET: Ultra-fast batch fetch of integrations for current orgId ─────────────

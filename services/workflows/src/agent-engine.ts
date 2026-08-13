@@ -26,6 +26,14 @@ export interface AgentTaskInput {
    *  Ask AI) scope + rotate their own sessions instead of sharing the fallback
    *  `darex:{org}:chat` bucket forever. */
   sessionKey?: string;
+  /** Results from previous steps in a multi-step agent loop. */
+  priorToolResults?: {
+    step: number;
+    action: string;
+    toolUsed?: string;
+    result: string;
+    selfCorrected?: boolean;
+  }[];
 }
 
 export interface AgentTaskResult {
@@ -45,4 +53,6 @@ export interface AgentTaskResult {
   partialReply?: string;
   /** True when the failure was a timeout/abort the caller may safely retry. */
   retryable?: boolean;
+  /** Indicates if the agent has reached a final answer or completed its task. */
+  isDone?: boolean;
 }

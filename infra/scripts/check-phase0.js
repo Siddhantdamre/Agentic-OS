@@ -130,7 +130,7 @@ async function runHealthChecks() {
   // HTTP endpoints
   await checkHttp('Nango API (/health)', 'http://localhost:3003/health');
   await checkHttp('Langfuse API (/api/public/health)', 'http://localhost:3002/api/public/health');
-  await checkHttp('LiteLLM Gateway (/health)', 'http://localhost:4000/health', 200, { Authorization: 'Bearer sk-darex-litellm-dev-key' });
+  await checkHttp('LiteLLM Gateway (/health/readiness)', 'http://localhost:4000/health/readiness', 200, { Authorization: 'Bearer sk-darex-litellm-dev-key' });
 
   console.log('\n--- Summary ---');
   const total = pass + fail;

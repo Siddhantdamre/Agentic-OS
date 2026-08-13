@@ -43,20 +43,15 @@ export async function POST(request: Request) {
   let client = null;
   try {
     const body = await request.json();
-    const { tool, action, payload, orgId: bodyOrgId } = body;
+    const { tool, action, payload } = body;
 
-    let orgId = bodyOrgId;
-    
-    if (orgId) {
-      // Server-to-server request from Hermes Python script
-      client = await pool.connect();
-      await client.query("SELECT set_config('app.current_org_id', $1, true)", [orgId]);
-    } else {
-      // Frontend request
-      const scoped = await getScopedClient();
-      client = scoped.client;
-      orgId = scoped.orgId;
-    }
+    // Always authenticate via the session cookie. The org is resolved from the
+    // authenticated user — a client-supplied orgId is NEVER trusted, so an
+    // unauthenticated / cross-tenant caller can no longer execute tools against
+    // an arbitrary org.
+    const scoped = await getScopedClient();
+    client = scoped.client;
+    const orgId = scoped.orgId;
 
     try {
       if (!tool) {

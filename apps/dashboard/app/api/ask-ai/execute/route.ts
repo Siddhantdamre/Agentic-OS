@@ -1,4 +1,5 @@
-import { getScopedClient } from '@/lib/db';
+import { getScopedClient, pool } from '@/lib/db';
+import { logLangfuseTrace } from '@/lib/langfuse-trace';
 
 export const dynamic = 'force-dynamic';
 
@@ -35,7 +36,73 @@ function wireDependencies(step: any, previousResults: any[]): any {
     const fileId = pick(['fileId', 'file_id', 'id']);
     if (fileId) payload.fileId = fileId;
   }
-  return payload;
+
+  function interpolate(value: any): any {
+    if (typeof value === 'string') {
+      return value.replace(/\{\{step(\d+)_output\}\}/g, (match, stepNum) => {
+        const idx = parseInt(stepNum, 10) - 1;
+        if (idx >= 0 && idx < previousResults.length) {
+          const res = previousResults[idx];
+          if (res && res.status === 'executed' && res.data) {
+             if (res.data.results) return JSON.stringify(res.data.results, null, 2);
+             if (res.data.content) return res.data.content;
+             return JSON.stringify(res.data, null, 2);
+          }
+        }
+        return '';
+      });
+    } else if (Array.isArray(value)) {
+      return value.map(interpolate);
+    } else if (value !== null && typeof value === 'object') {
+      const obj: any = {};
+      for (const [k, v] of Object.entries(value)) {
+        obj[k] = interpolate(v);
+      }
+      return obj;
+    }
+    return value;
+  }
+
+  return interpolate(payload);
+}
+
+/**
+ * Partition plan steps into sequential "stages". Independent steps (those whose
+ * payload has no {{stepN_output}} interpolation and no known ID dependency on a
+ * prior step's output) run concurrently within a stage, so a large multi-app
+ * plan executes faster instead of serially awaiting every step. Steps that DO
+ * depend on an earlier result drop to later stages and keep their wiring.
+ */
+function stageSteps(steps: any[]): any[][] {
+  const stages: any[][] = [];
+  const dependsOnEarlier = (step: any) => {
+    const payloadStr = String(JSON.stringify(step.payload || ''));
+    if (/\{\{step\d+_output\}\}/.test(payloadStr)) return true;
+    if (step.tool === 'google-sheets' && ['sheets_read', 'sheets_append_row'].includes(step.action) && !step.payload?.spreadsheetId) return true;
+    if (step.tool === 'google-docs' && ['docs_read', 'docs_append'].includes(step.action) && !step.payload?.documentId) return true;
+    if (step.tool === 'google-drive' && ['drive_get_text', 'drive_share'].includes(step.action) && !step.payload?.fileId) return true;
+    return false;
+  };
+
+  let remaining = steps.map((s, i) => ({ s, i }));
+  while (remaining.length > 0) {
+    const stage: any[] = [];
+    const stageIdx = new Set<number>();
+    for (const item of remaining) {
+      if (!dependsOnEarlier(item.s)) {
+        stage.push(item);
+        stageIdx.add(item.i);
+      }
+    }
+    if (stage.length === 0) {
+      // Every remaining step depends on a not-yet-emitted step: emit the first.
+      stage.push(remaining[0]);
+      stageIdx.add(remaining[0].i);
+    }
+    remaining = remaining.filter((item) => !stageIdx.has(item.i));
+    stages.push(stage);
+  }
+  return stages;
 }
 
 /**
@@ -74,6 +141,21 @@ export async function GET(request: Request) {
     let steps = Array.isArray(plan.steps) ? plan.steps : [];
     const enabledSteps = steps.filter((s: any) => s.enabled !== false);
 
+    // Explicit allowlist for plan execution: the union of tools the approved
+    // plan's steps depend on + the always-allowed atomic core. This guarantees
+    // the plan runs the connectors it was approved with, independent of which
+    // employee was seeded first in the org.
+    const coreTools = [
+      'web_search', 'web_extract', 'database_query', 'db_query', 'sql_analytics',
+      'file_ops', 'workspace_file', 'file_system', 'sandbox', 'code_execution', 'execute_code',
+    ];
+    const planTools = Array.from(
+      new Set<string>([
+        ...coreTools,
+        ...steps.map((s: any) => String(s.tool || '').toLowerCase()).filter(Boolean),
+      ])
+    );
+
     if (plan.status !== 'approved') {
       // Allow re-execution only after approval; anything else is invalid.
       if (plan.status !== 'running' && plan.status !== 'completed') {
@@ -86,14 +168,41 @@ export async function GET(request: Request) {
       [planId, orgId]
     );
 
+    // Release the pooled connection before the (potentially long) SSE stream so
+    // a plan execution never holds a pool slot. Mid-stream DB writes re-acquire
+    // a short-lived connection + org context on demand instead.
+    client.release();
+    client = null;
+
     const encoder = new TextEncoder();
     const stream = new ReadableStream<Uint8Array>({
       async start(controller) {
+        let clientDisconnected = false;
         const send = (event: string, data: unknown) => {
+          if (clientDisconnected) return;
           try {
             controller.enqueue(encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`));
           } catch {
-            // client disconnected
+            clientDisconnected = true;
+          }
+        };
+
+        // Short-lived org-scoped write used for mid-stream progress updates.
+        const updatePlan = async (patch: { status?: string; current_step?: number }) => {
+          const pc = await pool.connect();
+          try {
+            await pc.query("SELECT set_config('app.current_org_id', $1, false)", [orgId]);
+            const sets: string[] = ['updated_at = NOW()'];
+            const params: any[] = [];
+            if (patch.status) { params.push(patch.status); sets.push(`status = $${params.length}`); }
+            if (patch.current_step !== undefined) { params.push(patch.current_step); sets.push(`current_step = $${params.length}`); }
+            params.push(planId, orgId);
+            await pc.query(
+              `UPDATE agent_plans SET ${sets.join(', ')} WHERE id = $${params.length - 1} AND org_id = $${params.length}`,
+              params
+            );
+          } finally {
+            pc.release();
           }
         };
 
@@ -102,73 +211,102 @@ export async function GET(request: Request) {
         try {
           const { executeAutonomousToolAction } = await import('@darex/workflows/dist/tool-executor');
 
-          for (let i = 0; i < steps.length; i++) {
-            const step = steps[i];
-            if (step.enabled === false) {
-              send('step_done', {
-                stepIndex: i,
-                status: 'skipped',
-                message: 'Step disabled by user',
-                data: null,
-              });
-              results.push({ stepIndex: i, status: 'skipped', message: step.description });
-              continue;
-            }
+          const stages = stageSteps(steps);
 
-            send('step_start', {
-              stepIndex: i,
-              description: step.description,
-              tool: step.tool,
-              action: step.action,
-            });
+          for (const stage of stages) {
+            if (clientDisconnected) break;
 
-            try {
-              const payload = wireDependencies(step, results);
-              const result = await executeAutonomousToolAction({
-                tool: step.tool,
-                action: step.action,
-                payload,
-                orgId,
-              });
-              results.push({ stepIndex: i, status: result.status, message: result.message, data: result.data });
-              send('step_done', {
-                stepIndex: i,
-                status: result.status,
-                message: result.message,
-                data: result.data,
-              });
-            } catch (err: any) {
-              const msg = String(err?.message || 'step execution failed');
-              results.push({ stepIndex: i, status: 'error', message: msg });
-              send('step_error', { stepIndex: i, message: msg });
-            }
-
-            await client.query(
-              `UPDATE agent_plans SET current_step = $3, updated_at = NOW() WHERE id = $1 AND org_id = $2`,
-              [planId, orgId, i + 1]
+            // Run a stage's independent steps concurrently, but keep results
+            // ordered by global step index for dependency wiring.
+            const stageOutcomes = await Promise.all(
+              stage.map(async (item) => {
+                const i = item.i;
+                const step = item.s;
+                if (step.enabled === false) {
+                  return { i, outcome: { status: 'skipped', message: step.description } };
+                }
+                send('step_start', {
+                  stepIndex: i,
+                  description: step.description,
+                  tool: step.tool,
+                  action: step.action,
+                });
+                try {
+                  const payload = wireDependencies(step, results);
+                  const result = await executeAutonomousToolAction({
+                    tool: step.tool,
+                    action: step.action,
+                    payload,
+                    orgId,
+                    toolAllowlist: planTools,
+                  });
+                  send('step_done', {
+                    stepIndex: i,
+                    status: result.status,
+                    message: result.message,
+                    data: result.data,
+                  });
+                  return { i, outcome: { status: result.status, message: result.message, data: result.data } };
+                } catch (err: any) {
+                  const msg = String(err?.message || 'step execution failed');
+                  send('step_error', { stepIndex: i, message: msg });
+                  return { i, outcome: { status: 'error', message: msg } };
+                }
+              })
             );
+
+            stageOutcomes.sort((a, b) => a.i - b.i);
+            for (const { i, outcome } of stageOutcomes) {
+              // Per-step Langfuse trace so each plan step's tool call (tool,
+              // action, payload, result) is observable in the dashboard.
+              const stepForTrace = steps[i];
+              logLangfuseTrace({
+                name: `PlanExecution-${stepForTrace?.tool || 'step'}`,
+                orgId,
+                input: { planId, stepIndex: i, tool: stepForTrace?.tool, action: stepForTrace?.action, payload: stepForTrace?.payload },
+                output: { status: outcome.status, message: outcome.message, data: outcome.data },
+                metadata: { planId, step: i + 1 },
+                provider: 'atomic-agent',
+              }).catch(() => {});
+              // Only keep a non-skipped outcome (keep a slot for skipped ones so
+              // indices stay aligned).
+              results[i] = { stepIndex: i, ...outcome };
+              if (outcome.status === 'error') {
+                await updatePlan({ current_step: i + 1 }).catch(() => {});
+                const firedSoFar = results.filter(Boolean).length;
+                // Stop scheduling further stages on an error (fail-fast).
+                await updatePlan({
+                  status: results.some((r) => r?.status === 'error') ? 'completed_with_errors' : 'completed',
+                }).catch(() => {});
+                send('execution_done', { planId, status: 'completed_with_errors', results: results.filter(Boolean) });
+                void firedSoFar;
+                return;
+              }
+              await updatePlan({ current_step: i + 1 }).catch(() => {});
+            }
           }
 
-          const failed = results.filter((r) => r.status === 'error').length;
+          const done = results.filter(Boolean);
+          const failed = done.filter((r) => r.status === 'error').length;
           const finalStatus = failed > 0 ? 'completed_with_errors' : 'completed';
-          await client.query(
-            `UPDATE agent_plans SET status = $3, updated_at = NOW() WHERE id = $1 AND org_id = $2`,
-            [planId, orgId, finalStatus]
-          );
+          await updatePlan({ status: finalStatus });
 
-          send('execution_done', { planId, status: finalStatus, results });
+          logLangfuseTrace({
+            name: 'PlanExecutionSummary',
+            orgId,
+            input: { planId, totalSteps: steps.length, tools: Array.from(new Set(steps.map((s: any) => s.tool))) },
+            output: { status: finalStatus, results: done },
+            metadata: { planId },
+            provider: 'atomic-agent',
+          }).catch(() => {});
+
+          send('execution_done', { planId, status: finalStatus, results: done });
         } catch (err: any) {
           console.error('SSE execution failed:', err);
-          try {
-            await client.query(
-              `UPDATE agent_plans SET status = 'completed_with_errors', updated_at = NOW() WHERE id = $1 AND org_id = $2`,
-              [planId, orgId]
-            );
-          } catch {}
+          try { await updatePlan({ status: 'completed_with_errors' }); } catch {}
           send('execution_error', { message: String(err?.message || 'execution failed') });
         } finally {
           try { controller.close(); } catch {}
-          client.release();
         }
       },
     });

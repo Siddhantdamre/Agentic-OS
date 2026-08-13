@@ -19,43 +19,73 @@ export interface ChatOptions {
   maxTokens: number;
   temperature?: number;
   timeoutMs?: number;
+  maxRetries?: number;
+}
+
+const RETRYABLE_STATUSES = new Set([429, 500, 502, 503, 504]);
+
+async function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 export async function chatCompletion(
   messages: ChatMessage[],
   options: ChatOptions
 ): Promise<string> {
-  const controller = new AbortController();
+  const maxRetries = options.maxRetries ?? 2;
   const timeoutMs = options.timeoutMs ?? 120000;
-  const timeout = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    const res = await fetch(`${LITELLM_BASE_URL}/chat/completions`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${LITELLM_API_KEY}`,
-      },
-      body: JSON.stringify({
-        model: LITELLM_MODEL,
-        stream: false,
-        max_tokens: options.maxTokens,
-        temperature: options.temperature ?? 0,
-        // deepseek-v4-flash is a reasoning model: it burns the token budget on
-        // reasoning_content before emitting content, which makes small-budget
-        // calls return empty and large ones hang. These paths only need the
-        // final answer, so disable chain-of-thought.
-        reasoning: { enabled: false },
-        messages,
-      }),
-      signal: controller.signal,
-    });
-    if (!res.ok) {
+
+  let lastError: Error | null = null;
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const res = await fetch(`${LITELLM_BASE_URL}/chat/completions`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${LITELLM_API_KEY}`,
+        },
+        body: JSON.stringify({
+          model: LITELLM_MODEL,
+          stream: false,
+          max_tokens: options.maxTokens,
+          temperature: options.temperature ?? 0,
+          // deepseek-v4-flash is a reasoning model: it burns the token budget on
+          // reasoning_content before emitting content, which makes small-budget
+          // calls return empty and large ones hang. These paths only need the
+          // final answer, so disable chain-of-thought.
+          reasoning: { enabled: false },
+          messages,
+        }),
+        signal: controller.signal,
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        controller.abort();
+        return data?.choices?.[0]?.message?.content || '';
+      }
+
+      // Non-2xx: retry only on transient server/rate errors.
       const body = await res.text().catch(() => '');
-      throw new Error(`LiteLLM HTTP ${res.status}: ${body.slice(0, 300)}`);
+      if (!RETRYABLE_STATUSES.has(res.status) || attempt >= maxRetries) {
+        throw new Error(`LiteLLM HTTP ${res.status}: ${body.slice(0, 300)}`);
+      }
+      lastError = new Error(`LiteLLM HTTP ${res.status}: ${body.slice(0, 300)}`);
+    } catch (err: any) {
+      controller.abort();
+      // AbortError means the overall timeout elapsed — retrying is pointless.
+      if (err?.name === 'AbortError') throw new Error(`LiteLLM request timed out after ${timeoutMs}ms`);
+      lastError = err;
+      if (attempt >= maxRetries) break;
+    } finally {
+      clearTimeout(timeout);
     }
-    const data = await res.json();
-    return data?.choices?.[0]?.message?.content || '';
-  } finally {
-    clearTimeout(timeout);
+
+    // Exponential backoff + jitter before the next attempt.
+    await sleep(250 * Math.pow(2, attempt) + Math.floor(Math.random() * 250));
   }
+
+  throw lastError ?? new Error('LiteLLM request failed');
 }
