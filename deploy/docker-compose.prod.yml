@@ -1,0 +1,93 @@
+# Production overlay for infra/docker-compose.yml.
+# Callers: deploy/deploy.sh. Bind admin/data ports to loopback so they are
+# not on the public internet. Put Caddy/nginx in front of 127.0.0.1:3000.
+#
+#   docker compose --env-file .env \
+#     -f infra/docker-compose.yml \
+#     -f deploy/docker-compose.prod.yml up -d
+#
+# Does not replace Terraform / multi-instance (those are still unbuilt).
+
+services:
+  postgres:
+    ports:
+      - "127.0.0.1:5432:5432"
+    restart: always
+
+  temporal:
+    ports:
+      - "127.0.0.1:7233:7233"
+    restart: always
+
+  temporal-ui:
+    ports:
+      - "127.0.0.1:8233:8080"
+    restart: always
+
+  redis:
+    ports:
+      - "127.0.0.1:6379:6379"
+    restart: always
+
+  nango-server:
+    ports:
+      - "127.0.0.1:3003:3003"
+    restart: always
+
+  langfuse-clickhouse:
+    ports:
+      - "127.0.0.1:8123:8123"
+      - "127.0.0.1:9000:9000"
+    restart: always
+
+  langfuse-minio:
+    ports:
+      - "127.0.0.1:9090:9000"
+      - "127.0.0.1:9091:9001"
+    restart: always
+
+  langfuse-server:
+    ports:
+      - "127.0.0.1:3002:3000"
+    restart: always
+
+  langfuse-worker:
+    restart: always
+
+  langfuse-redis:
+    restart: always
+
+  supertokens:
+    ports:
+      - "127.0.0.1:3567:3567"
+    restart: always
+
+  litellm:
+    ports:
+      - "127.0.0.1:4000:4000"
+    restart: always
+
+  atomic-bridge:
+    restart: always
+
+  atomic-agent:
+    restart: always
+
+  sandbox:
+    restart: always
+
+  inbox:
+    ports:
+      - "127.0.0.1:3004:3004"
+    restart: always
+
+  worker:
+    restart: always
+
+  dashboard:
+    ports:
+      - "127.0.0.1:3000:3000"
+    restart: always
+    environment:
+      - NEXT_PUBLIC_APP_URL=${NEXT_PUBLIC_APP_URL}
+      - ALLOW_DEMO_AUTH=false
