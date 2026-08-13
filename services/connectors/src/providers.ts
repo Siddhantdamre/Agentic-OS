@@ -89,6 +89,7 @@ export const NANGO_PING_SPECS: Record<string, PingSpec> = {
   'google-business-profile': { method: 'GET', endpoint: '/v1/accounts' },
   'google-chat': { method: 'GET', endpoint: '/v1/spaces?pageSize=1' },
   'google-meet': { method: 'GET', endpoint: '/v2/conferenceRecords?pageSize=1' },
+  'google-cloud': { method: 'GET', endpoint: '/oauth2/v2/userinfo' },
   github: { method: 'GET', endpoint: '/user' },
   slack: { method: 'POST', endpoint: '/auth.test' },
   hubspot: { method: 'GET', endpoint: '/crm/v3/objects/contacts?limit=1' },

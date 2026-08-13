@@ -113,9 +113,9 @@ export async function POST(request: Request) {
             result = ping;
             message = ping.message;
           }
-        } else if (provider === 'google-cloud' || spec?.authMode === 'service_account') {
+        } else if (spec?.authMode === 'service_account') {
           statusCode = 400;
-          message = 'Google Cloud is service-account only — there is no OAuth connect or diagnostic ping.';
+          message = `${spec.name} is service-account only — there is no OAuth connect or diagnostic ping.`;
           result = { connected: false, setupUrl: '/connectors' };
         } else if (provider === 'gmail' && payload.recipient && payload.text) {
           const nangoClient = getNangoClient();

@@ -77,6 +77,9 @@ BEGIN
        env_id, false),
       (NOW(), NOW(), 'google-business-profile', 'google', g_client_id, g_client_secret,
        'openid email profile https://www.googleapis.com/auth/business.manage',
+       env_id, false),
+      (NOW(), NOW(), 'google-cloud', 'google', g_client_id, g_client_secret,
+       'openid email profile https://www.googleapis.com/auth/cloud-platform',
        env_id, false)
     ON CONFLICT (unique_key, environment_id, deleted_at) DO UPDATE SET
       provider = EXCLUDED.provider,
