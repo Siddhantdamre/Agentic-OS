@@ -9,6 +9,7 @@
     "lint": "next lint"
   },
   "dependencies": {
+    "@darex/shared-types": "workspace:*",
     "@darex/connectors": "workspace:*",
     "@darex/workflows": "workspace:*",
     "@nangohq/frontend": "^0.38.0",

@@ -20,7 +20,8 @@
     ],
     "paths": {
       "@/*": ["./*"],
-      "@darex/connectors": ["../../services/connectors/src/index.ts"]
+      "@darex/connectors": ["../../services/connectors/src/index.ts"],
+      "@darex/shared-types": ["../../packages/shared-types/src/index.ts"]
     }
   },
   "include": ["next-env.d.ts", "**/*.ts", "**/*.tsx", ".next/types/**/*.ts"],

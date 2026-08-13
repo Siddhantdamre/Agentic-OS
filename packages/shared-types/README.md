@@ -1,10 +1,17 @@
-# packages/shared-types — Shared TypeScript Types (populated across phases)
+# @darex/shared-types
 
-Shared TypeScript interfaces and Zod schemas used by all apps and services.
+Shared TypeScript contracts for Darex apps and services.
 
-**Status:** Placeholder. Populated as types are needed across phases.
+**Status:** Used by `@darex/dashboard` and `@darex/workflows`. Types only — no runtime I/O.
 
-## What goes here
-- `Org`, `User`, `AIEmployee`, `Channel`, `Conversation`, `Message` TS interfaces
-- Zod schemas for API request/response validation
-- Shared constants (employee roles, channel types, etc.)
+## What lives here
+
+- Domain: `Org`, `User`, `AIEmployee`, `Channel`, `Conversation`, `Message`
+- Agent: `AgentTaskInput`, `AgentTaskResult`, `ToolExecutionResult`
+- Ask AI: `ClassifyResult`, `PlanStep`, `GeneratedPlan`
+
+Import:
+
+```ts
+import type { PlanStep, ToolExecutionResult } from '@darex/shared-types';
+```

@@ -14,16 +14,20 @@ RUN corepack enable
 WORKDIR /app
 
 COPY package.json pnpm-workspace.yaml pnpm-lock.yaml ./
-RUN mkdir -p apps/dashboard apps/inbox services/connectors services/workflows
+RUN mkdir -p apps/dashboard apps/inbox services/connectors services/workflows packages/shared-types
 COPY apps/dashboard/package.json apps/dashboard/package.json
 COPY apps/inbox/package.json apps/inbox/package.json
 COPY services/connectors/package.json services/connectors/package.json
 COPY services/workflows/package.json services/workflows/package.json
+COPY packages/shared-types/package.json packages/shared-types/package.json
 RUN pnpm install --frozen-lockfile
 
 # ── builder: compile workspace deps, then run `next build` ─────────────────
 FROM deps AS builder
 WORKDIR /app
+
+COPY packages/shared-types packages/shared-types
+RUN pnpm --filter @darex/shared-types build
 
 COPY services/connectors/tsconfig.json services/connectors/tsconfig.json
 COPY services/connectors/src services/connectors/src
@@ -45,6 +49,7 @@ ENV NEXT_TELEMETRY_DISABLED=1
 
 COPY --from=builder /app/package.json /app/pnpm-workspace.yaml /app/pnpm-lock.yaml ./
 COPY --from=builder /app/node_modules ./node_modules
+COPY --from=builder /app/packages ./packages
 COPY --from=builder /app/services ./services
 COPY --from=builder /app/apps/dashboard ./apps/dashboard
 

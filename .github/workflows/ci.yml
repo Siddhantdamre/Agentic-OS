@@ -39,7 +39,8 @@ jobs:
 
       - name: Typecheck (shared-types, connectors, workflows)
         run: |
-          pnpm --filter @darex/shared-types exec tsc --noEmit || true
+          pnpm --filter @darex/shared-types exec tsc --noEmit
+          pnpm --filter @darex/shared-types build
           pnpm --filter @darex/connectors exec tsc --noEmit
           pnpm --filter @darex/workflows exec tsc --noEmit
 

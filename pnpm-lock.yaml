@@ -23,6 +23,9 @@ importers:
       '@darex/connectors':
         specifier: workspace:*
         version: link:../../services/connectors
+      '@darex/shared-types':
+        specifier: workspace:*
+        version: link:../../packages/shared-types
       '@darex/workflows':
         specifier: workspace:*
         version: link:../../services/workflows
@@ -122,6 +125,12 @@ importers:
         specifier: ^5.4.5
         version: 5.9.3
 
+  packages/shared-types:
+    devDependencies:
+      typescript:
+        specifier: ^5.4.0
+        version: 5.9.3
+
   services/connectors:
     dependencies:
       '@nangohq/node':
@@ -143,6 +152,9 @@ importers:
       '@agent-infra/sandbox':
         specifier: ^1.0.17
         version: 1.0.17
+      '@darex/shared-types':
+        specifier: workspace:*
+        version: link:../../packages/shared-types
       '@modelcontextprotocol/sdk':
         specifier: 1.29.0
         version: 1.29.0(@cfworker/json-schema@4.1.1)(zod@3.25.76)
