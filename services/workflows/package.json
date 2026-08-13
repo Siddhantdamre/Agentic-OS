@@ -4,10 +4,11 @@
   "private": true,
   "main": "dist/worker.js",
   "scripts": {
-    "build": "tsc",
+    "build": "tsc && mkdir -p dist/metrics && cp src/metrics/core-kpis.yaml dist/metrics/core-kpis.yaml",
     "dev": "tsc -w",
     "start": "node dist/worker.js",
-    "start:bridge": "node dist/mcp-bridge.js"
+    "start:bridge": "node dist/mcp-bridge.js",
+    "test": "node --test dist/activities/redact.test.js dist/activities/memory-writeback.test.js dist/activities/critic-check.test.js dist/route-employee.test.js dist/tools/realestate/match.test.js dist/tools/realestate/charges.test.js dist/tools/realestate/compliance.test.js"
   },
   "dependencies": {
     "@darex/shared-types": "workspace:*",
