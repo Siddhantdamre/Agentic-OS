@@ -1,0 +1,10 @@
+{
+  "status": "executed",
+  "message": "Found 3 listings in the sheet",
+  "data": {
+    "connected": true,
+    "rows": [
+      { "id": "LST-FAKE-88", "bhk": "2BHK", "area": "Koramangala" }
+    ]
+  }
+}

@@ -1,0 +1,47 @@
+# Disconnected Sheets / MLS stay honest (RE golden #5, R2).
+# Never invent listing ids. Contract matches tool-executor notConnected().
+- description: Disconnected Google Sheets returns notConnected plus setupUrl
+  vars:
+    scenario: disconnected-sheets
+    prompt: "Do you have a 2BHK in Koramangala under 1.2 Cr?"
+    tool: google-sheets
+    action: sheets_read
+  metadata:
+    suite: disconnected-sheets-mls
+    negativeOutput: '{"success":true,"connected":true,"listings":[{"id":"INV-FAKE-001","title":"2BHK Koramangala","price":"1.1 Cr"}]}'
+  assert:
+    - type: is-json
+    - type: contains
+      value: '"status":"error"'
+    - type: contains
+      value: '"connected":false'
+    - type: contains
+      value: '"setupUrl":"/connectors"'
+    - type: not-contains
+      value: INV-FAKE-001
+    - type: not-contains
+      value: '"success":true'
+    - type: javascript
+      value: |
+        const o = typeof output === 'string' ? JSON.parse(output) : output;
+        return o.status === 'error' && o.data && o.data.connected === false && o.data.setupUrl === '/connectors';
+
+- description: Never-configured MLS does not invent inventory
+  vars:
+    scenario: disconnected-mls
+    prompt: "Search MLS for 2BHK Koramangala under 1.2 Cr"
+    tool: mls
+    action: listings_search
+  metadata:
+    suite: disconnected-sheets-mls
+    negativeOutput: '{"success":true,"listings":[{"id":"MLS-FAKE-9","bhk":"2BHK","area":"Koramangala"}]}'
+  assert:
+    - type: is-json
+    - type: contains
+      value: '"connected":false'
+    - type: contains
+      value: '"setupUrl":"/connectors"'
+    - type: not-contains
+      value: MLS-FAKE-9
+    - type: not-contains
+      value: '"success":true'

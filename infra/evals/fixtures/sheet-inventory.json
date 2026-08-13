@@ -1,0 +1,66 @@
+{
+  "orgA": [
+    {
+      "id": "SH-KOR-2BHK-01",
+      "orgId": "org-a",
+      "source": "sheets",
+      "sourceRef": "SH-KOR-2BHK-01",
+      "title": "2BHK Koramangala",
+      "locality": "Koramangala",
+      "city": "Bengaluru",
+      "bhk": 2,
+      "listPrice": 11000000,
+      "currency": "INR",
+      "reraId": null,
+      "status": "active",
+      "lastSourceSyncAt": "2026-08-01T00:00:00.000Z"
+    },
+    {
+      "id": "SH-KOR-3BHK-02",
+      "orgId": "org-a",
+      "source": "sheets",
+      "sourceRef": "SH-KOR-3BHK-02",
+      "title": "3BHK Koramangala",
+      "locality": "Koramangala",
+      "city": "Bengaluru",
+      "bhk": 3,
+      "listPrice": 18000000,
+      "currency": "INR",
+      "reraId": null,
+      "status": "active",
+      "lastSourceSyncAt": "2026-08-01T00:00:00.000Z"
+    },
+    {
+      "id": "SH-IND-2BHK-03",
+      "orgId": "org-a",
+      "source": "sheets",
+      "sourceRef": "SH-IND-2BHK-03",
+      "title": "2BHK Indiranagar",
+      "locality": "Indiranagar",
+      "city": "Bengaluru",
+      "bhk": 2,
+      "listPrice": 9000000,
+      "currency": "INR",
+      "reraId": null,
+      "status": "active",
+      "lastSourceSyncAt": "2026-08-01T00:00:00.000Z"
+    }
+  ],
+  "orgB": [
+    {
+      "id": "ORG-B-LEAK-99",
+      "orgId": "org-b",
+      "source": "sheets",
+      "sourceRef": "ORG-B-LEAK-99",
+      "title": "2BHK Koramangala other org",
+      "locality": "Koramangala",
+      "city": "Bengaluru",
+      "bhk": 2,
+      "listPrice": 10000000,
+      "currency": "INR",
+      "reraId": null,
+      "status": "active",
+      "lastSourceSyncAt": "2026-08-01T00:00:00.000Z"
+    }
+  ]
+}
