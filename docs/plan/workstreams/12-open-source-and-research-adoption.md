@@ -33,6 +33,9 @@ REJECT (closed decision).
 
 ## 3. Gaps
 
+**Audit 2026-08-14:** L1–L5 **done** (CI deny-list; Promptfoo YAML;
+hybrid retrieve; PgBouncer).
+
 Policy exists in future-scope. This plan must apply it so
 implementers do not add Mastra/Mem0/CrewAI as a kernel.
 

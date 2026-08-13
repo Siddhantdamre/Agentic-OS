@@ -4,6 +4,9 @@ This bucket finishes memory so it is no longer theater, then
 starts insight, the scale skeleton, and the connector registry
 plus Wave A/B. Real-estate pack is still **out**.
 
+**Audit 2026-08-14: MOSTLY DONE in code.** Remaining: M6 live eval,
+Zoho/Leegality, two-replica drill, Langfuse ClickHouse.
+
 Linked from [00-phase-map.md](./00-phase-map.md).
 Documentation only.
 

@@ -33,6 +33,8 @@ goldens. LangSmith REJECT. Narrative over pre-aggregates only.
 
 ## 3. Gaps
 
+**Audit 2026-08-14:** A2–A5 **done** as code. A1 Langfuse **partial**.
+
 Analytics SQL **done**. Insight engine, eval-runner, cost budgets,
 promotion **missing**. Langfuse **partial**.
 

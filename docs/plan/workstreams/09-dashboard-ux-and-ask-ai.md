@@ -38,6 +38,9 @@ Onboarding → pack install with real warm-up. Mobile + a11y.
 
 ## 3. Gaps
 
+**Audit 2026-08-14:** U1–U5 **done**. U6 **partial** (a11y
+components; no recorded 375px pass).
+
 Ask AI core **done**. Citations, @employee, Brain, pack modules,
 real warm-up, mobile/a11y **missing**.
 

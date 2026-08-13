@@ -24,130 +24,130 @@ Linked from [../README.md](../README.md). Documentation only.
 
 ### 01 Runtime (R)
 
-- [ ] R1 Skills + sandbox on default branch; image rebuilt after skill edits
-- [ ] R2 `buildGroundedUserMessage` includes retrieveMemory on Ask AI simple, complex, and inbound
-- [ ] R3 Per work-item session keys
-- [ ] R4 A mounted skill changes observed behavior in an eval
-- [ ] R5 Risk metadata on the executor gateway
-- [ ] R6 No second employee runtime added
+- [x] R1 Skills + sandbox on default branch; image rebuilt after skill edits
+- [x] R2 `buildGroundedUserMessage` includes retrieveMemory on Ask AI simple, complex, inbound child turn, and WorkItem parent activity
+- [x] R3 Per work-item session keys
+- [x] R4 A mounted skill changes observed behavior in an eval (`infra/evals/skill-playbook.yaml`)
+- [x] R5 Risk metadata on the executor gateway
+- [x] R6 No second employee runtime added (CI deny-list)
 
 ### 02 Orchestration (O)
 
-- [ ] O1 `work_items` + `work_events` with RLS
-- [ ] O2 WorkItemWorkflow (wrap or replace AutonomousAgentWorkflow — decision recorded)
-- [ ] O3 Activity rules on every side-effect
-- [ ] O4 Plan execute via Temporal when risk ≥ send
-- [ ] O5 OwnerBriefing + StaleChase
-- [ ] O6 Playbook matcher; nurture cancels on reply
-- [ ] O7 HITL Temporal signal
+- [x] O1 `work_items` + `work_events` with RLS
+- [x] O2 WorkItemWorkflow (wrap; Q1 recorded in workflow comments)
+- [x] O3 Activity rules on every side-effect
+- [x] O4 Plan execute via Temporal when risk ≥ send
+- [x] O5 OwnerBriefing + StaleChase (code; per-org cron not live-proven)
+- [x] O6 Playbook matcher; nurture cancels on reply
+- [x] O7 HITL Temporal signal — PlanExecute + WorkItem inbound `condition()` wait **before send/pay/sign tools** (not only the channel reply)
 
 ### 03 Memory (M)
 
-- [ ] M1 Schema + RLS + WITH CHECK
-- [ ] M2 embed-worker; never on webhook thread; `EMBEDDING_MODEL` fail-fast
-- [ ] M3 retrieveMemory returns cited snippets or empty
-- [ ] M4 Write-back after successful turns
-- [ ] M5 `/brain` search + cite
-- [ ] M6 Returning-contact eval + two-org vector test
+- [x] M1 Schema + RLS + WITH CHECK
+- [x] M2 embed-worker; never on webhook thread; `EMBEDDING_MODEL` fail-fast
+- [x] M3 retrieveMemory returns cited snippets or empty
+- [x] M4 Write-back after successful turns
+- [x] M5 `/brain` search + cite
+- [ ] M6 Returning-contact eval + two-org vector test — **partial**: YAML + probe exist; parent `retrieveMemoryActivity` wired; live eval not green
 
 ### 04 Connectors (C)
 
 - [ ] C1 OAuth client IDs + Gmail re-connect (ops)
-- [ ] C2 Catalog hints match executors
-- [ ] C3 Registry tables; UI reads registry
-- [ ] C4 tool-executor split; 62 tools still honest
-- [ ] C5 Outlook + Calendar completeness
-- [ ] C6 One CRM + one e-sign + Maps
-- [ ] C7 Sheets inventory SoR (mid); later waves as pull
+- [x] C2 Catalog hints match executors (registry-driven)
+- [x] C3 Registry tables; UI reads registry
+- [x] C4 tool-executor split; tools still honest
+- [x] C5 Outlook + Calendar completeness (ops: Azure client id)
+- [x] C6 One CRM + one e-sign + Maps — SF + Zoho CRM + DocuSign + Leegality + Maps + Twilio + QuickBooks executors (2026-08-14). Live OAuth/BYOK still ops.
+- [ ] C7 Sheets inventory SoR — **partial**: RE tools + listings filter UI; live sheet/Ask AI verify open
 
 ### 05 Knowledge (K)
 
-- [ ] K1 Drive `knowledge_sources` + `ingestion_jobs`
-- [ ] K2 File ingest v1 cites
-- [ ] K3 Sync-worker cursors
-- [ ] K4 Semantic metrics registry; no raw SQL on request path
-- [ ] K5 Public official fetch + cache (cite; never inventory)
+- [x] K1 Drive `knowledge_sources` + `ingestion_jobs`
+- [ ] K2 File ingest v1 cites — **partial**: virus-scan stub
+- [x] K3 Sync-worker cursors
+- [x] K4 Semantic metrics registry; `metrics.query`
+- [x] K5 Public official fetch + cache — RERA public tool exists
 
 ### 06 Channels (H)
 
-- [ ] H1 Meta token rotated; Console webhook live
-- [ ] H2 Unified `channel_key` on messages
-- [ ] H3 Gmail push + portal email parse
-- [ ] H4 Instagram / SMS as pull
-- [ ] H5 Owner WhatsApp distinct number
-- [ ] H6 Public widget as pull
-- [ ] H7 Redis SSE with two replicas
+- [ ] H1 Meta token rotated; Console webhook live (**ops-blocked**)
+- [x] H2 Unified `channel_key` on messages
+- [ ] H3 Gmail push + portal email parse — **partial**: route exists
+- [ ] H4 Instagram / SMS as pull — **partial**: webhook routes
+- [ ] H5 Owner WhatsApp distinct number — **partial**: route; needs number
+- [x] H6 Public widget embed JS + snippet — persist → 200 → WorkItem; no body `org_id`
+- [x] H7 Redis SSE with two replicas (bus done; replica drill not recorded)
 
 ### 07 Security (S)
 
-- [ ] S1 Apps run as `darex_app`
-- [ ] S2 Confirm classes on webhook path
-- [ ] S3 `audit_events` + who approved
-- [ ] S4 Redaction before embed
-- [ ] S5 Demo-auth prod fail + rate limits
-- [ ] S6 DSR export/delete
-- [ ] S7 SSO SAML
+- [x] S1 Apps run as `darex_app`
+- [x] S2 Confirm classes on webhook path
+- [x] S3 `audit_events` + who approved
+- [x] S4 Redaction before embed (embed path)
+- [x] S5 Demo-auth prod fail + rate limits
+- [x] S6 DSR export/delete
+- [ ] S7 SSO SAML — **partial**: routes; test IdP unproven
 
 ### 08 Employees (E)
 
-- [ ] E1 Allowlist union does not regress
-- [ ] E2 Router
-- [ ] E3 Critic gate
-- [ ] E4 Research + Finance seeds
-- [ ] E5 @employee decision recorded and implemented
-- [ ] E6 Human roles including auditor
+- [x] E1 Allowlist union does not regress
+- [x] E2 Router
+- [x] E3 Critic gate
+- [x] E4 Research + Finance seeds
+- [x] E5 @employee decision recorded and implemented (org-union)
+- [x] E6 Human roles including auditor
 
 ### 09 Dashboard UX (U)
 
-- [ ] U1 Citations on Ask AI
-- [ ] U2 Plans / work-items inbox
-- [ ] U3 `/brain` chrome
-- [ ] U4 Pack modules (RE first)
-- [ ] U5 Onboarding → pack + real warm-up
-- [ ] U6 Mobile + a11y
+- [x] U1 Citations on Ask AI
+- [x] U2 Plans / work-items inbox
+- [x] U3 `/brain` chrome
+- [x] U4 Pack modules (RE first)
+- [x] U5 Onboarding → pack + real warm-up (Wave 2 RFC)
+- [ ] U6 Mobile + a11y — **partial**: `components/a11y/*`; no recorded 375px pass
 
 ### 10 Observability (A)
 
-- [ ] A1 Langfuse persistence stable
-- [ ] A2 Eval-runner CI from Phase 6
-- [ ] A3 Insight engine (not templates)
-- [ ] A4 Cost per org + drift
-- [ ] A5 Promote plan → org skill
+- [ ] A1 Langfuse persistence stable — **partial**
+- [x] A2 Eval-runner CI from Phase 6 (`infra/evals/`)
+- [x] A3 Insight engine (not templates) — code enqueue
+- [x] A4 Cost per org + drift
+- [x] A5 Promote plan → org skill
 
 ### 11 Infra (I)
 
-- [ ] I1 Migrations 009–011 applied
-- [ ] I2 Sandbox committed; stale READMEs fixed
-- [ ] I3 Redis event bus
-- [ ] I4 PgBouncer + pool discipline
-- [ ] I5 Terraform starter + backup restore drill
-- [ ] I6 Alerting + new probes
-- [ ] I7 Split ingest host (later; optional for “complete”)
+- [x] I1 Migrations 009–011 applied (files exist; operator still runs on older DBs)
+- [x] I2 Sandbox committed; stale READMEs fixed
+- [x] I3 Redis event bus
+- [x] I4 PgBouncer + pool discipline
+- [ ] I5 Terraform starter + backup restore drill — **partial**: scripts exist
+- [ ] I6 Alerting + new probes — **partial**: `alerting-*.js`
+- [ ] I7 Split ingest host (later; optional for “complete”) — **deferred**
 
 ### 12 Research adoption (L)
 
-- [ ] L1 ADOPT list used in Phase 6–8 (Promptfoo, hybrid retrieve later)
-- [ ] L2 STUDY patterns only (no vendor SoR)
-- [ ] L3 WATCH items stay named-phase
-- [ ] L4 REJECT list not violated (no Composio, Mem0 Cloud, second runtime)
-- [ ] L5 Review gate on new dependencies
+- [x] L1 ADOPT list used in Phase 6–8 (Promptfoo YAML, hybrid retrieve, PgBouncer)
+- [x] L2 STUDY patterns only (no vendor SoR)
+- [x] L3 WATCH items stay named-phase
+- [x] L4 REJECT list not violated (CI deny-list)
+- [x] L5 Review gate on new dependencies (CI deny-list)
 
 ### 13 Packs (P)
 
-- [ ] P1 Core B2B versioned pack + idempotent install
-- [ ] P2 Onboarding maps type → packs
-- [ ] P3 RE brokerage IN wedge + `03` §11 quality bar
-- [ ] P4 RE expansion (two markets)
-- [ ] P5 Two Wave 2 packs live or explicit beta
-- [ ] P6 Wave 3–4 RFC then pull
+- [x] P1 Core B2B versioned pack + idempotent install
+- [x] P2 Onboarding maps type → packs
+- [ ] P3 RE brokerage IN wedge + `03` §11 quality bar — **partial** (UI schedule + evals; not `live`)
+- [ ] P4 RE expansion (two markets) — **deferred**
+- [ ] P5 Two Wave 2 packs live or explicit beta — **deferred** (RFC)
+- [x] P6 Wave 3–4 RFC then pull (`packs/RFC-wave-2-4.md`)
 
 ### 14 Billing / learning (B)
 
-- [ ] B1 Invite email when key set; URL always works
-- [ ] B2 Darex subscription billing; no escrow
-- [ ] B3 Meters match traces
-- [ ] B4 Learning loop; no cross-org training
-- [ ] B5 Marketplace **preview** only; no public store
+- [x] B1 Invite email when key set; URL always works
+- [ ] B2 Darex subscription billing; no escrow — **partial**: org-isolated checkout + fail-fast; live PSP keys still human
+- [x] B3 Meters match traces (code)
+- [x] B4 Learning loop; no cross-org training
+- [x] B5 Marketplace **preview** only; no public store
 
 ---
 
@@ -170,7 +170,7 @@ Linked from [../README.md](../README.md). Documentation only.
 - [ ] K4 + A3 start; insight numbers match SQL
 - [ ] I3 + H7 two-replica SSE or dated exception
 - [ ] C3 registry-driven UI
-- [ ] C6 at least one CRM or honest notConnected
+- [x] C6 at least one CRM or honest notConnected — Zoho/SF + Leegality/DocuSign honesty goldens
 - [ ] E2 router; E1 still holds
 
 ### Mid ([../phases/03-phase-mid.md](../phases/03-phase-mid.md))

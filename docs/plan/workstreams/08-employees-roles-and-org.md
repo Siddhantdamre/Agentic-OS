@@ -39,6 +39,8 @@ Sources: `docs/future-scope/08-agent-workforce.md`, `03`, `13`.
 
 ## 3. Gaps
 
+**Audit 2026-08-14:** E1–E6 **done** (org-union @employee).
+
 Seed + allowlist union **done**. Router, critic, Research/Finance,
 @mention, pack YAML, auditor role **missing**.
 

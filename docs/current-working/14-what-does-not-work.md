@@ -27,10 +27,10 @@ Gaps in the **current tree**, not the original wish-list.
 
 ## Not started (roadmap Phases 6–9)
 
-- **Phase 6** Memory & RAG — pgvector on, no embeddings pipeline.
-- **Phase 7** Insight/analytics **engine** — pages exist with simpler SQL.
-- **Phase 8** Redis pub/sub realtime, Terraform, HTTPS, alerting.
-- **Phase 9** Mobile, a11y, billing. (Onboarding wizard already exists.)
+- **Phase 6** Memory & RAG — **partial** (tables + retrieve + /brain; inbound parent activity still no-op).
+- **Phase 7** Insight engine — **partial** (named-workflow enqueue exists).
+- **Phase 8** Redis bus + PgBouncer **done**; Terraform/alerting scripts **partial**.
+- **Phase 9** Packs + billing APIs **partial**; Darex PSP keys ops. Wave 2 RFC.
 
 ## Stale claims to ignore
 

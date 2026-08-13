@@ -43,6 +43,13 @@ surfaces, `03` §10 marketplace later, `08` §10.
 
 ## 3. Gaps
 
+**Audit 2026-08-14 + B2 wiring 2026-08-14:** B3/B4/B5 **done** as
+code. B2 **partial** — checkout/session is session-`org_id` only,
+prod fail-fast + honest 503 when keys missing, `.env.example`
+documents `DAREX_STRIPE_*` / `DAREX_RAZORPAY_*`. Live paid plan
+still needs a human to paste Darex PSP test keys. B1 **partial**
+without Resend key.
+
 Invite link **partial**. Billing, meters, promotion UI,
 marketplace **missing**. Eval-runner owned by workstream 10.
 

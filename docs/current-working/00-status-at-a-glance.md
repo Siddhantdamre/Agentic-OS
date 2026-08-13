@@ -47,8 +47,8 @@ Legend:
 | Code sandbox (`code_execution`)                 | **Works if connected** | `infra/docker/sandbox/` restored in this tree; needs compose build      |
 | Custom skill playbooks (11 SKILL.md)            | **Works**              | Dockerfile COPY into `starter-skills` (rebuild atomic-agent image)      |
 | Langfuse traces                                 | **Partial**            | Ingestion schema fixed; ClickHouse persistence flaky                    |
-| pgvector RAG / org memory                       | **Does not work**      | Extension enabled; Phase 6 not built                                    |
-| Billing                                         | **Does not work**      | Phase 9                                                                 |
+| pgvector RAG / org memory                       | **Partial**            | Tables + retrieve + /brain; M6 live eval + inbound activity gap |
+| Billing                                         | **Partial**            | `/billing` APIs; Darex PSP keys                                 |
 
 
 
@@ -138,9 +138,9 @@ Disconnected OAuth **never fabricates success**. Tools return `status: 'error'`,
 | 3 Inbox ingestion                         | Done            | Webhooks + conversations                 |
 | 4 / 4.5 / 4.6 Agent + security + live E2E | Done            | atomic-agent, not Hermes                 |
 | 5 Realtime SSE                            | Done            | Single-process hub                       |
-| 6 Memory & RAG                            | **Not started** |                                          |
-| 7 Insight & analytics engine              | **Not started** | Pages exist with simpler SQL / templates |
-| 8 Scale / Terraform / alerting            | **Not started** |                                          |
-| 9 Polish, mobile, a11y, billing           | **Not started** | Onboarding wizard already exists         |
+| 6 Memory & RAG                            | **Partial**     | Tables + retrieve + /brain |
+| 7 Insight & analytics engine              | **Partial**     | Named-workflow enqueue     |
+| 8 Scale / Terraform / alerting            | **Partial**     | Redis + PgBouncer; TF scripts |
+| 9 Polish, mobile, a11y, billing           | **Partial**     | Packs + billing APIs       |
 
 

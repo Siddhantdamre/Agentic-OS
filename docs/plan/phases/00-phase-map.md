@@ -4,6 +4,9 @@ This file maps [`docs/future-scope/13-phased-roadmap.md`](../../future-scope/13-
 onto this plan’s four execution buckets. Future-scope 13 remains the
 phase numbering (6–18). This plan does not invent a second roadmap.
 
+**Audit 2026-08-14:** Immediate and most Near items are in code.
+Do not rebuild M1–M5, O1–O6, C3–C5, S1–S6, P1–P2.
+
 Linked from [../README.md](../README.md) and
 [../05-workstream-index.md](../05-workstream-index.md).
 Documentation only.
@@ -19,8 +22,10 @@ Documentation only.
 | [03-phase-mid.md](./03-phase-mid.md) | Phases 9, 11, 12, 13, 14 | Billing, RE packs, playbooks, Wave 2 |
 | [04-phase-complete.md](./04-phase-complete.md) | Phases 15–18 + “complete OS” bar | Enterprise + pull waves |
 
-Phases 0–5 are **done in code**. Do not reopen them. See
-[../01-current-state-baseline.md](../01-current-state-baseline.md).
+Phases 0–5 are **done in code**. Phases 6–10 are **mostly in code**
+(see [../02-gap-analysis.md](../02-gap-analysis.md) §0.1). Do not
+reopen them. Remaining: operator creds, inbound retrieve activity,
+WorkItem HITL wait, RE quality bar, Wave 2 RFC, residency, pull waves.
 
 **Never skip Phase 6.** Future-scope `13` and `01` §5 are binding.
 A realtor demo without recall is theater.
@@ -51,8 +56,9 @@ current-working `16` already closed. Full table:
 
 ### Phase 6 — Memory & RAG (never skip)
 
-**Still open:** M1–M6, R2, S4 (redaction before embed), A2 stub,
-I2, S1 (`darex_app` can start here; Phase 8 also lists it).
+**Still open:** M6 live eval;
+C6 leftovers shipped (live creds ops); P3 live-verify; H1 token;
+C1 OAuth IDs; A1 ClickHouse; I5/I6 staging apply.
 
 **Hygiene still open:** I1 migrate 009–011; C1 OAuth IDs; H1 Meta
 token; R1 land sandbox/skills; C2 catalog hints.

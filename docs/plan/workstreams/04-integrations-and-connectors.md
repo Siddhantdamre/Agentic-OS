@@ -58,6 +58,10 @@ Sources: `docs/future-scope/06-integrations-catalog.md`,
 
 ## 3. Gaps
 
+**Audit 2026-08-14:** C3/C4/C5 **done**. C6 leftovers **done** as
+executors (SF + Zoho CRM + DocuSign + Leegality + Maps + Twilio +
+QuickBooks). Live Nango/BYOK still **ops**. C1 still **ops**.
+
 | Item | Status |
 |------|--------|
 | Nango truth + honest notConnected | **done** |
@@ -66,7 +70,7 @@ Sources: `docs/future-scope/06-integrations-catalog.md`,
 | UI `catalog_only` hints | **partial** |
 | Registry tables | **missing** |
 | Executor module split | **missing** |
-| Outlook / Salesforce / Zoho / DocuSign / Maps | **missing** |
+| Outlook / Salesforce / Zoho / DocuSign / Leegality / Maps / QuickBooks | **done** as executors (live creds ops) |
 | RE CRMs / MLS feed | **missing** (after memory) |
 
 ---
@@ -130,6 +134,10 @@ Sources: `docs/future-scope/06-integrations-catalog.md`,
 - **Depends on:** C3–C4. Maps is P0 for RE.
 - **DoD:** E-sign confirm class works. GBP reviews real when
   connected. No portal scrape.
+- **2026-08-14 leftovers:** Zoho CRM + Leegality + QuickBooks
+  executors, seed, MCP, honesty goldens shipped. Live OAuth/BYOK
+  still ops. Happy path when connected: `zoho_list_contacts`,
+  `leegality_list_documents`, `quickbooks_list_customers`.
 
 ### C7 — Wave C (after Phase 6 memory)
 

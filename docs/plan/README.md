@@ -7,8 +7,10 @@
 > - **What we intend to become:** [`docs/future-scope/`](../future-scope/)
 > - **This folder:** the sequenced, executable plan between those two.
 >
-> Snapshot date of the baseline: **2026-08-13**. If current-working has
-> moved, trust current-working for facts and update this plan.
+> Snapshot date of the baseline: **2026-08-13**. Status audit:
+> **2026-08-14** (code + `BUILD_STATE.md`). Current-working 13 Aug
+> docs are stale on Phases 6–15 — trust this folder’s audit until
+> they are rewritten.
 
 Darex is already a working multi-tenant AI-employee SaaS: Ask AI
 plan-confirm-execute, atomic-agent + MCP (`mcp.darex.*`), Nango
@@ -18,9 +20,11 @@ system** — generic B2B first, then vertical packs — with memory,
 orchestration, channels, and governance that make it a brain, not a
 capable agent with amnesia.
 
-**Do not treat this folder as shipped.** When a work item lands,
+**This folder is the execution tracker.** When a work item lands,
 update `docs/current-working/` and `BUILD_STATE.md`, then mark the
-matching row here as absorbed.
+matching row here. A 2026-08-14 audit found most Immediate/Near
+items already in the tree; statuses are from code, not the original
+“not started” snapshot.
 
 ---
 
@@ -37,11 +41,9 @@ If you are planning a quarter: start at
 [`execution/03-build-order.md`](./execution/03-build-order.md).
 
 If current-working and future-scope disagree on **what exists**,
-current-working wins. If they disagree on **what to build next**,
-future-scope wins until `BUILD_STATE.md` records a deviation. Several
-hygiene items in `docs/future-scope/01-from-today-to-os.md` are
-already closed in the 2026-08-13 working tree — see
-[`02-gap-analysis.md`](./02-gap-analysis.md) section 0.
+**code wins** (then this audit). If they disagree on **what to build
+next**, future-scope wins until `BUILD_STATE.md` records a deviation.
+See [`02-gap-analysis.md`](./02-gap-analysis.md).
 
 ---
 
@@ -104,57 +106,122 @@ already closed in the 2026-08-13 working tree — see
 | Field | Value |
 |-------|-------|
 | Created | 2026-08-13 |
-| Baseline | `docs/current-working/` as of 2026-08-13 (includes uncommitted working-tree work in `16-updates-2026-08-13.md`) |
+| Last status audit | **2026-08-14** — code vs `docs/future-scope/` vs this folder |
+| Baseline | `docs/current-working/` as of 2026-08-13 is **stale** on Phases 6–15. Prefer this README + [02-gap-analysis.md](./02-gap-analysis.md) until current-working is rewritten. |
 | Target | `docs/future-scope/` Phases 6–18 |
-| Replaces | Nothing. No prior `docs/plan/` existed. |
-| Code changes | None. This corpus is documentation only. |
+| Code changes from this folder | Documentation only |
+
+Legend: **done** (wired in code) · **partial** (code exists, gap remains) · **ops-blocked** (code ready, credentials) · **not done** · **deferred** (RFC / pull / Phase 16–18).
+
+---
+
+## Audit summary (2026-08-14)
+
+The 13 Aug plan assumed Phases 6–18 were empty. The tree now contains
+migrations **001–020**, Temporal workflows beyond Autonomous/Crew,
+`packs/core-b2b` + `packs/re-brokerage-in`, Redis SSE bus, billing
+APIs, DSR, SSO routes, and eval YAML. **Operator credentials and
+Wave 2–4 packs are the remaining product work**, not “start Phase 6.”
+
+### Fully done (kernel + Immediate + most Near)
+
+- Phases 0–5 (Ask AI, atomic-agent, Nango honesty, WhatsApp/Chatwoot inbound, RLS, single-process SSE then Redis bus).
+- **M1–M5** memory schema, embed worker, `retrieveMemory` on Ask AI / agent/run / Temporal `runAgentTurnActivity`, write-back workflow, `/brain` UI. Evidence: `infra/db/migrations/013_memory_rag.sql`, `services/workflows/src/memory/retrieve.ts`, `apps/dashboard/app/(dashboard)/brain/page.tsx`.
+- **R1/I2** skills COPY + `infra/docker/sandbox/`. **R2** grounded user prefix. **R5** risk metadata. **R6** CI deny-list.
+- **O1–O6** work items, WorkItemWorkflow wrap, plan-execute Temporal, briefing/stale-chase/nurture, playbook matcher. **O7** HITL `condition()` wait on `PlanExecuteWorkflow` and WorkItem inbound send/pay/sign **tools** (wait before `executeChild`).
+- **C3/C4/C5** registry + `tools/*.ts` split + Outlook/Calendar. **C6** Salesforce + Zoho CRM + DocuSign + Leegality + Maps + Twilio + QuickBooks (executors; live OAuth/BYOK still ops).
+- **S1** `DB_USER=darex_app` + PgBouncer. **S2/S3** webhook confirm + `audit_events`. **S5** demo-auth prod refuse + rate limits. **S6** DSR. **E1–E6** router, critic, Research/Finance seeds, @employee (org-union), auditor role.
+- **U1–U5** citations, `/plans`, `/brain`, listings/inquiries, onboarding → pack recommend. **P1/P2** Core B2B + InstallPackWorkflow.
+- **I3/I4/H7** Redis bus + PgBouncer. Terraform starter + restore-drill + alerting **scripts** (I5/I6 **partial** until staging apply).
+- **A2/A3/A4/A5/B4** evals, insight engine enqueue, cost cards, promote playbook. **B5** marketplace **preview** (`docs/current-working/marketplace-preview.md` + `/skills`). **L1–L5** deny-list in CI.
+
+### Partial (code present, DoD not fully met)
+
+| Item | There | Missing |
+|------|-------|---------|
+| **M6** returning-contact | `infra/evals/phase6-returning-contact.yaml` + `check-phase6-memory.js`; WorkItem parent `retrieveMemoryActivity` calls `retrieveMemory` | Live eval green on a migrated DB |
+| **A1** Langfuse | Ingestion 201; dedicated Redis | ClickHouse persistence still flaky |
+| **C2** catalog | Registry-driven UI | Confirm every Google product is `live` in seed vs leftover `catalog_only` |
+| **C6** Wave B | SF / Zoho CRM / DocuSign / Leegality / Maps / Twilio / QuickBooks executors + honesty goldens | Live Nango/BYOK credentials (ops). Pipedrive / Mailchimp / Instagram still out of C6 leftovers. |
+| **C7 / P3** RE IN | Pack YAML (`live: false`), listings/inquiries UI with showing + rent schedule, Sheets SoR tools, goldens + live RLS evals | Quality bar (`03` §11) not fully live-verified: Calendar-connected showing from UI and Ask AI against a real sheet still need an operator DB/OAuth pass |
+| **H1** WhatsApp outbound | Inbound + Graph executor | Token expired 2026-06-12 |
+| **H3–H5** Gmail push / IG / SMS / owner WA | Webhook routes | Pub/Sub, Meta IG, Twilio, distinct owner number |
+| **H6** public widget | `/embed/widget.js` + Settings snippet | **done** |
+| **O7** HITL | `PlanExecuteWorkflow` + WorkItem inbound `condition()` wait **before** send/pay/sign tools; conversation → `needs_attention` while waiting | Greetings/read-only skip wait; inbound without `planId` still needs a signal (PlanCard / owner WhatsApp / Temporal). Agent-initiated send without user-message intent is a leftover (reply still gated). |
+| **B1/B2/B3** invites + billing | Resend-if-key; `/billing` Stripe/Razorpay checkout + meters; org from session; prod fail-fast | Live Darex PSP keys still human; invite email still optional |
+| **S7** SSO | SuperTokens SAML/OIDC + test-IdP env; password path when SSO off | Live Jackson/mocksaml (or real IdP) still human |
+| **U6** mobile/a11y | `components/a11y/*`, BottomTabs | No recorded 375px / axe pass |
+| **I5/I6** Terraform / alerting | `infra/terraform/`, `alerting-*.js`, `restore-drill.sh` | No staging apply / pager |
+| **P4** RE expansion | `packs/real-estate-pm/RFC.md`, `MARKETS.md` | Not a live pack |
+| Virus scan (K2) | Ingest workflow | Scanner is an always-clean **stub** |
+| Compensation | `needs_attention` on partial fail | No compensating txn |
+
+### Not started / deferred
+
+- **Ops forever:** C1 Nango client IDs; Gmail compose re-connect; H1 Meta token; `JINA_API_KEY`.
+- **Connectors:** Zoho Books, Follow Up Boss, RESO/MLS, Pipedrive. (Zoho CRM / Leegality / QuickBooks executors shipped 2026-08-14.)
+- **Packs:** Wave 2–4 are RFC (`packs/RFC-wave-2-4.md`) — P5/P6 **deferred**.
+- **Enterprise leftover:** data-residency design (no fake EU pin); SCIM.
+- **Pull (Phases 16–18):** voice, computer-use / browser-runner, AGE graph DB, I7 split ingest host.
+- **Optional Phase 6 research:** temporal fact columns (`valid_from`); graph hop retrieve.
+
+### In future-scope, missing from this plan (called out)
+
+These live in future-scope but were never given a work-item id here. Treat as **deferred / pull**, not forgotten:
+
+- Messenger, Telegram, LINE, WeChat, Apple Business Chat (`11`).
+- Mailchimp, Linear, Jira, Freshdesk (`06` Wave D–E).
+- Knowledge graph as Apache AGE (`02`/`07`) — `memory_edges` table is the steal; AGE is WATCH.
+- Outcome pricing / Sierra-class (`00` non-goal).
+- Public third-party skill store (`03` §10) — B5 is design-only, correctly.
+- Clinic-ops PHI storage (`04` Wave 4) — RFC says **out**.
+
+### Recommended next workstreams (parallel agents)
+
+See the parent briefing in the audit conversation. Non-overlapping file owners:
+
+1. **Ops credentials** (no product code) — Nango IDs, Meta token, Gmail re-connect, Jina.
+2. **Wire inbound memory + HITL wait** — **done** (`retrieveMemoryActivity` + WorkItem `condition()`).
+3. **Wave B leftovers** — **done** (Zoho CRM + Leegality + QuickBooks executors + seed + MCP + honesty goldens). Live OAuth/BYOK is ops.
+4. **RE pack live-verify** — goldens + Calendar showing from UI; do not invent inventory.
+5. **Channel go-live** — Gmail Pub/Sub, owner WhatsApp number (widget embed **done**).
+6. **Billing/SSO staging** — Stripe/Razorpay Darex keys + test IdP.
+7. **Wave 2 pack (one)** — only after M6 eval is green on a real DB.
 
 ---
 
 ## How current maps to future (one screen)
 
 ```
-Today (Phases 0–5 in code)
-  Ask AI simple stream + complex plan-confirm-execute
-  atomic-agent → MCP → tool-executor (62 tools)
-  Nango OAuth truth + honest notConnected
-  WhatsApp/Chatwoot inbound → Temporal → reply
-  RLS + WITH CHECK; SuperTokens + Postgres auth
-  SSE inbox (one process); Insight = templates
-  pgvector enabled; no RAG pipeline
+Shipped in code (Phases 0–5 + most 6–15 scaffolding)
+  Ask AI + citations + @employee; plan-confirm-execute; Temporal PlanExecute
+  atomic-agent → MCP (~85 tools) → tools/*.ts gateway
+  Memory tables + retrieveMemory + /brain + write-back
+  WorkItemWorkflow wrap; nurture / briefing / stale-chase
+  Connector registry; Outlook; Salesforce; Zoho CRM; DocuSign; Leegality; Maps; Twilio; QuickBooks
+  Redis SSE bus; PgBouncer; darex_app; packs/core-b2b + re-brokerage-in
+  Billing APIs; DSR; SSO routes; eval YAML; CI deny-list
 
-Immediate (hygiene still open + Phase 6 start)
-  Operator: migrate 009–011, OAuth client IDs, Meta token, Gmail re-connect
-  Commit sandbox + skills if not on the default branch
-  Switch DB_USER=darex_app; Redis pub/sub design
-  Memory tables + embed-worker + retrieveMemory prefix
+Still ops-blocked
+  Nango client IDs; Meta WhatsApp outbound token; Gmail compose re-connect
 
-Near (Phases 6 done → 7 → 8 start → 10 Wave A/B)
-  Returning-contact RAG; /brain inspector
-  Insight engine + named workflow actions
-  Two dashboard replicas + Redis bus
-  Connector registry; GBP/Meet/Outlook/Zoho/Salesforce/DocuSign
+Remaining product (not theater)
+  M6 live eval
+  RE quality bar live; Wave 2 RFC→pack
+  Staging Terraform/SSO/billing keys; residency design
 
-Mid (Phases 9, 11–14)
-  Billing + pack onboarding
-  Real estate brokerage IN wedge, then PM/US/developer
-  Work items + playbooks + owner WhatsApp
-  Agencies / ecom / SaaS / prof-services packs
-
-Complete OS (Phases 15–18 + quality bar)
-  SSO, audit role, residency design
-  Wave 3–4 packs as pull
-  Voice + computer-use last resort
-  Success definition in future-scope 00 §8 is true
+Pull
+  Voice, computer-use, Wave 3–4, AGE, I7 ingest host split
 ```
 
 ---
 
 ## Source-of-truth order (unchanged)
 
-1. `docs/current-working/` — what the code does **today**.
-2. `BUILD_STATE.md` — live verification log (some infra bullets there are superseded by current-working `16`).
-3. `AGENTS.md` — short agent cheat-sheet (tool count there is stale: 49 vs 62).
-4. `docs/future-scope/` — what we **intend to become**.
-5. **This folder** — how we get there.
-6. `documentation/` — older standalone docs (some claims stale).
+1. **Code** — `apps/`, `services/`, `infra/db/migrations/`, `packs/`.
+2. **This folder** (after 2026-08-14 audit) — execution status.
+3. `BUILD_STATE.md` — live verification log (older “Phase 5 next” wording is historical).
+4. `AGENTS.md` — short agent cheat-sheet (MCP tools grew past 62 after Wave A/B).
+5. `docs/current-working/` — 13 Aug snapshot; **stale** on Phases 6–15 until rewritten.
+6. `docs/future-scope/` — what we **intend to become** (some §holes in `01` are absorbed).
+7. `documentation/` — older standalone docs (some claims stale).

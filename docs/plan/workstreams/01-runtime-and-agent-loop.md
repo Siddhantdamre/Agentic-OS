@@ -61,6 +61,9 @@ Sources: `docs/future-scope/00` layer 3–4, `02` §5–7, `08` §5 and
 
 ## 3. Gaps
 
+**Audit 2026-08-14:** R1/R2/R3/R4/R5/R6 **done**. Inbound parent
+`retrieveMemoryActivity` calls `retrieveMemory`. Browser-runner **deferred**.
+
 | Item | Status |
 |------|--------|
 | Dual-loop hang class (classify via atomic-agent) | **closed** — LiteLLM path |

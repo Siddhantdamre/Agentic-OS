@@ -4,6 +4,10 @@ Concrete work that starts **now**. This is remaining Phase 6
 hygiene plus the first slices of memory. It does not include the
 real-estate pack.
 
+**Audit 2026-08-14: MOSTLY DONE.** Do not rebuild M1–M3, R1/I2, S1,
+A2. Remaining: operator creds (C1, H1, Jina). Parent
+`retrieveMemoryActivity` is wired.
+
 Linked from [00-phase-map.md](./00-phase-map.md) and
 [../00-executive-summary.md](../00-executive-summary.md).
 Documentation only.
@@ -97,14 +101,16 @@ unification does not wait on embeddings. They must not block M1.
 
 ## 7. Exit to “near”
 
-Immediate is done when:
+Immediate is **code-complete** except operator items. Tick a box
+only when the probe is green on **this** environment:
 
 1. I1 + C1 + H1 operator items are either done or explicitly
    blocked on a named third party (document which).
-2. R1 + I2 are on the default branch.
-3. M1 + M2 exist; M3/R2 are merged even if recall is empty.
-4. A2 stub exists and can fail closed.
-5. S1 is merged or has a dated exception in current-working.
+2. R1 + I2 are on the default branch. **Code: done.**
+3. M1 + M2 exist; M3/R2 are merged. **Code: done** (inbound parent
+   `retrieveMemoryActivity` now calls `retrieveMemory`).
+4. A2 stub exists and can fail closed. **Code: done** (`infra/evals/`).
+5. S1 is merged. **Code: done** (`DB_USER=darex_app`).
 
 Then follow [02-phase-near.md](./02-phase-near.md).
 

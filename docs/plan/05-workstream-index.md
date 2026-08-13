@@ -7,6 +7,10 @@ owns that work ([phases/00-phase-map.md](./phases/00-phase-map.md)).
 Linked from [README.md](./README.md) and
 [02-gap-analysis.md](./02-gap-analysis.md). Documentation only.
 
+**Audit 2026-08-14:** most workstream items are in code. See
+[README.md](./README.md). Do not rebuild M1–M5, O1–O6, C3–C5,
+S1–S6, P1–P2, E1–E6.
+
 ---
 
 ## How to use a workstream file

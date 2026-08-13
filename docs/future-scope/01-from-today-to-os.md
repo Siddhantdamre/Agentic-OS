@@ -5,7 +5,7 @@ in `00-vision-ai-brain-os.md`. Every future phase should be able to point
 at a row here and say “this gap closed”.
 
 Snapshot date of “today”: **2026-08-13**. If current-working has moved,
-trust current-working for facts and update this gap list.
+trust `docs/plan/02-gap-analysis.md` for facts and update this gap list.
 
 ---
 

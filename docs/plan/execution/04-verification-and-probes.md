@@ -44,7 +44,7 @@ node infra/scripts/e2e-live-llm.js
 | Two-replica SSE | I3/H7 | Both dashboard processes receive `needs_attention` |
 | Connector goldens | C3+ | Connected action; revoked token; never-configured provider — all three paths |
 | Returning-contact eval | M6 / A2 | New thread cites a prior fact; inventing the fact fails CI |
-| Pack goldens `05` §11 | P3 | “2BHK” subset of sheet only; zero matches does not invent |
+| Pack goldens `05` §11 | P3 | `node infra/evals/runner.js re-brokerage.yaml` — fixture 2BHK subset; `*-live` seeds `re_listings` + RLS |
 | Billing isolation | B2 | Org A cannot read Org B invoices; unsigned webhook rejected |
 | DSR two-org | S6 | Delete A leaves B vectors |
 
