@@ -83,7 +83,7 @@ export async function AutonomousAgentWorkflow(input: AgentTaskInput): Promise<Ag
     });
   }
 
-  if (input.conversationId && input.orgId && resultToSave.replyMessage) {
+  if (input.conversationId && input.orgId && resultToSave.replyMessage && !input.skipPersist) {
     await saveMessageActivity({
       orgId: input.orgId,
       conversationId: input.conversationId,

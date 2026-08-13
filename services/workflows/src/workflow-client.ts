@@ -1,5 +1,6 @@
 import { Connection, Client } from '@temporalio/client';
 import { AgentTaskInput, AgentTaskResult } from './agent-engine.js';
+import type { CrewWorkflowInput, CrewWorkflowResult } from '@darex/shared-types';
 
 let clientInstance: Client | null = null;
 let connecting: Promise<Client | null> | null = null;
@@ -74,6 +75,53 @@ export async function startAutonomousAgentWorkflow(input: AgentTaskInput) {
     return handle;
   } catch (err: any) {
     console.error(`[Temporal Start Error] Workflow ${workflowId} start failed:`, err.message);
+    return null;
+  }
+}
+
+function crewWorkflowIdFor(input: CrewWorkflowInput): string {
+  const stamp = Date.now();
+  if (input.idempotencyKey) return `crew-task-${input.orgId}-${input.idempotencyKey}`;
+  if (input.conversationId) return `crew-task-${input.orgId}-${input.conversationId}-${stamp}`;
+  return `crew-task-${input.orgId}-${stamp}`;
+}
+
+export async function triggerCrewWorkflow(input: CrewWorkflowInput): Promise<CrewWorkflowResult | null> {
+  const client = await getTemporalClient();
+  if (!client) return null;
+
+  const workflowId = crewWorkflowIdFor(input);
+  try {
+    const handle = await client.workflow.start('CrewWorkflow', {
+      taskQueue: 'darex-agent-tasks',
+      workflowId,
+      args: [{ ...input, idempotencyKey: input.idempotencyKey || workflowId }],
+      workflowExecutionTimeout: '40 minutes',
+    });
+    console.log(`Temporal CrewWorkflow started: ${handle.workflowId}`);
+    return await handle.result();
+  } catch (err: any) {
+    console.error(`[Temporal Execution Error] CrewWorkflow ${workflowId} failed:`, err.message);
+    return null;
+  }
+}
+
+export async function startCrewWorkflow(input: CrewWorkflowInput) {
+  const client = await getTemporalClient();
+  if (!client) return null;
+
+  const workflowId = crewWorkflowIdFor(input);
+  try {
+    const handle = await client.workflow.start('CrewWorkflow', {
+      taskQueue: 'darex-agent-tasks',
+      workflowId,
+      args: [{ ...input, idempotencyKey: input.idempotencyKey || workflowId }],
+      workflowExecutionTimeout: '40 minutes',
+    });
+    console.log(`Temporal CrewWorkflow started: ${handle.workflowId}`);
+    return handle;
+  } catch (err: any) {
+    console.error(`[Temporal Start Error] CrewWorkflow ${workflowId} start failed:`, err.message);
     return null;
   }
 }

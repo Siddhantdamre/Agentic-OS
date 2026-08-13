@@ -16,7 +16,7 @@ async function runWorker() {
       const connection = await NativeConnection.connect({ address: temporalHost });
       const worker = await Worker.create({
         connection,
-        workflowsPath: require.resolve('./workflows/AutonomousAgentWorkflow.js'),
+        workflowsPath: require.resolve('./workflows/index.js'),
         activities,
         taskQueue: 'darex-agent-tasks',
       });
