@@ -7,9 +7,10 @@ let initialized = false;
 export function ensureSuperTokensInit() {
   if (initialized) return;
 
-  const isProd = process.env.NODE_ENV === 'production';
-  const connectionURI = process.env.SUPERTOKENS_CONNECTION_URI;
-  if (isProd && !connectionURI) {
+  const isProd = process.env['NODE_ENV'] === 'production';
+  const isNextBuild = process.env['NEXT_PHASE'] === 'phase-production-build';
+  const connectionURI = process.env['SUPERTOKENS_CONNECTION_URI'];
+  if (isProd && !isNextBuild && !connectionURI) {
     throw new Error('SUPERTOKENS_CONNECTION_URI must be set in production');
   }
 

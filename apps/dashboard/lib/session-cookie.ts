@@ -29,8 +29,10 @@ export function sessionCookieOptions(maxAgeSeconds: number = SESSION_MAX_AGE_SEC
 }
 
 function sessionSecret(): string {
-  const secret = process.env.DAREX_SESSION_SECRET || process.env.SUPERTOKENS_API_KEY;
-  if (process.env.NODE_ENV === 'production') {
+  const secret = process.env['DAREX_SESSION_SECRET'] || process.env['SUPERTOKENS_API_KEY'];
+  const isProd = process.env['NODE_ENV'] === 'production';
+  const isNextBuild = process.env['NEXT_PHASE'] === 'phase-production-build';
+  if (isProd && !isNextBuild) {
     if (!secret) {
       throw new Error('DAREX_SESSION_SECRET (or SUPERTOKENS_API_KEY) must be set in production');
     }
