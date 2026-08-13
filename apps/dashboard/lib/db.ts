@@ -53,10 +53,23 @@ export async function getScopedClient(): Promise<{ client: PoolClient; orgId: st
       await client.query('UPDATE users SET org_id = $1 WHERE id = $2', [orgId, userId]);
     }
 
-    // 3. Set PostgreSQL RLS Context
-    await client.query("SELECT set_config('app.current_org_id', $1, true)", [orgId]);
+    // 3. Set PostgreSQL RLS Context — SESSION-level (`is_local=false`) so the
+    //    org binding survives the caller's own autocommit queries (SET LOCAL
+    //    with `true` only lasted for the single statement that set it, which
+    //    made RLS a no-op). The client is wrapped so `release()` resets the
+    //    context, keeping it from leaking to the next pooled borrower.
+    await client.query("SELECT set_config('app.current_org_id', $1, false)", [orgId]);
 
-    return { client, orgId, userId };
+    const scopedClient = client;
+    const originalRelease = scopedClient.release.bind(scopedClient);
+    scopedClient.release = function (err?: Error | boolean) {
+      scopedClient
+        .query('RESET app.current_org_id')
+        .catch(() => {})
+        .finally(() => originalRelease(err));
+    } as typeof scopedClient.release;
+
+    return { client: scopedClient, orgId, userId };
   } catch (err) {
     client.release();
     throw err;

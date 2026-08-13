@@ -36,3 +36,22 @@ export async function triggerAutonomousAgentWorkflow(input: AgentTaskInput): Pro
     return null;
   }
 }
+
+export async function startAutonomousAgentWorkflow(input: AgentTaskInput) {
+  const client = await getTemporalClient();
+  if (!client) return null;
+
+  const workflowId = `agent-task-${input.orgId}-${Date.now()}`;
+  try {
+    const handle = await client.workflow.start('AutonomousAgentWorkflow', {
+      taskQueue: 'darex-agent-tasks',
+      workflowId,
+      args: [input],
+    });
+    console.log(`🚀 Temporal AutonomousAgentWorkflow started: ${handle.workflowId}`);
+    return handle;
+  } catch (err: any) {
+    console.error(`[Temporal Start Error] Workflow ${workflowId} start failed:`, err.message);
+    return null;
+  }
+}

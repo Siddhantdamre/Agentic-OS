@@ -1,56 +1,49 @@
 # LiteLLM Proxy Config — DareX model router
-# Routes the atomic-agent through LiteLLM. Primary model is the fast, reliable
-# tool-calling workhorse; the free nemotron models are fallbacks:
-#   1) deepseek/deepseek-v4-flash-0731                 (primary)
-#   2) nvidia/nemotron-3-super-120b-a12b:free          (fallback)
-#   3) nvidia/nemotron-3-ultra-550b-a55b:free          (final fallback)
+# Routes the atomic-agent through LiteLLM using DeepSeek via OpenRouter:
+#   1) deepseek/deepseek-v4-flash-0731              (primary model via OpenRouter)
+#   2) deepseek/deepseek-v4-flash-0731              (fallback model via OpenRouter)
 # The atomic-agent always calls model "atomic-agent"; LiteLLM owns failover.
 # File: infra/litellm/config.yaml
 
 model_list:
   - model_name: atomic-agent
     litellm_params:
-      model: openrouter/deepseek/deepseek-v4-flash-0731
+      model: openrouter/deepseek/deepseek-chat
       api_key: os.environ/OPENROUTER_API_KEY
     model_info:
       mode: chat
 
   - model_name: atomic-agent-fallback
     litellm_params:
-      model: openrouter/nvidia/nemotron-3-super-120b-a12b:free
+      model: openrouter/deepseek/deepseek-chat
       api_key: os.environ/OPENROUTER_API_KEY
     model_info:
       mode: chat
 
   - model_name: atomic-agent-deepseek
     litellm_params:
-      model: openrouter/nvidia/nemotron-3-ultra-550b-a55b:free
+      model: openrouter/deepseek/deepseek-chat
       api_key: os.environ/OPENROUTER_API_KEY
     model_info:
       mode: chat
 
 litellm_settings:
-  # Tag every call with org_id for per-tenant cost tracking.
   default_team_id: darex-default
   success_callback: ["langfuse"]
   failure_callback: ["langfuse"]
-
-  # Langfuse integration.
   langfuse_host: http://darex-langfuse-server:3000
 
 router_settings:
-  enable_pre_call_checks: true
-  # Fail a model that hangs (the free nemotron-ultra is often unresponsive)
-  # and let LiteLLM move down the chain immediately.
-  request_timeout: 30
+  enable_pre_call_checks: false
+  request_timeout: 60
   fallbacks:
     - atomic-agent:
         - atomic-agent-fallback
         - atomic-agent-deepseek
   retry_policy:
     timeout: 0
-    RateLimitError: 1
-    InternalServerError: 1
+    RateLimitError: 2
+    InternalServerError: 2
     BadRequestError: 0
     AuthenticationError: 0
     ContentPolicyViolationError: 0

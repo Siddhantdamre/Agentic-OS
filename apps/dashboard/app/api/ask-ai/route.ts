@@ -41,6 +41,17 @@ async function client2InsertPlan(
 
 export async function POST(request: Request) {
   let client: PoolClient | null = null;
+
+  // Acquire + release the pooled connection around ONLY the short-lived DB
+  // reads. Releasing before opening the SSE stream prevents the pool
+  // (max:10) from being starved by long-running Ask AI streams.
+  const release = () => {
+    if (client) {
+      client.release();
+      client = null;
+    }
+  };
+
   try {
     const scoped = await getScopedClient();
     client = scoped.client;
@@ -70,8 +81,9 @@ export async function POST(request: Request) {
       // Continue if context queries fail
     }
 
-    const { prompt } = await request.json();
+    const { prompt, conversationId } = await request.json();
     if (!prompt) {
+      release();
       return NextResponse.json({ error: 'Prompt is required' }, { status: 400 });
     }
 
@@ -87,6 +99,16 @@ export async function POST(request: Request) {
 
         const planId = crypto.randomUUID();
         await client2InsertPlan(client, planId, orgId, userId, generated, classification);
+        release();
+
+        logLangfuseTrace({
+          name: 'PlanGenerated',
+          orgId,
+          input: { prompt, classification: classification.type, confidence: classification.confidence, connectedChannels: connectedChannelsList },
+          output: { planId, summary: generated.summary, steps: generated.steps, reasoning: generated.reasoning },
+          metadata: { planId, usedFallback: classification.usedFallback },
+          provider: 'atomic-agent',
+        }).catch(() => {});
 
         return NextResponse.json({
           type: 'complex',
@@ -105,18 +127,25 @@ export async function POST(request: Request) {
       } catch (planErr: any) {
         // Planner failed — degrade gracefully to a normal inline agent answer.
         console.error('Plan generation failed, falling back to direct answer:', planErr.message);
+        // No more DB reads needed on this path — release before the slow agent call.
+        release();
         const { runAutonomousAgentDirect } = await import('@darex/workflows/dist/atomic-agent-client');
-        const day = new Date().toISOString().slice(0, 10).replace(/-/g, '');
-        // Fresh session per request: a reusable session accumulates unbounded
-        // context that makes every subsequent turn hang and time out.
-        const sessionKey = `askai-${userId}-${day}-${crypto.randomUUID().slice(0, 8)}`;
+        let sessionKey: string;
+        if (conversationId) {
+          sessionKey = `askai-${userId}-${conversationId}`;
+        } else {
+          const day = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+          sessionKey = `askai-${userId}-${day}-${crypto.randomUUID().slice(0, 8)}`;
+        }
         const result = await runAutonomousAgentDirect(
           {
             orgId,
+            conversationId,
             sessionKey,
             employeeName: 'DareX Executive',
             employeeRole: 'Primary Business Assistant',
             employeePersona: `You are DareX Executive, an autonomous AI assistant for ${orgName}. Current user: ${currentUserEmail}. Connected channels: ${connectedChannelsList.join(', ') || 'none'}. Act decisively and execute tools when needed. Your org_id is ${orgId} — always pass it to mcp.darex.database_query and mcp.darex.database_execute, and never search memory to find it.`,
+            connectedChannels: connectedChannelsList,
             toolAllowlist: [
               'gmail', 'google-calendar', 'google-drive', 'google-docs', 'google-sheets',
               'github', 'whatsapp', 'hubspot',
@@ -156,62 +185,91 @@ export async function POST(request: Request) {
     // looping session can never poison Ask AI — each Ask AI prompt is
     // self-contained, and a shared session accumulates context that eventually
     // makes every turn hang and time out.
-    const day = new Date().toISOString().slice(0, 10).replace(/-/g, '');
-    const sessionKey = `askai-${userId}-${day}-${crypto.randomUUID().slice(0, 8)}`;
+    let sessionKey: string;
+    if (conversationId) {
+      sessionKey = `askai-${userId}-${conversationId}`;
+    } else {
+      const day = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+      sessionKey = `askai-${userId}-${day}-${crypto.randomUUID().slice(0, 8)}`;
+    }
 
-    const result = await runAutonomousAgentDirect(
-      {
-        orgId,
-        sessionKey,
-        employeeName: 'DareX Executive',
-        employeeRole: 'Primary Business Assistant',
-        employeePersona: `You are DareX Executive, an autonomous AI assistant for ${orgName}. Current user: ${currentUserEmail}. Connected channels: ${connectedChannelsList.join(', ') || 'none'}. Act decisively and execute tools when needed. Your org_id is ${orgId} — always pass it to mcp.darex.database_query and mcp.darex.database_execute, and never search memory to find it.`,
-        toolAllowlist: [
-          'gmail', 'google-calendar', 'google-drive', 'google-docs', 'google-sheets',
-          'github', 'whatsapp', 'hubspot',
-          'meta-ads', 'google-ads', 'slack', 'notion', 'stripe',
-          'shopify', 'zendesk', 'intercom', 'razorpay',
-          'database_query', 'web_search', 'web_extract', 'file_ops',
-        ],
-        userMessage: prompt,
-      },
-      { timeoutMs: 120000 }
-    );
+    // Release the pooled client before the SSE stream runs — the stream can
+    // live for minutes and must not hold a pool slot (pool max is 10).
+    release();
 
-    // Log to Langfuse
-    await logLangfuseTrace({
-      name: 'AskAI-AutonomousExecution',
-      orgId,
-      input: { prompt },
-      output: result.replyMessage,
-      metadata: { usedTools: result.usedTools, steps: result.executedSteps.length },
+    const encoder = new TextEncoder();
+    const stream = new ReadableStream({
+      async start(controller) {
+        const send = (type: string, payload: any) => {
+          controller.enqueue(encoder.encode(JSON.stringify({ type, ...payload }) + '\n'));
+        };
+
+        try {
+          const result = await runAutonomousAgentDirect(
+            {
+              orgId,
+              conversationId,
+              sessionKey,
+              employeeName: 'DareX Executive',
+              employeeRole: 'Primary Business Assistant',
+              employeePersona: `You are DareX Executive, an autonomous AI assistant for ${orgName}. Current user: ${currentUserEmail}. Connected channels: ${connectedChannelsList.join(', ') || 'none'}. Act decisively and execute tools when needed. Your org_id is ${orgId} — always pass it to mcp.darex.database_query and mcp.darex.database_execute, and never search memory to find it.`,
+              connectedChannels: connectedChannelsList,
+              toolAllowlist: [
+                'gmail', 'google-calendar', 'google-drive', 'google-docs', 'google-sheets',
+                'github', 'whatsapp', 'hubspot',
+                'meta-ads', 'google-ads', 'slack', 'notion', 'stripe',
+                'shopify', 'zendesk', 'intercom', 'razorpay',
+                'database_query', 'web_search', 'web_extract', 'file_ops',
+              ],
+              userMessage: prompt,
+            },
+            { 
+              timeoutMs: 120000,
+              onChunk: (text) => send('chunk', { text }),
+              onToolProgress: (tool, label) => send('tool', { tool, label })
+            }
+          );
+
+          await logLangfuseTrace({
+            name: 'AskAI-AutonomousExecution',
+            orgId,
+            input: { prompt },
+            output: result.replyMessage,
+            metadata: { usedTools: result.usedTools, steps: result.executedSteps.length },
+          }).catch(console.error);
+
+          send('done', {
+            type: 'simple',
+            answer: sanitizeAgentReply(result.replyMessage),
+            provider: 'Atomic Agent',
+            usedTools: result.usedTools,
+            executedSteps: result.executedSteps,
+            trajectory: result.executedSteps.map((s: any) => ({
+              step: s.step,
+              thought: s.action,
+              action: s.toolUsed || 'reason',
+              observation: s.result,
+            })),
+            proposedAction: null,
+            error: result.error || null,
+            retryable: result.retryable || false,
+            partialReply: result.partialReply || null,
+          });
+        } catch (err: any) {
+          send('error', { error: err.message, retryable: true });
+        } finally {
+          controller.close();
+        }
+      }
     });
 
-    return NextResponse.json({
-      type: 'simple',
-      answer: sanitizeAgentReply(result.replyMessage),
-      provider: 'Atomic Agent',
-      usedTools: result.usedTools,
-      executedSteps: result.executedSteps,
-      trajectory: result.executedSteps.map((s, i) => ({
-        step: s.step,
-        thought: s.action,
-        action: s.toolUsed || 'reason',
-        observation: s.result,
-      })),
-      proposedAction: null,
-      // Failure diagnostics (UI renders an amber banner + Retry when present)
-      error: result.error || null,
-      retryable: result.retryable || false,
-      partialReply: result.partialReply || null,
-    });
+    return new Response(stream, { headers: { 'Content-Type': 'application/x-ndjson' } });
   } catch (error: any) {
+    if (client) client.release();
     if (error.message === 'Unauthorized') {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
     console.error('API /api/ask-ai Error:', error);
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
-  } finally {
-    if (client) client.release();
   }
 }

@@ -1,7 +1,6 @@
 import { NextResponse } from 'next/server';
 import { pool } from '@/lib/db';
 import { realtimeHub } from '@/lib/realtime-hub';
-import { runAutonomousAgentDirect } from '@darex/workflows/dist/atomic-agent-client';
 
 /**
  * GET /api/webhooks/whatsapp
@@ -197,109 +196,99 @@ export async function POST(req: Request) {
             channelType: 'whatsapp',
           });
 
-          // ── 8. Run AI response via Temporal (durable) or direct fallback ──
-          let aiReply = `Hello! I received your message and will get back to you shortly.`;
-          let savedByWorkflow = false;
-          try {
-            const toolAllowlist = (() => {
-              if (!employee?.tool_allowlist) return ['whatsapp', 'gmail'];
-              if (Array.isArray(employee.tool_allowlist)) return employee.tool_allowlist;
-              try { return JSON.parse(employee.tool_allowlist); } catch { return ['whatsapp', 'gmail']; }
-            })();
-
-            const agentInput = {
-              orgId,
-              conversationId,
-              channelId: channelId ?? undefined,
-              employeeName: employee?.name ?? 'AI Assistant',
-              employeeRole: employee?.role ?? 'Support',
-              employeePersona: employee?.persona ?? 'Helpful customer support assistant.',
-              toolAllowlist,
-              userMessage: text,
-            };
-
-          // Try Temporal first for durable retryable execution
-          let agentResult: any = null;
-          try {
-            const { triggerAutonomousAgentWorkflow } = await import('@darex/workflows/dist/workflow-client');
-            agentResult = await triggerAutonomousAgentWorkflow(agentInput);
-            // Only treat the message as already-persisted if the workflow
-            // actually ran and returned a result (it calls saveMessageActivity).
-            savedByWorkflow = !!agentResult;
-            if (agentResult) {
-              console.log('[WhatsApp Webhook] Agent ran via Temporal workflow');
-            }
-          } catch (temporalErr: any) {
-            console.warn('[WhatsApp Webhook] Temporal fallback:', temporalErr.message);
-          }
-
-          // Fallback: direct in-process via atomic-agent
-          if (!agentResult) {
-            agentResult = await runAutonomousAgentDirect(agentInput);
-          }
-
-            aiReply = agentResult.replyMessage;
-          } catch (agentErr: any) {
-            console.error('[WhatsApp Webhook] Agent loop error:', agentErr.message);
-          }
-
-          // ── 9. Save AI reply to DB ────────────────────────────────────────
-          // The Temporal workflow already persists the assistant reply via
-          // saveMessageActivity when it ran. Only insert here for the direct
-          // in-process fallback path to avoid duplicate assistant messages.
-          if (!savedByWorkflow) {
-            await client.query(
-              `INSERT INTO messages (org_id, conversation_id, role, content, created_at)
-               VALUES ($1, $2, 'assistant', $3, NOW())`,
-              [orgId, conversationId, aiReply]
-            );
-          }
-
-          // ── 10. Send AI reply back via per-org Meta credentials ──────────
-          if (orgPhoneNumberId && orgMetaToken) {
-            const sendRes = await fetch(
-              `https://graph.facebook.com/v18.0/${orgPhoneNumberId}/messages`,
-              {
-                method: 'POST',
-                headers: {
-                  Authorization: `Bearer ${orgMetaToken}`,
-                  'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({
-                  messaging_product: 'whatsapp',
-                  to: from,
-                  type: 'text',
-                  text: { body: aiReply },
-                }),
-              }
-            );
-
-            const sendStatus = sendRes.ok ? 'success' : 'error';
-            const sendBody = await sendRes.text().catch(() => '');
-            if (!sendRes.ok) {
-              console.error('[WhatsApp Webhook] Meta send error:', sendBody);
-            }
-
-            await client.query(
-              `INSERT INTO channel_logs (org_id, channel_type, event_type, status, status_code, message, payload)
-               VALUES ($1, 'whatsapp', 'outbound_message', $2, $3, $4, $5)`,
-              [
-                orgId,
-                sendStatus,
-                sendRes.status,
-                `AI reply to ${from}: ${aiReply.slice(0, 80)}`,
-                JSON.stringify({ to: from, status: sendRes.status, body: sendBody.slice(0, 300) }),
-              ]
-            );
-          } else {
-            console.warn('[WhatsApp Webhook] No per-org Meta credentials found — AI reply not sent. Store phone_number_id and meta_access_token in channels.meta for this org.');
-          }
-
-          // Update conversation updated_at
+          // Update conversation updated_at + summary (fast DB op, done inline)
           await client.query(
             `UPDATE conversations SET updated_at = NOW(), summary = $1 WHERE id = $2 AND org_id = $3`,
             [text.slice(0, 100), conversationId, orgId]
           );
+
+          // ── 7c. Fire-and-forget AI response (non-blocking) ────────────────
+          // Run the agent turn in the background so a slow model call can never
+          // stall the webhook (which would trigger Meta retries). This returns
+          // immediately; the client is released in the finally below. Prefer
+          // durable Temporal, else a background direct turn. Either path
+          // persists the assistant reply.
+          const toolAllowlist = (() => {
+            if (!employee) return ['whatsapp', 'gmail'];
+            if (Array.isArray(employee.tool_allowlist)) return employee.tool_allowlist;
+            try { return JSON.parse(employee.tool_allowlist); } catch { return ['whatsapp', 'gmail']; }
+          })();
+
+          const agentInput = {
+            orgId,
+            conversationId,
+            channelId: channelId ?? undefined,
+            employeeName: employee?.name ?? 'AI Assistant',
+            employeeRole: employee?.role ?? 'Support',
+            employeePersona: employee?.persona ?? 'Helpful customer support assistant.',
+            toolAllowlist,
+            userMessage: text,
+          };
+
+          void (async () => {
+            try {
+              const { triggerAutonomousAgentWorkflow } = await import('@darex/workflows/dist/workflow-client');
+              const result = await triggerAutonomousAgentWorkflow(agentInput);
+              if (result) {
+                console.log('[WhatsApp Webhook] Agent reply via Temporal workflow');
+                return;
+              }
+            } catch (temporalErr: any) {
+              console.warn('[WhatsApp Webhook] Temporal unavailable, direct fallback:', temporalErr.message);
+            }
+            try {
+              const { runAutonomousAgentDirect } = await import('@darex/workflows/dist/atomic-agent-client');
+              const agentResult = await runAutonomousAgentDirect(agentInput);
+              const aiReply = agentResult.replyMessage;
+              const dc = await pool.connect();
+              try {
+                await dc.query(`SELECT set_config('app.current_org_id', $1, true)`, [orgId]);
+                await dc.query(
+                  `INSERT INTO messages (org_id, conversation_id, role, content, created_at)
+                   VALUES ($1, $2, 'assistant', $3, NOW())`,
+                  [orgId, conversationId, aiReply]
+                );
+                if (orgPhoneNumberId && orgMetaToken) {
+                  const sendRes = await fetch(
+                    `https://graph.facebook.com/v18.0/${orgPhoneNumberId}/messages`,
+                    {
+                      method: 'POST',
+                      headers: {
+                        Authorization: `Bearer ${orgMetaToken}`,
+                        'Content-Type': 'application/json',
+                      },
+                      body: JSON.stringify({
+                        messaging_product: 'whatsapp',
+                        to: from,
+                        type: 'text',
+                        text: { body: aiReply },
+                      }),
+                    }
+                  );
+                  const sendStatus = sendRes.ok ? 'success' : 'error';
+                  const sendBody = await sendRes.text().catch(() => '');
+                  if (!sendRes.ok) {
+                    console.error('[WhatsApp Webhook] Meta send error:', sendBody);
+                  }
+                  await dc.query(
+                    `INSERT INTO channel_logs (org_id, channel_type, event_type, status, status_code, message, payload)
+                     VALUES ($1, 'whatsapp', 'outbound_message', $2, $3, $4, $5)`,
+                    [
+                      orgId,
+                      sendStatus,
+                      sendRes.status,
+                      `AI reply to ${from}: ${aiReply.slice(0, 80)}`,
+                      JSON.stringify({ to: from, status: sendRes.status, body: sendBody.slice(0, 300) }),
+                    ]
+                  );
+                }
+              } finally {
+                dc.release();
+              }
+            } catch (agentErr: any) {
+              console.error('[WhatsApp Webhook] Agent loop error:', agentErr.message);
+            }
+          })();
 
         } catch (dbErr: any) {
           console.error('[WhatsApp Webhook] Processing error:', dbErr.message);
@@ -310,6 +299,6 @@ export async function POST(req: Request) {
     }
   }
 
-  // Always return 200 to Meta
+  // Always return 200 to Meta — inbound is already persisted above.
   return new NextResponse('OK', { status: 200 });
 }

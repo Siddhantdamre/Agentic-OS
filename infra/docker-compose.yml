@@ -39,9 +39,9 @@ services:
     ports:
       - "5432:5432"
     environment:
-      POSTGRES_USER: darex
-      POSTGRES_PASSWORD: darex_dev_secret
-      POSTGRES_DB: darex
+      POSTGRES_USER: ${POSTGRES_USER:-darex}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-darex_dev_secret}
+      POSTGRES_DB: ${POSTGRES_DB:-darex}
     volumes:
       - postgres-data:/var/lib/postgresql/data
       # Init scripts run in alphabetical order on first boot
@@ -71,7 +71,7 @@ services:
       - DB=postgres12
       - DB_PORT=5432
       - POSTGRES_USER=darex
-      - POSTGRES_PWD=darex_dev_secret
+      - POSTGRES_PWD=${DB_PASSWORD:-darex_dev_secret}
       - POSTGRES_SEEDS=postgres
       - DYNAMIC_CONFIG_FILE_PATH=config/dynamicconfig/development-sql.yaml
       - ENABLE_ES=false
@@ -136,14 +136,14 @@ services:
       - "3003:3003"   # Nango API + Dashboard
     environment:
       - NANGO_DB_USER=darex
-      - NANGO_DB_PASSWORD=darex_dev_secret
+      - NANGO_DB_PASSWORD=${DB_PASSWORD:-darex_dev_secret}
       - NANGO_DB_HOST=postgres
       - NANGO_DB_PORT=5432
       - NANGO_DB_NAME=nango
       - NANGO_DB_SSL=false
       - NANGO_REDIS_URL=redis://redis:6379
       - SERVER_RUN_MODE=PROD
-      - NANGO_SECRET_KEY=0c2eb30a-0ecd-42ea-8918-0c73eda41a47
+      - NANGO_SECRET_KEY=${NANGO_SECRET_KEY:-0c2eb30a-0ecd-42ea-8918-0c73eda41a47}
       - NANGO_SERVER_URL=http://localhost:3003
       - WEBHOOK_TRACER_URL=http://localhost:3003
       - LOG_LEVEL=info
@@ -195,7 +195,31 @@ services:
     environment:
       - MINIO_ROOT_USER=langfuse
       - MINIO_ROOT_PASSWORD=langfuse_dev_secret
+      - MINIO_ACCESS_KEY=langfuse
+      - MINIO_SECRET_KEY=langfuse_dev_secret
     command: server /data --console-address ":9001"
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - darex-net
+
+  langfuse-minio-createbuckets:
+    image: minio/mc
+    container_name: darex-langfuse-minio-init
+    depends_on:
+      - langfuse-minio
+    entrypoint: >
+      /bin/sh -c "
+      until (/usr/bin/mc alias set myminio http://darex-langfuse-minio:9000 langfuse langfuse_dev_secret); do echo 'Waiting for MinIO...'; sleep 1; done;
+      /usr/bin/mc mb --ignore-existing myminio/langfuse-events;
+      /usr/bin/mc mb --ignore-existing myminio/langfuse-media;
+      /usr/bin/mc anonymous set public myminio/langfuse-events;
+      /usr/bin/mc anonymous set public myminio/langfuse-media;
+      exit 0;
+      "
     networks:
       - darex-net
 
@@ -210,10 +234,15 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      langfuse-minio-createbuckets:
+        condition: service_completed_successfully
     ports:
       - "3002:3000"   # Langfuse UI + API
     environment:
-      DATABASE_URL: postgresql://darex:darex_dev_secret@postgres:5432/langfuse
+      DATABASE_URL: postgresql://darex:${DB_PASSWORD:-darex_dev_secret}@postgres:5432/langfuse
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      REDIS_URL: redis://redis:6379
       REDIS_CONNECTION_STRING: redis://redis:6379
       NEXTAUTH_URL: http://localhost:3002
       NEXTAUTH_SECRET: darex-langfuse-nextauth-secret-dev
@@ -237,12 +266,17 @@ services:
       CLICKHOUSE_USER: langfuse
       CLICKHOUSE_PASSWORD: langfuse_dev_secret
       LANGFUSE_S3_EVENT_UPLOAD_BUCKET: langfuse-events
+      LANGFUSE_S3_EVENT_UPLOAD_REGION: us-east-1
+      LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT: http://darex-langfuse-minio:9000
+      LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID: langfuse
+      LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY: langfuse_dev_secret
+      LANGFUSE_S3_EVENT_UPLOAD_FORCE_PATH_STYLE: "true"
       LANGFUSE_S3_MEDIA_UPLOAD_BUCKET: langfuse-media
-      LANGFUSE_S3_ENDPOINT: http://darex-langfuse-minio:9000
-      LANGFUSE_S3_REGION: auto
-      LANGFUSE_S3_ACCESS_KEY_ID: langfuse
-      LANGFUSE_S3_SECRET_ACCESS_KEY: langfuse_dev_secret
-      LANGFUSE_S3_FORCE_PATH_STYLE: "true"
+      LANGFUSE_S3_MEDIA_UPLOAD_REGION: us-east-1
+      LANGFUSE_S3_MEDIA_UPLOAD_ENDPOINT: http://darex-langfuse-minio:9000
+      LANGFUSE_S3_MEDIA_UPLOAD_ACCESS_KEY_ID: langfuse
+      LANGFUSE_S3_MEDIA_UPLOAD_SECRET_ACCESS_KEY: langfuse_dev_secret
+      LANGFUSE_S3_MEDIA_UPLOAD_FORCE_PATH_STYLE: "true"
     networks:
       - darex-net
     healthcheck:
@@ -261,8 +295,13 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      langfuse-minio-createbuckets:
+        condition: service_completed_successfully
     environment:
-      DATABASE_URL: postgresql://darex:darex_dev_secret@postgres:5432/langfuse
+      DATABASE_URL: postgresql://darex:${DB_PASSWORD:-darex_dev_secret}@postgres:5432/langfuse
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      REDIS_URL: redis://redis:6379
       REDIS_CONNECTION_STRING: redis://redis:6379
       SALT: darex-langfuse-salt-dev-change-in-prod
       CLICKHOUSE_URL: http://darex-langfuse-clickhouse:8123
@@ -271,12 +310,17 @@ services:
       CLICKHOUSE_USER: langfuse
       CLICKHOUSE_PASSWORD: langfuse_dev_secret
       LANGFUSE_S3_EVENT_UPLOAD_BUCKET: langfuse-events
+      LANGFUSE_S3_EVENT_UPLOAD_REGION: us-east-1
+      LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT: http://darex-langfuse-minio:9000
+      LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID: langfuse
+      LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY: langfuse_dev_secret
+      LANGFUSE_S3_EVENT_UPLOAD_FORCE_PATH_STYLE: "true"
       LANGFUSE_S3_MEDIA_UPLOAD_BUCKET: langfuse-media
-      LANGFUSE_S3_ENDPOINT: http://darex-langfuse-minio:9000
-      LANGFUSE_S3_REGION: auto
-      LANGFUSE_S3_ACCESS_KEY_ID: langfuse
-      LANGFUSE_S3_SECRET_ACCESS_KEY: langfuse_dev_secret
-      LANGFUSE_S3_FORCE_PATH_STYLE: "true"
+      LANGFUSE_S3_MEDIA_UPLOAD_REGION: us-east-1
+      LANGFUSE_S3_MEDIA_UPLOAD_ENDPOINT: http://darex-langfuse-minio:9000
+      LANGFUSE_S3_MEDIA_UPLOAD_ACCESS_KEY_ID: langfuse
+      LANGFUSE_S3_MEDIA_UPLOAD_SECRET_ACCESS_KEY: langfuse_dev_secret
+      LANGFUSE_S3_MEDIA_UPLOAD_FORCE_PATH_STYLE: "true"
     networks:
       - darex-net
 
@@ -294,11 +338,11 @@ services:
       - "3567:3567"   # SuperTokens API
     environment:
       POSTGRESQL_USER: darex
-      POSTGRESQL_PASSWORD: darex_dev_secret
+      POSTGRESQL_PASSWORD: ${DB_PASSWORD:-darex_dev_secret}
       POSTGRESQL_HOST: postgres
       POSTGRESQL_PORT: 5432
       POSTGRESQL_DATABASE_NAME: supertokens
-      API_KEYS: darex-supertokens-api-key-dev
+      API_KEYS: ${SUPERTOKENS_API_KEY:-darex-supertokens-api-key-dev}
     networks:
       - darex-net
     healthcheck:
@@ -319,10 +363,10 @@ services:
       - "4000:4000"
     volumes:
       - ./litellm/config.yaml:/app/config.yaml:ro
-    command: ["--config", "/app/config.yaml", "--port", "4000", "--num_workers", "1"]
+    command: ["--config", "/app/config.yaml", "--host", "0.0.0.0", "--port", "4000", "--num_workers", "1"]
     environment:
-      - LITELLM_MASTER_KEY=sk-darex-litellm-dev-key
-      - DATABASE_URL=postgresql://darex:darex_dev_secret@postgres:5432/litellm
+      - LITELLM_MASTER_KEY=${LITELLM_MASTER_KEY:-sk-darex-litellm-dev-key}
+      - DATABASE_URL=postgresql://darex:${DB_PASSWORD:-darex_dev_secret}@postgres:5432/litellm
       # OpenRouter key used by the model fallback chain in config.yaml
       - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
     depends_on:
@@ -390,20 +434,16 @@ services:
     depends_on:
       atomic-bridge:
         condition: service_healthy
+      sandbox:
+        condition: service_started
     ports:
       - "127.0.0.1:8787:8787"   # OpenAI-compatible HTTP API (localhost only)
     environment:
       - ATOMIC_AGENT_STATE_DIR=/data
       - ATOMIC_AGENT_API_KEY=${ATOMIC_AGENT_API_KEY:-darex-atomic-agent-dev-key}
-      # .env.local pins the (dead) ":free" OpenRouter slug — override to the
-      # slug the API currently accepts. `environment` wins over env_file.
       - OPENROUTER_MODEL=${ATOMIC_AGENT_OPENROUTER_MODEL:-deepseek/deepseek-v4-flash-0731}
-      # Route through the LiteLLM proxy: it owns the model fallback chain
-      # (infra/litellm/config.yaml) — nemotron free -> deepseek-v4-flash-latest.
       - LITELLM_BASE_URL=http://litellm:4000/v1
       - LITELLM_MODEL=atomic-agent
-      # Default active LLM provider is LiteLLM; other providers can be selected
-      # per-run via ATOMIC_AGENT_ACTIVE_PROVIDER.
       - ATOMIC_AGENT_ACTIVE_PROVIDER=${ATOMIC_AGENT_ACTIVE_PROVIDER:-darex-litellm}
     env_file:
       - ../.env
@@ -420,6 +460,31 @@ services:
       timeout: 5s
       retries: 10
       start_period: 30s
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # Code Sandbox — self-hosted, network-isolated code execution for the
+  # `code_execution` / `sandbox` / `execute_code` agent tools. Runs untrusted
+  # code as an unprivileged user with a hard timeout, fully isolated from the
+  # rest of the stack (no DB, no other services, no host).
+  # ─────────────────────────────────────────────────────────────────────────
+  sandbox:
+    build:
+      context: ./docker/sandbox
+      dockerfile: Dockerfile
+    container_name: darex-sandbox
+    restart: unless-stopped
+    environment:
+      - SANDBOX_PORT=8080
+      - SANDBOX_MAX_CONCURRENT=2
+      - SANDBOX_DEFAULT_TIMEOUT_MS=10000
+    networks:
+      - darex-net
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"fetch('http://localhost:8080/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 10s
 
   # ─────────────────────────────────────────────────────────────────────────
   # Inbox — Chatwoot Fork / Multi-Channel Inbox Gateway (Phase 3)
@@ -479,6 +544,9 @@ services:
       - ATOMIC_AGENT_API_KEY=${ATOMIC_AGENT_API_KEY:-darex-atomic-agent-dev-key}
       - ATOMIC_AGENT_ACTIVE_PROVIDER=${ATOMIC_AGENT_ACTIVE_PROVIDER:-darex-openrouter}
       - ATOMIC_AGENT_TIMEOUT_MS=${ATOMIC_AGENT_TIMEOUT_MS:-300000}
+      - SANDBOX_API_URL=http://sandbox:8080
+      - LANGFUSE_HOST=http://langfuse-server:3000
+      - JINA_API_KEY=${JINA_API_KEY:-}
     env_file:
       - ../.env
       - ../apps/dashboard/.env.local
@@ -525,7 +593,9 @@ services:
       - LANGFUSE_HOST=http://langfuse-server:3000
       - ATOMIC_AGENT_URL=http://atomic-agent:8787
       - ATOMIC_AGENT_API_KEY=${ATOMIC_AGENT_API_KEY:-darex-atomic-agent-dev-key}
+      - JINA_API_KEY=${JINA_API_KEY:-}
       - ATOMIC_AGENT_TIMEOUT_MS=${ATOMIC_AGENT_TIMEOUT_MS:-300000}
+      - SANDBOX_API_URL=http://sandbox:8080
     env_file:
       - ../.env
       - ../apps/dashboard/.env.local

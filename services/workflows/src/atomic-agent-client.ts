@@ -16,6 +16,13 @@ const ATOMIC_AGENT_URL = process.env.ATOMIC_AGENT_URL || 'http://localhost:8787'
 const ATOMIC_AGENT_API_KEY = process.env.ATOMIC_AGENT_API_KEY || 'darex-atomic-agent-dev-key';
 const ATOMIC_AGENT_MODEL = process.env.ATOMIC_AGENT_MODEL || 'atomic-agent';
 const AGENT_TURN_TIMEOUT_MS = parseInt(process.env.ATOMIC_AGENT_TIMEOUT_MS || '180000', 10);
+const AGENT_MAX_RETRIES = parseInt(process.env.ATOMIC_AGENT_MAX_RETRIES || '2', 10);
+
+const RETRYABLE_HTTP = new Set([408, 429, 500, 502, 503, 504]);
+
+function sleepMs(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 function buildSystemPrompt(input: AgentTaskInput): string {
   const lines = [
@@ -45,11 +52,23 @@ function buildGroundedUserMessage(input: AgentTaskInput): string {
     `- This org_id is ALREADY known to you. The user is a customer/employee of this org.`,
     `- When any mcp.darex.* tool requires org_id, pass org_id=${JSON.stringify(input.orgId)}. Never ask the user for it and never search memory/profile/notes/resources/prompts to find it.`,
     `- If a mcp.darex.* tool needs an argument you do not have (besides org_id), ask the user for that specific value directly.`,
+  ];
+  if (input.connectedChannels && input.connectedChannels.length > 0) {
+    facts.push(
+      `- CONNECTED CONNECTORS for this org (authoritative, already OAuth-authorized): ${input.connectedChannels.join(', ')}. Use these tools directly.`,
+      `- A tool response saying "not connected" for one connector (e.g. google-drive) does NOT mean other connectors are unavailable — each connector is independent. Verify per-connector by calling its tool.`,
+    );
+  } else {
+    facts.push(
+      `- No connectors are confirmed connected for this org yet — do not assume any external connector is available.`,
+    );
+  }
+  facts.push(
     ``,
     `USER REQUEST:`,
     input.userMessage,
-  ].join('\n');
-  return facts;
+  );
+  return facts.join('\n');
 }
 
 function buildSessionId(input: AgentTaskInput): string {
@@ -80,33 +99,14 @@ class AgentTurnError extends Error {
   }
 }
 
-function handleSseData(payload: string, eventType: string | null, state: SseState): boolean {
-  if (payload === '[DONE]') return true;
-  let json: any;
-  try {
-    json = JSON.parse(payload);
-  } catch {
-    return false;
-  }
-  if (eventType === 'tool_progress') {
-    state.tools.push({
-      tool: typeof json.tool === 'string' ? json.tool : 'unknown',
-      argsLabel: typeof json.label === 'string' ? json.label : '',
-    });
-  } else if (eventType === 'session_id') {
-    const sid = json.session_id ?? json.sessionId;
-    if (typeof sid === 'string' && sid.length > 0) state.sessionId = sid;
-  } else if (eventType === 'error') {
-    state.errorText = typeof json.error === 'string' ? json.error : JSON.stringify(json);
-  } else {
-    const delta = json.choices?.[0]?.delta?.content;
-    if (typeof delta === 'string' && delta.length > 0) state.reply += delta;
-    if (typeof json.model === 'string') state.model = json.model;
-  }
-  return false;
+export interface RunAgentOptions {
+  timeoutMs?: number;
+  priorMessages?: { role: string; content: string }[];
+  onChunk?: (text: string) => void;
+  onToolProgress?: (tool: string, label: string) => void;
 }
 
-async function readSseStream(body: ReadableStream<Uint8Array>, sessionId: string): Promise<AgentTurnResult> {
+async function readSseStream(body: ReadableStream<Uint8Array>, sessionId: string, opts?: RunAgentOptions): Promise<AgentTurnResult> {
   const reader = body.getReader();
   const decoder = new TextDecoder();
   let buffer = '';
@@ -134,24 +134,51 @@ async function readSseStream(body: ReadableStream<Uint8Array>, sessionId: string
           eventType = line.slice('event:'.length).trim();
         } else if (line.startsWith('data:')) {
           const payload = line.slice('data:'.length).trim();
-          if (handleSseData(payload, eventType, state)) {
+          
+          if (payload === '[DONE]') {
             done = true;
             break;
+          }
+          let json: any;
+          try {
+            json = JSON.parse(payload);
+          } catch {
+            newlineIdx = buffer.indexOf('\n');
+            continue;
+          }
+
+          if (eventType === 'tool_progress') {
+            const toolStr = typeof json.tool === 'string' ? json.tool : 'unknown';
+            const labelStr = typeof json.label === 'string' ? json.label : '';
+            state.tools.push({ tool: toolStr, argsLabel: labelStr });
+            opts?.onToolProgress?.(toolStr, labelStr);
+          } else if (eventType === 'session_id') {
+            const sid = json.session_id ?? json.sessionId;
+            if (typeof sid === 'string' && sid.length > 0) state.sessionId = sid;
+          } else if (eventType === 'error') {
+            state.errorText = typeof json.error === 'string' ? json.error : JSON.stringify(json);
+          } else {
+            const delta = json.choices?.[0]?.delta?.content;
+            if (typeof delta === 'string' && delta.length > 0) {
+              state.reply += delta;
+              opts?.onChunk?.(delta);
+            }
+            if (typeof json.model === 'string') state.model = json.model;
           }
         }
         newlineIdx = buffer.indexOf('\n');
       }
+    }
+  } catch (error: any) {
+    if (error.name !== 'AbortError') {
+      console.error('[atomic-agent] readSseStream error:', error);
     }
   } finally {
     reader.releaseLock();
   }
 
   if (state.errorText) {
-    throw new AgentTurnError(
-      state.errorText,
-      state.reply,
-      state.tools.length > 0
-    );
+    throw new AgentTurnError(`Agent loop failed: ${state.errorText}`, state.reply, state.tools.length > 0);
   }
   return {
     reply: state.reply,
@@ -161,46 +188,69 @@ async function readSseStream(body: ReadableStream<Uint8Array>, sessionId: string
   };
 }
 
-export interface RunAgentOptions {
-  /** Override the process-level AGENT_TURN_TIMEOUT_MS for this single turn. */
-  timeoutMs?: number;
-}
+
 
 export async function runAgentTurn(input: AgentTaskInput, opts?: RunAgentOptions): Promise<AgentTurnResult> {
   const sessionId = buildSessionId(input);
-  const controller = new AbortController();
   const timeoutMs = opts?.timeoutMs ?? AGENT_TURN_TIMEOUT_MS;
-  const timeout = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    const res = await fetch(`${ATOMIC_AGENT_URL}/v1/chat/completions`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${ATOMIC_AGENT_API_KEY}`,
-        'X-Atomic-Extensions': 'on',
-      },
-      body: JSON.stringify({
-        model: ATOMIC_AGENT_MODEL,
-        stream: true,
-        session_id: sessionId,
-        messages: [
-          { role: 'system', content: buildSystemPrompt(input) },
-          { role: 'user', content: buildGroundedUserMessage(input) },
-        ],
-      }),
-      signal: controller.signal,
-    });
 
-    if (!res.ok) {
-      const text = await res.text().catch(() => '');
-      throw new Error(`atomic-agent HTTP ${res.status}: ${text.slice(0, 300)}`);
+  let lastErr: Error | null = null;
+  for (let attempt = 0; attempt <= AGENT_MAX_RETRIES; attempt++) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const res = await fetch(`${ATOMIC_AGENT_URL}/v1/chat/completions`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${ATOMIC_AGENT_API_KEY}`,
+          'X-Atomic-Extensions': 'on',
+        },
+        body: JSON.stringify({
+          model: ATOMIC_AGENT_MODEL,
+          stream: true,
+          session_id: sessionId,
+          messages: [
+            { role: 'system', content: buildSystemPrompt(input) },
+            ...(opts?.priorMessages || []),
+            { role: 'user', content: buildGroundedUserMessage(input) },
+          ],
+        }),
+        signal: controller.signal,
+      });
+
+      if (!res.ok) {
+        const text = await res.text().catch(() => '');
+        const msg = `atomic-agent HTTP ${res.status}: ${text.slice(0, 300)}`;
+        if (RETRYABLE_HTTP.has(res.status) && attempt < AGENT_MAX_RETRIES) {
+          lastErr = new Error(msg);
+          controller.abort();
+          clearTimeout(timeout);
+          await sleepMs(250 * Math.pow(2, attempt) + Math.floor(Math.random() * 250));
+          continue;
+        }
+        throw new Error(msg);
+      }
+      if (!res.body) throw new Error('atomic-agent returned no response body');
+
+      const result = await readSseStream(res.body, sessionId, opts);
+      controller.abort();
+      return result;
+    } catch (err: any) {
+      controller.abort();
+      if (err?.name === 'AbortError') {
+        throw new Error(`atomic-agent request timed out after ${timeoutMs}ms`);
+      }
+      lastErr = err;
+      clearTimeout(timeout);
+      if (attempt >= AGENT_MAX_RETRIES) throw lastErr;
+      await sleepMs(250 * Math.pow(2, attempt) + Math.floor(Math.random() * 250));
+    } finally {
+      clearTimeout(timeout);
     }
-    if (!res.body) throw new Error('atomic-agent returned no response body');
-
-    return await readSseStream(res.body, sessionId);
-  } finally {
-    clearTimeout(timeout);
   }
+
+  throw lastErr ?? new Error('atomic-agent request failed');
 }
 
 export function mapTurnToResult(turn: AgentTurnResult): AgentTaskResult {

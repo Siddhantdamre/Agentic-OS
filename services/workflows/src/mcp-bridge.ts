@@ -428,6 +428,41 @@ const TOOLS: ToolDef[] = [
     tool: 'google-sheets',
     action: 'sheets_append_row',
   },
+  {
+    name: 'slides_create',
+    description: 'Create a new Google Slides presentation in the org-connected account.',
+    schema: { org_id: z.string(), title: z.string().optional() },
+    tool: 'google-slides',
+    action: 'slides_create',
+  },
+  {
+    name: 'forms_get',
+    description: 'Get details and responses from a Google Form in the org-connected account.',
+    schema: { org_id: z.string(), formId: z.string() },
+    tool: 'google-forms',
+    action: 'forms_get',
+  },
+  {
+    name: 'contacts_list',
+    description: 'List connections and contacts from the org-connected Google Contacts account.',
+    schema: { org_id: z.string(), pageSize: z.number().optional() },
+    tool: 'google-contacts',
+    action: 'contacts_list',
+  },
+  {
+    name: 'tasks_list',
+    description: 'Fetch task lists and tasks from the org-connected Google Tasks account.',
+    schema: { org_id: z.string(), tasklistId: z.string().optional() },
+    tool: 'google-tasks',
+    action: 'tasks_list',
+  },
+  {
+    name: 'analytics_report',
+    description: 'Run a report query against the org-connected Google Analytics property.',
+    schema: { org_id: z.string(), propertyId: z.string() },
+    tool: 'google-analytics',
+    action: 'analytics_report',
+  },
 ];
 
 function createServer(): McpServer {
@@ -445,6 +480,19 @@ function createServer(): McpServer {
       const orgId = String(args.org_id || '');
       const payload: Record<string, any> = { ...args };
       delete payload.org_id;
+
+      // The bridge is localhost-only, but still validate the org id before any
+      // side-effect: reject missing / malformed org ids instead of passing a
+      // garbage value downstream.
+      const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+      if (!UUID_RE.test(orgId)) {
+        return textContent(JSON.stringify({
+          status: 'error',
+          message: 'A valid org_id (UUID) is required for this tool call.',
+          data: null,
+        }, null, 2));
+      }
+
       // file_ops uses the tool-level action field for read/write.
       if (tool === 'file_ops') {
         const fileAction = String(args.action || 'read_file');

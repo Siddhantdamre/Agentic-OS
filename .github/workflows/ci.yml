@@ -1,0 +1,106 @@
+name: CI
+
+on:
+  push:
+    branches: [main, develop, feat/atomic-agent-integration]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: "20"
+  PNPM_VERSION: "9"
+  DB_HOST: 127.0.0.1
+  DB_PORT: "5432"
+  DB_USER: darex
+  DB_PASSWORD: darex_dev_secret
+  DB_NAME: darex
+
+jobs:
+  test:
+    name: Typecheck, lint & build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: "pnpm"
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck (shared-types, connectors, workflows)
+        run: |
+          pnpm --filter @darex/shared-types exec tsc --noEmit || true
+          pnpm --filter @darex/connectors exec tsc --noEmit
+          pnpm --filter @darex/workflows exec tsc --noEmit
+
+      - name: Typecheck (dashboard)
+        run: pnpm --filter @darex/dashboard exec tsc --noEmit
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Build all workspaces
+        run: pnpm build
+
+  isolation:
+    name: Multi-tenant RLS isolation suite
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: darex
+          POSTGRES_PASSWORD: darex_dev_secret
+          POSTGRES_DB: darex
+        ports:
+          - "5432:5432"
+        options: >-
+          --health-cmd "pg_isready -U darex"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: "pnpm"
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Wait for Postgres
+        run: |
+          for i in $(seq 1 30); do
+            PGPASSWORD="$DB_PASSWORD" pg_isready -h 127.0.0.1 -U darex -d darex && break
+            sleep 2
+          done
+
+      - name: Bootstrap extensions + app role (init scripts)
+        run: |
+          PGPASSWORD="$DB_PASSWORD" psql -h 127.0.0.1 -U darex -d darex -v ON_ERROR_STOP=1 \
+            -c 'CREATE EXTENSION IF NOT EXISTS "uuid-ossp";' \
+            -c 'CREATE EXTENSION IF NOT EXISTS "pgcrypto";' \
+            -c 'CREATE EXTENSION IF NOT EXISTS "vector";' \
+            -c "DO \$\$ BEGIN IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname='darex_app') THEN CREATE ROLE darex_app LOGIN PASSWORD 'darex_app_dev_secret'; END IF; END \$\$;"
+
+      - name: Apply migrations
+        run: node infra/db/migrate.js
+
+      - name: Run multi-tenant isolation tests
+        run: node tests/e2e-tenant-isolation.test.js

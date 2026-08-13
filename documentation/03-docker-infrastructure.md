@@ -20,13 +20,19 @@ Everything lives in `infra/docker-compose.yml` on a single bridge network `darex
 | `atomic-bridge` | darex-atomic-bridge | **build** `infra/docker/atomic-bridge/Dockerfile` (context `../`) | 127.0.0.1:8790 | postgres+nango healthy |
 | `atomic-agent` | darex-atomic-agent | **build** `infra/docker/atomic-agent/Dockerfile` (context `./docker/atomic-agent`) | 127.0.0.1:8787 | atomic-bridge healthy |
 | `inbox` | darex-inbox | **build** `apps/inbox/Dockerfile` | 3004 | postgres healthy |
+| `sandbox` | darex-sandbox | **build** `infra/docker/sandbox/Dockerfile` | 8080 | — |
 | `worker` | darex-worker | **build** `infra/docker/worker/Dockerfile` (context `../`) | — | postgres+temporal+atomic-agent healthy |
 | `dashboard` | darex-dashboard | **build** `infra/docker/dashboard/Dockerfile` (context `../`) | 3000 | postgres+supertokens+temporal+atomic-agent healthy |
 
 Notes:
-- `atomic-bridge`, `atomic-agent`, `worker`, `dashboard` load env via `env_file:` from `../.env`, `../apps/dashboard/.env.local`, `./.env` (and connectors' `.env` for the bridge). Explicit `environment:` entries override `env_file:` — that's how the compose file forces internal hostnames (`DB_HOST=postgres`, `NANGO_HOST=http://nango-server:3003`, `ATOMIC_AGENT_URL=http://atomic-agent:8787`, `SUPERTOKENS_CONNECTION_URI=http://supertokens:3567`).
+- `atomic-bridge`, `atomic-agent`, `worker`, `dashboard`, `sandbox` load env via `env_file:` from `../.env`, `../apps/dashboard/.env.local`, `./.env` (and connectors' `.env` for the bridge). Explicit `environment:` entries override `env_file:` — that's how the compose file forces internal hostnames (`DB_HOST=postgres`, `NANGO_HOST=http://nango-server:3003`, `ATOMIC_AGENT_URL=http://atomic-agent:8787`, `SUPERTOKENS_CONNECTION_URI=http://supertokens:3567`, `SANDBOX_API_URL=http://sandbox:8080`, `LANGFUSE_HOST=http://langfuse-server:3000`).
 - Langfuse v3 requires **`REDIS_CONNECTION_STRING`** (not `REDIS_URL`) — verified fixed.
 - Langfuse S3 uploads go to the bundled MinIO via `LANGFUSE_S3_ENDPOINT=http://darex-langfuse-minio:9000`.
+- `sandbox` (`infra/docker/sandbox`): self-hosted, network-isolated code execution for the
+  `code_execution` / `sandbox` / `execute_code` agent tools. Runs untrusted code as an
+  unprivileged user with a hard timeout; **no outbound network, no DB access**. API:
+  `POST /execute {language: node|python|bash, code, timeoutMs}` → `{result:{stdout,stderr,exitCode}}`.
+  Health: `GET /health`.
 
 ## Dockerfiles
 

@@ -4,6 +4,110 @@
 
 ---
 
+## Runtime Fixes — Tool Allowlist, Code Sandbox, Langfuse v3 (2026-08-13)
+
+### 🔴 Tool allowlist regression — plans/agents failing "not in allowed tool list"
+- **Symptom:** approved plans failed every tool step with `Tool "web_search" is not in this
+  employee's allowed tool list`. Steps stayed `Pending`.
+- **Root cause:** `tool-executor.ts` started enforcing an allowlist, but the fallback
+  `resolveOrgToolAllowlist` used `SELECT ... FROM ai_employees WHERE status='active' LIMIT 1` —
+  it grabbed **whichever employee came first** (e.g. Sarah: `[gmail,whatsapp,hubspot]`), blocking
+  web_search / google-sheets / google-drive that the **org actually owns**.
+- **Fixes (org-wide union, not one employee):**
+  1. `resolveOrgToolAllowlist` now returns the **union of ALL active employees** tool_allowlists
+     **plus** ALWAYS-allowed core tools (`web_search, web_extract, database_query, db_query,
+     sql_analytics, file_ops, file_system, workspace_file, sandbox, code_execution, execute_code`).
+  2. **Also unions every connector the org has connected** (`channels` where status in
+     connected/active) — so google-sheets/google-drive/etc. run for the org even when no single
+     employee lists them, while never-connected connectors stay gated.
+  3. Plan-execute path (`ask-ai/execute/route.ts`) now passes an explicit `toolAllowlist` =
+     the plan's own step tools + core tools (belt-and-suspenders).
+- **Verified live (worker rebuilt):** `google-sheets sheets_create` → **executed** (real Sheet),
+  `google-drive drive_list` → **executed** (27 files), `web_search` passes allowlist.
+
+### 🟢 Sandboxed code execution — `code_execution` / `sandbox` / `execute_code`
+- **Before:** pointed at dead `@agent-infra/sandbox` → `http://localhost:8080` = Temporal UI, not a
+  sandbox. Code execution never worked.
+- **After:** new self-hosted **`sandbox`** Docker service (`infra/docker/sandbox`, node:20 + python3).
+  Runs untrusted code as an unprivileged user, hard timeout, no outbound network, no DB access,
+  `POST /execute {language, code, timeoutMs}` → `{result:{stdout,stderr,exitCode}}`. Supports
+  `node` / `python` / `bash`. Added `SANDBOX_API_URL=http://sandbox:8080` to worker + dashboard env.
+- **Verified:** python `6*7=42`, node `1+1=2`, bash `hi there` — all real output.
+
+### 🟡 Langfuse observations now actually land (was silently 0 traces)
+- **Symptoms:** Langfuse DB always empty; "what is the agent doing" invisible.
+- **Fixes:**
+  1. **Ingestion payload schema (the real bug):** hand-rolled trace sent `timestamp` inside
+     `body` — Langfuse v3.225 rejects that (400 / 207 with `timestamp expected string`).
+     `lib/langfuse-trace.ts` now puts `timestamp` at the **event level** (correct schema).
+     Verified: ingestion returns `201` and the batch is accepted.
+  2. Stopped swallowing errors (`.catch(()=>{})` removed) so misconfig is visible in logs.
+  3. **worker `LANGFUSE_HOST` was `http://localhost:3002`** (wrong inside Docker) →
+     fixed to `http://langfuse-server:3000`.
+  4. Expanded tracing: added traces to plan-generation (`PlanGenerated`), each plan-execute
+     step (`PlanExecution-<tool>`), and plan summary (`PlanExecutionSummary`).
+- **Note (pre-existing infra):** the `langfuse-worker`'s BullMQ side-queues hit intermittent
+  Redis socket timeouts under the shared Redis (100 clients); ingestion queue drains but some
+  total persistence to ClickHouse is flaky. Trace *ingestion* is now correct; the upstream
+  worker/Redis stability is a separate ops item (consider a dedicated Redis for langfuse).
+
+### 🟢 web_search / web_extract
+- Now send `Authorization: Bearer $JINA_API_KEY` when `JINA_API_KEY` is set (Jina now requires one;
+  unset → honest error, no fake results). Set it in `infra/.env`. Added to worker/dashboard env.
+
+### Docker / tenancy
+- Compose secrets moved to `${VAR:-dev}` env-driven form; migration `008_rls_with_check.sql`
+  adds `WITH CHECK` to all org policies + `darex_app` grants.
+- Full rebuild (`pnpm build`) green; worker/bridge/dashboard/sandbox images rebuilt and recreated.
+
+---
+
+
+
+## Phase D: Plan-Confirm-Execute live + LiteLLM routing + Nango scope fixes (2026-08-11)
+
+### Classifier/planner hang fixed — now call LiteLLM directly
+- **Symptom:** complex Ask AI prompts returned `type:"simple"` or hung 90s+. Root cause: `lib/classify.ts`
+  + `lib/plan-generator.ts` + `reviseDraft` called **atomic-agent's** `/v1/chat/completions`
+  non-streaming. atomic-agent's agent loop injects the full GBNF tool grammar + all tool
+  descriptors, so the model tried to emit real tool calls (gmail/drive) with malformed
+  concatenated JSON → `Failed to parse tool call arguments` → parse/repair loop → hang.
+- **Fix:** new `apps/dashboard/lib/litellm-client.ts` (OpenAI-compatible client, base URL
+  `http://litellm:4000/v1` in prod / `localhost:4000` in dev, model `atomic-agent`).
+  classify/plan/revise now call LiteLLM directly for plain JSON completions.
+- **Second hang:** deepseek-v4-flash-0731 is a **reasoning model** — it burned the whole
+  `max_tokens` budget on `reasoning_content` (returns empty `content`), and with a large
+  budget it reasoned for minutes. Fix: `reasoning: { enabled: false }` in `litellm-client.ts`
+  + `max_tokens: 300` (classify) / `800` (plan) / `1000` (revise).
+- **Verified live:** complex prompt → `type:"complex"` (confidence 0.75) → plan with gmail
+  `draft_email` step + 291-char draft → planId persisted → PATCH approve → SSE execute
+  stream (`execution_start`/`step_start`/`step_done`/`execution_done`) in ~13s total.
+  Simple prompt → `type:"simple"` clean answer in ~6s.
+- **Remaining:** gmail `draft_email` execution returned 403 `insufficient scopes` — the
+  existing gmail OAuth token was minted before `gmail.compose` was added. **Re-connect gmail
+  in the browser** (disconnect + Connect OAuth on `/connectors`) to mint a token with the new
+  scopes, then `draft_email`/`send_email` work.
+
+### Nango integration config + scope fixes
+- **gmail config** now includes `gmail.send gmail.readonly gmail.compose gmail.modify`
+  (was missing `compose` → `drafts.create` 403). Requires the browser re-connect above.
+- **intercom + notion** configs had **empty `oauth_scopes`** (OAuth would fail) — set to
+  `read write`.
+- **google-drive/docs/sheets** configs verified present with correct scopes (seeded from the
+  gmail client creds).
+- **`infra/scripts/seed-nango-configs.sql`** updated to apply all of the above idempotently
+  (gmail scope repair + intercom/notion fill + drive/docs/sheets upsert). Run it, then
+  `docker compose restart nango-server`.
+- **Verified:** `/api/integrations` lists all 17 apps, 6 connected via real Nango OAuth
+  (gmail, google-calendar, google-ads, github, google-docs, google-sheets). google-docs
+  `docs_create` + google-sheets `sheets_create` still work live. google-drive correctly
+  reports `simulated: google-drive not connected` (needs browser OAuth).
+- **Still manual:** connect google-drive + re-connect gmail via browser OAuth on `/connectors`;
+  whatsapp uses BYOK modal; slack/hubspot/stripe/notion/shopify/zendesk/intercom need real
+  OAuth client IDs in the Nango UI (`http://localhost:3003`) before their popups complete.
+
+---
+
 ## Documentation (2026-08-11)
 - Created `documentation/` (11 docs: 00–10) covering how to run, architecture, docker infra, DB schema, auth,
   API reference, agent engine, realtime, verification checks, and feature roadmap — each written as

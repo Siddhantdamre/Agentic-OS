@@ -34,7 +34,8 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Plan not found' }, { status: 404 });
     }
     const plan = rows[0];
-    if (plan.status !== 'pending' && plan.status !== 'approved') {
+    const allowedStatuses = ['pending', 'approved', 'completed', 'completed_with_errors', 'failed'];
+    if (!allowedStatuses.includes(plan.status)) {
       return NextResponse.json(
         { error: `Cannot revise a plan in status "${plan.status}"` },
         { status: 409 }
@@ -51,15 +52,17 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Draft revision produced empty output' }, { status: 502 });
     }
 
+    const newStatus = ['completed', 'completed_with_errors', 'failed'].includes(plan.status) ? 'approved' : plan.status;
+
     await client.query(
-      `UPDATE agent_plans SET draft = $3, feedback = $4, updated_at = NOW() WHERE id = $1 AND org_id = $2`,
-      [planId, orgId, JSON.stringify({ content: revised, version: previousVersion + 1 }), String(feedback)]
+      `UPDATE agent_plans SET draft = $3, feedback = $4, status = $5, updated_at = NOW() WHERE id = $1 AND org_id = $2`,
+      [planId, orgId, JSON.stringify({ content: revised, version: previousVersion + 1 }), String(feedback), newStatus]
     );
 
     return NextResponse.json({
       success: true,
       draft: { content: revised, version: previousVersion + 1 },
-      status: plan.status,
+      status: newStatus,
     });
   } catch (error: any) {
     if (error.message === 'Unauthorized') {

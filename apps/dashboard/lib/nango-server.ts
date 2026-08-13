@@ -11,13 +11,16 @@ export async function nangoConnectionExists(orgId: string, provider: string): Pr
     return false;
   }
   try {
-    const connectionId = `${orgId}_${provider}`;
-    const res = await fetch(
-      `${NANGO_HOST}/connection/${encodeURIComponent(connectionId)}?provider_config_key=${encodeURIComponent(provider)}`,
-      { headers: { Authorization: `Bearer ${NANGO_SECRET_KEY}` } }
-    );
-    if (!res.ok) return false;
-    return true;
+    const keysToCheck = provider === 'whatsapp' ? ['whatsapp', 'whatsapp-business'] : [provider];
+    for (const key of keysToCheck) {
+      const connectionId = `${orgId}_${key}`;
+      const res = await fetch(
+        `${NANGO_HOST}/connection/${encodeURIComponent(connectionId)}?provider_config_key=${encodeURIComponent(key)}`,
+        { headers: { Authorization: `Bearer ${NANGO_SECRET_KEY}` } }
+      );
+      if (res.ok) return true;
+    }
+    return false;
   } catch (err: any) {
     console.warn(`[Nango] Connection check failed for ${provider}:`, err.message);
     return false;

@@ -6,6 +6,9 @@ export interface ToolExecutionParams {
   action: string;
   payload: Record<string, any>;
   orgId: string;
+  /** Optional allowlist of base tool keys (e.g. 'gmail'). When set, tools not
+   *  on the list are rejected before execution. */
+  toolAllowlist?: string[];
 }
 
 export interface ToolExecutionResult {
@@ -30,6 +33,77 @@ const dbPool = new Pool({
   max: 10,
 });
 
+// Tools that are safe to run for every org regardless of per-employee config.
+// These are the agent's own atomic capabilities (web search/extract, scoped SQL,
+// workspace files, and sandboxed code execution) — not external OAuth connectors.
+const ALWAYS_ALLOWED_CORE_TOOLS = [
+  'web_search', 'web_extract', 'database_query', 'db_query', 'sql_analytics',
+  'file_ops', 'workspace_file', 'file_system',
+  'sandbox', 'code_execution', 'execute_code',
+];
+
+// Org-wide tool allowlist — cached briefly to avoid a DB hit on every call.
+// The authoritative set for an org is:
+//   1. always-allowed core tools (web_search, database_query, sandbox, ...)
+//   2. union of ALL active employee tool_allowlists
+//   3. every connector the org has actually connected (channels table)
+// This means a tool the org OWNS (e.g. google-sheets connected via Nango) is
+// executable even when no single employee names it in their allowlist, while
+// connectors the org hasn't connected are still gated.
+const allowlistCache = new Map<string, { keys: string[]; expiresAt: number }>();
+const ALLOWLIST_TTL_MS = 60_000;
+
+async function resolveOrgToolAllowlist(orgId: string): Promise<string[]> {
+  const cached = allowlistCache.get(orgId);
+  if (cached && cached.expiresAt > Date.now()) return cached.keys;
+
+  const union = new Set<string>(ALWAYS_ALLOWED_CORE_TOOLS);
+  try {
+    const client = await dbPool.connect();
+    try {
+      await client.query("SELECT set_config('app.current_org_id', $1, true)", [orgId]);
+      const res = await client.query(
+        `SELECT tool_allowlist FROM ai_employees WHERE org_id = $1 AND status = 'active'`,
+        [orgId]
+      );
+      for (const row of res.rows) {
+        const list = Array.isArray(row.tool_allowlist)
+          ? row.tool_allowlist.map(String)
+          : (() => {
+              try { return JSON.parse(row.tool_allowlist).map(String); } catch { return []; }
+            })();
+        for (const t of list) union.add(String(t).toLowerCase());
+      }
+
+      // Add every connector the org has actually connected (Nango channels).
+      const chanRes = await client.query(
+        `SELECT channel_type FROM channels WHERE org_id = $1 AND status IN ('connected','active')`,
+        [orgId]
+      );
+      for (const c of chanRes.rows) {
+        if (typeof c.channel_type === 'string') union.add(c.channel_type.toLowerCase());
+      }
+    } finally {
+      client.release();
+    }
+  } catch (err: any) {
+    console.warn(`[Tool Executor] Failed to resolve allowlist for ${orgId}:`, err.message);
+  }
+  const keys = Array.from(union);
+  allowlistCache.set(orgId, { keys, expiresAt: Date.now() + ALLOWLIST_TTL_MS });
+  return keys;
+}
+
+function isToolAllowed(baseTool: string, allowlist: string[]): boolean {
+  const allowed = allowlist.map((t) => t.toLowerCase());
+  const normalizedTool = baseTool.replace(/_/g, '-');
+  return (
+    allowed.includes(baseTool) ||
+    allowed.includes(normalizedTool) ||
+    allowed.some((a) => baseTool.startsWith(a + '_') || baseTool.startsWith(a + '-'))
+  );
+}
+
 /**
  * Fetch Nango connection tokens for a provider
  */
@@ -47,7 +121,7 @@ async function getNangoConnection(connectionId: string, providerKey: string): Pr
     return null;
   }
   try {
-    const res = await fetch(`${NANGO_HOST}/connection/${connectionId}?provider_config_key=${providerKey}`, {
+    const res = await fetch(`${NANGO_HOST}/connection/${encodeURIComponent(connectionId)}?provider_config_key=${encodeURIComponent(providerKey)}`, {
       headers: { Authorization: `Bearer ${NANGO_SECRET_KEY}` },
     });
     if (!res.ok) {
@@ -68,7 +142,7 @@ function notConnected(tool: string, action: string, timestamp: string): ToolExec
   return {
     tool,
     action,
-    status: 'simulated',
+    status: 'error',
     message: `${tool} not connected. Authorize via Nango OAuth at /connectors to enable real actions.`,
     data: { connected: false, setupUrl: '/connectors' },
     timestamp,
@@ -340,22 +414,41 @@ export async function executeAutonomousToolAction(
 ): Promise<ToolExecutionResult> {
   const timestamp = new Date().toISOString();
   const actionName = (params.action || 'auto_execute').toLowerCase();
+  const baseTool = (params.tool || '').toLowerCase();
   console.log(`[Autonomous Tool Execution] Tool: ${params.tool}, Action: ${actionName}, Org: ${params.orgId}`);
+
+  // Enforce the allowlist BEFORE any side-effect executes. The allowlist holds
+  // base tool keys (e.g. 'gmail', 'database_query'); a tool request is allowed
+  // if its base key is listed. An attacker / prompt-injected tool call that is
+  // not on the list is rejected here. If the caller didn't pass one, fall back
+  // to the org's active-employee allowlist (cached).
+  const effectiveAllowlist =
+    (Array.isArray(params.toolAllowlist) && params.toolAllowlist.length > 0)
+      ? params.toolAllowlist
+      : await resolveOrgToolAllowlist(params.orgId);
+
+  if (effectiveAllowlist.length > 0 && !isToolAllowed(baseTool, effectiveAllowlist)) {
+    return {
+      tool: params.tool,
+      action: actionName,
+      status: 'error',
+      message: `Tool "${params.tool}" is not in this employee's allowed tool list.`,
+      data: { connected: false, allowed: effectiveAllowlist },
+      timestamp,
+    };
+  }
 
   try {
     switch (params.tool.toLowerCase()) {
       case 'sandbox':
       case 'code_execution':
       case 'execute_code': {
-        console.log(`[Agent-Infra Sandbox] Executing secure cloud sandbox code for ${params.orgId}...`);
+        console.log(`[Darex Sandbox] Executing isolated code for ${params.orgId}...`);
         try {
-          const { SandboxClient } = await import('@agent-infra/sandbox');
-          const client = new SandboxClient({
-            environment: process.env.SANDBOX_API_URL || 'http://localhost:8080',
-          });
-          
-          const language = (params.payload.language === 'javascript' || params.payload.language === 'node') ? 'javascript' : 'python';
-          
+          const sandboxUrl = process.env.SANDBOX_API_URL || 'http://localhost:8080';
+
+          const language = (params.payload.language === 'javascript' || params.payload.language === 'node') ? 'node' : 'python';
+
           let codeToRun = params.payload.code || params.payload.expression || params.payload.command;
           if (!codeToRun) {
             if (params.payload.num1 !== undefined && params.payload.num2 !== undefined) {
@@ -371,31 +464,65 @@ export async function executeAutonomousToolAction(
             }
           }
 
-          const execResult = await client.code.executeCode({
-            code: codeToRun,
-            language: language,
+          const controller = new AbortController();
+          const timeout = setTimeout(() => controller.abort(), (params.payload.timeoutMs || 10000) + 2000);
+
+          const sandboxRes = await fetch(`${sandboxUrl}/execute`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              language,
+              code: codeToRun,
+              timeoutMs: params.payload.timeoutMs || 10000,
+            }),
+            signal: controller.signal,
           });
-          
-          const bodyData = (execResult as any)?.body?.data || (execResult as any)?.data || {};
-          const textOutput = bodyData.stdout || bodyData.text || (execResult as any).output || JSON.stringify(execResult);
-          
+          clearTimeout(timeout);
+
+          if (!sandboxRes.ok) {
+            const errText = await sandboxRes.text().catch(() => '');
+            return {
+              tool: params.tool,
+              action: params.action,
+              status: 'error',
+              message: `Sandbox HTTP ${sandboxRes.status}: ${errText.slice(0, 300)}`,
+              data: { error: errText.slice(0, 300) },
+              timestamp,
+            };
+          }
+
+          const parseRes = await sandboxRes.json();
+          const r = parseRes?.result || {};
+          if (r.ok === false) {
+            return {
+              tool: params.tool,
+              action: params.action,
+              status: 'error',
+              message: `Sandbox execution failed: ${r.error || 'unknown error'}`,
+              data: { stdout: r.stdout || '', stderr: r.stderr || '', error: r.error || null },
+              timestamp,
+            };
+          }
+
           return {
             tool: params.tool,
             action: params.action,
             status: 'executed',
-            message: 'Code executed securely in Agent-Infra Sandbox',
+            message: 'Code executed securely in the isolated Darex sandbox',
             data: {
-              output: textOutput,
+              output: r.stdout || '',
+              stderr: r.stderr || '',
+              exitCode: r.exitCode ?? 0,
             },
             timestamp,
           };
         } catch (err: any) {
-          console.error('[Agent-Infra Sandbox Error]', err);
+          console.error('[Darex Sandbox Error]', err);
           return {
             tool: params.tool,
             action: params.action,
             status: 'error',
-            message: 'Failed to execute code in Agent-Infra sandbox',
+            message: 'Failed to execute code in the Darex sandbox',
             data: { error: err.message },
             timestamp,
           };
@@ -409,19 +536,26 @@ export async function executeAutonomousToolAction(
         if (!query) {
           return { tool: 'web_search', action: 'search', status: 'error', message: 'Search query is required', data: null, timestamp };
         }
-        console.log(`[Web Search Tool] Performing live web search for: "${query}"...`);
+        console.log(`[Web Search Tool] Performing live web search via Jina for: "${query}"...`);
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 15000);
         try {
-          const searchRes = await fetch(`https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`, {
-            headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
+          const searchHeaders: Record<string, string> = {
+            'Accept': 'application/json',
+            'X-Retain-Images': 'none',
+          };
+          // Jina requires an API key for search now; only send it when configured.
+          const jinaKey = process.env.JINA_API_KEY || process.env.JINA_READ_API_KEY;
+          if (jinaKey) searchHeaders['Authorization'] = `Bearer ${jinaKey}`;
+          const searchRes = await fetch(`https://s.jina.ai/${encodeURIComponent(query)}`, {
+            headers: searchHeaders,
+            signal: controller.signal
           });
-          const html = await searchRes.text();
-          const results: Array<{ title: string; snippet: string; url: string }> = [];
-          const matches = html.matchAll(/<a class="result__snippet[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi);
-          for (const match of matches) {
-            if (results.length >= 5) break;
-            const snippet = match[2].replace(/<[^>]+>/g, '').trim();
-            results.push({ title: query, snippet, url: match[1] });
-          }
+          clearTimeout(timeout);
+          if (!searchRes.ok) throw new Error(`Jina Search API failed: ${searchRes.statusText}`);
+          const data = await searchRes.json();
+          const results = Array.isArray(data.data) ? data.data.slice(0, 5) : [];
+
           return {
             tool: 'web_search',
             action: 'search',
@@ -433,6 +567,7 @@ export async function executeAutonomousToolAction(
             timestamp,
           };
         } catch (err: any) {
+          clearTimeout(timeout);
           return { tool: 'web_search', action: 'search', status: 'error', message: `Search failed: ${err.message}`, data: null, timestamp };
         }
       }
@@ -444,17 +579,22 @@ export async function executeAutonomousToolAction(
         if (!url) {
           return { tool: 'web_extract', action: 'extract', status: 'error', message: 'URL parameter is required', data: null, timestamp };
         }
-        console.log(`[Web Extract Tool] Extracting web content from ${url}...`);
+        console.log(`[Web Extract Tool] Extracting web content via Jina from ${url}...`);
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 15000);
         try {
-          const pageRes = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' } });
+          const readerHeaders: Record<string, string> = { 'Accept': 'text/plain' };
+          const jinaKey = process.env.JINA_API_KEY || process.env.JINA_READ_API_KEY;
+          if (jinaKey) readerHeaders['Authorization'] = `Bearer ${jinaKey}`;
+          const pageRes = await fetch(`https://r.jina.ai/${encodeURIComponent(url)}`, { 
+            headers: readerHeaders,
+            signal: controller.signal
+          });
+          clearTimeout(timeout);
+          if (!pageRes.ok) throw new Error(`Jina Reader API failed: ${pageRes.statusText}`);
           const rawText = await pageRes.text();
-          const cleanText = rawText
-            .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
-            .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
-            .replace(/<[^>]+>/g, ' ')
-            .replace(/\s+/g, ' ')
-            .trim()
-            .slice(0, 4000);
+          const cleanText = rawText.slice(0, 8000); // Allow more Markdown text
+          
           return {
             tool: 'web_extract',
             action: 'extract',
@@ -464,6 +604,7 @@ export async function executeAutonomousToolAction(
             timestamp,
           };
         } catch (err: any) {
+          clearTimeout(timeout);
           return { tool: 'web_extract', action: 'extract', status: 'error', message: `Failed to extract URL: ${err.message}`, data: null, timestamp };
         }
       }
@@ -471,25 +612,24 @@ export async function executeAutonomousToolAction(
       case 'database_query':
       case 'db_query':
       case 'sql_analytics': {
-        let sql = params.payload.sql || (typeof params.payload.query === 'string' && params.payload.query.toLowerCase().trim().startsWith('select') ? params.payload.query : null);
+        let rawQuery = params.payload.sql || params.payload.query || '';
+        let sql = (typeof rawQuery === 'string' && (rawQuery.toLowerCase().trim().startsWith('select') || rawQuery.toLowerCase().trim().startsWith('with'))) ? rawQuery.trim() : null;
         if (!sql) {
-          const queryType = (params.payload.queryType || params.payload.table || actionName || '').toString().toLowerCase();
-          if (queryType.includes('employee')) {
-            sql = 'SELECT id, name, role, status FROM ai_employees LIMIT 10';
-          } else if (queryType.includes('channel') || queryType.includes('log')) {
-            sql = 'SELECT id, channel_type, event_type, status FROM channel_logs ORDER BY created_at DESC LIMIT 10';
-          } else {
-            sql = 'SELECT id, name, role, status FROM ai_employees LIMIT 10';
-          }
+          return { tool: 'database_query', action: 'query', status: 'error', message: 'SQL query is required and must start with SELECT or WITH', data: null, timestamp };
         }
-        if (!sql.toLowerCase().trim().startsWith('select')) {
-          return { tool: 'database_query', action: 'query', status: 'error', message: 'Security Policy: Only SELECT queries are permitted', data: null, timestamp };
+
+        const normalizedSql = sql.toLowerCase().trim();
+        if (sql.includes(';') || (!normalizedSql.startsWith('select') && !normalizedSql.startsWith('with'))) {
+          return { tool: 'database_query', action: 'query', status: 'error', message: 'Security Policy: Only single-statement SELECT or WITH queries are permitted', data: null, timestamp };
         }
+
         try {
           const client = await dbPool.connect();
           try {
+            await client.query('BEGIN');
             await client.query("SELECT set_config('app.current_org_id', $1, true)", [params.orgId]);
             const dbRes = await client.query(sql);
+            await client.query('COMMIT');
             return {
               tool: 'database_query',
               action: 'query',
@@ -498,6 +638,9 @@ export async function executeAutonomousToolAction(
               data: { rows: dbRes.rows.slice(0, 25), totalRows: dbRes.rows.length },
               timestamp,
             };
+          } catch (execErr) {
+            await client.query('ROLLBACK').catch(() => {});
+            throw execErr;
           } finally {
             client.release();
           }
@@ -1896,7 +2039,17 @@ export async function executeAutonomousToolAction(
 
       case 'google-drive':
       case 'google-docs':
-      case 'google-sheets': {
+      case 'google-sheets':
+      case 'google-slides':
+      case 'google-forms':
+      case 'google-chat':
+      case 'google-meet':
+      case 'google-contacts':
+      case 'google-tasks':
+      case 'google-analytics':
+      case 'google-search-console':
+      case 'google-business-profile':
+      case 'google-cloud': {
         const gTool = params.tool.toLowerCase();
         const gConnId = `${params.orgId}_${gTool}`;
         let gToken: string | null = null;
@@ -2189,9 +2342,17 @@ export async function executeAutonomousToolAction(
               const row = params.payload.row;
               let values: any[][];
               if (Array.isArray(rawValues)) {
-                values = rawValues.length && Array.isArray(rawValues[0]) ? rawValues : [rawValues];
+                if (rawValues.length > 0 && typeof rawValues[0] === 'object' && rawValues[0] !== null && !Array.isArray(rawValues[0])) {
+                  values = rawValues.map((obj: any) => Object.values(obj));
+                } else {
+                  values = rawValues.length && Array.isArray(rawValues[0]) ? rawValues : [rawValues];
+                }
+              } else if (typeof rawValues === 'object' && rawValues !== null) {
+                values = [Object.values(rawValues)];
               } else if (Array.isArray(row)) {
                 values = [row];
+              } else if (typeof row === 'object' && row !== null) {
+                values = [Object.values(row)];
               } else {
                 values = [[params.payload.value ?? params.payload.content ?? '']];
               }
@@ -2220,6 +2381,89 @@ export async function executeAutonomousToolAction(
             }
 
             return { tool: 'google-sheets', action: actionName, status: 'error', message: `Unsupported Sheets action "${actionName}". Try sheets_create, sheets_read, sheets_append_row.`, data: null, timestamp };
+          }
+
+          // ── GOOGLE SLIDES ───────────────────────────────────────────────
+          if (gTool === 'google-slides') {
+            const title = params.payload.title || 'Untitled Presentation';
+            const slidesRes = await fetch('https://slides.googleapis.com/v1/presentations', {
+              method: 'POST',
+              headers: { Authorization: `Bearer ${gToken}`, 'Content-Type': 'application/json' },
+              body: JSON.stringify({ title }),
+            });
+            if (!slidesRes.ok) {
+              return { tool: 'google-slides', action: 'slides_create', status: 'error', message: `Slides error ${slidesRes.status}: ${await slidesRes.text()}`, data: null, timestamp };
+            }
+            const slidesData = await slidesRes.json();
+            return {
+              tool: 'google-slides',
+              action: 'slides_create',
+              status: 'executed',
+              message: `Created presentation "${slidesData.title}"`,
+              data: { presentationId: slidesData.presentationId, title: slidesData.title },
+              timestamp,
+            };
+          }
+
+          // ── GOOGLE FORMS ────────────────────────────────────────────────
+          if (gTool === 'google-forms') {
+            const formId = params.payload.formId || params.payload.id;
+            if (!formId) {
+              return { tool: 'google-forms', action: 'forms_get', status: 'error', message: 'formId is required.', data: null, timestamp };
+            }
+            const formsRes = await fetch(`https://forms.googleapis.com/v1/forms/${formId}`, {
+              headers: { Authorization: `Bearer ${gToken}` },
+            });
+            if (!formsRes.ok) {
+              return { tool: 'google-forms', action: 'forms_get', status: 'error', message: `Forms error ${formsRes.status}: ${await formsRes.text()}`, data: null, timestamp };
+            }
+            const formData = await formsRes.json();
+            return {
+              tool: 'google-forms',
+              action: 'forms_get',
+              status: 'executed',
+              message: `Fetched form "${formData.info?.title || formId}"`,
+              data: { formId, title: formData.info?.title, items: formData.items || [] },
+              timestamp,
+            };
+          }
+
+          // ── GOOGLE CONTACTS ─────────────────────────────────────────────
+          if (gTool === 'google-contacts') {
+            const contactsRes = await fetch(`https://people.googleapis.com/v1/people/me/connections?personFields=names,emailAddresses,phoneNumbers&pageSize=${params.payload.pageSize || 50}`, {
+              headers: { Authorization: `Bearer ${gToken}` },
+            });
+            if (!contactsRes.ok) {
+              return { tool: 'google-contacts', action: 'contacts_list', status: 'error', message: `Contacts error ${contactsRes.status}: ${await contactsRes.text()}`, data: null, timestamp };
+            }
+            const contactsData = await contactsRes.json();
+            return {
+              tool: 'google-contacts',
+              action: 'contacts_list',
+              status: 'executed',
+              message: `Fetched ${contactsData.connections?.length || 0} contacts`,
+              data: { connections: contactsData.connections || [] },
+              timestamp,
+            };
+          }
+
+          // ── GOOGLE TASKS ────────────────────────────────────────────────
+          if (gTool === 'google-tasks') {
+            const tasksRes = await fetch('https://tasks.googleapis.com/v1/users/@me/lists', {
+              headers: { Authorization: `Bearer ${gToken}` },
+            });
+            if (!tasksRes.ok) {
+              return { tool: 'google-tasks', action: 'tasks_list', status: 'error', message: `Tasks error ${tasksRes.status}: ${await tasksRes.text()}`, data: null, timestamp };
+            }
+            const tasksData = await tasksRes.json();
+            return {
+              tool: 'google-tasks',
+              action: 'tasks_list',
+              status: 'executed',
+              message: `Fetched ${tasksData.items?.length || 0} task lists`,
+              data: { tasklists: tasksData.items || [] },
+              timestamp,
+            };
           }
 
           return {

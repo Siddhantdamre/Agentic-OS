@@ -1,13 +1,12 @@
 // Plan generator for the Reasoning + Plan-Confirm-Execute flow.
 //
-// When the classifier marks a request COMPLEX, we ask atomic-agent (one larger,
-// non-streaming turn) to decompose the request into an explicit, approvable
-// step sequence + optional draft + reasoning. Atomic-agent always passes org_id
-// to every mcp.darex.* tool, so the plan steps carry actionable params.
+// When the classifier marks a request COMPLEX, we ask LiteLLM (one plain,
+// non-streaming completion) to decompose the request into an explicit,
+// approvable step sequence + optional draft + reasoning. This bypasses
+// atomic-agent's agent loop — the planner only needs structured JSON out,
+// never tool execution.
 
-const ATOMIC_AGENT_URL = process.env.ATOMIC_AGENT_URL || 'http://localhost:8787';
-const ATOMIC_AGENT_API_KEY = process.env.ATOMIC_AGENT_API_KEY || 'darex-atomic-agent-dev-key';
-const ATOMIC_AGENT_MODEL = process.env.ATOMIC_AGENT_MODEL || 'atomic-agent';
+import { chatCompletion } from './litellm-client';
 
 export interface PlanStep {
   id: string;
@@ -40,8 +39,10 @@ function sanitizeSteps(raw: any[]): PlanStep[] {
     const tool = String(s?.tool || '').toLowerCase();
     const action = String(s?.action || '');
     if (!VALID_TOOLS.has(tool) || action.length === 0) continue;
-    if (seen.has(`${tool}:${action}`)) continue;
-    seen.add(`${tool}:${action}`);
+    const payloadSig = JSON.stringify(s?.payload || {});
+    const stepSig = `${tool}:${action}:${payloadSig}`;
+    if (seen.has(stepSig)) continue;
+    seen.add(stepSig);
     steps.push({
       id: `step-${steps.length + 1}`,
       description: String(s?.description || `${tool} → ${action}`).slice(0, 200),
@@ -73,8 +74,6 @@ export async function generatePlan(
   orgId: string,
   connectedTools: string[]
 ): Promise<GeneratedPlan> {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 60000);
   try {
     const connected = connectedTools.length > 0 ? connectedTools.join(', ') : 'unknown — attempt tools, they may fall back gracefully';
     const systemPrompt = [
@@ -88,34 +87,20 @@ export async function generatePlan(
       '- step.tool must be one of the connected tools.',
       '- step.action must be a real action for that tool (e.g. gmail: fetch_latest_emails, triage_emails, draft_email, send_email, extract_otp, extract_attachment; google-calendar: check_availability, create_event, list_events; google-drive: drive_search, drive_list, drive_get_text, drive_upload, drive_share; google-docs: docs_create, docs_read, docs_append; google-sheets: sheets_create, sheets_read, sheets_append_row; hubspot: create_crm_contact, update_contact; github: create_repo, create_issue, fetch_user_repos; zendesk: create_support_ticket, update_ticket, fetch_tickets; notion: create_page, append_page_content, search_workspace_docs; database_query: query; web_search: search; web_extract: extract).',
       '- Step payloads must include all required params for the action.',
+      '- To pass the result of a previous step (like search results or fetched content) into a text field, use the exact syntax {{stepN_output}} where N is the 1-based index (e.g. {{step1_output}}). DO NOT write placeholders like "[Insert results here]".',
       '- Never invent a user email/phone — if the user did not provide the recipient, leave the param empty and note it in description.',
       '- Keep steps to at most 6.',
       '- If the request is really only a simple reply, put 1 step (e.g. gmail draft_email) and author the email in draft.',
+      'Begin your reply with the JSON object directly.',
     ].join('\n');
 
-    const res = await fetch(`${ATOMIC_AGENT_URL}/v1/chat/completions`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${ATOMIC_AGENT_API_KEY}`,
-        'X-Atomic-Extensions': 'on',
-      },
-      body: JSON.stringify({
-        model: ATOMIC_AGENT_MODEL,
-        stream: false,
-        max_tokens: 2000,
-        temperature: 0.2,
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: `USER REQUEST: ${prompt}` },
-        ],
-      }),
-      signal: controller.signal,
-    });
-
-    if (!res.ok) throw new Error(`atomic-agent HTTP ${res.status}`);
-    const data = await res.json();
-    const content: string = data?.choices?.[0]?.message?.content || '';
+    const content = await chatCompletion(
+      [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: `USER REQUEST: ${prompt}` },
+      ],
+      { maxTokens: 800, temperature: 0.2, timeoutMs: 60000 }
+    );
     const parsed = extractJson(content);
 
     const steps = sanitizeSteps(parsed?.steps);
@@ -129,8 +114,9 @@ export async function generatePlan(
       steps,
       draft: String(parsed?.draft || '').slice(0, 4000),
     };
-  } finally {
-    clearTimeout(timeout);
+  } catch (err) {
+    console.warn('[Planner] LiteLLM call failed:', (err as Error)?.message);
+    throw err;
   }
 }
 
@@ -142,8 +128,6 @@ export async function reviseDraft(
   currentDraft: string,
   feedback: string
 ): Promise<string> {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 60000);
   try {
     const systemPrompt = [
       'You are DareX Executive, polishing a drafted message.',
@@ -158,29 +142,16 @@ export async function reviseDraft(
       'Return the fully revised draft now:',
     ].join('\n');
 
-    const res = await fetch(`${ATOMIC_AGENT_URL}/v1/chat/completions`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${ATOMIC_AGENT_API_KEY}`,
-        'X-Atomic-Extensions': 'on',
-      },
-      body: JSON.stringify({
-        model: ATOMIC_AGENT_MODEL,
-        stream: false,
-        max_tokens: 2000,
-        temperature: 0.2,
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: userPrompt },
-        ],
-      }),
-      signal: controller.signal,
-    });
-    if (!res.ok) throw new Error(`atomic-agent HTTP ${res.status}`);
-    const data = await res.json();
-    return String(data?.choices?.[0]?.message?.content || '').trim().slice(0, 4000);
-  } finally {
-    clearTimeout(timeout);
+    const content = await chatCompletion(
+      [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userPrompt },
+      ],
+      { maxTokens: 1000, temperature: 0.2, timeoutMs: 60000 }
+    );
+    return content.trim().slice(0, 4000);
+  } catch (err) {
+    console.warn('[ReviseDraft] LiteLLM call failed:', (err as Error)?.message);
+    throw err;
   }
 }

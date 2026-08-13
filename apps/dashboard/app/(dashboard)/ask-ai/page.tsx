@@ -40,6 +40,7 @@ interface Message {
   partialReply?: string;
   type?: 'simple' | 'complex' | 'reasoning' | 'plan' | 'draft';
   reasoning?: { text: string; durationMs?: number | null };
+  statusLine?: string;
   planCard?: {
     planId: string;
     summary: string;
@@ -95,14 +96,83 @@ How can I assist your business strategy or automate your workflows today?`,
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
+  const storageKey = useRef<string>('askAiMessages');
+  const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const storageNamespace = (userId: string, orgId?: string) =>
+    `askAiMessages:${orgId || 'no-org'}:${userId || 'anon'}`;
+
+  // Persistence: Load messages from local storage on mount (namespaced per org+user)
   useEffect(() => {
-    fetch('/api/auth/session')
-      .then((r) => r.json())
-      .then((data) => {
+    let cancelled = false;
+    (async () => {
+      let userId = 'anon';
+      let orgId: string | undefined;
+      try {
+        const res = await fetch('/api/auth/session');
+        const data = await res.json();
+        if (!cancelled && data.userId) userId = data.userId;
+        if (!cancelled && data.orgId) orgId = data.orgId;
         if (data.email) setCurrentUserEmail(data.email);
-      })
-      .catch(() => {});
+      } catch {}
+      if (cancelled) return;
+      const key = storageNamespace(userId, orgId);
+      storageKey.current = key;
+      const saved = localStorage.getItem(key);
+      if (saved) {
+        try {
+          const parsed = JSON.parse(saved);
+          if (Array.isArray(parsed)) setMessages(parsed);
+        } catch (e) {
+          console.error('Failed to parse saved messages', e);
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, []);
+
+  // Persistence: Debounced, namespaced save. Strip heavy payloads (big plan
+  // steps, draft/execution blobs) before writing so localStorage never exceeds
+  // quota, and never save executor-only transient state.
+  useEffect(() => {
+    if (messages.length <= 1) return;
+    if (saveTimer.current) clearTimeout(saveTimer.current);
+    saveTimer.current = setTimeout(() => {
+      const snack = messages.map((m) => ({
+        ...m,
+        reasoning: undefined,
+        execution: undefined,
+        statusLine: undefined,
+        planCard: m.planCard
+          ? {
+              planId: m.planCard.planId,
+              summary: m.planCard.summary,
+              status: m.planCard.status,
+              steps: (m.planCard.steps || []).map((s) => ({
+                id: s.id,
+                description: s.description,
+                tool: s.tool,
+                action: s.action,
+                enabled: s.enabled,
+              })),
+            }
+          : undefined,
+        draftBox: m.draftBox
+          ? { content: m.draftBox.content, version: m.draftBox.version, accepted: m.draftBox.accepted }
+          : undefined,
+      }));
+      try {
+        localStorage.setItem(storageKey.current, JSON.stringify(snack));
+      } catch (e) {
+        console.warn('Failed to persist chat history (quota?)', e);
+      }
+    }, 400);
+    return () => {
+      if (saveTimer.current) clearTimeout(saveTimer.current);
+    };
+  }, [messages]);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -121,6 +191,56 @@ How can I assist your business strategy or automate your workflows today?`,
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ prompt }),
       });
+
+      if (res.headers.get('content-type')?.includes('application/x-ndjson')) {
+        const reader = res.body!.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+        
+        const aiMsgId = `ai_${Date.now()}`;
+        setMessages((prev) => [...prev, {
+          id: aiMsgId,
+          sender: 'ai',
+          text: '',
+          provider: 'Atomic Agent',
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        }]);
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          
+          let newlineIdx;
+          while ((newlineIdx = buffer.indexOf('\n')) !== -1) {
+            const line = buffer.slice(0, newlineIdx);
+            buffer = buffer.slice(newlineIdx + 1);
+            if (!line.trim()) continue;
+            
+            try {
+              const event = JSON.parse(line);
+              if (event.type === 'chunk') {
+                 setMessages((prev) => prev.map((m) => (m.id === aiMsgId ? { ...m, text: m.text + event.text } : m)));
+              } else if (event.type === 'tool') {
+                 // Live tool-progress: update the in-flight bubble's status line
+                 setMessages((prev) => prev.map((m) => (m.id === aiMsgId ? { ...m, statusLine: `⚙️ ${event.tool}${event.label ? ` — ${event.label}` : ''}…` } : m)));
+              } else if (event.type === 'done') {
+                 setMessages((prev) => prev.map((m) => (m.id === aiMsgId ? { ...m, ...event, statusLine: undefined } : m)));
+              } else if (event.type === 'error') {
+                 setMessages((prev) => prev.map((m) => (m.id === aiMsgId ? { 
+                   ...m, 
+                   error: event.error, 
+                   retryable: event.retryable,
+                   text: (m.text || '') + `\n\n❌ **Error:** ${event.error}`,
+                   retryPrompt: prompt,
+                   statusLine: undefined,
+                 } : m)));
+              }
+            } catch(e) {}
+          }
+        }
+        return;
+      }
 
       const data = await res.json();
 
@@ -372,6 +492,31 @@ How can I assist your business strategy or automate your workflows today?`,
     } catch {}
   };
 
+  const handleAddInstruction = async (planId: string, instruction: string) => {
+    const msgId = messages.find((m) => m.planCard?.planId === planId)?.id;
+    if (!msgId) return;
+    const cur = messages.find((m) => m.id === msgId)!;
+    const newStep: PlanStep = {
+      id: `step-${Date.now()}`,
+      description: instruction,
+      tool: 'agent.user_instruction',
+      action: 'execute_context',
+      enabled: true,
+    };
+    const steps = [...(cur.planCard?.steps || []), newStep];
+    patchMessage(msgId, { planCard: { ...cur.planCard!, steps } });
+    try {
+      await fetch('/api/ask-ai/plan', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          planId,
+          steps: steps.map((s) => ({ id: s.id, description: s.description, tool: s.tool, action: s.action, enabled: s.enabled })),
+        }),
+      });
+    } catch {}
+  };
+
   const handleDraftRevised = (msgId: string, draft: DraftState) => {
     patchMessage(msgId, { draftBox: draft });
   };
@@ -519,17 +664,7 @@ How can I assist your business strategy or automate your workflows today?`,
                   <span suppressHydrationWarning className="text-[10px] text-slate-400 font-mono">{msg.timestamp}</span>
                 </div>
 
-                <div
-                  className={`p-5 rounded-3xl text-xs leading-relaxed border shadow-sm ${
-                    isUser
-                      ? 'bg-amber-500 text-heading border-amber-600 font-medium rounded-tr-none'
-                      : 'bg-white text-slate-800 border-cream-300 rounded-tl-none'
-                  } ${!isUser && !msg.text ? 'hidden' : ''}`}
-                >
-                  {isUser ? msg.text : <FormattedMarkdownResponse content={msg.text} />}
-                </div>
-
-                {/* Reasoning strip + plan card + draft + execution for COMPLEX */}
+                {/* ── Claude-style layout: Reasoning & Plan/Draft appear at the TOP of the response ── */}
                 {!isUser && msg.type === 'complex' && msg.planCard && (
                   <>
                     {msg.reasoning && (
@@ -552,6 +687,7 @@ How can I assist your business strategy or automate your workflows today?`,
                           onApprove={handleApprovePlan}
                           onCancel={handleCancelPlan}
                           onToggleStep={handleToggleStep}
+                          onAddInstruction={handleAddInstruction}
                         />
                       )
                     )}
@@ -582,6 +718,23 @@ How can I assist your business strategy or automate your workflows today?`,
                     editable={false}
                   />
                 )}
+
+                {/* Text Response Bubble */}
+                {!isUser && msg.statusLine && !msg.text && (
+                  <div className="px-4 py-2.5 rounded-2xl text-[11px] text-amber-800 bg-amber-50 border border-amber-500/30 flex items-center gap-2">
+                    <RefreshCw className="w-3 h-3 text-amber-600 animate-spin shrink-0" />
+                    <span className="font-mono">{msg.statusLine}</span>
+                  </div>
+                )}
+                <div
+                  className={`p-5 rounded-3xl text-xs leading-relaxed border shadow-sm ${
+                    isUser
+                      ? 'bg-amber-500 text-heading border-amber-600 font-medium rounded-tr-none'
+                      : 'bg-white text-slate-800 border-cream-300 rounded-tl-none'
+                  } ${!isUser && !msg.text ? 'hidden' : ''}`}
+                >
+                  {isUser ? msg.text : <FormattedMarkdownResponse content={msg.text} />}
+                </div>
 
                 {/* Failure Banner + Retry */}
                 {!isUser && msg.error && (
@@ -657,24 +810,42 @@ How can I assist your business strategy or automate your workflows today?`,
       </div>
 
       {/* Bottom Prompt Input */}
-      <div className="relative shrink-0 pb-2">
-        <input
-          type="text"
-          placeholder="Ask AI anything about your sales, ad performance, leads, or execute tool actions..."
-          value={inputPrompt}
-          onChange={(e) => setInputPrompt(e.target.value)}
-          onKeyDown={(e) => e.key === 'Enter' && handleSendMessage()}
-          disabled={loading}
-          className="w-full pl-5 pr-14 py-3.5 bg-white border border-cream-300 rounded-2xl text-xs font-medium text-heading focus:outline-none focus:border-amber-500 shadow-sm disabled:opacity-50"
-        />
-        <button
-          onClick={() => handleSendMessage()}
-          disabled={!inputPrompt.trim() || loading}
-          className="absolute right-2 top-2 p-2 bg-amber-500 hover:bg-amber-600 text-heading rounded-xl transition-all disabled:opacity-40"
-        >
-          <Send className="w-4 h-4" />
-        </button>
-      </div>
+      {(() => {
+        const hasPendingPlanOrDraft = messages.some(
+          (m) =>
+            m.planCard?.status === 'pending' ||
+            m.planCard?.status === 'approved' ||
+            (m.draftBox && !m.draftBox.accepted)
+        );
+        return (
+          <div className="relative shrink-0 pb-2">
+            <input
+              type="text"
+              placeholder={
+                hasPendingPlanOrDraft
+                  ? 'Approve the plan above to continue, or ask something else...'
+                  : 'Ask AI anything about your sales, ad performance, leads, or execute tool actions...'
+              }
+              value={inputPrompt}
+              onChange={(e) => setInputPrompt(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && handleSendMessage()}
+              disabled={loading}
+              className={`w-full pl-5 pr-14 py-3.5 rounded-2xl text-xs font-medium focus:outline-none shadow-sm disabled:opacity-50 transition-all ${
+                hasPendingPlanOrDraft
+                  ? 'bg-cream-100/80 border border-amber-500/40 text-heading placeholder-amber-900/60 font-semibold'
+                  : 'bg-white border border-cream-300 text-heading focus:border-amber-500'
+              }`}
+            />
+            <button
+              onClick={() => handleSendMessage()}
+              disabled={!inputPrompt.trim() || loading}
+              className="absolute right-2 top-2 p-2 bg-amber-500 hover:bg-amber-600 text-heading rounded-xl transition-all disabled:opacity-40"
+            >
+              <Send className="w-4 h-4" />
+            </button>
+          </div>
+        );
+      })()}
     </div>
   );
 }

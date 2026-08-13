@@ -50,6 +50,12 @@ export async function POST(request: Request) {
         }
       }
 
+      const channelsRes = await client.query(
+        `SELECT * FROM channels WHERE org_id = $1 AND status IN ('active', 'connected')`,
+        [orgId]
+      );
+      const connectedChannels = channelsRes.rows;
+
       const agentInput = {
         orgId,
         conversationId,
@@ -59,6 +65,7 @@ export async function POST(request: Request) {
         employeePersona,
         toolAllowlist,
         userMessage,
+        connectedChannels,
       };
 
       // Try Temporal first for durable, retryable execution

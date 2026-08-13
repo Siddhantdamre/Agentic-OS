@@ -1,48 +1,61 @@
-# Darex — Multi-tenant AI Employee SaaS Platform
+# Darex — The Brain of Your Organization
 
-> Build your AI-powered workforce. Every AI employee has its own persona, memory, tool access, and works across your existing channels.
+> Multi-tenant AI-employee SaaS. Darex is the operating brain of your business:
+> AI employees answer questions and act on your connected tools (Gmail, Calendar,
+> Google Drive/Sheets/Docs, HubSpot, WhatsApp, GitHub, ads, SQL, web, sandboxed
+> code) — and confirm before running multi-step plans. It makes business work
+> simple.
 
-## Quick Start (Local Development)
+## Quick Start (Docker)
 
 ### Prerequisites
 - Docker Desktop 4.x+ with Compose V2
 - Node.js 20+ and pnpm 9+
-- Git
 
-### 1. Start Infrastructure
+### 1. Boot Infrastructure
 
 ```bash
-# From repo root
 pnpm infra:up
 ```
 
-This boots:
-| Service | URL | Credentials |
-|---|---|---|
-| **Postgres + pgvector** | `localhost:5432` | `darex / darex_dev_secret` |
-| **Temporal** | `localhost:7233` (gRPC) | — |
-| **Temporal UI** | http://localhost:8233 | — |
-| **Nango** | http://localhost:3003 | secret key: see `apps/dashboard/.env.local` (`NANGO_SECRET_KEY` / `NEXT_PUBLIC_NANGO_PUBLIC_KEY`) |
-| **Langfuse** | http://localhost:3002 | `admin@darex.dev / darex_admin_dev` |
-| **LiteLLM** | http://localhost:4000 | master key: `sk-darex-litellm-dev-key` |
+This boots the full stack:
 
-### 2. Run DB Migrations
+| Service | URL |
+|---|---|
+| **Dashboard (Next.js)** | http://localhost:3000 |
+| **Postgres + pgvector** | `localhost:5432` (`darex / darex_dev_secret`) |
+| **Temporal + UI** | `localhost:7233` · http://localhost:8233 |
+| **Nango (OAuth)** | http://localhost:3003 |
+| **Langfuse (tracing)** | http://localhost:3002 (`admin@darex.dev / darex_admin_dev`) |
+| **LiteLLM (LLM gateway)** | http://localhost:4000 |
+| **Supertokens (auth)** | http://localhost:3567 |
+| **Atomic Agent** | `localhost:8787` |
+| **MCP Bridge** | `localhost:8790` |
+| **Code Sandbox** | `http://localhost:8080/health` |
+| **Inbox (Chatwoot fork)** | http://localhost:3004 |
+
+### 2. Apply DB Migrations & Seed
 
 ```bash
 pnpm db:migrate
+pnpm db:seed
 ```
 
-### 3. Install Dependencies
+### 3. Install Dependencies + Run
 
 ```bash
 pnpm install
+pnpm dev          # dashboard only (Next.js)
+pnpm dev:all      # all workspaces
+pnpm build        # production build all workspaces
 ```
 
-### 4. Start Development Servers
-
-```bash
-pnpm dev
-```
+### Optional runtime config
+- `JINA_API_KEY` — set in `infra/.env` to enable `web_search` / `web_extract`
+  (free key from https://jina.ai). Not set → these tools report honestly that the
+  external search API is unconfigured rather than faking results.
+- `DB_USER=darex_app` — set to the least-privilege role (RLS is enforced for that
+  role; migration `008` adds the matching `WITH CHECK` policies + grants).
 
 ---
 
@@ -51,53 +64,48 @@ pnpm dev
 ```
 dare-xai/
 ├── apps/
-│   ├── inbox/          → Chatwoot fork (Phase 3) — conversation inbox
-│   ├── agents/         → LangGraph AI employee services (Phase 4)
-│   └── dashboard/      → Darex owner dashboard — Next.js (Phase 1)
+│   ├── dashboard/   → Next.js app — API routes (app/api), lib/, UI
+│   └── inbox/       → Chatwoot fork — conversation inbox
 ├── services/
-│   ├── connectors/     → Nango integration functions (Phase 2)
-│   └── workflows/      → Temporal workflow + activity definitions (Phase 5)
-├── packages/           → Shared TypeScript packages (types, utils)
+│   ├── workflows/   → Temporal worker + shared agent runtime (atomic-agent client,
+│   │                  tool-executor with per-org allowlist, MCP bridge)
+│   └── connectors/  → Nango connector SDK (used by /integrations diagnostics)
+├── packages/        → Shared TS types
 ├── infra/
-│   ├── docker-compose.yml
-│   ├── db/             → SQL migrations + migration runner
-│   ├── temporal/       → Temporal dynamic config
-│   ├── litellm/        → LiteLLM gateway config
-│   └── terraform/      → Production infrastructure (Phase 8)
-├── docs/               → Architecture specs
-├── BUILD_STATE.md      → Agent build context — read before each phase
-├── package.json
-└── turbo.json
+│   ├── docker-compose.yml  → full stack orchestration
+│   ├── docker/       → Dockerfiles (dashboard, worker, atomic-agent, bridge, sandbox)
+│   ├── db/           → SQL migrations (001–008) + runner
+│   ├── litellm/      → LiteLLM gateway config
+│   └── scripts/      → worker/bridge launchers + check-phase probes
+├── documentation/   → standalone technical docs (00–10)
+├── AGENTS.md        → agent/coding-assistant project context (the whole map)
+├── BUILD_STATE.md   → live per-phase status & decisions
+├── graphify-out/    → knowledge-graph of the corpus (queryable)
+└── package.json
 ```
-
----
-
-## Build Progress
-
-See [BUILD_STATE.md](./BUILD_STATE.md) for current phase status and architectural decisions.
-
-| Phase | Description | Status |
-|---|---|---|
-| 0 | Foundations — infra scaffold | ✅ In Progress |
-| 1 | Multi-tenant core (SuperTokens + onboarding) | ⏳ Pending |
-| 2 | Connector layer (Nango + OAuth) | ⏳ Pending |
-| 3 | Conversation ingestion (Chatwoot fork) | ⏳ Pending |
-| 4 | Agent harness (LangGraph AI employees) | ⏳ Pending |
-| 5 | Durability (Temporal workflows) | ⏳ Pending |
-| 6 | Memory & RAG (pgvector) | ⏳ Pending |
-| 7 | Insight & Analytics engine | ⏳ Pending |
-| 8 | Observability, security, scale hardening | ⏳ Pending |
-| 9 | Polish & launch readiness | ⏳ Pending |
 
 ---
 
 ## Architecture Principles
 
 1. **Multi-tenant from day one** — every table has `org_id` + RLS policy
-2. **No conversation ever silently drops** — every thread is a Temporal workflow
-3. **Modular employees** — an AI employee is config + LangGraph graph + tool allowlist; zero infra changes to add a new role
-4. **Every external side-effect is an idempotent Temporal Activity**
-5. **Clone, don't rebuild**: Chatwoot, Nango, Temporal, Langfuse. Build fresh: LangGraph graphs, Darex dashboard, Insight engine.
+   (migration 008 adds `WITH CHECK`).
+2. **No conversation ever silently drops** — webhooks return `200` immediately,
+   then run a durable Temporal workflow.
+3. **Never deadlock the DB pool** (`max:10`) — release pooled clients before
+   opening SSE streams / slow agent calls.
+4. **Never fabricate data** — a missing OAuth connector returns an honest
+   `error` + `connected:false` + `/connectors` URL.
+5. **Env-driven config only** — every URL/key/model comes from `process.env`;
+   secrets live in gitignored `.env*` files.
+6. **Tools are scoped per org** — tool-executor enforces an org-wide allowlist
+   (core tools + all active-employee tools + connected channels) so real
+   connectors run while never-connected ones stay gated.
+7. **Untrusted code runs in an isolated sandbox** — `code_execution` executes in
+   the self-hosted `sandbox` service (unprivileged child process, hard timeout,
+   no outbound network, no DB access).
+8. **Observability by default** — every plan/step/agent turn is traced to
+   Langfuse so you can see exactly what the agent did.
 
 ---
 
@@ -105,12 +113,23 @@ See [BUILD_STATE.md](./BUILD_STATE.md) for current phase status and architectura
 
 | Layer | Technology |
 |---|---|
-| Conversation inbox | Chatwoot (forked) |
-| OAuth / connectors | Nango (self-hosted) |
+| AI agent runtime | **atomic-agent** (OpenAI-compatible agent + MCP) |
+| Tool bridge | MCP SSE bridge (`mcp.darex.*` tools) |
+| Code sandbox | Self-hosted, network-isolated container (`infra/docker/sandbox`) |
 | Durable execution | Temporal (self-hosted) |
-| AI agents | LangGraph |
 | LLM gateway | LiteLLM (self-hosted) |
-| Vector memory | pgvector (Postgres extension) |
+| OAuth / connectors | Nango (self-hosted) |
+| Vector memory | pgvector |
 | Auth / identity | SuperTokens (self-hosted) |
-| LLM tracing | Langfuse (self-hosted) |
-| Dashboard | Next.js + Tailwind + shadcn/ui |
+| LLM tracing | Langfuse v3 (self-hosted) |
+| Dashboard | Next.js + Tailwind |
+
+---
+
+## Key Docs
+
+- [AGENTS.md](./AGENTS.md) — the repo map / agent context (read first)
+- [BUILD_STATE.md](./BUILD_STATE.md) — live phase status & gotchas
+- [documentation/00-README.md](./documentation/00-README.md) — doc index
+- [documentation/03-docker-infrastructure.md](./documentation/03-docker-infrastructure.md) — infra
+- [documentation/07-agent-engine.md](./documentation/07-agent-engine.md) — agent runtime

@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getScopedClient } from '@/lib/db';
-import { runAutonomousAgentDirect } from '@darex/workflows/dist/atomic-agent-client';
+import type { PoolClient } from 'pg';
 
 export async function GET(request: Request) {
   try {
@@ -112,7 +112,8 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
-    const { client, orgId } = await getScopedClient();
+    const { client: clientPool, orgId } = await getScopedClient();
+    let client: PoolClient | null = clientPool;
     try {
       const body = await request.json();
       const { contactId, channelType, employeeId, initialMessage } = body;
@@ -193,29 +194,55 @@ export async function POST(request: Request) {
           [orgId, conversation.id, initialMessage]
         );
 
-        // Call AI model (atomic-agent)
-        const aiResult = await runAutonomousAgentDirect(
-          {
-            orgId,
-            conversationId: conversation.id,
-            employeeName: empName,
-            employeeRole: empRole,
-            employeePersona: empPersona,
-            toolAllowlist: empToolAllowlist,
-            userMessage: initialMessage,
-          }
-        );
+        // Release the pooled client before the AI turn so this handler never
+        // holds a pool slot during the (potentially slow) model call.
+        client.release();
+        client = null;
 
-        await client.query(
-          `INSERT INTO messages (org_id, conversation_id, role, content, created_at)
-           VALUES ($1, $2, 'assistant', $3, NOW())`,
-          [orgId, conversation.id, aiResult.replyMessage]
-        );
+        const aiAgentInput = {
+          orgId,
+          conversationId: conversation.id,
+          employeeName: empName,
+          employeeRole: empRole,
+          employeePersona: empPersona,
+          toolAllowlist: empToolAllowlist,
+          userMessage: initialMessage,
+        };
+
+        // Fire-and-forget: prefer durable Temporal; fall back to a background
+        // direct atomic-agent turn. Either path persists the assistant reply.
+        void (async () => {
+          try {
+            const { startAutonomousAgentWorkflow } = await import('@darex/workflows/dist/workflow-client');
+            const handle = await startAutonomousAgentWorkflow(aiAgentInput);
+            if (handle) return;
+          } catch (temporalErr: any) {
+            console.warn('[Conversations] Temporal unavailable, direct fallback:', temporalErr.message);
+          }
+          try {
+            const { runAutonomousAgentDirect } = await import('@darex/workflows/dist/atomic-agent-client');
+            const aiResult = await runAutonomousAgentDirect(aiAgentInput);
+            const pool = (await import('@/lib/db')).pool;
+            const pc = await pool.connect();
+            try {
+              await pc.query("SELECT set_config('app.current_org_id', $1, true)", [orgId]);
+              await pc.query(
+                `INSERT INTO messages (org_id, conversation_id, role, content, tool_calls, created_at)
+                 VALUES ($1, $2, 'assistant', $3, $4, NOW())`,
+                [orgId, conversation.id, aiResult.replyMessage, JSON.stringify(aiResult.executedSteps || [])]
+              );
+            } finally {
+              pc.release();
+            }
+          } catch (agentErr: any) {
+            console.error('[Conversations] Agent reply error:', agentErr.message);
+          }
+        })();
       }
 
       return NextResponse.json({ success: true, conversation });
     } finally {
-      client.release();
+      if (client) client.release();
     }
   } catch (err: any) {
     if (err.message === 'Unauthorized') {
