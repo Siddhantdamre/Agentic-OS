@@ -36,8 +36,8 @@ apps/dashboard        Next.js app server (API routes in app/api, lib/, component
                       realtime-hub.ts, langfuse-trace.ts
 services/workflows    Temporal worker + shared agent runtime (imported by dashboard via dist/)
   src/atomic-agent-client.ts   OpenAI-compatible SSE client → atomic-agent :8787
-  src/tool-executor.ts         49 real connector+DB+web tool executors (+ per-org allowlist)
-  src/mcp-bridge.ts            SSE MCP server :8790 exposing mcp.darex.* tools to atomic-agent
+  src/tool-executor.ts         62 real connector+DB+web tool executors (+ per-org allowlist)
+  src/mcp-bridge.ts            SSE MCP server :8790 exposing 62 mcp.darex.* tools to atomic-agent
   src/workflows/               AutonomousAgentWorkflow + CrewWorkflow (child spawns, cap 3)
 services/connectors   Nango-based connector SDK (mostly used by /integrations/test diagnostic)
 packages/shared-types Shared TS types
