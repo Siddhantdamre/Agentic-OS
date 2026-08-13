@@ -3,10 +3,26 @@ import { getScopedClient, pool } from '@/lib/db';
 import { logLangfuseTrace } from '@/lib/langfuse-trace';
 import { classifyRequest } from '@/lib/classify';
 import { generatePlan, VALID_TOOLS } from '@/lib/plan-generator';
+import { getPlaybook, playbookToPlan } from '@/lib/playbook-matcher';
+import {
+  loadOrgPromotedPlaybooks,
+  matchOrgPromotedPlaybook,
+  orgPlaybookToPlan,
+} from '@/lib/insight-engine';
+import {
+  denyAskAiBusy,
+  denyAskAiIfLimited,
+  isRateLimitError,
+  responseFromRateLimit,
+  tryAcquireConcurrency,
+} from '@/lib/rate-limit';
 import {
   runAutonomousAgentDirect,
   sanitizeAgentReply,
 } from '@darex/workflows/dist/atomic-agent-client';
+import { retrieveMemory } from '@darex/workflows/dist/memory/retrieve';
+import { planRequiresDurableExecute } from '@darex/workflows/dist/plan-steps';
+import { startMemoryWriteBackWorkflow, startPlanExecuteWorkflow } from '@darex/workflows/dist/workflow-client';
 import type { PoolClient } from 'pg';
 
 export const dynamic = 'force-dynamic';
@@ -177,6 +193,12 @@ export async function POST(request: Request) {
     client = scoped.client;
     const orgId = scoped.orgId;
     const userId = scoped.userId;
+
+    const limited = denyAskAiIfLimited(orgId);
+    if (limited) {
+      release();
+      return limited;
+    }
     let orgName = 'Your Business';
     let currentUserEmail = 'user@company.com';
     let connectedChannelsList: string[] = [];
@@ -219,11 +241,27 @@ export async function POST(request: Request) {
     release();
 
     const classification = await classifyRequest(String(prompt), orgId);
+    const promotions = await withOrgClient(orgId, (c) => loadOrgPromotedPlaybooks(c, orgId));
+    const shipPlaybook = classification.playbookId ? getPlaybook(classification.playbookId) : null;
+    const orgPlaybook = shipPlaybook
+      ? null
+      : matchOrgPromotedPlaybook(String(prompt), promotions) ||
+        promotions.find((p) => p.playbookId === classification.playbookId) ||
+        null;
+    if (orgPlaybook && !shipPlaybook) {
+      classification.type = 'complex';
+      classification.playbookId = orgPlaybook.playbookId;
+    }
 
     // ── COMPLEX: generate plan + draft, persist, present for approval ──────
     if (classification.type === 'complex') {
       try {
-        const generated = await generatePlan(String(prompt), orgId, connectedChannelsList);
+        const playbook = classification.playbookId ? getPlaybook(classification.playbookId) : null;
+        const generated = playbook
+          ? playbookToPlan(playbook, String(prompt))
+          : orgPlaybook
+            ? orgPlaybookToPlan(orgPlaybook, String(prompt))
+            : await generatePlan(String(prompt), orgId, connectedChannelsList);
 
         const planId = crypto.randomUUID();
         await withOrgClient(orgId, async (writeClient) => {
@@ -238,6 +276,7 @@ export async function POST(request: Request) {
               {
                 type: 'complex',
                 planId,
+                playbookId: classification.playbookId || null,
                 summary: generated.summary,
                 steps: generated.steps,
                 draft: generated.draft,
@@ -247,18 +286,27 @@ export async function POST(request: Request) {
           }
         });
 
+        if (planRequiresDurableExecute(generated.steps)) {
+          void startPlanExecuteWorkflow({
+            orgId,
+            planId,
+            waitForApproval: true,
+            idempotencyKey: planId,
+          });
+        }
+
         logLangfuseTrace({
           name: 'PlanGenerated',
           orgId,
-          input: { prompt, classification: classification.type, confidence: classification.confidence, connectedChannels: connectedChannelsList },
+          input: { prompt, classification: classification.type, confidence: classification.confidence, connectedChannels: connectedChannelsList, playbookId: classification.playbookId },
           output: { planId, summary: generated.summary, steps: generated.steps, reasoning: generated.reasoning },
-          metadata: { planId, usedFallback: classification.usedFallback },
-          provider: 'litellm',
+          metadata: { planId, usedFallback: classification.usedFallback, playbookId: classification.playbookId },
+          provider: playbook ? 'playbook' : 'litellm',
         }).catch(() => {});
 
         return NextResponse.json({
           type: 'complex',
-          classification: { confidence: classification.confidence, usedFallback: classification.usedFallback },
+          classification: { confidence: classification.confidence, usedFallback: classification.usedFallback, playbookId: classification.playbookId || null },
           planId,
           conversationId,
           provider: 'Atomic Agent',
@@ -298,6 +346,9 @@ export async function POST(request: Request) {
     });
   } catch (error: any) {
     if (client) client.release();
+    if (isRateLimitError(error)) {
+      return responseFromRateLimit(error);
+    }
     if (error.message === 'Unauthorized') {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
@@ -316,6 +367,11 @@ function streamSimpleAnswer(args: {
   connectedChannelsList: string[];
   fallbackReason?: string;
 }): Response {
+  const lease = tryAcquireConcurrency(args.orgId, 'ask_ai');
+  if (!lease) {
+    return denyAskAiBusy();
+  }
+
   const sessionKey = dailySessionKey(args.userId);
   const encoder = new TextEncoder();
   const stream = new ReadableStream({
@@ -325,6 +381,11 @@ function streamSimpleAnswer(args: {
       };
 
       try {
+        const retrievedMemory = await retrieveMemory({
+          orgId: args.orgId,
+          query: args.prompt,
+          conversationId: args.conversationId || undefined,
+        });
         const result = await runAutonomousAgentDirect(
           {
             orgId: args.orgId,
@@ -344,6 +405,7 @@ function streamSimpleAnswer(args: {
           },
           {
             timeoutMs: 120000,
+            retrievedMemory,
             onChunk: (text) => send('chunk', { text }),
             onToolProgress: (tool, label) => send('tool', { tool, label }),
           }
@@ -367,6 +429,15 @@ function streamSimpleAnswer(args: {
             error: result.error || null,
             retryable: result.retryable || false,
           }).catch((err) => console.warn('[Ask AI] Failed to persist assistant message:', err?.message));
+          if (result.success && answer) {
+            void startMemoryWriteBackWorkflow({
+              orgId: args.orgId,
+              conversationId: args.conversationId,
+              closed: false,
+              toolResults: result.executedSteps,
+              businessKey: `ask-ai:${args.conversationId}:${Date.now()}`,
+            });
+          }
         }
 
         send('done', {
@@ -390,6 +461,7 @@ function streamSimpleAnswer(args: {
       } catch (err: any) {
         send('error', { error: err.message, retryable: true });
       } finally {
+        lease.release();
         controller.close();
       }
     },
@@ -451,6 +523,9 @@ export async function GET() {
       plans: planRes.rows,
     });
   } catch (error: any) {
+    if (isRateLimitError(error)) {
+      return responseFromRateLimit(error);
+    }
     if (error.message === 'Unauthorized') {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }

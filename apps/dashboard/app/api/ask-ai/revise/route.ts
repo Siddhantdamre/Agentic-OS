@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getScopedClient } from '@/lib/db';
 import { reviseDraft } from '@/lib/plan-generator';
+import { denyAskAiIfLimited, isRateLimitError, responseFromRateLimit } from '@/lib/rate-limit';
 
 export const dynamic = 'force-dynamic';
 
@@ -17,6 +18,11 @@ export async function POST(request: Request) {
     const scoped = await getScopedClient();
     client = scoped.client;
     const { orgId } = scoped;
+
+    const limited = denyAskAiIfLimited(orgId);
+    if (limited) {
+      return limited;
+    }
 
     const body = await request.json();
     const { planId, feedback } = body || {};
@@ -65,6 +71,9 @@ export async function POST(request: Request) {
       status: newStatus,
     });
   } catch (error: any) {
+    if (isRateLimitError(error)) {
+      return responseFromRateLimit(error);
+    }
     if (error.message === 'Unauthorized') {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }

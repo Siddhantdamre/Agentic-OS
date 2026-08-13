@@ -12,6 +12,9 @@ import {
   Brain,
   ShieldCheck,
   AlertTriangle,
+  ThumbsUp,
+  ThumbsDown,
+  BookmarkPlus,
 } from 'lucide-react';
 import { FormattedMarkdownResponse } from '@/components/chat/FormattedMarkdownResponse';
 import { ActionPermissionCard, ProposedActionData } from '@/components/chat/ActionPermissionCard';
@@ -19,6 +22,9 @@ import { ReasoningStrip } from '@/components/chat/ReasoningStrip';
 import { PlanCard, PlanStep } from '@/components/chat/PlanCard';
 import { ExecutionStrip, StepRunStatus } from '@/components/chat/ExecutionStrip';
 import { DraftPanel, DraftState } from '@/components/chat/DraftPanel';
+import { CitationChips } from '@/components/ask-ai/CitationChips';
+import { parseEmployeeMentions, type MentionableEmployee } from '@/lib/employee-mentions';
+import { LiveRegion, StatusBadge } from '@/components/a11y';
 
 interface Message {
   id: string;
@@ -48,6 +54,8 @@ interface Message {
     running: boolean;
     statuses: StepRunStatus[];
   };
+  vote?: 'up' | 'down';
+  promotedName?: string;
 }
 
 const DEFAULT_SUGGESTIONS: Array<{ label: string; prompt: string; requires?: string[] }> = [
@@ -79,6 +87,12 @@ I can answer questions and query your Darex data. Connector actions only run for
   const [conversationId, setConversationId] = useState<string>('');
   const [connectedChannels, setConnectedChannels] = useState<string[]>([]);
   const [orgName, setOrgName] = useState<string>('Your Business');
+  const [roster, setRoster] = useState<MentionableEmployee[]>([]);
+  const [mentionOpen, setMentionOpen] = useState(false);
+  const [mentionQuery, setMentionQuery] = useState('');
+  const [lockedName, setLockedName] = useState<string | null>(null);
+  const [promoteDraft, setPromoteDraft] = useState<Record<string, string>>({});
+  const [promoteBusy, setPromoteBusy] = useState<string | null>(null);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesRef = useRef<Message[]>([]);
@@ -316,6 +330,22 @@ Always available: \`database_query\`, \`web_search\`, \`web_extract\`, \`file_op
     return () => {
       cancelled = true;
     };
+  }, []);
+
+  useEffect(() => {
+    fetch('/api/employees')
+      .then((res) => (res.ok ? res.json() : { employees: [] }))
+      .then((data) => {
+        const list = Array.isArray(data.employees) ? data.employees : [];
+        setRoster(
+          list.map((e: { id?: string; name?: string; status?: string }) => ({
+            id: e.id,
+            name: String(e.name || ''),
+            status: e.status,
+          })).filter((e: MentionableEmployee) => e.name)
+        );
+      })
+      .catch(() => setRoster([]));
   }, []);
 
   // Persistence: Debounced, namespaced save. Strip heavy payloads (big plan
@@ -563,9 +593,38 @@ Always available: \`database_query\`, \`web_search\`, \`web_extract\`, \`file_op
     }
   };
 
+  const applyMentionChrome = (value: string) => {
+    const parsed = parseEmployeeMentions(value, roster);
+    setLockedName(parsed.locked?.name || null);
+    const at = /(?:^|\s)@([A-Za-z0-9._-]*)$/.exec(value);
+    if (at) {
+      setMentionOpen(true);
+      setMentionQuery(at[1].toLowerCase());
+    } else {
+      setMentionOpen(false);
+      setMentionQuery('');
+    }
+  };
+
+  const mentionMatches = roster.filter(
+    (e) =>
+      (e.status || 'active') !== 'paused' &&
+      e.name.toLowerCase().startsWith(mentionQuery)
+  );
+
+  const insertMention = (name: string) => {
+    const next = inputPrompt.replace(/(?:^|\s)@[A-Za-z0-9._-]*$/, (chunk) =>
+      chunk.startsWith(' ') ? ` @${name} ` : `@${name} `
+    );
+    setInputPrompt(next);
+    setMentionOpen(false);
+    setLockedName(name);
+  };
+
   const handleSendMessage = async (textToSend?: string) => {
     const prompt = textToSend || inputPrompt;
     if (!prompt.trim() || loading) return;
+    parseEmployeeMentions(prompt, roster);
 
     const userMsgId = `user_${Date.now()}`;
     const userMessage: Message = {
@@ -577,6 +636,8 @@ Always available: \`database_query\`, \`web_search\`, \`web_extract\`, \`file_op
 
     setMessages((prev) => [...prev, userMessage]);
     setInputPrompt('');
+    setMentionOpen(false);
+    setLockedName(null);
     await sendRequest(prompt);
   };
 
@@ -815,6 +876,48 @@ Always available: \`database_query\`, \`web_search\`, \`web_extract\`, \`file_op
     patchMessage(msgId, { draftBox: draft });
   };
 
+  const handleVote = async (msg: Message, vote: 'up' | 'down') => {
+    patchMessage(msg.id, { vote });
+    try {
+      await fetch('/api/ask-ai/feedback', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'vote',
+          vote,
+          messageId: msg.id,
+          conversationId: conversationId || undefined,
+          planId: msg.planCard?.planId,
+        }),
+      });
+    } catch (err) {
+      console.error('Ask AI feedback vote failed', err);
+    }
+  };
+
+  const handlePromotePlan = async (msg: Message) => {
+    const planId = msg.planCard?.planId;
+    if (!planId) return;
+    const name = (promoteDraft[planId] || '').trim();
+    if (name.length < 3) return;
+    setPromoteBusy(planId);
+    try {
+      const res = await fetch('/api/ask-ai/feedback', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'promote', planId, name }),
+      });
+      const data = await res.json();
+      if (res.ok && data.promotion?.name) {
+        patchMessage(msg.id, { promotedName: data.promotion.name });
+      }
+    } catch (err) {
+      console.error('Ask AI playbook promote failed', err);
+    } finally {
+      setPromoteBusy(null);
+    }
+  };
+
   const handleExecuteToolAction = async (_tool: string, _action: string, label: string) => {
     const suggestion = DEFAULT_SUGGESTIONS.find((s) => s.label === label);
     await handleSendMessage(suggestion?.prompt || label);
@@ -872,16 +975,23 @@ Always available: \`database_query\`, \`web_search\`, \`web_extract\`, \`file_op
   };
 
   return (
-    <div className="max-w-5xl mx-auto flex flex-col h-[calc(100vh-6rem)] space-y-4">
+    <div className="max-w-5xl mx-auto flex flex-col h-[calc(100vh-8.5rem)] md:h-[calc(100vh-6rem)] space-y-4">
+      <LiveRegion
+        message={
+          loading
+            ? 'Ask AI is responding'
+            : messages.find((m) => m.statusLine)?.statusLine || ''
+        }
+      />
       {/* Header */}
-      <div className="flex items-center justify-between border-b border-cream-300 pb-4 shrink-0">
-        <div className="flex items-center space-x-3">
-          <div className="w-10 h-10 rounded-2xl bg-amber-500/20 border border-amber-500/40 flex items-center justify-center">
+      <div className="flex items-center justify-between border-b border-cream-300 pb-4 shrink-0 gap-2">
+        <div className="flex items-center space-x-3 min-w-0">
+          <div className="w-10 h-10 rounded-2xl bg-amber-500/20 border border-amber-500/40 flex items-center justify-center shrink-0">
             <Brain className="w-5 h-5 text-amber-600 animate-pulse" />
           </div>
-          <div>
-            <h1 className="text-xl font-serif font-bold text-heading">Ask AI Intelligence</h1>
-            <p className="text-xs text-slate-500">
+          <div className="min-w-0">
+            <h1 className="text-lg sm:text-xl font-serif font-bold text-heading truncate">Ask AI Intelligence</h1>
+            <p className="text-xs text-slate-500 truncate">
               {orgName}
               {connectedChannels.length > 0
                 ? ` · connected: ${connectedChannels.join(', ')}`
@@ -890,10 +1000,10 @@ Always available: \`database_query\`, \`web_search\`, \`web_extract\`, \`file_op
           </div>
         </div>
 
-        <div className="flex items-center space-x-2">
+        <div className="hidden sm:flex items-center space-x-2 shrink-0">
           <span className="text-[11px] font-bold uppercase tracking-wider px-3 py-1 bg-amber-500/10 text-amber-800 rounded-full border border-amber-500/30 flex items-center space-x-1.5">
             <ShieldCheck className="w-3.5 h-3.5 text-amber-600" />
-            <span>☤ Atomic Intelligence Agent Active</span>
+            <span>Atomic Agent Active</span>
           </span>
         </div>
       </div>
@@ -964,6 +1074,43 @@ Always available: \`database_query\`, \`web_search\`, \`web_extract\`, \`file_op
                       />
                     )}
 
+                    {(msg.planCard.status === 'completed' ||
+                      msg.planCard.status === 'completed_with_errors' ||
+                      msg.planCard.status === 'approved') && (
+                      <div className="mt-2 p-3 rounded-xl border border-cream-300 bg-cream-50 space-y-2">
+                        <p className="text-[11px] text-slate-600 flex items-center gap-1.5">
+                          <BookmarkPlus className="w-3.5 h-3.5" />
+                          Promote this plan to a human-named org playbook. Replay uses the matcher — no cross-org training.
+                        </p>
+                        {msg.promotedName ? (
+                          <p className="text-[11px] font-semibold text-emerald-700">Promoted as “{msg.promotedName}”</p>
+                        ) : (
+                          <div className="flex items-center gap-2">
+                            <input
+                              type="text"
+                              value={promoteDraft[msg.planCard.planId] || ''}
+                              onChange={(e) =>
+                                setPromoteDraft((prev) => ({ ...prev, [msg.planCard!.planId]: e.target.value }))
+                              }
+                              placeholder="Name this playbook…"
+                              className="flex-1 text-xs px-2.5 py-1.5 rounded-lg border border-cream-300 bg-white"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => handlePromotePlan(msg)}
+                              disabled={
+                                promoteBusy === msg.planCard.planId ||
+                                (promoteDraft[msg.planCard.planId] || '').trim().length < 3
+                              }
+                              className="px-2.5 py-1.5 text-[11px] font-bold rounded-lg bg-amber-500 text-heading disabled:opacity-40"
+                            >
+                              {promoteBusy === msg.planCard.planId ? 'Saving…' : 'Promote'}
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    )}
+
                     {msg.planCard.status !== 'completed' && msg.draftBox && (
                       <DraftPanel
                         draft={msg.draftBox}
@@ -1010,6 +1157,7 @@ Always available: \`database_query\`, \`web_search\`, \`web_extract\`, \`file_op
                 >
                   {isUser ? msg.text : <FormattedMarkdownResponse content={msg.text} />}
                 </div>
+                {!isUser && msg.text && <CitationChips text={msg.text} />}
                 {!isUser && (msg.text || msg.usedTools?.length) && (
                   <div className="flex items-center flex-wrap gap-2 px-1">
                     {msg.usedTools && msg.usedTools.length > 0 && (
@@ -1033,6 +1181,26 @@ Always available: \`database_query\`, \`web_search\`, \`web_extract\`, \`file_op
                         {copiedId === msg.id ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
                         {copiedId === msg.id ? 'Copied' : 'Copy'}
                       </button>
+                    )}
+                    {msg.text && msg.id !== 'welcome' && (
+                      <div className="flex items-center gap-1">
+                        <button
+                          type="button"
+                          onClick={() => handleVote(msg, 'up')}
+                          className={`p-1 rounded-md ${msg.vote === 'up' ? 'text-emerald-600 bg-emerald-50' : 'text-slate-400 hover:text-slate-700'}`}
+                          title="Helpful — stored as a vote, not used to train on another tenant"
+                        >
+                          <ThumbsUp className="w-3 h-3" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleVote(msg, 'down')}
+                          className={`p-1 rounded-md ${msg.vote === 'down' ? 'text-red-600 bg-red-50' : 'text-slate-400 hover:text-slate-700'}`}
+                          title="Not helpful — stored as a vote, not used to train on another tenant"
+                        >
+                          <ThumbsDown className="w-3 h-3" />
+                        </button>
+                      </div>
                     )}
                   </div>
                 )}
@@ -1140,28 +1308,63 @@ Always available: \`database_query\`, \`web_search\`, \`web_extract\`, \`file_op
             (m.draftBox && !m.draftBox.accepted)
         );
         return (
-          <div className="relative shrink-0 pb-2">
+          <div className="relative shrink-0 pb-2 space-y-2">
+            {lockedName ? (
+              <StatusBadge label={`Asking ${lockedName} · org-union tools`} tone="info" />
+            ) : (
+              <p className="text-[11px] text-slate-400 px-1">Type @name to mention an employee. Tools stay org-union.</p>
+            )}
+            {mentionOpen && mentionMatches.length > 0 ? (
+              <ul
+                role="listbox"
+                aria-label="Mention employee"
+                className="absolute bottom-full mb-2 left-0 right-0 bg-white border border-cream-300 rounded-2xl shadow-lg max-h-40 overflow-y-auto z-20"
+              >
+                {mentionMatches.map((emp) => (
+                  <li key={emp.id || emp.name}>
+                    <button
+                      type="button"
+                      onClick={() => insertMention(emp.name)}
+                      className="w-full text-left px-4 py-2 text-xs font-medium text-heading hover:bg-cream-100 focus:outline-none focus-visible:bg-amber-50"
+                    >
+                      @{emp.name}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            ) : null}
             <input
               type="text"
               placeholder={
                 hasPendingPlanOrDraft
                   ? 'Approve the plan above to continue, or ask something else...'
-                  : 'Ask AI anything about your sales, ad performance, leads, or execute tool actions...'
+                  : 'Ask AI… use @Sarah to mention an employee'
               }
               value={inputPrompt}
-              onChange={(e) => setInputPrompt(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && handleSendMessage()}
+              onChange={(e) => {
+                setInputPrompt(e.target.value);
+                applyMentionChrome(e.target.value);
+              }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                  e.preventDefault();
+                  handleSendMessage();
+                }
+              }}
               disabled={loading}
-              className={`w-full pl-5 pr-14 py-3.5 rounded-2xl text-xs font-medium focus:outline-none shadow-sm disabled:opacity-50 transition-all ${
+              aria-label="Ask AI prompt"
+              className={`w-full pl-5 pr-14 py-3.5 rounded-2xl text-xs font-medium focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-500 shadow-sm disabled:opacity-50 transition-all ${
                 hasPendingPlanOrDraft
                   ? 'bg-cream-100/80 border border-amber-500/40 text-heading placeholder-amber-900/60 font-semibold'
                   : 'bg-white border border-cream-300 text-heading focus:border-amber-500'
               }`}
             />
             <button
+              type="button"
               onClick={() => handleSendMessage()}
               disabled={!inputPrompt.trim() || loading}
-              className="absolute right-2 top-2 p-2 bg-amber-500 hover:bg-amber-600 text-heading rounded-xl transition-all disabled:opacity-40"
+              aria-label="Send message"
+              className="absolute right-2 bottom-2 p-2 bg-amber-500 hover:bg-amber-600 text-heading rounded-xl transition-all disabled:opacity-40 focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-600"
             >
               <Send className="w-4 h-4" />
             </button>
