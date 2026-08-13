@@ -371,7 +371,7 @@ industries in year one.
 | 1 | **Point-solution AI per vertical** (Harvey legal, Sierra CX, 11x SDR, Artisan BDR, Devin eng) | Depth and pricing; buyers understand “AI lawyer / AI SDR” | We are the *platform* those become as packs; Harvey is licensed-advice (our non-goal) | Vellum “best AI employees”; CellCog comparison 2026 |
 | 2 | **Industry ERPs only** (Yardi, AppFolio, Procore, Cloudbeds, Greenhouse) | They already *are* the SoR | We connect; we do not rebuild Yardi | Catalog in `06` |
 | 3 | **HubSpot / Salesforce as the only world** | One CRM, less catalog | IN brokers live on WhatsApp + Sheets; US RE on FUB/kvCORE | `06` CRM table |
-| 4 | **Industry ERPs only** (Yardi, AppFolio, Procore, Cloudbeds, Greenhouse) | They already *are* the SoR | We connect; we do not rebuild Yardi | Catalog in `06` |
+| 4 | **n8n / Zapier industry templates** | Thousands of community workflows | No tenancy, no confirm, no memory — n8n lives in `06`, not here | `06` GitHub list |
 | 5 | **Medusa / Saleor** for ecom instead of an ecom pack | Real commerce OSS | Shopify/Woo stay SoR; pack is CX + ops on top | This file GitHub list |
 
 **Five things to steal anyway**

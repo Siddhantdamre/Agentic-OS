@@ -4,8 +4,7 @@
 > Current working state lives in [`docs/current-working/`](../current-working/).
 > Live build log lives in [`BUILD_STATE.md`](../../BUILD_STATE.md).
 >
-> Folder name is `docs/futuer-scope` as specified. Treat this as the canonical
-> future-scope pack even if the spelling is non-standard.
+> Folder path: `docs/future-scope`. Forward map only.
 
 **What Darex becomes:** the **AI Brain Operating System** of a business.
 Not a chatbot bolted onto a CRM. Not a helpdesk with an LLM. A multi-tenant
