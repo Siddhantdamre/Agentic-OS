@@ -14,7 +14,8 @@
 #   DEPLOY_HOST=ubuntu@203.0.113.10 DEPLOY_PATH=/opt/darex ./deploy/deploy.sh
 #
 # Requires: Docker Compose V2, a real .env (see env.production.example).
-# Does not provision DNS, TLS, or Terraform — put Caddy in front of :3000.
+# Fail-fast: DB_USER=darex_app and ALLOW_DEMO_AUTH=false. Caddy in front of :3000.
+# Terraform starter is infra/terraform/ — not invoked by this script.
 
 set -euo pipefail
 
@@ -62,17 +63,7 @@ looks_like_uuid() {
 }
 
 compose() {
-  if docker compose version >/dev/null 2>&1; then
-    docker compose --env-file "$ROOT/.env" \
-      -f "$ROOT/infra/docker-compose.yml" \
-      -f "$ROOT/deploy/docker-compose.prod.yml" \
-      "$@"
-  else
-    docker-compose --env-file "$ROOT/.env" \
-      -f "$ROOT/infra/docker-compose.yml" \
-      -f "$ROOT/deploy/docker-compose.prod.yml" \
-      "$@"
-  fi
+  bash "$ROOT/infra/scripts/compose-cmd.sh" --overlay "$ROOT/deploy/docker-compose.prod.yml" "$@"
 }
 
 env_check() {
@@ -83,6 +74,8 @@ env_check() {
   set +a
 
   [ "${ALLOW_DEMO_AUTH:-false}" = "false" ] || die "ALLOW_DEMO_AUTH must be false on a server."
+  [ "${DB_USER:-}" = "darex_app" ] || die "DB_USER must be darex_app on a server (got '${DB_USER:-}')."
+  [ "${APP_DB_USER:-darex_app}" = "darex_app" ] || die "APP_DB_USER must be darex_app on a server (got '${APP_DB_USER:-}')."
   case "${NEXT_PUBLIC_APP_URL:-}" in
     https://*) ;;
     *) die "NEXT_PUBLIC_APP_URL must be https://… (got '${NEXT_PUBLIC_APP_URL:-}')" ;;

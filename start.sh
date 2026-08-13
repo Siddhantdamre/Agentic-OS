@@ -52,11 +52,7 @@ need() {
 }
 
 compose() {
-  if docker compose version >/dev/null 2>&1; then
-    docker compose --env-file "$ROOT/.env" -f "$ROOT/infra/docker-compose.yml" "$@"
-  else
-    docker-compose --env-file "$ROOT/.env" -f "$ROOT/infra/docker-compose.yml" "$@"
-  fi
+  bash "$ROOT/infra/scripts/compose-cmd.sh" "$@"
 }
 
 wait_cmd() {

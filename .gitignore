@@ -35,11 +35,12 @@ docker-compose.override.yml
 *.sql.bak
 pgdata/
 
-# Secrets / credentials
+# Secrets / credentials (root folder only — keep terraform module tracked)
 *.pem
 *.key
 *.cert
-secrets/
+/secrets/
+!infra/terraform/modules/secrets/
 
 # IDE
 .vscode/
@@ -80,8 +81,13 @@ nul
 workspace_storage/
 /sandbox/
 
-# Terraform
-infra/.terraform/
-infra/*.tfstate
-infra/*.tfstate.backup
-infra/.terraform.lock.hcl
+# Terraform (state and secret tfvars must never be committed)
+**/.terraform/
+**/*.tfstate
+**/*.tfstate.*
+**/.terraform.lock.hcl
+crash.log
+crash.*.log
+*.tfvars
+!*.tfvars.example
+infra/terraform/backend.hcl

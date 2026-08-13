@@ -18,6 +18,7 @@ const containers = [
   'darex-langfuse-worker',
   'darex-litellm',
   'darex-langfuse-redis',
+  'darex-pgbouncer',
 ];
 
 console.log('--- Container Status ---');
@@ -128,6 +129,21 @@ async function runHealthChecks() {
     fail++;
   }
 
+  // PgBouncer (I4) — additive. Do not skip if the container is missing.
+  try {
+    const pgb = execSync('docker exec darex-pgbouncer pg_isready -h 127.0.0.1 -p 5432 -U darex_app -d darex', { encoding: 'utf8' });
+    if (pgb.includes('accepting connections')) {
+      console.log('  [PASS] PgBouncer (pg_isready via darex_app)');
+      pass++;
+    } else {
+      console.log('  [FAIL] PgBouncer (pg_isready via darex_app)');
+      fail++;
+    }
+  } catch (e) {
+    console.log('  [FAIL] PgBouncer (pg_isready via darex_app)');
+    fail++;
+  }
+
   // HTTP endpoints
   await checkHttp('Nango API (/health)', 'http://localhost:3003/health');
   await checkHttp('Langfuse API (/api/public/health)', 'http://localhost:3002/api/public/health');
@@ -143,6 +159,7 @@ async function runHealthChecks() {
     console.log('    Nango:        http://localhost:3003');
     console.log('    LiteLLM:      http://localhost:4000  (Bearer sk-darex-litellm-dev-key)');
     console.log('    Postgres:     localhost:5432  (darex / darex_dev_secret)');
+    console.log('    PgBouncer:    localhost:6432  (darex_app, session pool)');
   } else {
     console.log(`  ${fail}/${total} CHECKS FAILED — fix before proceeding to Phase 1`);
     process.exit(1);
