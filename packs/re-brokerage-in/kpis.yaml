@@ -1,0 +1,30 @@
+metrics:
+  - id: re.inquiries_24h
+    insightCopy: New inquiries in the last 24 hours.
+    recommendedAction: Route to Buyer ISA.
+    sql: |
+      SELECT COUNT(*)::float8 AS value
+      FROM re_inquiries i
+      WHERE i.org_id = current_setting('app.current_org_id', true)::uuid
+        AND i.created_at >= $from::timestamptz
+        AND i.created_at < $to::timestamptz
+  - id: re.showings_this_week
+    insightCopy: Showings scheduled this week.
+    sql: |
+      SELECT COUNT(*)::float8 AS value
+      FROM re_showings s
+      WHERE s.org_id = current_setting('app.current_org_id', true)::uuid
+        AND s.status IN ('proposed', 'booked')
+        AND s.starts_at >= $from::timestamptz
+        AND s.starts_at < $to::timestamptz
+  - id: re.listing_days_on_market
+    insightCopy: Active listings whose source sync is older than 14 days (stale).
+    sql: |
+      SELECT COUNT(*)::float8 AS value
+      FROM re_listings l
+      WHERE l.org_id = current_setting('app.current_org_id', true)::uuid
+        AND l.status = 'active'
+        AND (
+          l.last_source_sync_at IS NULL
+          OR l.last_source_sync_at < NOW() - INTERVAL '14 days'
+        )

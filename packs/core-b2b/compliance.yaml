@@ -1,0 +1,10 @@
+extraConfirmClasses: [send, pay, sign]
+bannedPhrases:
+  - guaranteed returns
+  - assured returns
+  - guaranteed yield
+requiredDisclosures: []
+blockedDataClasses: [kyc, pan, aadhaar]
+retentionNotes: Conversations follow org retention. Uninstall does not delete them.
+marketModules: [GDPR, DPDP]
+knownBadDraft: "Invest now — guaranteed 12% yield this quarter."

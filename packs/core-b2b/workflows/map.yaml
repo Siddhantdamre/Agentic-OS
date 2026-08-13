@@ -1,0 +1,4 @@
+- temporalWorkflowName: OwnerBriefingWorkflow
+  triggers: [daily]
+- temporalWorkflowName: StaleChaseWorkflow
+  triggers: [scheduled]

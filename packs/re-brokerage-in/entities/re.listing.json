@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "darex.re.listing",
+  "title": "re.listing",
+  "type": "object",
+  "required": ["org_id", "source", "source_ref"],
+  "properties": {
+    "org_id": { "type": "string", "format": "uuid" },
+    "source": { "type": "string", "enum": ["sheets", "csv", "licensed_mls", "crm"] },
+    "source_ref": { "type": "string" },
+    "title": { "type": ["string", "null"] },
+    "locality": { "type": ["string", "null"] },
+    "city": { "type": ["string", "null"] },
+    "bhk": { "type": ["integer", "null"] },
+    "list_price": { "type": ["number", "null"], "description": "As received from source. Never a model guess." },
+    "currency": { "type": "string", "default": "INR" },
+    "rera_id": { "type": ["string", "null"] },
+    "status": {
+      "type": "string",
+      "enum": ["draft", "active", "under_offer", "reserved", "sold", "rented", "withdrawn", "stale"]
+    },
+    "last_source_sync_at": { "type": ["string", "null"], "format": "date-time" }
+  }
+}
