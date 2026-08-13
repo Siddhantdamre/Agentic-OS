@@ -970,6 +970,128 @@ integrations:
       webhook_events: [payment_received]
 
 
+  # ============================================================
+  # WAVE A/B — Microsoft, Salesforce, DocuSign, Twilio, Maps
+  # Additive only. Do not mark connected without a Nango row.
+  # ============================================================
+
+  microsoft-outlook:
+    display_name: "Microsoft Outlook"
+    dashboard_status_ref: "Microsoft Outlook — EMAIL"
+    auth_mode: OAUTH2
+    categories: [microsoft, email, communication]
+    authorization_url: https://login.microsoftonline.com/common/oauth2/v2.0/authorize
+    token_url: https://login.microsoftonline.com/common/oauth2/v2.0/token
+    scopes:
+      - offline_access
+      - openid
+      - email
+      - profile
+      - User.Read
+      - Mail.Read
+      - Mail.ReadWrite
+      - Mail.Send
+    capabilities:
+      - messages.read
+      - messages.send
+      - drafts.write
+    sync:
+      mode: incremental
+      entities: [emails, threads]
+
+  microsoft-calendar:
+    display_name: "Microsoft Calendar"
+    dashboard_status_ref: "Microsoft Calendar — CALENDAR"
+    auth_mode: OAUTH2
+    categories: [microsoft, calendar]
+    authorization_url: https://login.microsoftonline.com/common/oauth2/v2.0/authorize
+    token_url: https://login.microsoftonline.com/common/oauth2/v2.0/token
+    scopes:
+      - offline_access
+      - openid
+      - email
+      - profile
+      - User.Read
+      - Calendars.Read
+      - Calendars.ReadWrite
+    capabilities:
+      - calendar_events.read
+      - calendar_events.write
+    sync:
+      mode: incremental
+      entities: [calendar_events, calendars]
+
+  salesforce:
+    display_name: "Salesforce CRM"
+    dashboard_status_ref: "Salesforce CRM — CRM"
+    auth_mode: OAUTH2
+    categories: [crm, sales]
+    authorization_url: https://login.salesforce.com/services/oauth2/authorize
+    token_url: https://login.salesforce.com/services/oauth2/token
+    scopes:
+      - api
+      - refresh_token
+      - id
+    capabilities:
+      - contacts.read
+      - contacts.write
+      - leads.read
+      - leads.write
+    sync:
+      mode: incremental
+      entities: [contacts, leads, companies]
+
+  docusign:
+    display_name: "DocuSign"
+    dashboard_status_ref: "DocuSign — E-SIGN"
+    auth_mode: OAUTH2
+    categories: [documents, esign]
+    authorization_url: https://account.docusign.com/oauth/auth
+    token_url: https://account.docusign.com/oauth/token
+    scopes:
+      - signature
+      - extended
+      - openid
+    capabilities:
+      - envelopes.read
+      - envelopes.write
+      - envelopes.send
+    sync:
+      mode: webhook
+      entities: [envelopes]
+      webhook_events: [document_created]
+
+  twilio:
+    display_name: "Twilio SMS"
+    dashboard_status_ref: "Twilio SMS — MESSAGING"
+    auth_mode: API_KEY
+    categories: [messaging, sms]
+    credentials:
+      - account_sid
+      - auth_token
+    capabilities:
+      - messages.send
+      - messages.read
+    sync:
+      mode: webhook
+      entities: [messages]
+      webhook_events: [message_sent, message_status]
+
+  google-maps:
+    display_name: "Google Maps Geocoding"
+    dashboard_status_ref: "Google Maps — MAPS"
+    auth_mode: API_KEY
+    categories: [maps, public]
+    credentials:
+      - api_key
+    capabilities:
+      - geocode
+      - reverse_geocode
+    sync:
+      mode: none
+      entities: []
+
+
 # ==============================================================
 # GLOBAL CAPABILITY MATRIX
 # ==============================================================

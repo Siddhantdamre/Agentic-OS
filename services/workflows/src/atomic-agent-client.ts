@@ -1,4 +1,10 @@
+import type { RetrieveMemoryResult } from '@darex/shared-types';
 import type { AgentTaskInput, AgentTaskResult } from './agent-engine.js';
+import {
+  emptyMemoryResult,
+  formatRetrievedFactsBlock,
+  retrieveMemory,
+} from './memory/retrieve.js';
 
 export interface AgentToolStep {
   tool: string;
@@ -52,8 +58,14 @@ function buildSystemPrompt(input: AgentTaskInput): string {
  * OpenAI-compatible HTTP handler drops the `system` role message entirely, so
  * org-scoped facts are embedded in the user message — the only part of the
  * request guaranteed to reach the LLM prompt.
+ *
+ * Retrieved memory is cited as `[M-n]` (R2 / M3). Empty index → "no stored
+ * memory"; never invent contacts, listings, or prior conversations.
  */
-function buildGroundedUserMessage(input: AgentTaskInput): string {
+export function buildGroundedUserMessage(
+  input: AgentTaskInput,
+  memory?: RetrieveMemoryResult,
+): string {
   const facts = [
     `SYSTEM CONTEXT (authoritative, do not question):`,
     `- You are operating as an AI employee for organisation org_id=${input.orgId}.`,
@@ -84,8 +96,10 @@ function buildGroundedUserMessage(input: AgentTaskInput): string {
     }
   }
   facts.push(
-    ``,
-    `USER REQUEST:`,
+    '',
+    formatRetrievedFactsBlock(memory ?? emptyMemoryResult(input.orgId)),
+    '',
+    'USER REQUEST:',
     input.userMessage,
   );
   return facts.join('\n');
@@ -124,6 +138,8 @@ export interface RunAgentOptions {
   priorMessages?: { role: string; content: string }[];
   onChunk?: (text: string) => void;
   onToolProgress?: (tool: string, label: string) => void;
+  /** Prefetched retrieveMemory result (session/workflow org). Retrieved inside the turn if omitted. */
+  retrievedMemory?: RetrieveMemoryResult;
 }
 
 async function readSseStream(body: ReadableStream<Uint8Array>, sessionId: string, opts?: RunAgentOptions): Promise<AgentTurnResult> {
@@ -219,9 +235,28 @@ async function readSseStream(body: ReadableStream<Uint8Array>, sessionId: string
 
 
 
+async function loadRetrievedMemory(
+  input: AgentTaskInput,
+  prefetched?: RetrieveMemoryResult,
+): Promise<RetrieveMemoryResult> {
+  if (prefetched) return prefetched;
+  try {
+    return await retrieveMemory({
+      orgId: input.orgId,
+      query: input.userMessage,
+      employeeId: input.employeeId,
+      conversationId: input.conversationId,
+    });
+  } catch {
+    return emptyMemoryResult(input.orgId);
+  }
+}
+
 export async function runAgentTurn(input: AgentTaskInput, opts?: RunAgentOptions): Promise<AgentTurnResult> {
   const sessionId = buildSessionId(input);
   const timeoutMs = opts?.timeoutMs ?? AGENT_TURN_TIMEOUT_MS;
+  const memory = await loadRetrievedMemory(input, opts?.retrievedMemory);
+  const groundedUser = buildGroundedUserMessage(input, memory);
 
   let lastErr: Error | null = null;
   for (let attempt = 0; attempt <= AGENT_MAX_RETRIES; attempt++) {
@@ -242,7 +277,7 @@ export async function runAgentTurn(input: AgentTaskInput, opts?: RunAgentOptions
           messages: [
             { role: 'system', content: buildSystemPrompt(input) },
             ...(opts?.priorMessages || []),
-            { role: 'user', content: buildGroundedUserMessage(input) },
+            { role: 'user', content: groundedUser },
           ],
         }),
         signal: controller.signal,
