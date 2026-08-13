@@ -2,9 +2,8 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, develop, feat/atomic-agent-integration]
   pull_request:
-    branches: [main, develop]
 
 concurrency:
   group: ci-${{ github.ref }}
