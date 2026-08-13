@@ -1,8 +1,10 @@
 /**
  * Product catalog for /integrations and /connectors.
- * Callers: app/api/integrations/route.ts, nango-token/route.ts, test/route.ts.
- * Glob of apps/dashboard/lib confirmed no existing catalog module.
- * Does not persist data files.
+ * Fallback seed SOURCE only — `connector_defs` (DB registry) is the system of record.
+ * GET /api/integrations reads the registry; this module seeds and remains a
+ * compile-time fallback if the table is missing or empty.
+ * Callers: app/api/integrations/route.ts, nango-token/route.ts, test/route.ts,
+ * lib/connector-registry.ts.
  */
 
 export type IntegrationAuthMode = 'oauth' | 'api_key' | 'byok' | 'service_account';

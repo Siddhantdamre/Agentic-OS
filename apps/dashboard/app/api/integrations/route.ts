@@ -1,12 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getScopedClient } from '@/lib/db';
-import {
-  INTEGRATION_CATALOG,
-  getIntegration,
-  isIntegrationId,
-  isPublicMetaKey,
-  nangoUiUrl,
-} from '@/lib/integrations-catalog';
+import { getConnectorDef, listConnectorDefs, listOrgConnectors, upsertOrgConnector } from '@/lib/connector-registry';
+import { isPublicMetaKey, nangoUiUrl } from '@/lib/integrations-catalog';
 import {
   deleteNangoConnection,
   isNangoSecretConfigured,
@@ -51,6 +46,11 @@ export async function GET() {
       );
       const dbChannelsMap = new Map(channelsRes.rows.map((r: any) => [r.channel_type, r]));
 
+      const [defs, orgConnectors] = await Promise.all([
+        listConnectorDefs(client),
+        listOrgConnectors(client, orgId),
+      ]);
+
       const nangoSecretOk = isNangoSecretConfigured();
       const [nangoConns, nangoConfigs] = await Promise.all([
         listNangoConnections(orgId),
@@ -62,9 +62,11 @@ export async function GET() {
       const nangoListUsable = nangoConns.some((c) => Boolean(c.catalogId));
       const configByKey = new Map(nangoConfigs.map((c) => [c.uniqueKey, c]));
 
+      // Connected badge is Nango (or verified BYOK) only — never org_connectors.status.
       const integrations = await Promise.all(
-        INTEGRATION_CATALOG.map(async (item) => {
+        defs.map(async (item) => {
           const dbRecord = dbChannelsMap.get(item.id) as any;
+          const orgConn = orgConnectors.get(item.id);
           const meta = publicMeta(dbRecord?.meta);
 
           let oauthConfigured = item.authMode !== 'oauth';
@@ -118,8 +120,11 @@ export async function GET() {
             ...item,
             connected: Boolean(isConnected),
             status: isConnected ? 'Connected' : 'Disconnected',
-            nangoConnectionId: dbRecord?.nango_connection_id || (isConnected && connectionSource === 'nango' ? `${orgId}_${item.id}` : null),
-            lastSyncedAt: dbRecord?.connected_at || null,
+            nangoConnectionId:
+              dbRecord?.nango_connection_id ||
+              (isConnected && connectionSource === 'nango' ? `${orgId}_${item.id}` : null) ||
+              (isConnected ? orgConn?.nangoConnectionId : null),
+            lastSyncedAt: dbRecord?.connected_at || (isConnected ? orgConn?.lastOkAt : null) || null,
             oauthConfigured,
             missingConfigReason: isConnected ? undefined : missingConfigReason,
             connectionSource,
@@ -190,11 +195,12 @@ export async function POST(request: Request) {
       if (!provider || !action) {
         return NextResponse.json({ message: 'provider and action are required' }, { status: 400 });
       }
-      if (!isIntegrationId(provider)) {
+
+      const spec = await getConnectorDef(client, provider);
+      if (!spec) {
         return NextResponse.json({ message: `Unknown provider: ${provider}` }, { status: 400 });
       }
 
-      const spec = getIntegration(provider);
       const nangoConnId = primaryConnectionId(orgId, provider);
 
       if (action === 'connect') {
@@ -248,6 +254,14 @@ export async function POST(request: Request) {
           [orgId, provider, `${provider} connected via Nango OAuth`, JSON.stringify({ connectionId: nangoConnId })]
         );
 
+        await upsertOrgConnector(client, orgId, provider, {
+          status: 'connected',
+          nangoConnectionId: nangoConnId,
+          scopes: spec.scopes,
+          lastOkAt: new Date(),
+          lastError: null,
+        });
+
         return NextResponse.json({
           success: true,
           message: `${provider} connected successfully`,
@@ -271,6 +285,14 @@ export async function POST(request: Request) {
            VALUES ($1, $2, 'disconnect', 'success', 200, $3)`,
           [orgId, provider, `${provider} disconnected (Nango connection deleted)`]
         );
+
+        await upsertOrgConnector(client, orgId, provider, {
+          status: 'disconnected',
+          nangoConnectionId: null,
+          scopes: [],
+          lastOkAt: null,
+          lastError: null,
+        });
 
         return NextResponse.json({ success: true, message: `${provider} disconnected` });
       }

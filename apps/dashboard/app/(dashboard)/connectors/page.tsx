@@ -37,6 +37,7 @@ import {
   Store,
   Cloud,
 } from 'lucide-react';
+import { LiveRegion, StatusBadge } from '@/components/a11y';
 
 interface Integration {
   id: string;
@@ -231,7 +232,8 @@ export default function ConnectorsPage() {
   });
 
   return (
-    <div className="max-w-7xl mx-auto space-y-8 pb-16">
+    <div className="max-w-7xl mx-auto space-y-8 pb-20 md:pb-16">
+      <LiveRegion message={statusNotification?.message || ''} />
       {/* Notification Toast */}
       {statusNotification && (
         <div
@@ -256,9 +258,9 @@ export default function ConnectorsPage() {
       )}
 
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
         <div>
-          <h1 className="text-3xl font-serif font-bold text-heading">Connection Hub & Integrations</h1>
+          <h1 className="text-2xl sm:text-3xl font-serif font-bold text-heading">Connection Hub & Integrations</h1>
           <p className="text-slate-500 text-sm mt-1">
             Connect your business tools via real OAuth popups (Nango Gateway running on port 3003).
           </p>
@@ -274,7 +276,7 @@ export default function ConnectorsPage() {
       </div>
 
       {/* Metric Cards */}
-      <div className="grid grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <div className="bg-cream-200/70 border border-cream-300 p-5 rounded-2xl space-y-2 shadow-sm">
           <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Connected Tools</span>
           <div className="text-3xl font-bold text-emerald-600">{stats.connectedApps} / {integrations.length}</div>
@@ -334,7 +336,7 @@ export default function ConnectorsPage() {
 
       {/* Connectors Grid */}
       {loading && integrations.length === 0 ? (
-        <div className="grid grid-cols-3 gap-6">
+        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-6">
           {[1, 2, 3, 4, 5, 6].map((i) => (
             <div key={i} className="h-56 bg-cream-200/50 rounded-3xl animate-pulse border border-cream-300" />
           ))}
@@ -346,7 +348,7 @@ export default function ConnectorsPage() {
           <p className="text-slate-500 text-xs">Try adjusting your search query or category filter.</p>
         </div>
       ) : (
-        <div className="grid grid-cols-3 gap-6">
+        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-6">
           {filteredIntegrations.map((item) => {
             const isConnecting = connectingId === item.id;
             return (
@@ -369,16 +371,11 @@ export default function ConnectorsPage() {
                       </div>
                     </div>
 
-                    <span
-                      className={`text-[10px] font-bold uppercase tracking-wider px-2.5 py-1 rounded-full flex items-center space-x-1 ${
-                        item.connected
-                          ? 'bg-emerald-500/10 text-emerald-600 border border-emerald-500/20'
-                          : 'bg-slate-100 text-slate-400 border border-slate-200'
-                      }`}
-                    >
-                      <span className={`w-1.5 h-1.5 rounded-full ${item.connected ? 'bg-emerald-500' : 'bg-slate-400'}`} />
-                      <span>{item.connected ? 'Connected' : 'Disconnected'}</span>
-                    </span>
+                    <StatusBadge
+                      label={item.connected ? 'Connected' : 'Disconnected'}
+                      tone={item.connected ? 'success' : 'neutral'}
+                      icon={item.connected ? 'connected' : 'plug'}
+                    />
                   </div>
 
                   {/* Description */}
