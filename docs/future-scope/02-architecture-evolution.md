@@ -326,9 +326,13 @@ media). 15 GitHub repos. We take the piece, not a rewrite.
 Honorable (still not in stack; pick from these if 15 is not enough):
 [redpanda-data/connect](https://github.com/redpanda-data/connect) (CDC/sync pipelines),
 [valkey-io/valkey](https://github.com/valkey-io/valkey) (dedicated Redis-compatible for Langfuse),
-[infisical/infisical](https://github.com/Infisical/infisical) (BYOK vault instead of env soup),
-[clamav/clamav](https://github.com/Cisco-Talos/clamav) (virus scan on uploads),
-[hatchet-dev/hatchet](https://github.com/hatchet-dev/hatchet) (PG-native workflows if Temporal ops explode — WATCH only).
+[Infisical/infisical](https://github.com/Infisical/infisical) (BYOK vault instead of env soup),
+[Cisco-Talos/clamav](https://github.com/Cisco-Talos/clamav) (virus scan on uploads),
+[caddyserver/caddy](https://github.com/caddyserver/caddy) (alt to Traefik),
+[envoyproxy/envoy](https://github.com/envoyproxy/envoy) (sidecar if we split ingest),
+[cloudnative-pg/cloudnative-pg](https://github.com/cloudnative-pg/cloudnative-pg) (PG operator later),
+[dragonflydb/dragonfly](https://github.com/dragonflydb/dragonfly) (Redis-compatible if Valkey is not enough).
+Hatchet / Temporal-class jobs live in `09` — do not list them here.
 
 **Still reject as kernel (even if OSS):** LangGraph, Mastra, Letta, Agno,
 Supabase-as-backend, Composio. Same job as what we already run.

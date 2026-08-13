@@ -98,19 +98,43 @@ history; add a “Shipped” note).
 
 ## Alternatives in every file (how to read them)
 
-Every numbered file now ends with **“Alternatives in the world”**:
+Every numbered file ends with **“Alternatives in the world”** plus a
+**GitHub list unique to that layer**.
+
+**Do not repeat a repo across files.** Odoo is only in `03`. Chatwoot
+is KEEP (`15` §1) and channel notes live in `11`. Mem0 is only in `10`.
+n8n is only in `06`. If you need the union, open `15` §17 — that is
+the only place the full list appears.
 
 1. **What Darex does** (this pack’s choice).
-2. **4–5 existing products/repos** that solve a similar job, often
-   better at *one* axis (speed, depth, OSS, enterprise).
-3. **Why those can be better** — honest, so we know the trade.
-4. **Why we still do ours** — tenancy, confirm, WhatsApp, packs.
-5. **Five things to steal** — code/patterns we should copy *into*
-   Darex without swapping the kernel.
-6. **Refs** — GitHub, papers, articles.
-7. **Open-source GitHub (at least 5)** — repos doing similar work we
-   can copy into Darex. Commercial products stay in the table;
-   this list is cloneable code.
+2. **4–5 existing products** that solve a similar job (commercial OK).
+3. **Why those can be better** / **why we still do ours**.
+4. **Five things to steal** — patterns into Darex, not a kernel swap.
+5. **Open-source GitHub** — cloneable code **owned by this file**.
+   Kernel KEEP (Postgres, pgvector, Nango, Temporal, atomic-agent,
+   MCP, LiteLLM, Langfuse, SuperTokens, Redis, Chatwoot, Next.js,
+   Jina, Docker sandbox) is listed once in `15` §1. Do not paste
+   those repos again as “new alternatives”.
 
-Master catalog: [`15-open-source-research-landscape.md`](./15-open-source-research-landscape.md).
-If `15` and a layer file disagree on a **keep**, `14` + `15` §14 win.
+### Who owns which GitHub list
+
+| File | Owns (topic) | Do not put here |
+|------|----------------|-----------------|
+| `00` | Agent-OS metaphors (OpenFang, Dust, OpenHands, Continue…) | ERP, memory SDKs, eval CI |
+| `01` | Eval / gap-close (Promptfoo, Phoenix, Ragas, skills…) | Mem0, n8n, Chatwoot |
+| `02` | New infra we do **not** run (NATS, AGE, ParadeDB, Cube…) | Temporal, Nango, LiteLLM, Hatchet |
+| `03` | Packs / ERP / CRM modules (**Odoo, ERPNext, Twenty** live here) | Medusa, Cal.com, Chatwoot |
+| `04` | Industry products (Medusa, Saleor, PostHog, OpenEMR…) | Odoo, Twenty, n8n |
+| `05` | Geo / showings / e-sign (Nominatim, Cal.com, Documenso, MapLibre) | Twenty, Chatwoot |
+| `06` | iPaaS / MCP / scrape (**n8n, Activepieces, Firecrawl**) | Nango KEEP, Windmill, Temporal |
+| `07` | Parse / RAG / sync (Unstructured, Docling, Airbyte, GraphRAG) | pgvector KEEP, Mem0 |
+| `08` | Multi-agent crews (CrewAI, AutoGen, MetaGPT, Camel…) | Letta, Promptfoo, Agno |
+| `09` | Durable jobs (Restate, Inngest, Hatchet, Prefect, Cadence) | n8n, Temporal KEEP |
+| `10` | Memory (**Mem0, Graphiti, Cognee, Letta**, Qdrant…) | GraphRAG, pgvector KEEP |
+| `11` | Channels / voice / widgets (LiveKit, Typebot, Matrix…) | Chatwoot KEEP as product |
+| `12` | Authz / IdP / vault (OpenFGA, Cerbos, OPA, Vault…) | SuperTokens KEEP |
+| `13` | Phase order only | No GitHub dump |
+| `14` | Invariants only | No GitHub dump |
+| `15` | KEEP stack + **master unique catalog** | Do not contradict `14` |
+
+If `15` and a layer file disagree on a **keep**, `14` + `15` §1 win.

@@ -228,29 +228,35 @@ memory ourselves; do not buy a second agent OS.
 
 | # | Alternative | Why it can be better | Why we still do ours | Refs |
 |---|-------------|----------------------|----------------------|------|
-| 1 | **Mastra + Vercel AI SDK** on Next.js | TS-native agents, memory, MCP, Studio; 1.0 in 2026 | We already left LangGraph for atomic-agent; dual loop = the hang class | [mastra-ai/mastra](https://github.com/mastra-ai/mastra), mastra.ai |
-| 2 | **Mem0 / Graphiti self-host** as the memory gap-closer | Fastest path to “returning customer remembers” | Tenant facts must live in *our* RLS tables; hosted memory is a second SoR | [mem0ai/mem0](https://github.com/mem0ai/mem0), [getzep/graphiti](https://github.com/getzep/graphiti) |
-| 3 | **n8n / Inngest** for Chatwoot→agent and realtime | Days not weeks to wire ingest + jobs | Webhooks already Temporal; n8n is not RLS-aware | [n8n-io/n8n](https://github.com/n8n-io/n8n), Inngest AgentKit |
-| 4 | **Langfuse Cloud / Phoenix** instead of self-host Redis pain | Traces that actually persist | Self-host is the residency story; fix Redis split (Phase 8) | [langfuse/langfuse](https://github.com/langfuse/langfuse), [Arize-ai/phoenix](https://github.com/Arize-ai/phoenix) |
+| 1 | **Mastra + Vercel AI SDK** on Next.js | TS-native agents, memory, MCP, Studio; 1.0 in 2026 | We already left LangGraph for atomic-agent; dual loop = the hang class | [mastra-ai/mastra](https://github.com/mastra-ai/mastra) listed in `00` |
+| 2 | **Promptfoo / Phoenix / Ragas in CI** as the gap-closer | Fastest honest proof that hygiene + memory work | We still implement tables ourselves; evals do not *be* the brain | This file GitHub list |
+| 3 | **Langfuse Cloud** instead of self-host Redis pain | Traces that actually persist | Self-host is the residency story; fix Redis split (Phase 8). Langfuse KEEP in `15` §1 | Langfuse Cloud vs self-host |
+| 4 | **Buy a memory SaaS** (hosted Mem0/Zep) to skip Phase 6 | “Returning customer remembers” in a week | Tenant facts must live in *our* RLS tables — details in `10` | `10` |
 | 5 | **Skip to RE pack** (Elise/Lofty-shaped) before RAG | Revenue demo faster | Pack on dead skills + no memory + expired WhatsApp is theater (`01` §2) | This file §2; `13` “never skip Phase 6” |
 
 **Five things to steal anyway**
 
 1. Mount `SKILL.md` into the atomic-agent image (Cursor/Claude skill pattern) — hygiene, not a new runtime.
-2. Hybrid retrieve from Mem0/Graphiti — implement in pgvector+FTS (`10`).
-3. Chatwoot → WorkItemWorkflow now; do not wait for a Zapier.
-4. Promptfoo YAML for golden gaps (`promptfoo/promptfoo`).
-5. Sandbox context into git (OpenHands SDK lesson: local→remote same agent).
+2. Hybrid retrieve lives in `10` — implement in pgvector+FTS, do not paste Mem0 here.
+3. Chatwoot → WorkItemWorkflow now (`11`); n8n is a *customer* iPaaS in `06`.
+4. Promptfoo / Ragas / Phoenix YAML for golden gaps (this file).
+5. Sandbox context into git (OpenHands lesson in `00`).
 
-### Open-source GitHub (at least 5) — same job as this file
+### Open-source GitHub — this file only (eval / gap-close)
+
+Langfuse KEEP → `15` §1. Memory SDKs → `10`. n8n → `06`. Chatwoot → `11`. Mastra → `00`.
 
 | Repo | Similar to | We take |
 |------|------------|---------|
 | [promptfoo/promptfoo](https://github.com/promptfoo/promptfoo) | Golden eval YAML in CI | Eval-runner for gap close |
-| [langfuse/langfuse](https://github.com/langfuse/langfuse) | Traces we already run | Dedicated Redis, not a swap |
-| [Arize-ai/phoenix](https://github.com/Arize-ai/phoenix) | OSS eval/OTel if Langfuse hurts | Optional CI traces |
-| [mastra-ai/mastra](https://github.com/mastra-ai/mastra) | TS agent+memory+MCP on Next | Patterns only; keep atomic-agent |
-| [mem0ai/mem0](https://github.com/mem0ai/mem0) | Drop-in returning-user memory | Hybrid retrieve in *our* tables |
-| [getzep/graphiti](https://github.com/getzep/graphiti) | Temporal facts | `valid_from` columns (`10`) |
-| [n8n-io/n8n](https://github.com/n8n-io/n8n) | Chatwoot→agent wiring | Do it in Temporal, steal the trigger list |
-| [chatwoot/chatwoot](https://github.com/chatwoot/chatwoot) | Inbox we already wrap | Wire webhook to agent (gap) |
+| [Arize-ai/phoenix](https://github.com/Arize-ai/phoenix) | OSS traces + eval if Langfuse Redis hurts | Optional CI; do not replace Langfuse |
+| [explodinggradients/ragas](https://github.com/explodinggradients/ragas) | RAG faithfulness metrics | `/brain` eval, not a product |
+| [confident-ai/deepeval](https://github.com/confident-ai/deepeval) | Unit tests for LLM outputs | Golden + disconnected paths |
+| [giskard-ai/giskard](https://github.com/giskard-ai/giskard) | LLM red-team / RAG scan | Fair-housing + RERA trap tests (`05`) |
+| [openai/evals](https://github.com/openai/evals) | Eval registry format | YAML shape for pack goldens |
+| [anthropics/skills](https://github.com/anthropics/skills) | `SKILL.md` mount pattern | Mount into atomic-agent image |
+| [traceloop/openllmetry](https://github.com/traceloop/openllmetry) | OTel for LLM apps | Export beside Langfuse (`02` OTel JS) |
+| [microsoft/promptflow](https://github.com/microsoft/promptflow) | Prompt graphs + eval | Classify/plan YAML, not a runtime |
+| [wandb/weave](https://github.com/wandb/weave) | Trace + eval hosted | WATCH; residency vs Langfuse Cloud |
+| [lastmile-ai/aiconfig](https://github.com/lastmile-ai/aiconfig) | Prompts as versioned config | LiteLLM prompt files, not a new loop |
+| [stanford-crfm/helm](https://github.com/stanford-crfm/helm) | Holistic eval suite | Pack-level benchmark later |

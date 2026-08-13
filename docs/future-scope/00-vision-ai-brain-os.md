@@ -295,30 +295,38 @@ Dust. We become the OS a brokerage or agency *runs on*.
 |---|-------------|----------------------|----------------------|------|
 | 1 | **Dust.tt** — multiplayer company AI, MCP, EU residency, semantic layer | Permissions and “AI operator” UX are years ahead; SOC2/GDPR story is sellable | Not multi-tenant *SaaS for SMBs*; no WhatsApp/RE pack; closed core | [dust.tt](https://dust.tt), GitHub `dust-tt/dust` |
 | 2 | **Glean** — permission-aware enterprise search + agents | ACL-correct retrieval; already in Fortune 500 | Search company, not action/confirm/Nango OS | [glean.com/blog/agent-orchestration-platforms-compared](https://www.glean.com/blog/agent-orchestration-platforms-compared) |
-| 3 | **Odoo / ERPNext** — full industry ERP, modules as “packs” | Real inventory, accounting, manufacturing; 20 years of verticals | We are the *brain on top of* their SoR, not a second ERP | [github.com/odoo/odoo](https://github.com/odoo/odoo), [frappe/erpnext](https://github.com/frappe/erpnext) |
-| 4 | **Letta (MemGPT)** — agent *is* the OS (core + archival memory) | Best “LLM as OS” research; agents survive restarts with self-paging memory | Replacing atomic-agent splits MCP/allowlists; we already have Temporal+Postgres | [letta-ai/letta](https://github.com/letta-ai/letta), arXiv:2310.08560 |
-| 5 | **Specialist AI employees** (Sierra CX, 11x SDR, Devin/OpenHands code, EliseAI leasing) | They win one job 10× deeper than a pack v1 | We stay platform; packs copy their *job design* | OpenHands [All-Hands-AI/OpenHands](https://github.com/All-Hands-AI/OpenHands); Elise vs Funnel (Thesis Driven / Hargreaves 2026) |
+| 3 | **OpenFang / Agno AgentOS** — OSS “agent operating system” | Sandbox, MCP, channels, scheduled hands in one runtime | We already have Temporal + atomic-agent + MCP; steal the *shape*, not the rewrite | [RightNow-AI/openfang](https://github.com/RightNow-AI/openfang), [agno-agi/agno](https://github.com/agno-agi/agno) |
+| 4 | **Computer-use OS** (Skyvern, Browser Use, OpenHands) | The agent *is* the product: sandbox + confirm + traces | APIs first (`14`); computer-use is Phase 17 last resort | [skyvern-ai/skyvern](https://github.com/skyvern-ai/skyvern); OpenHands MLSys 2026 |
+| 5 | **Specialist AI employees** (Sierra CX, 11x SDR, EliseAI leasing) | They win one job 10× deeper than a pack v1 | We stay platform; packs copy their *job design* | Elise vs Funnel (Thesis Driven / Hargreaves 2026) |
 
 **Five things to steal anyway**
 
 1. Dust dual-layer permissions (agent access vs who may invoke) → `12`.
 2. Glean: retrieval must honor the same ACL as Drive → `/brain` RLS.
-3. Odoo: pack = module with entities + workflows + views, not a fork.
-4. MemGPT: core vs archival hierarchy → `10`.
-5. EliseAI: after-hours inbound *is* the product for RE/PM — WhatsApp 24/7.
+3. OpenFang: scheduled hands + sandbox as OS primitives, not a chatbot.
+4. Pack-as-module lives in `03` (Odoo/ERPNext listed **once** there).
+5. EliseAI: after-hours inbound *is* the product for RE/PM — WhatsApp 24/7. Memory hierarchy is `10` (Letta listed **once** there).
 
 CoALA (Sumers, Yao, Narasimhan, Griffiths, TMLR 2024) is the academic
 name for our six layers. Generative Agents (Park et al. 2023) is the
 memory-stream paper. Neither is a product we install.
 
-### Open-source GitHub (at least 5) — same job as this file
+### Open-source GitHub — this file only (agent-OS metaphors)
+
+Kernel KEEP is in `15` §1. Odoo/ERPNext → `03`. Letta/Mem0 → `10`. Eval → `01`.
 
 | Repo | Similar to | We take |
 |------|------------|---------|
-| [letta-ai/letta](https://github.com/letta-ai/letta) | Agent as OS (core + archival memory) | Hierarchy for `10`, not the runtime |
-| [RightNow-AI/openfang](https://github.com/RightNow-AI/openfang) | Rust “agent OS”: sandbox, MCP, channels, scheduled hands | Sandbox + scheduled briefing; not a rewrite |
-| [agno-agi/agno](https://github.com/agno-agi/agno) | Multi-tenant AgentOS + control plane | Roster UI ideas; Python-only so not kernel |
-| [All-Hands-AI/OpenHands](https://github.com/All-Hands-AI/OpenHands) | Production software employee, sandbox, confirm | Sandbox + event-source lessons |
-| [dust-tt/dust](https://github.com/dust-tt/dust) | Company knowledge + agents + MCP | Permission dual-layer, operator UX |
-| [frappe/erpnext](https://github.com/frappe/erpnext) | Industry modules on one kernel | Pack = DocType + workflow, not a fork |
-| [odoo/odoo](https://github.com/odoo/odoo) | Industry apps on one ERP | Pack manifest shape (`03`) |
+| [RightNow-AI/openfang](https://github.com/RightNow-AI/openfang) | Rust agent OS: sandbox, MCP, channels, scheduled hands | Scheduled briefing + sandbox shape |
+| [agno-agi/agno](https://github.com/agno-agi/agno) | Multi-tenant AgentOS + control plane | Roster UI; Python-only so not kernel |
+| [All-Hands-AI/OpenHands](https://github.com/All-Hands-AI/OpenHands) | Production software employee | Sandbox + event-source; we do not sell Devin |
+| [dust-tt/dust](https://github.com/dust-tt/dust) | Company knowledge + agents + MCP | Dual-layer permissions, operator UX |
+| [continuedev/continue](https://github.com/continuedev/continue) | IDE as agent OS | Skill/context files, not a product surface |
+| [cline/cline](https://github.com/cline/cline) | Coding agent in the editor | Confirm-before-write UX |
+| [block/goose](https://github.com/block/goose) | Local agent runtime (Block) | Recipe/skill layout |
+| [skyvern-ai/skyvern](https://github.com/skyvern-ai/skyvern) | Browser workflow OS | Phase 17 last-resort computer-use |
+| [browser-use/browser-use](https://github.com/browser-use/browser-use) | LLM drives a real browser | Same; APIs first |
+| [elizaOS/eliza](https://github.com/elizaOS/eliza) | Multi-character agent OS | Persona YAML, not a social runtime |
+| [Significant-Gravitas/AutoGPT](https://github.com/Significant-Gravitas/AutoGPT) | Classic autonomous loop | Bounded goals; never unbounded fan-out |
+| [stanfordnlp/dspy](https://github.com/stanfordnlp/dspy) | Program, don’t prompt | Compile classify/plan prompts later |
+| [mastra-ai/mastra](https://github.com/mastra-ai/mastra) | TS AgentOS on Next | Patterns only; dual loop = hang class |

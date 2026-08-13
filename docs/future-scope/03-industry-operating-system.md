@@ -294,10 +294,19 @@ Article: “Open Source CRM & ERP 2026” (Odoo, ERPNext, Twenty, SuiteCRM, Espo
 
 | Repo | Similar to | We take |
 |------|------------|---------|
-| [odoo/odoo](https://github.com/odoo/odoo) | Industry modules on one kernel | `pack.yaml` manifest |
+| [odoo/odoo](https://github.com/odoo/odoo) | Industry modules on one kernel | `pack.yaml` manifest (`depends`, data, views) |
 | [frappe/erpnext](https://github.com/frappe/erpnext) | DocTypes + workflows per domain | `entities/*.json` |
+| [frappe/frappe](https://github.com/frappe/frappe) | Framework under ERPNext | Metadata-driven forms, not PHP/Python runtime |
 | [twentyhq/twenty](https://github.com/twentyhq/twenty) | Custom objects, modern CRM | Projection tables, not schema fork |
 | [salesagility/SuiteCRM](https://github.com/salesagility/SuiteCRM) | Classic OSS CRM modules | Entity names for core pack |
 | [espocrm/espocrm](https://github.com/espocrm/espocrm) | Self-host CRM + metadata | Pack metadata, not PHP runtime |
-| [calcom/cal.com](https://github.com/calcom/cal.com) | Scheduling as a pack-like app | Showing/demo booking connector |
-| [documenso/documenso](https://github.com/documenso/documenso) | OSS DocuSign | E-sign confirm class later |
+| [Dolibarr/dolibarr](https://github.com/Dolibarr/dolibarr) | SMB ERP (invoices, CRM, stock) | Core-pack object list |
+| [akaunting/akaunting](https://github.com/akaunting/akaunting) | OSS accounting | Books pack entities; Tally/Zoho stay SoR |
+| [invoiceninja/invoiceninja](https://github.com/invoiceninja/invoiceninja) | Invoicing app | Invoice projection, not a PSP |
+| [budibase/budibase](https://github.com/Budibase/budibase) | Internal apps from tables | Pack admin screens later |
+| [appsmithorg/appsmith](https://github.com/appsmithorg/appsmith) | Same internal-app idea | WATCH; dashboard stays Next.js |
+| [nocodb/nocodb](https://github.com/nocodb/nocodb) | Airtable-on-Postgres | Sheets wedge UI, not a second SoR |
+| [baserow/baserow](https://github.com/bram2w/baserow) | Same | Same |
+| [directus/directus](https://github.com/directus/directus) | Headless CMS + ACL | Pack content types |
+
+Cal.com / Documenso → `05`. Medusa / Saleor → `04`. Chatwoot → `11`.

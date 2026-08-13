@@ -371,8 +371,8 @@ industries in year one.
 | 1 | **Point-solution AI per vertical** (Harvey legal, Sierra CX, 11x SDR, Artisan BDR, Devin eng) | Depth and pricing; buyers understand “AI lawyer / AI SDR” | We are the *platform* those become as packs; Harvey is licensed-advice (our non-goal) | Vellum “best AI employees”; CellCog comparison 2026 |
 | 2 | **Industry ERPs only** (Yardi, AppFolio, Procore, Cloudbeds, Greenhouse) | They already *are* the SoR | We connect; we do not rebuild Yardi | Catalog in `06` |
 | 3 | **HubSpot / Salesforce as the only world** | One CRM, less catalog | IN brokers live on WhatsApp + Sheets; US RE on FUB/kvCORE | `06` CRM table |
-| 4 | **n8n templates per industry** | Thousands of community workflows | No tenancy, no confirm, no memory | [n8n-io/n8n](https://github.com/n8n-io/n8n) |
-| 5 | **Medusa / Saleor** for ecom instead of an ecom pack | Real commerce OSS | Shopify/Woo stay SoR; pack is CX + ops on top | [medusajs/medusa](https://github.com/medusajs/medusa), [saleor/saleor](https://github.com/saleor/saleor) |
+| 4 | **Industry ERPs only** (Yardi, AppFolio, Procore, Cloudbeds, Greenhouse) | They already *are* the SoR | We connect; we do not rebuild Yardi | Catalog in `06` |
+| 5 | **Medusa / Saleor** for ecom instead of an ecom pack | Real commerce OSS | Shopify/Woo stay SoR; pack is CX + ops on top | This file GitHub list |
 
 **Five things to steal anyway**
 
@@ -382,15 +382,24 @@ industries in year one.
 4. AppFolio/Yardi: PM pack entities copied from *their* objects, not invented.
 5. Wave order stays; skip Wave 4 before skipping Phase 6 (`13`).
 
-### Open-source GitHub (at least 5) — same job as this file
+### Open-source GitHub — this file only (industry products)
+
+Odoo / Twenty / SuiteCRM → `03`. Cal.com → `05`. Chatwoot → `11`. OpenHands → `00`. n8n → `06`.
 
 | Repo | Similar to | We take |
 |------|------------|---------|
 | [medusajs/medusa](https://github.com/medusajs/medusa) | Ecom OS (orders, carts) | Ecom pack entities; Shopify stays SoR |
 | [saleor/saleor](https://github.com/saleor/saleor) | GraphQL commerce | Same |
-| [calcom/cal.com](https://github.com/calcom/cal.com) | Scheduling vertical | Showings/demos connector |
-| [twentyhq/twenty](https://github.com/twentyhq/twenty) | Generic B2B CRM | Core pack CRM projection |
-| [posthog/posthog](https://github.com/posthog/posthog) | Product analytics OSS | SaaS pack metrics; not our Insight engine |
+| [woocommerce/woocommerce](https://github.com/woocommerce/woocommerce) | WordPress commerce | Woo connector objects |
+| [magento/magento2](https://github.com/magento/magento2) | Enterprise commerce | Wholesale pack later |
+| [posthog/posthog](https://github.com/PostHog/posthog) | Product analytics OSS | SaaS pack metrics; not Insight engine |
 | [outline/outline](https://github.com/outline/outline) | Team wiki | KB ingest for agencies/SaaS |
-| [chatwoot/chatwoot](https://github.com/chatwoot/chatwoot) | Support inbox | Support pack channel |
-| [All-Hands-AI/OpenHands](https://github.com/All-Hands-AI/OpenHands) | Software-employee vertical | Sandbox; we do not sell Devin |
+| [strapi/strapi](https://github.com/strapi/strapi) | Headless CMS | Agency content pack |
+| [TryGhost/Ghost](https://github.com/TryGhost/Ghost) | Publishing | Content-ops pack |
+| [moodle/moodle](https://github.com/moodle/moodle) | LMS | Education pack entities |
+| [openemr/openemr](https://github.com/openemr/openemr) | Clinic EMR | Clinic-ops *entities only*; PHI in `12` |
+| [makeplane/plane](https://github.com/makeplane/plane) | Jira-class OSS | Professional-services work items |
+| [listmonk/listmonk](https://github.com/knadh/listmonk) | Self-host campaigns | Marketing pack; Klaviyo stays SoR |
+| [plausible/analytics](https://github.com/plausible/analytics) | Privacy analytics | SaaS pack KPI, not GA4 replace |
+| [umami-software/umami](https://github.com/umami-software/umami) | Same | Same |
+| [pretix/pretix](https://github.com/pretix/pretix) | Ticketing / events | Hospitality-adjacent pack |

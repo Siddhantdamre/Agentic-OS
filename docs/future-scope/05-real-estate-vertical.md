@@ -523,16 +523,21 @@ first. Not an MLS, not escrow, not a consumer portal.
 
 Do not clone Zillow/99acres. Operator OS, not consumer search.
 
-### Open-source GitHub (at least 5) — same job as this file
+### Open-source GitHub — this file only (geo / showings / e-sign)
 
-RE has almost no full OSS “brokerage OS”. We take **adjacent** repos:
+Twenty / Chatwoot are not RE products — `03` / `11`. Odoo is `03`.
 
 | Repo | Similar to | We take |
 |------|------------|---------|
-| [RESOStandards/web-api](https://github.com/RESOStandards) (RESO Web API specs) | Listing field dictionary | `re.listing` mapping; never invent beds |
-| [openstreetmap/Nominatim](https://github.com/osm-search/Nominatim) | Geocoding fallback | Address lat/lng; never guess |
+| [RESOStandards/web-api-metadata](https://github.com/RESOStandards/web-api-metadata) | RESO field dictionary | `re.listing` mapping; never invent beds |
+| [osm-search/Nominatim](https://github.com/osm-search/Nominatim) | Geocoding fallback | Address lat/lng; never guess |
+| [openstreetmap/openstreetmap-website](https://github.com/openstreetmap/openstreetmap-website) | Map SoR | Area-book citations, not listing facts |
+| [maplibre/maplibre-gl-js](https://github.com/maplibre/maplibre-gl-js) | Listing map pins (OSS fork) | Dashboard map (`05` UI) |
+| [Leaflet/Leaflet](https://github.com/Leaflet/Leaflet) | Lightweight map | Same if MapLibre is heavy |
+| [Turfjs/turf](https://github.com/Turfjs/turf) | Geo predicates | Radius / catchment filters |
+| [pelias/pelias](https://github.com/pelias/pelias) | Geocoder stack | If Nominatim quality fails IN addresses |
+| [komoot/photon](https://github.com/komoot/photon) | OSM search | Place autocomplete |
+| [openaddresses/openaddresses](https://github.com/openaddresses/openaddresses) | Open address points | Normalize, cite |
 | [calcom/cal.com](https://github.com/calcom/cal.com) | Showing / tour booking | ShowingScheduleWorkflow |
 | [documenso/documenso](https://github.com/documenso/documenso) | OSS e-sign | Confirm `sign`; Leegality/DocuSign stay IN/US SoR |
-| [twentyhq/twenty](https://github.com/twentyhq/twenty) | CRM for inquiries | Inquiry pipeline until FUB/Zoho |
-| [chatwoot/chatwoot](https://github.com/chatwoot/chatwoot) | WhatsApp-class inbox | Inbound inquiry loop |
-| [mapbox](https://github.com/mapbox/mapbox-gl-js) | Listing map pins | Dashboard map (`05` UI) |
+| [geopy/geopy](https://github.com/geopy/geopy) | Geocode client | Wrapper around Nominatim/Maps |
