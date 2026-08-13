@@ -2,21 +2,15 @@
 
 import React, { useState, useRef, useEffect } from 'react';
 import {
-  Sparkles,
   Send,
   Bot,
   User,
   Zap,
-  Calendar,
-  Mail,
-  Database,
-  BarChart2,
   RefreshCw,
   Copy,
   Check,
   Brain,
   ShieldCheck,
-  ChevronRight,
   AlertTriangle,
 } from 'lucide-react';
 import { FormattedMarkdownResponse } from '@/components/chat/FormattedMarkdownResponse';
@@ -41,11 +35,13 @@ interface Message {
   type?: 'simple' | 'complex' | 'reasoning' | 'plan' | 'draft';
   reasoning?: { text: string; durationMs?: number | null };
   statusLine?: string;
+  usedTools?: string[];
+  toolEvents?: Array<{ tool: string; label?: string }>;
   planCard?: {
     planId: string;
     summary: string;
     steps: PlanStep[];
-    status: 'pending' | 'approved' | 'running' | 'completed' | 'cancelled';
+    status: 'pending' | 'approved' | 'running' | 'completed' | 'cancelled' | 'completed_with_errors';
   };
   draftBox?: DraftState;
   execution?: {
@@ -54,11 +50,12 @@ interface Message {
   };
 }
 
-const DEFAULT_SUGGESTIONS = [
-  { label: '📊 Analyze Google Ads & Meta Ads Performance', prompt: 'Summarize our active advertising metrics, CTR, and ROAS across Google Ads and Meta Ads.' },
-  { label: '📅 Book Sales Demo on Google Calendar', prompt: 'Can you schedule a product demo call on Google Calendar for tomorrow at 2:00 PM?' },
-  { label: '🗃️ Log Lead into HubSpot CRM', prompt: 'Log a new qualified sales lead into HubSpot CRM with contact email lead@company.com.' },
-  { label: '📧 Dispatch Email Follow-Up via Gmail', prompt: 'Draft and dispatch a follow-up email to customer@company.com thanking them for their inquiry.' },
+const DEFAULT_SUGGESTIONS: Array<{ label: string; prompt: string; requires?: string[] }> = [
+  { label: 'Ask about our Darex data', prompt: 'How many conversations and messages are in our workspace right now?' },
+  { label: '📊 Analyze Google Ads & Meta Ads Performance', prompt: 'Summarize our active advertising metrics, CTR, and ROAS across Google Ads and Meta Ads.', requires: ['google-ads', 'meta-ads'] },
+  { label: '📅 Book Sales Demo on Google Calendar', prompt: 'Can you schedule a product demo call on Google Calendar for tomorrow at 2:00 PM?', requires: ['google-calendar'] },
+  { label: '🗃️ Log Lead into HubSpot CRM', prompt: 'Log a new qualified sales lead into HubSpot CRM with contact email lead@company.com.', requires: ['hubspot'] },
+  { label: '📧 Dispatch Email Follow-Up via Gmail', prompt: 'Draft and dispatch a follow-up email to customer@company.com thanking them for their inquiry.', requires: ['gmail'] },
 ];
 
 export default function AskAiPage() {
@@ -66,25 +63,11 @@ export default function AskAiPage() {
     {
       id: 'welcome',
       sender: 'ai',
-      text: `### 🤖 Hello! I am DareX Executive AI Intelligence.
+      text: `### Hello from DareX Executive
 
-I have full operational awareness and live integration access across your **connected tools**:
-- 💬 **Messaging:** WhatsApp Business, Slack
-- 📧 **Email & Calendar:** Gmail, Google Calendar
-- 📊 **Advertising:** Google Ads, Meta Ads
-- 🗃️ **CRM & Support:** HubSpot CRM, Zendesk, Intercom
-- 💳 **Payments & E-Com:** Stripe, Shopify, Razorpay
-- 🧠 **Knowledge & Code:** Notion, GitHub
-
-How can I assist your business strategy or automate your workflows today?`,
+I can answer questions and query your Darex data. Connector actions only run for tools that are actually connected — I will not invent results.`,
       provider: 'Atomic Intelligence Agent',
       timestamp: 'Just now',
-      suggestedActions: [
-        { label: '📅 Book Demo on Google Calendar', tool: 'google-calendar', action: 'create_event' },
-        { label: '📧 Dispatch Gmail Follow-Up', tool: 'gmail', action: 'send_email' },
-        { label: '🗃️ Log Lead in HubSpot CRM', tool: 'hubspot', action: 'create_crm_contact' },
-        { label: '📊 Fetch Meta & Google Ads Metrics', tool: 'meta-ads', action: 'fetch_campaign_metrics' },
-      ],
     },
   ]);
 
@@ -93,8 +76,14 @@ How can I assist your business strategy or automate your workflows today?`,
   const [executingTool, setExecutingTool] = useState<string | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [currentUserEmail, setCurrentUserEmail] = useState<string>('user@company.com');
+  const [conversationId, setConversationId] = useState<string>('');
+  const [connectedChannels, setConnectedChannels] = useState<string[]>([]);
+  const [orgName, setOrgName] = useState<string>('Your Business');
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const messagesRef = useRef<Message[]>([]);
+  const conversationIdRef = useRef<string>('');
+  const queryBootstrapped = useRef(false);
 
   const storageKey = useRef<string>('askAiMessages');
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -102,7 +91,63 @@ How can I assist your business strategy or automate your workflows today?`,
   const storageNamespace = (userId: string, orgId?: string) =>
     `askAiMessages:${orgId || 'no-org'}:${userId || 'anon'}`;
 
-  // Persistence: Load messages from local storage on mount (namespaced per org+user)
+  const formatTs = (raw?: string) => {
+    if (!raw) return new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    const d = new Date(raw);
+    if (Number.isNaN(d.getTime())) return raw;
+    return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  };
+
+  const mapPlanStatus = (
+    status: string
+  ): NonNullable<Message['planCard']>['status'] => {
+    switch (status) {
+      case 'pending':
+      case 'approved':
+      case 'running':
+      case 'completed':
+      case 'cancelled':
+      case 'completed_with_errors':
+        return status;
+      default:
+        return 'pending';
+    }
+  };
+
+  const buildWelcome = (name: string, channels: string[]): Message => ({
+    id: 'welcome',
+    sender: 'ai',
+    text:
+      channels.length > 0
+        ? `### Hello from DareX Executive
+
+I can answer questions about **${name}** and act on the connectors that are actually connected:
+
+${channels.map((c) => `- \`${c}\``).join('\n')}
+
+Core tools (no OAuth): \`database_query\`, \`web_search\`, \`web_extract\`, \`file_ops\`.
+
+If a connector is missing I will say so and point you to \`/connectors\` — I will not invent results.`
+        : `### Hello from DareX Executive
+
+I can answer questions about **${name}** and query your Darex data.
+
+No OAuth connectors are connected yet. I will not invent Gmail, Calendar, CRM, or ads data. Connect tools at \`/connectors\` when you want me to act on them.
+
+Always available: \`database_query\`, \`web_search\`, \`web_extract\`, \`file_ops\`.`,
+    provider: 'Atomic Intelligence Agent',
+    timestamp: 'Just now',
+  });
+
+  useEffect(() => {
+    messagesRef.current = messages;
+  }, [messages]);
+
+  useEffect(() => {
+    conversationIdRef.current = conversationId;
+  }, [conversationId]);
+
+  // Hydrate from the server thread (messages + plans). localStorage is a cache only.
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -118,13 +163,153 @@ How can I assist your business strategy or automate your workflows today?`,
       if (cancelled) return;
       const key = storageNamespace(userId, orgId);
       storageKey.current = key;
-      const saved = localStorage.getItem(key);
-      if (saved) {
-        try {
-          const parsed = JSON.parse(saved);
-          if (Array.isArray(parsed)) setMessages(parsed);
-        } catch (e) {
-          console.error('Failed to parse saved messages', e);
+      let hydratedConversationId = '';
+
+      try {
+        const threadRes = await fetch('/api/ask-ai');
+        if (threadRes.ok) {
+          const thread = await threadRes.json();
+          if (cancelled) return;
+          if (thread.conversationId) {
+            hydratedConversationId = thread.conversationId;
+            setConversationId(thread.conversationId);
+          }
+          if (Array.isArray(thread.connectedChannels)) setConnectedChannels(thread.connectedChannels);
+          if (thread.orgName) setOrgName(thread.orgName);
+
+          const plans = Array.isArray(thread.plans) ? thread.plans : [];
+          const planById = new Map(plans.map((p: any) => [p.id, p]));
+          const serverMsgs: Message[] = (thread.messages || []).map((row: any) => {
+            const tc = row.toolCalls || {};
+            if (row.role === 'user') {
+              return {
+                id: row.id,
+                sender: 'user' as const,
+                text: row.content || '',
+                timestamp: formatTs(row.createdAt),
+              };
+            }
+            if (tc.type === 'complex' && tc.planId) {
+              const plan = planById.get(tc.planId) as any;
+              const status = mapPlanStatus(plan?.status || 'pending');
+              const steps = (plan?.steps || tc.steps || []) as PlanStep[];
+              const draftSrc = plan?.draft || (tc.draft ? { content: tc.draft, version: 1 } : null);
+              const currentStep = Number(plan?.current_step || 0);
+              const inferStatuses: StepRunStatus[] = steps.map((_, i) => {
+                if (status === 'running' || status === 'completed' || status === 'completed_with_errors') {
+                  if (i < currentStep) return { status: 'done' };
+                  if (status === 'running' && i === currentStep) return { status: 'running' };
+                }
+                return { status: 'pending' };
+              });
+              return {
+                id: row.id,
+                sender: 'ai' as const,
+                text: row.content || '',
+                provider: 'Atomic Agent',
+                timestamp: formatTs(row.createdAt),
+                type: 'complex' as const,
+                reasoning: { text: tc.reasoning || plan?.reasoning?.text || '', durationMs: null },
+                planCard: {
+                  planId: tc.planId,
+                  summary: plan?.summary || tc.summary || '',
+                  steps,
+                  status,
+                },
+                draftBox: draftSrc?.content
+                  ? { content: String(draftSrc.content), version: Number(draftSrc.version || 1) }
+                  : undefined,
+                execution:
+                  status === 'running' || status === 'completed' || status === 'completed_with_errors'
+                    ? { running: status === 'running', statuses: inferStatuses }
+                    : undefined,
+              };
+            }
+            return {
+              id: row.id,
+              sender: 'ai' as const,
+              text: row.content || '',
+              provider: 'Atomic Agent',
+              timestamp: formatTs(row.createdAt),
+              usedTools: Array.isArray(tc.usedTools) ? tc.usedTools : undefined,
+              error: tc.error || undefined,
+              retryable: Boolean(tc.retryable),
+            };
+          });
+
+          const seenPlanIds = new Set(
+            serverMsgs.map((m) => m.planCard?.planId).filter(Boolean) as string[]
+          );
+          for (const plan of plans) {
+            if (!plan?.id || seenPlanIds.has(plan.id)) continue;
+            if (!['pending', 'approved', 'running'].includes(plan.status)) continue;
+            serverMsgs.push({
+              id: `plan_${plan.id}`,
+              sender: 'ai',
+              text: '',
+              provider: 'Atomic Agent',
+              timestamp: formatTs(plan.created_at),
+              type: 'complex',
+              reasoning: { text: plan.reasoning?.text || '', durationMs: null },
+              planCard: {
+                planId: plan.id,
+                summary: plan.summary || '',
+                steps: Array.isArray(plan.steps) ? plan.steps : [],
+                status: mapPlanStatus(plan.status),
+              },
+              draftBox: plan.draft?.content
+                ? { content: String(plan.draft.content), version: Number(plan.draft.version || 1) }
+                : undefined,
+            });
+          }
+
+          if (serverMsgs.length > 0) {
+            messagesRef.current = serverMsgs;
+            setMessages(serverMsgs);
+            const orphan = plans.find((p: any) => p.status === 'running');
+            if (orphan?.id) {
+              void handleApprovePlan(orphan.id);
+            }
+          } else {
+            setMessages([buildWelcome(thread.orgName || 'Your Business', thread.connectedChannels || [])]);
+          }
+        } else {
+          const saved = localStorage.getItem(key);
+          if (saved) {
+            try {
+              const parsed = JSON.parse(saved);
+              if (Array.isArray(parsed) && parsed.length > 0) setMessages(parsed);
+            } catch (e) {
+              console.error('Failed to parse saved messages', e);
+            }
+          }
+        }
+      } catch {
+        const saved = localStorage.getItem(key);
+        if (saved) {
+          try {
+            const parsed = JSON.parse(saved);
+            if (Array.isArray(parsed) && parsed.length > 0) setMessages(parsed);
+          } catch (e) {
+            console.error('Failed to parse saved messages', e);
+          }
+        }
+      }
+
+      if (!cancelled && !queryBootstrapped.current) {
+        queryBootstrapped.current = true;
+        const q = new URLSearchParams(window.location.search).get('q');
+        if (q?.trim()) {
+          window.history.replaceState({}, '', '/ask-ai');
+          const prompt = q.trim();
+          const userMessage: Message = {
+            id: `user_${Date.now()}`,
+            sender: 'user',
+            text: prompt,
+            timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          };
+          setMessages((prev) => [...prev.filter((m) => m.id !== 'welcome' || prev.length === 1), userMessage]);
+          void sendRequest(prompt, hydratedConversationId || undefined);
         }
       }
     })();
@@ -182,69 +367,129 @@ How can I assist your business strategy or automate your workflows today?`,
     scrollToBottom();
   }, [messages, loading]);
 
-  const sendRequest = async (prompt: string) => {
+  const applyNdjsonEvent = (aiMsgId: string, event: any, prompt: string) => {
+    if (event.type === 'chunk') {
+      setMessages((prev) =>
+        prev.map((m) => (m.id === aiMsgId ? { ...m, text: m.text + (event.text || '') } : m))
+      );
+      return;
+    }
+    if (event.type === 'tool') {
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.id === aiMsgId
+            ? {
+                ...m,
+                statusLine: `⚙️ ${event.tool}${event.label ? ` — ${event.label}` : ''}…`,
+                toolEvents: [...(m.toolEvents || []), { tool: event.tool, label: event.label }],
+              }
+            : m
+        )
+      );
+      return;
+    }
+    if (event.type === 'done' || event.type === 'simple') {
+      if (event.conversationId) setConversationId(event.conversationId);
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.id === aiMsgId
+            ? {
+                ...m,
+                text: event.answer || m.text,
+                usedTools: event.usedTools || m.usedTools,
+                error: event.error || undefined,
+                retryable: event.retryable ?? false,
+                partialReply: event.partialReply || undefined,
+                retryPrompt: event.error ? prompt : undefined,
+                statusLine: undefined,
+              }
+            : m
+        )
+      );
+      return;
+    }
+    if (event.type === 'error') {
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.id === aiMsgId
+            ? {
+                ...m,
+                error: event.error,
+                retryable: event.retryable,
+                text: (m.text || '') + `\n\n❌ **Error:** ${event.error}`,
+                retryPrompt: prompt,
+                statusLine: undefined,
+              }
+            : m
+        )
+      );
+    }
+  };
+
+  const sendRequest = async (prompt: string, threadId?: string) => {
     setLoading(true);
 
     try {
       const res = await fetch('/api/ask-ai', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ prompt }),
+        body: JSON.stringify({
+          prompt,
+          conversationId: threadId || conversationIdRef.current || undefined,
+        }),
       });
 
       if (res.headers.get('content-type')?.includes('application/x-ndjson')) {
-        const reader = res.body!.getReader();
+        if (!res.body) {
+          throw new Error('Ask AI stream returned no body');
+        }
+        const reader = res.body.getReader();
         const decoder = new TextDecoder();
         let buffer = '';
-        
+
         const aiMsgId = `ai_${Date.now()}`;
-        setMessages((prev) => [...prev, {
-          id: aiMsgId,
-          sender: 'ai',
-          text: '',
-          provider: 'Atomic Agent',
-          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-        }]);
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: aiMsgId,
+            sender: 'ai',
+            text: '',
+            provider: 'Atomic Agent',
+            timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+            toolEvents: [],
+          },
+        ]);
+
+        const consumeLine = (line: string) => {
+          if (!line.trim()) return;
+          try {
+            applyNdjsonEvent(aiMsgId, JSON.parse(line), prompt);
+          } catch {
+            // ignore partial JSON
+          }
+        };
 
         while (true) {
           const { done, value } = await reader.read();
           if (done) break;
           buffer += decoder.decode(value, { stream: true });
-          
+
           let newlineIdx;
           while ((newlineIdx = buffer.indexOf('\n')) !== -1) {
             const line = buffer.slice(0, newlineIdx);
             buffer = buffer.slice(newlineIdx + 1);
-            if (!line.trim()) continue;
-            
-            try {
-              const event = JSON.parse(line);
-              if (event.type === 'chunk') {
-                 setMessages((prev) => prev.map((m) => (m.id === aiMsgId ? { ...m, text: m.text + event.text } : m)));
-              } else if (event.type === 'tool') {
-                 // Live tool-progress: update the in-flight bubble's status line
-                 setMessages((prev) => prev.map((m) => (m.id === aiMsgId ? { ...m, statusLine: `⚙️ ${event.tool}${event.label ? ` — ${event.label}` : ''}…` } : m)));
-              } else if (event.type === 'done') {
-                 setMessages((prev) => prev.map((m) => (m.id === aiMsgId ? { ...m, ...event, statusLine: undefined } : m)));
-              } else if (event.type === 'error') {
-                 setMessages((prev) => prev.map((m) => (m.id === aiMsgId ? { 
-                   ...m, 
-                   error: event.error, 
-                   retryable: event.retryable,
-                   text: (m.text || '') + `\n\n❌ **Error:** ${event.error}`,
-                   retryPrompt: prompt,
-                   statusLine: undefined,
-                 } : m)));
-              }
-            } catch(e) {}
+            consumeLine(line);
           }
         }
+        if (buffer.trim()) consumeLine(buffer);
         return;
       }
 
       const data = await res.json();
 
       // ── COMPLEX: plan-confirm-execute proposal ──────────────────────────
+      if (res.ok && data.conversationId) setConversationId(data.conversationId);
+
       if (res.ok && data.type === 'complex' && data.planId) {
         const planMsgId = `ai_plan_${Date.now()}`;
         const planMessage: Message = {
@@ -347,50 +592,126 @@ How can I assist your business strategy or automate your workflows today?`,
   // ── Plan lifecycle: approve → run SSE → stream step completion ─────────
   const handleApprovePlan = async (planId: string) => {
     try {
-      const res = await fetch('/api/ask-ai/plan', {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ planId, action: 'approve' }),
-      });
-      if (!res.ok) return;
+      const existingStatus = messagesRef.current.find((m) => m.planCard?.planId === planId)?.planCard?.status;
+      if (existingStatus === 'pending') {
+        const res = await fetch('/api/ask-ai/plan', {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ planId, action: 'approve' }),
+        });
+        if (!res.ok) {
+          const errBody = await res.json().catch(() => ({}));
+          const msgId = messagesRef.current.find((m) => m.planCard?.planId === planId)?.id;
+          if (msgId) {
+            setMessages((prev) =>
+              prev.map((m) =>
+                m.id === msgId ? { ...m, error: errBody.error || 'Failed to approve plan', retryable: false } : m
+              )
+            );
+          }
+          return;
+        }
+      }
 
-      const msgId = messages.find((m) => m.planCard?.planId === planId)?.id;
+      const msgId = messagesRef.current.find((m) => m.planCard?.planId === planId)?.id;
       if (!msgId) return;
 
-      const stepIds = (messages.find((m) => m.id === msgId)?.planCard?.steps || []).map((s) => ({
+      const latest = messagesRef.current.find((m) => m.id === msgId);
+      const stepIds = (latest?.planCard?.steps || []).map((s) => ({
         id: s.id || `step-${s.description}`,
         description: s.description,
       }));
 
-      const setPlanMsg = (patch: Partial<Message>) => {
-        setMessages((prev) => prev.map((m) => (m.id === msgId ? { ...m, ...patch } : m)));
+      const setPlanMsg = (updater: (cur: Message) => Message) => {
+        setMessages((prev) => prev.map((m) => (m.id === msgId ? updater(m) : m)));
       };
 
       let statuses: StepRunStatus[] = stepIds.map(() => ({ status: 'pending' as const }));
-      setPlanMsg({
-        planCard: { ...messages.find((m) => m.id === msgId)!.planCard!, status: 'running' },
+      setPlanMsg((cur) => ({
+        ...cur,
+        planCard: cur.planCard ? { ...cur.planCard, status: 'running' } : cur.planCard,
         execution: { running: true, statuses },
-      });
+        error: undefined,
+      }));
 
       const streamRes = await fetch(`/api/ask-ai/execute?planId=${encodeURIComponent(planId)}`);
       if (!streamRes.ok || !streamRes.body) {
-        statuses = stepIds.map(() => ({ status: 'error' as const, message: 'Failed to open execution stream' }));
-        setPlanMsg({
-          planCard: { ...messages.find((m) => m.id === msgId)!.planCard!, status: 'approved' },
+        const failMsg = streamRes.status === 409
+          ? 'This plan was already executed.'
+          : 'Failed to open execution stream';
+        statuses = stepIds.map(() => ({ status: 'error' as const, message: failMsg }));
+        setPlanMsg((cur) => ({
+          ...cur,
+          planCard: cur.planCard ? { ...cur.planCard, status: 'approved' } : cur.planCard,
           execution: { running: false, statuses },
-        });
+          error: failMsg,
+          retryable: streamRes.status !== 409,
+          retryPrompt: undefined,
+        }));
         return;
       }
 
       const reader = streamRes.body.getReader();
       const decoder = new TextDecoder();
       let buffer = '';
-      let eventType: string | null = null;
+      let sawExecutionDone = false;
 
       const updateSteps = (index: number, status: StepRunStatus) => {
         if (!statuses[index]) statuses[index] = status;
         else statuses[index] = { ...statuses[index], ...status };
-        setPlanMsg({ execution: { running: true, statuses: [...statuses] } });
+        setPlanMsg((cur) => ({ ...cur, execution: { running: true, statuses: [...statuses] } }));
+      };
+
+      const consumeSseChunk = (chunk: string) => {
+        let eventType: string | null = null;
+        let dataLine = '';
+        for (const line of chunk.split('\n')) {
+          if (line.startsWith('event:')) eventType = line.slice(6).trim();
+          else if (line.startsWith('data:')) dataLine += line.slice(5).trim();
+        }
+        if (!dataLine || !eventType) return;
+        let evt: any;
+        try {
+          evt = JSON.parse(dataLine);
+        } catch {
+          return;
+        }
+
+        if (eventType === 'step_start' && typeof evt.stepIndex === 'number') {
+          updateSteps(evt.stepIndex, { status: 'running' });
+        } else if (eventType === 'step_done' && typeof evt.stepIndex === 'number') {
+          const notConnected = evt.data && evt.data.connected === false;
+          updateSteps(evt.stepIndex, {
+            status: evt.status === 'error' ? 'error' : evt.status === 'skipped' ? 'skipped' : 'done',
+            message: evt.message,
+            setupUrl: notConnected ? evt.data.setupUrl || '/connectors' : undefined,
+          });
+        } else if (eventType === 'step_error' && typeof evt.stepIndex === 'number') {
+          updateSteps(evt.stepIndex, { status: 'error', message: evt.message });
+        } else if (eventType === 'execution_done') {
+          sawExecutionDone = true;
+          const nextStatus =
+            evt.status === 'completed_with_errors'
+              ? 'completed_with_errors'
+              : evt.status === 'completed'
+                ? 'completed'
+                : 'cancelled';
+          setPlanMsg((cur) => ({
+            ...cur,
+            planCard: cur.planCard ? { ...cur.planCard, status: nextStatus } : cur.planCard,
+            execution: { running: false, statuses: [...statuses] },
+          }));
+        } else if (eventType === 'execution_error') {
+          const failedIdx = statuses.findIndex((s) => s.status === 'running');
+          if (failedIdx >= 0) statuses[failedIdx] = { status: 'error', message: evt.message };
+          setPlanMsg((cur) => ({
+            ...cur,
+            planCard: cur.planCard ? { ...cur.planCard, status: 'completed_with_errors' } : cur.planCard,
+            execution: { running: false, statuses: [...statuses] },
+            error: evt.message,
+            retryable: true,
+          }));
+        }
       };
 
       while (true) {
@@ -399,65 +720,38 @@ How can I assist your business strategy or automate your workflows today?`,
         buffer += decoder.decode(value, { stream: true });
         const chunks = buffer.split('\n\n');
         buffer = chunks.pop() || '';
-        for (const chunk of chunks) {
-          eventType = null;
-          let dataLine = '';
-          for (const line of chunk.split('\n')) {
-            if (line.startsWith('event:')) eventType = line.slice(6).trim();
-            else if (line.startsWith('data:')) dataLine += line.slice(5).trim();
-          }
-          if (!dataLine || !eventType) continue;
-          let evt: any;
-          try { evt = JSON.parse(dataLine); } catch { continue; }
-
-          if (eventType === 'step_start' && typeof evt.stepIndex === 'number') {
-            updateSteps(evt.stepIndex, { status: 'running' });
-          } else if (eventType === 'step_done' && typeof evt.stepIndex === 'number') {
-            updateSteps(evt.stepIndex, {
-              status: evt.status === 'error' ? 'error' : 'done',
-              message: evt.message,
-            });
-          } else if (eventType === 'step_error' && typeof evt.stepIndex === 'number') {
-            updateSteps(evt.stepIndex, { status: 'error', message: evt.message });
-          } else if (eventType === 'execution_done') {
-            setPlanMsg({
-              planCard: {
-                ...messages.find((m) => m.id === msgId)!.planCard!,
-                status: evt.status === 'completed' || evt.status === 'completed_with_errors' ? 'completed' : 'cancelled',
-              },
-              execution: { running: false, statuses: [...statuses] },
-            });
-          } else if (eventType === 'execution_error') {
-            const failedIdx = statuses.findIndex((s) => s.status === 'running');
-            if (failedIdx >= 0) statuses[failedIdx] = { status: 'error', message: evt.message };
-            setPlanMsg({
-              planCard: {
-                ...messages.find((m) => m.id === msgId)!.planCard!,
-                status: 'cancelled',
-              },
-              execution: { running: false, statuses: [...statuses] },
-            });
-          }
-        }
+        for (const chunk of chunks) consumeSseChunk(chunk);
       }
+      if (buffer.trim()) consumeSseChunk(buffer);
 
-      // Stream closed without execution_done: mark done anyway based on progress
-      const curPlan = messages.find((m) => m.id === msgId)?.planCard;
-      if (curPlan?.status === 'running') {
-        setPlanMsg({
-          planCard: { ...curPlan, status: 'completed' },
+      if (!sawExecutionDone) {
+        setPlanMsg((cur) => ({
+          ...cur,
+          planCard: cur.planCard
+            ? { ...cur.planCard, status: cur.planCard.status === 'running' ? 'completed_with_errors' : cur.planCard.status }
+            : cur.planCard,
           execution: { running: false, statuses: [...statuses] },
-        });
+          error: cur.planCard?.status === 'running' ? 'Execution stream ended unexpectedly' : cur.error,
+          retryable: true,
+        }));
       }
     } catch (err) {
       console.error('Plan execution error:', err);
-      const msgId = messages.find((m) => m.planCard?.planId === planId)?.id;
+      const msgId = messagesRef.current.find((m) => m.planCard?.planId === planId)?.id;
       if (msgId) {
-        const cur = messages.find((m) => m.id === msgId)!;
-        patchMessage(msgId, {
-          planCard: { ...cur.planCard!, status: 'approved' },
-          execution: { running: false, statuses: cur.execution?.statuses || [] },
-        });
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === msgId
+              ? {
+                  ...m,
+                  planCard: m.planCard ? { ...m.planCard, status: 'approved' } : m.planCard,
+                  execution: { running: false, statuses: m.execution?.statuses || [] },
+                  error: 'Connection error during plan execution',
+                  retryable: true,
+                }
+              : m
+          )
+        );
       }
     }
   };
@@ -499,8 +793,8 @@ How can I assist your business strategy or automate your workflows today?`,
     const newStep: PlanStep = {
       id: `step-${Date.now()}`,
       description: instruction,
-      tool: 'agent.user_instruction',
-      action: 'execute_context',
+      tool: 'user_instruction',
+      action: 'note',
       enabled: true,
     };
     const steps = [...(cur.planCard?.steps || []), newStep];
@@ -521,45 +815,9 @@ How can I assist your business strategy or automate your workflows today?`,
     patchMessage(msgId, { draftBox: draft });
   };
 
-  const handleExecuteToolAction = async (tool: string, action: string, label: string) => {
-    setExecutingTool(label);
-
-    let payload: Record<string, any> = {};
-    if (action === 'create_event') {
-      payload = { summary: 'Sales Demo Call', startTime: new Date(Date.now() + 86400000).toISOString() };
-    } else if (action === 'send_email') {
-      payload = { recipient: currentUserEmail, subject: 'Follow-up from DareX AI', content: 'Thank you for contacting us!' };
-    } else if (action === 'create_crm_contact') {
-      payload = { email: 'lead@company.com', firstname: 'Test', lastname: 'Lead' };
-    }
-
-    try {
-      const res = await fetch('/api/agent/tools', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          tool,
-          action,
-          payload,
-        }),
-      });
-
-      const data = await res.json();
-      if (data.success && data.result) {
-        const confirmMsg: Message = {
-          id: `tool_confirm_${Date.now()}`,
-          sender: 'ai',
-          text: `⚡ **Tool Action Executed Successfully!**\n\n- **Tool:** \`${data.result.tool}\`\n- **Action:** \`${data.result.action}\`\n- **Status:** \`${data.result.status}\`\n- **Result:** ${data.result.message}\n\n\`\`\`json\n${JSON.stringify(data.result.data, null, 2)}\n\`\`\``,
-          provider: 'Tool Engine',
-          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-        };
-        setMessages((prev) => [...prev, confirmMsg]);
-      }
-    } catch (err) {
-      console.error('Tool execution error:', err);
-    } finally {
-      setExecutingTool(null);
-    }
+  const handleExecuteToolAction = async (_tool: string, _action: string, label: string) => {
+    const suggestion = DEFAULT_SUGGESTIONS.find((s) => s.label === label);
+    await handleSendMessage(suggestion?.prompt || label);
   };
 
   const handleToolExecutionComplete = (result: any) => {
@@ -623,7 +881,12 @@ How can I assist your business strategy or automate your workflows today?`,
           </div>
           <div>
             <h1 className="text-xl font-serif font-bold text-heading">Ask AI Intelligence</h1>
-            <p className="text-xs text-slate-500">Autonomous business reasoning engine connected to your tools &amp; live DB</p>
+            <p className="text-xs text-slate-500">
+              {orgName}
+              {connectedChannels.length > 0
+                ? ` · connected: ${connectedChannels.join(', ')}`
+                : ' · no OAuth connectors yet'}
+            </p>
           </div>
         </div>
 
@@ -692,7 +955,7 @@ How can I assist your business strategy or automate your workflows today?`,
                       )
                     )}
 
-                    {msg.planCard.status === 'completed' && msg.draftBox && (
+                    {(msg.planCard.status === 'completed' || msg.planCard.status === 'completed_with_errors') && msg.draftBox && (
                       <DraftPanel
                         draft={msg.draftBox}
                         planId={msg.planCard.planId}
@@ -720,10 +983,22 @@ How can I assist your business strategy or automate your workflows today?`,
                 )}
 
                 {/* Text Response Bubble */}
-                {!isUser && msg.statusLine && !msg.text && (
+                {!isUser && msg.statusLine && (
                   <div className="px-4 py-2.5 rounded-2xl text-[11px] text-amber-800 bg-amber-50 border border-amber-500/30 flex items-center gap-2">
                     <RefreshCw className="w-3 h-3 text-amber-600 animate-spin shrink-0" />
                     <span className="font-mono">{msg.statusLine}</span>
+                  </div>
+                )}
+                {!isUser && msg.toolEvents && msg.toolEvents.length > 0 && (
+                  <div className="flex flex-wrap gap-1.5">
+                    {msg.toolEvents.map((ev, idx) => (
+                      <span
+                        key={`${ev.tool}-${idx}`}
+                        className="text-[10px] font-mono px-2 py-0.5 rounded-md bg-slate-100 text-slate-600 border border-slate-200"
+                      >
+                        {ev.tool}{ev.label ? ` — ${ev.label}` : ''}
+                      </span>
+                    ))}
                   </div>
                 )}
                 <div
@@ -735,6 +1010,32 @@ How can I assist your business strategy or automate your workflows today?`,
                 >
                   {isUser ? msg.text : <FormattedMarkdownResponse content={msg.text} />}
                 </div>
+                {!isUser && (msg.text || msg.usedTools?.length) && (
+                  <div className="flex items-center flex-wrap gap-2 px-1">
+                    {msg.usedTools && msg.usedTools.length > 0 && (
+                      <div className="flex flex-wrap gap-1">
+                        {msg.usedTools.map((tool) => (
+                          <span
+                            key={tool}
+                            className="text-[10px] font-mono px-2 py-0.5 rounded-md bg-amber-50 text-amber-800 border border-amber-200"
+                          >
+                            {tool}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                    {msg.text && (
+                      <button
+                        type="button"
+                        onClick={() => handleCopyText(msg.id, msg.text)}
+                        className="text-[10px] font-semibold text-slate-500 hover:text-slate-800 flex items-center gap-1"
+                      >
+                        {copiedId === msg.id ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
+                        {copiedId === msg.id ? 'Copied' : 'Copy'}
+                      </button>
+                    )}
+                  </div>
+                )}
 
                 {/* Failure Banner + Retry */}
                 {!isUser && msg.error && (
@@ -748,13 +1049,17 @@ How can I assist your business strategy or automate your workflows today?`,
                         {msg.partialReply ? ' A partial answer may be shown above.' : ''}
                       </span>
                     </span>
-                    {msg.retryable && msg.retryPrompt && (
+                    {msg.retryable && (msg.retryPrompt || msg.planCard?.planId) && (
                       <button
-                        onClick={() => handleRetry(msg.retryPrompt!)}
+                        onClick={() =>
+                          msg.retryPrompt
+                            ? handleRetry(msg.retryPrompt!)
+                            : handleApprovePlan(msg.planCard!.planId)
+                        }
                         disabled={loading}
                         className="shrink-0 px-2.5 py-1 bg-amber-500 hover:bg-amber-600 text-heading font-bold rounded-lg transition-all disabled:opacity-40"
                       >
-                        {loading ? 'Running…' : 'Retry'}
+                        {loading ? 'Running…' : msg.retryPrompt ? 'Retry' : 'Retry execution'}
                       </button>
                     )}
                   </div>
@@ -793,8 +1098,8 @@ How can I assist your business strategy or automate your workflows today?`,
           );
         })}
 
-        {/* Loading Indicator */}
-        {loading && (
+        {loading &&
+          !messages.some((m) => m.sender === 'ai' && (m.statusLine || (!m.text && m.id !== 'welcome' && !m.planCard))) && (
           <div className="flex items-start space-x-3">
             <div className="w-9 h-9 rounded-2xl bg-amber-500 text-heading flex items-center justify-center border border-amber-600">
               <Bot className="w-4 h-4 animate-bounce" />
@@ -803,6 +1108,23 @@ How can I assist your business strategy or automate your workflows today?`,
               <RefreshCw className="w-4 h-4 text-amber-600 animate-spin" />
               <span>Synthesizing multi-tool intelligence response...</span>
             </div>
+          </div>
+        )}
+
+        {messages.length <= 1 && !loading && (
+          <div className="flex flex-wrap gap-2 pb-2">
+            {DEFAULT_SUGGESTIONS.filter(
+              (s) => !s.requires || s.requires.some((tool) => connectedChannels.includes(tool))
+            ).map((s) => (
+              <button
+                key={s.label}
+                type="button"
+                onClick={() => handleSendMessage(s.prompt)}
+                className="px-3 py-1.5 bg-cream-100 hover:bg-amber-500/10 border border-cream-300 hover:border-amber-500/40 text-slate-700 font-semibold text-[11px] rounded-xl transition-all"
+              >
+                {s.label}
+              </button>
+            ))}
           </div>
         )}
 

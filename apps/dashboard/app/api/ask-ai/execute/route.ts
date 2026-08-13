@@ -1,5 +1,7 @@
 import { getScopedClient, pool } from '@/lib/db';
 import { logLangfuseTrace } from '@/lib/langfuse-trace';
+import { executeAutonomousToolAction } from '@darex/workflows/dist/tool-executor';
+import type { PoolClient } from 'pg';
 
 export const dynamic = 'force-dynamic';
 
@@ -126,7 +128,14 @@ export async function GET(request: Request) {
 
     const url = new URL(request.url);
     const planId = url.searchParams.get('planId');
+    const releaseEarly = () => {
+      if (client) {
+        client.release();
+        client = null;
+      }
+    };
     if (!planId) {
+      releaseEarly();
       return new Response('planId is required', { status: 400 });
     }
 
@@ -135,6 +144,7 @@ export async function GET(request: Request) {
       [planId, orgId]
     )).rows;
     if (rows.length === 0) {
+      releaseEarly();
       return new Response('Plan not found', { status: 404 });
     }
     const plan = rows[0];
@@ -156,11 +166,13 @@ export async function GET(request: Request) {
       ])
     );
 
-    if (plan.status !== 'approved') {
-      // Allow re-execution only after approval; anything else is invalid.
-      if (plan.status !== 'running' && plan.status !== 'completed') {
-        return new Response(`Plan must be approved before execution (status: ${plan.status})`, { status: 409 });
-      }
+    if (plan.status === 'completed' || plan.status === 'completed_with_errors' || plan.status === 'cancelled') {
+      releaseEarly();
+      return new Response(`Plan already ${plan.status}`, { status: 409 });
+    }
+    if (plan.status !== 'approved' && plan.status !== 'running') {
+      releaseEarly();
+      return new Response(`Plan must be approved before execution (status: ${plan.status})`, { status: 409 });
     }
 
     await client.query(
@@ -189,7 +201,7 @@ export async function GET(request: Request) {
 
         // Short-lived org-scoped write used for mid-stream progress updates.
         const updatePlan = async (patch: { status?: string; current_step?: number }) => {
-          const pc = await pool.connect();
+          const pc: PoolClient = await pool.connect();
           try {
             await pc.query("SELECT set_config('app.current_org_id', $1, false)", [orgId]);
             const sets: string[] = ['updated_at = NOW()'];
@@ -202,6 +214,7 @@ export async function GET(request: Request) {
               params
             );
           } finally {
+            try { await pc.query('RESET app.current_org_id'); } catch { /* ignore */ }
             pc.release();
           }
         };
@@ -209,12 +222,12 @@ export async function GET(request: Request) {
         send('execution_start', { planId, totalSteps: enabledSteps.length });
         const results: any[] = [];
         try {
-          const { executeAutonomousToolAction } = await import('@darex/workflows/dist/tool-executor');
-
           const stages = stageSteps(steps);
+          const noteTools = new Set(['user_instruction', 'note', 'agent.user_instruction']);
 
           for (const stage of stages) {
-            if (clientDisconnected) break;
+            // Keep executing after SSE disconnect — the user already approved.
+            // Only skip enqueueing events once the client is gone.
 
             // Run a stage's independent steps concurrently, but keep results
             // ordered by global step index for dependency wiring.
@@ -224,6 +237,15 @@ export async function GET(request: Request) {
                 const step = item.s;
                 if (step.enabled === false) {
                   return { i, outcome: { status: 'skipped', message: step.description } };
+                }
+                if (noteTools.has(String(step.tool || ''))) {
+                  send('step_done', {
+                    stepIndex: i,
+                    status: 'skipped',
+                    message: 'Instruction noted — not an executable tool.',
+                    data: null,
+                  });
+                  return { i, outcome: { status: 'skipped', message: 'Instruction noted — not an executable tool.' } };
                 }
                 send('step_start', {
                   stepIndex: i,

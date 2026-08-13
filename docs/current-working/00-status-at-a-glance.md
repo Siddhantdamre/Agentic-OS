@@ -24,21 +24,22 @@ Legend:
 | Analytics page | **Works** | Real aggregates (not Phase 7 engine) |
 | Insight page | **Partial** | Rule-based templates, not LLM |
 | Settings (rename org) | **Works** | |
-| Settings (invite member) | **Partial** | Inserts a user row, no email |
-| Settings (webhook URLs) | **Partial** | Meta URL points at Chatwoot route (bug) |
+| Settings (invite member) | **Works** | `org_invites` + copyable link; Resend if `RESEND_API_KEY` set |
+| Settings (webhook URLs) | **Works** | Meta → `/api/webhooks/whatsapp`; Chatwoot → `/api/webhooks/chatwoot?org_id=` |
+| Forgot / reset password, invite accept | **Works** | Reachable while signed in; OAuth keeps `?invite=` |
 
 ## Agent runtime
 
 | Piece | Status | Notes |
 |-------|--------|-------|
 | atomic-agent v0.1.73 on `:8787` | **Works** | OpenAI-compatible SSE |
-| MCP bridge on `:8790` (49 tools) | **Works** | `mcp.darex.*` → `executeAutonomousToolAction` |
+| MCP bridge on `:8790` (62 tools) | **Works** | `mcp.darex.*` + `GET /health` |
 | LiteLLM classify / plan / revise | **Works** | Reasoning disabled; JSON completions |
 | Temporal `AutonomousAgentWorkflow` | **Works** | Used by agent/run, WhatsApp, conversations |
 | Direct agent fallback | **Works** | Used when Temporal is down; Ask AI always direct |
 | Tool allowlist (org union + connected channels) | **Works** | Fixed 2026-08-13 |
-| Code sandbox (`code_execution`) | **Partial** | Executor + compose service exist; **`infra/docker/sandbox/` is not in git** |
-| Custom skill playbooks (11 SKILL.md) | **Does not work** | Files exist; **not copied into atomic-agent image** |
+| Code sandbox (`code_execution`) | **Works if connected** | `infra/docker/sandbox/` restored in this tree; needs compose build |
+| Custom skill playbooks (11 SKILL.md) | **Works** | Dockerfile COPY into `starter-skills` (rebuild atomic-agent image) |
 | Langfuse traces | **Partial** | Ingestion schema fixed; ClickHouse persistence flaky |
 | pgvector RAG / org memory | **Does not work** | Extension enabled; Phase 6 not built |
 | Billing | **Does not work** | Phase 9 |
@@ -55,13 +56,13 @@ Legend:
 | WhatsApp send | Real | Meta token + phone_number_id | **Token expired 2026-06-12** |
 | HubSpot / Slack / Notion / Stripe / Shopify / Zendesk / Intercom | Real | Nango + extra ids | Need real OAuth client IDs in Nango UI |
 | Meta Ads / Google Ads | Real | Token + account/customer id | Extra env (`META_AD_ACCOUNT_ID`, Ads developer token) |
-| Razorpay | Real | `RAZORPAY_KEY_ID/SECRET` | **Not per-org Nango** |
+| Razorpay | Real | Per-org `channels.meta` then env | Empty keys → `notConnected` |
 | web_search / web_extract | Real | `JINA_API_KEY` | Honest error if unset |
 | database_query | Real | Always (RLS SELECT) | |
 | file_ops | Real | Local `workspace_storage/{orgId}` | |
-| sandbox / code_execution | Real HTTP | `SANDBOX_API_URL` | Image context missing from repo |
-| Google Analytics `analytics_report` | **Stub** | — | MCP exposed, executor returns unhandled |
-| Google Chat / Meet / Search Console / Business / Cloud | **Stub** | — | Listed in UI catalog, no executor |
+| sandbox / code_execution | Real HTTP | `SANDBOX_API_URL` | Image context in working tree (`infra/docker/sandbox/`) |
+| Google Analytics `analytics_report` | Real | Nango + `propertyId` | UI catalog still labels `catalog_only` |
+| Google Chat / Meet / Search Console / Business / Cloud | Real | Nango (Cloud is service-account in UI) | Honest `notConnected` if no token; catalog hints stale |
 
 Disconnected OAuth **never fabricates success**. Tools return `status: 'error'`, `connected: false`, `setupUrl: '/connectors'`.
 
@@ -71,18 +72,18 @@ Disconnected OAuth **never fabricates success**. Tools return `status: 'error'`,
 |------|--------|-------|
 | WhatsApp GET verify (Meta challenge) | **Works** | `VERIFY_TOKEN` |
 | WhatsApp POST inbound → persist → agent → outbound | **Partial** | Inbound+LLM verified; outbound 401 on expired token |
-| Chatwoot webhook ingest + HMAC | **Works** | **Does not call the AI agent** |
-| Inbox gateway `:3004` inbound proxy | **Works** | Forwards to `/api/webhooks/chatwoot` |
-| Inbox gateway outbound `/api/inbox/send` | **Does not work** | Returns `{success:true}` without sending |
+| Chatwoot webhook ingest + HMAC | **Works** | Persist → 200 → `fireInboundAgent` (Temporal then direct) |
+| Inbox gateway `:3004` inbound proxy | **Works** | HMAC-signs and forwards to `/api/webhooks/chatwoot` |
+| Inbox gateway outbound `/api/inbox/send` | **Works** | Forwards to `/api/webhooks/outbound` → channel send-back |
 | SSE `/api/stream/events` | **Works** | In-process EventEmitter only (one Node process) |
 
 ## Infra
 
 | Service | Status |
 |---------|--------|
-| Postgres 16 + pgvector, 8 migrations, RLS + WITH CHECK | **Works** |
+| Postgres 16 + pgvector, 11 migrations (001–011), RLS + WITH CHECK | **Works** | Operator must apply 009–011 |
 | Temporal + UI | **Works** |
-| Redis | **Works** (shared; Langfuse worker timeouts) |
+| Redis | **Works** | Nango on `redis`; Langfuse on dedicated `langfuse-redis` |
 | Nango | **Works** |
 | LiteLLM | **Works** |
 | SuperTokens | **Works** (app falls back to Postgres if API key mismatch) |
@@ -90,7 +91,7 @@ Disconnected OAuth **never fabricates success**. Tools return `status: 'error'`,
 | Langfuse worker persistence | **Partial** |
 | atomic-agent + atomic-bridge | **Works** |
 | dashboard + worker containers | **Works** |
-| sandbox container | **Does not work** until `infra/docker/sandbox/` is committed |
+| sandbox container | **Works** if image built from `infra/docker/sandbox/` (untracked vs `99b5f04`) |
 | Production Terraform / HTTPS / multi-instance | **Does not work** |
 
 ## Verification scripts (last recorded green)

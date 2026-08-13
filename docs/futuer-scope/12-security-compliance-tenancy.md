@@ -180,3 +180,61 @@ Auditors get read-only role. Owners can see “who approved this send”.
 
 Security is not a phase you finish. Every new connector inherits this
 file.
+
+---
+
+## 13. What to steal from peers (permissions, not their stack)
+
+Dust.tt (2026) publishes a **dual-layer** model: what an *agent* may
+access vs who may *invoke* that agent, plus SCIM, SSO, audit
+retention. Glean’s pitch is **permission-aware retrieval** — the
+agent cannot see a Drive file the human could not.
+
+Darex mapping (do not buy their product):
+
+- Agent allowlist already exists (employee ∪ connected channels ∪
+  core tools). Keep it as the action gate.
+- `/brain` retrieval must use the same RLS as tools. A member who
+  cannot see payroll must not retrieve payroll snippets. That is
+  Glean’s lesson inside Postgres, not a Glean install.
+- Auditor role (`02` / Phase 15) is Dust’s “who can invoke” for
+  read-only humans.
+- SSO/SCIM stay SuperTokens-on-top (`02` KEEP).
+
+Catalog: `15` §10.5 and §9.
+
+---
+
+## 14. Alternatives in the world (instead of Postgres RLS + SuperTokens)
+
+**What Darex does:** `org_id` + RLS + session GUC; SuperTokens;
+confirm classes; no body `org_id`.
+
+| # | Alternative | Why it can be better | Why we still do ours | Refs |
+|---|-------------|----------------------|----------------------|------|
+| 1 | **Schema-per-tenant / DB-per-tenant** | Harder accidental joins | Ops nightmare at SMB count; RLS is the SaaS default | Postgres RLS docs; Citus notes |
+| 2 | **Citus / Neon / Supabase** hosted PG | Scale-out, branching, built-in auth | We can move *hosting* later; keep RLS model | [citusdata/citus](https://github.com/citusdata/citus), Neon |
+| 3 | **OpenFGA / Oso / Casbin** ReBAC | Google Zanzibar-style; Drive ACLs | Allowlists + RLS first; OpenFGA if `/brain` ACLs explode | [openfga/openfga](https://github.com/openfga/openfga) |
+| 4 | **Keycloak / Zitadel / Authentik** instead of SuperTokens | Full IdP, SAML day one | Add SAML *on* SuperTokens (Phase 15); do not replace sessions | SuperTokens; Keycloak |
+| 5 | **Dust dual-layer + Glean ACL retrieval** as products | Enterprise-ready permissions UX | Steal the *model*; keep our tables | dust.tt; Glean blog |
+
+**Five things to steal anyway**
+
+1. `darex_app` DB user — stop superuser in apps (`01`).
+2. pgvector: do not share ANN indexes blindly across tenants.
+3. Dual-layer: employee allowlist ≠ human role.
+4. Retrieval uses same RLS as tools (Glean).
+5. Webhook signatures + never await LLM (`AGENTS.md`).
+
+### Open-source GitHub (at least 5) — same job as this file
+
+| Repo | Similar to | We take |
+|------|------------|---------|
+| [supertokens/supertokens-core](https://github.com/supertokens/supertokens-core) | Sessions we already run | **KEEP**; SAML on top |
+| [openfga/openfga](https://github.com/openfga/openfga) | Zanzibar ReBAC | `/brain` ACLs if RLS is not enough |
+| [casbin/casbin](https://github.com/casbin/casbin) | Policy engine | Allowlist as policy later |
+| [keycloak/keycloak](https://github.com/keycloak/keycloak) | Full IdP | SAML recipes, not a replace |
+| [zitadel/zitadel](https://github.com/zitadel/zitadel) | Modern IdP | Same |
+| [goauthentik/authentik](https://github.com/goauthentik/authentik) | Self-host IdP | Same |
+| [citusdata/citus](https://github.com/citusdata/citus) | PG scale-out + tenant | Hosting later |
+| [pgvector/pgvector](https://github.com/pgvector/pgvector) | Vector tenancy notes | Partition/filter |

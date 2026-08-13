@@ -1,19 +1,23 @@
 import supertokens from 'supertokens-node';
 import EmailPassword from 'supertokens-node/recipe/emailpassword';
 import Session from 'supertokens-node/recipe/session';
-import DashboardRecipe from 'supertokens-node/recipe/dashboard';
 
 let initialized = false;
 
 export function ensureSuperTokensInit() {
   if (initialized) return;
 
+  const isProd = process.env.NODE_ENV === 'production';
+  const connectionURI = process.env.SUPERTOKENS_CONNECTION_URI;
+  if (isProd && !connectionURI) {
+    throw new Error('SUPERTOKENS_CONNECTION_URI must be set in production');
+  }
+
   try {
     supertokens.init({
       framework: 'custom',
       supertokens: {
-        connectionURI: process.env.SUPERTOKENS_CONNECTION_URI || 'http://localhost:3567',
-        // apiKey is optional; set SUPERTOKENS_API_KEY to match the SuperTokens server's API_KEYS
+        connectionURI: connectionURI || 'http://localhost:3567',
         apiKey: process.env.SUPERTOKENS_API_KEY,
       },
       appInfo: {
@@ -23,15 +27,10 @@ export function ensureSuperTokensInit() {
         apiBasePath: '/api/auth',
         websiteBasePath: '/login',
       },
-      recipeList: [
-        EmailPassword.init(),
-        Session.init(),
-        DashboardRecipe.init(),
-      ],
+      recipeList: [EmailPassword.init(), Session.init()],
     });
     initialized = true;
-  } catch (e) {
-    // Already initialized
+  } catch {
     initialized = true;
   }
 }

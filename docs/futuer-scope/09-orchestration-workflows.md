@@ -155,3 +155,65 @@ Cron per org:
 
 Names live in pack YAML. Worker registers them. Dashboard never
 embeds workflow logic.
+
+---
+
+## 11. Why Temporal stays (research, 2026)
+
+Durable-execution round-ups in 2026 still split the same way:
+
+| Engine | Pitch | Darex |
+|--------|-------|-------|
+| **Temporal** | Mature, polyglot, signals, timers, MIT, self-host | **KEEP.** Already in webhooks and agent/run. |
+| Restate | Single Rust binary; virtual object per entity | WATCH if Temporal ops hurt. `work_item` as a virtual object is a nice *idea*. |
+| Inngest + AgentKit | TS events, AgentKit router, MCP | STUDY the router. Serverless gravity fights our self-host kernel. |
+| Hatchet / DBOS | Workflows in Postgres | Philosophically close; not a migration. |
+| n8n / Windmill | OSS iPaaS | Customer automation later, not WorkItemWorkflow. |
+
+The Temporal 2026 slogan “your agent is a workflow” is our
+WorkItemWorkflow. Isolate every LLM and tool call in an **activity**
+(we already must: no model await in webhooks; no pooled client across
+SSE). PydanticAI and the OpenAI Agents SDK both learned to sit *on*
+Temporal rather than replace it. We do the same with atomic-agent.
+
+HITL confirm is a **Temporal signal**, not a LangGraph interrupt. Same
+user-visible PlanCard; different engine. Do not dual-run.
+
+Catalog: `15` §5.
+
+---
+
+## 12. Alternatives in the world (instead of Temporal WorkItemWorkflow)
+
+**What Darex does:** classify → plan-confirm-execute on Temporal;
+inbound = persist + 200 + workflow; HITL = signal.
+
+| # | Alternative | Why it can be better | Why we still do ours | Refs |
+|---|-------------|----------------------|----------------------|------|
+| 1 | **LangGraph interrupts** | First-class HITL, Studio, checkpoint | Temporal already live; do not dual-run | [langchain-ai/langgraph](https://github.com/langchain-ai/langgraph) |
+| 2 | **Restate** | Lighter ops; virtual object = work_item | BSL; migration; Temporal MIT | [restatedev/restate](https://github.com/restatedev/restate) |
+| 3 | **Inngest AgentKit** | TS, events, MCP, no cluster | Serverless gravity; we self-host | inngest.com AgentKit |
+| 4 | **Hatchet / DBOS** | Workflows in Postgres we already run | Less mature HITL/signals | hatchet-dev/hatchet; dbos-inc/dbos-transact |
+| 5 | **n8n / Windmill / Trigger.dev** | Fast visual or TS jobs | Not confirm-class OS; use later as customer iPaaS | n8n; windmill-labs/windmill |
+
+**Five things to steal anyway**
+
+1. Isolate LLM/tool in activities (Temporal “agent is a workflow” 2026).
+2. Restate virtual-object id → `darex:{org}:{workItemId}` session key.
+3. Inngest router → our employee router, not a new engine.
+4. Playbook matcher (skip free-form plan) — CrewAI Flows idea.
+5. Never unbounded fan-out from a model-produced list.
+
+### Open-source GitHub (at least 5) — same job as this file
+
+| Repo | Similar to | We take |
+|------|------------|---------|
+| [temporalio/temporal](https://github.com/temporalio/temporal) | Durable workflows | **KEEP** |
+| [temporal-community/temporal-ai-agent](https://github.com/temporal-community/temporal-ai-agent) | Agent + MCP inside Temporal | Activity wrap + goals dir |
+| [temporal-sa/durable-agentic-harness](https://github.com/temporal-sa/durable-agentic-harness) | Temporal as durable OS under an agent SDK | Same pattern we use |
+| [restatedev/restate](https://github.com/restatedev/restate) | Virtual objects | WATCH |
+| [inngest/inngest](https://github.com/inngest/inngest) | TS durable steps + AgentKit | Router ideas |
+| [hatchet-dev/hatchet](https://github.com/hatchet-dev/hatchet) | PG-native jobs | STUDY |
+| [n8n-io/n8n](https://github.com/n8n-io/n8n) | Visual HITL + agents | Customer iPaaS |
+| [windmill-labs/windmill](https://github.com/windmill-labs/windmill) | Script jobs | embed-worker later |
+| [triggerdotdev/trigger.dev](https://github.com/triggerdotdev/trigger.dev) | TS background | Same |

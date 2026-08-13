@@ -24,19 +24,79 @@ export interface GeneratedPlan {
   summary: string;
 }
 
-const VALID_TOOLS = new Set([
+/** Always-available tools (no OAuth). Planner may use these even if no connector is connected. */
+export const CORE_PLAN_TOOLS = [
+  'database_query',
+  'web_search',
+  'web_extract',
+  'file_ops',
+  'sandbox',
+] as const;
+
+export const VALID_TOOLS = new Set<string>([
   'gmail', 'google-calendar', 'google-drive', 'google-docs', 'google-sheets',
   'github', 'whatsapp', 'hubspot', 'meta-ads', 'google-ads', 'slack', 'notion',
   'stripe', 'shopify', 'zendesk', 'intercom', 'razorpay',
-  'database_query', 'web_search', 'web_extract', 'file_ops', 'sandbox',
+  'google-analytics', 'google-chat', 'google-meet', 'google-search-console',
+  'google-business-profile', 'google-cloud',
+  ...CORE_PLAN_TOOLS,
 ]);
+
+const TOOL_ALIASES: Record<string, string> = {
+  calendar: 'google-calendar',
+  google_calendar: 'google-calendar',
+  'google-calendar': 'google-calendar',
+  drive: 'google-drive',
+  google_drive: 'google-drive',
+  docs: 'google-docs',
+  google_docs: 'google-docs',
+  sheets: 'google-sheets',
+  google_sheets: 'google-sheets',
+  google_ads: 'google-ads',
+  meta_ads: 'meta-ads',
+  ga4: 'google-analytics',
+  google_analytics: 'google-analytics',
+  google_chat: 'google-chat',
+  google_meet: 'google-meet',
+  search_console: 'google-search-console',
+  google_search_console: 'google-search-console',
+  business_profile: 'google-business-profile',
+  google_business_profile: 'google-business-profile',
+  gcp: 'google-cloud',
+  google_cloud: 'google-cloud',
+  'database-query': 'database_query',
+  db_query: 'database_query',
+  sql: 'database_query',
+  sql_analytics: 'database_query',
+  code_execution: 'sandbox',
+  execute_code: 'sandbox',
+  'code-execution': 'sandbox',
+};
+
+export function normalizeToolName(raw: string): string {
+  const key = String(raw || '').toLowerCase().trim();
+  if (!key) return '';
+  if (TOOL_ALIASES[key]) return TOOL_ALIASES[key];
+  if (VALID_TOOLS.has(key)) return key;
+  const dashed = key.replace(/_/g, '-');
+  if (TOOL_ALIASES[dashed]) return TOOL_ALIASES[dashed];
+  if (VALID_TOOLS.has(dashed)) return dashed;
+  return key;
+}
+
+export function connectedPlannerTools(channelTypes: string[]): string[] {
+  const fromChannels = channelTypes
+    .map(normalizeToolName)
+    .filter((t) => VALID_TOOLS.has(t));
+  return Array.from(new Set<string>([...CORE_PLAN_TOOLS, ...fromChannels]));
+}
 
 function sanitizeSteps(raw: any[]): PlanStep[] {
   if (!Array.isArray(raw)) return [];
   const seen = new Set<string>();
   const steps: PlanStep[] = [];
   for (const s of raw.slice(0, 12)) {
-    const tool = String(s?.tool || '').toLowerCase();
+    const tool = normalizeToolName(String(s?.tool || ''));
     const action = String(s?.action || '');
     if (!VALID_TOOLS.has(tool) || action.length === 0) continue;
     const payloadSig = JSON.stringify(s?.payload || {});
@@ -75,17 +135,19 @@ export async function generatePlan(
   connectedTools: string[]
 ): Promise<GeneratedPlan> {
   try {
-    const connected = connectedTools.length > 0 ? connectedTools.join(', ') : 'unknown — attempt tools, they may fall back gracefully';
+    const allowed = connectedPlannerTools(connectedTools);
+    const connectedLabel = allowed.join(', ');
     const systemPrompt = [
       'You are DareX Executive, planning an airtight multi-step automation.',
       `Organisation org_id=${orgId}. You MUST pass org_id to every mcp.darex.* tool you plan.`,
-      `Connected tools: ${connected}. Only plan steps with tools from this list.`,
+      `Allowed tools: ${connectedLabel}. Only plan steps with tools from this list.`,
+      'Connector tools that are not in the allowed list are not connected — do not invent them or fake their results.',
       'Decompose the user request into the smallest set of concrete steps.',
       'Reply with ONLY a JSON object, no prose, no fences:',
       '{"reasoning": "1-2 sentence rationale", "summary": "one-line plan title", "steps": [{"description": "human step", "tool": "gmail", "action": "send_email", "payload": {"to":"x@y.com","subject":"...","body":"..."}}], "draft": "full drafted email/message content if the user wants a message authored, else empty string"}',
       'Rules:',
       '- step.tool must be one of the connected tools.',
-      '- step.action must be a real action for that tool (e.g. gmail: fetch_latest_emails, triage_emails, draft_email, send_email, extract_otp, extract_attachment; google-calendar: check_availability, create_event, list_events; google-drive: drive_search, drive_list, drive_get_text, drive_upload, drive_share; google-docs: docs_create, docs_read, docs_append; google-sheets: sheets_create, sheets_read, sheets_append_row; hubspot: create_crm_contact, update_contact; github: create_repo, create_issue, fetch_user_repos; zendesk: create_support_ticket, update_ticket, fetch_tickets; notion: create_page, append_page_content, search_workspace_docs; database_query: query; web_search: search; web_extract: extract).',
+      '- step.action must be a real action for that tool (e.g. gmail: fetch_latest_emails, triage_emails, draft_email, send_email, extract_otp, extract_attachment; google-calendar: check_availability, create_event, list_events; google-drive: drive_search, drive_list, drive_get_text, drive_upload, drive_share; google-docs: docs_create, docs_read, docs_append; google-sheets: sheets_create, sheets_read, sheets_append_row; hubspot: create_crm_contact, update_contact; github: create_repo, create_issue, fetch_user_repos; zendesk: create_support_ticket, update_ticket, fetch_tickets; notion: create_page, append_page_content, search_workspace_docs; google-analytics: analytics_report; google-chat: chat_list_spaces, chat_send_message; google-meet: meet_create_space, meet_get_space; google-search-console: search_console_sites, search_console_query; google-business-profile: business_list_locations; google-cloud: cloud_list_projects; database_query: query; web_search: search; web_extract: extract; sandbox: execute).',
       '- Step payloads must include all required params for the action.',
       '- To pass the result of a previous step (like search results or fetched content) into a text field, use the exact syntax {{stepN_output}} where N is the 1-based index (e.g. {{step1_output}}). DO NOT write placeholders like "[Insert results here]".',
       '- Never invent a user email/phone — if the user did not provide the recipient, leave the param empty and note it in description.',
@@ -99,7 +161,7 @@ export async function generatePlan(
         { role: 'system', content: systemPrompt },
         { role: 'user', content: `USER REQUEST: ${prompt}` },
       ],
-      { maxTokens: 800, temperature: 0.2, timeoutMs: 60000 }
+      { maxTokens: 1200, temperature: 0.2, timeoutMs: 60000 }
     );
     const parsed = extractJson(content);
 

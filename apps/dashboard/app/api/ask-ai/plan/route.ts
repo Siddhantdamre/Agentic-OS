@@ -69,6 +69,12 @@ export async function PATCH(request: Request) {
     }
 
     if (action === 'approve') {
+      if (existing.status !== 'pending') {
+        return NextResponse.json(
+          { error: `Plan must be pending to approve (status: ${existing.status})` },
+          { status: 409 }
+        );
+      }
       await client.query(
         `UPDATE agent_plans SET status = 'approved', updated_at = NOW() WHERE id = $1 AND org_id = $2`,
         [planId, orgId]
@@ -84,21 +90,46 @@ export async function PATCH(request: Request) {
       return NextResponse.json({ success: true, status: 'cancelled' });
     }
 
-    // Partial: update per-step enabled flags while pending
+    // Partial: update per-step enabled flags and append user instructions while pending
     if (steps && Array.isArray(steps) && existing.status === 'pending') {
-      const parsedSteps = existing.steps || [];
-      const enabledByDescription = new Map(
-        steps.map((s: any) => [String(s?.description || s?.id || ''), s?.enabled !== false])
-      );
-      const merged = parsedSteps.map((step: any) => ({
-        ...step,
-        enabled: enabledByDescription.get(String(step.description || step.id || '')) ?? step.enabled !== false,
-      }));
+      const parsedSteps = Array.isArray(existing.steps) ? existing.steps : [];
+      const incoming = steps as Array<{
+        id?: string;
+        description?: string;
+        tool?: string;
+        action?: string;
+        enabled?: boolean;
+      }>;
+      const byKey = (s: { id?: string; description?: string }) =>
+        String(s?.id || s?.description || '');
+      const incomingByKey = new Map(incoming.map((s) => [byKey(s), s]));
+      const merged = parsedSteps.map((step: any) => {
+        const patch = incomingByKey.get(byKey(step)) || incomingByKey.get(String(step.description || ''));
+        if (!patch) return step;
+        return { ...step, enabled: patch.enabled !== false };
+      });
+      for (const s of incoming) {
+        const key = byKey(s);
+        if (!key) continue;
+        const exists = merged.some(
+          (step: any) => byKey(step) === key || String(step.description || '') === String(s.description || '')
+        );
+        if (exists) continue;
+        merged.push({
+          id: s.id || `step-${merged.length + 1}`,
+          description: String(s.description).slice(0, 200),
+          tool: 'user_instruction',
+          action: 'note',
+          payload: {},
+          enabled: s.enabled !== false,
+        });
+      }
+      const capped = merged.slice(0, 12);
       await client.query(
         `UPDATE agent_plans SET steps = $3, updated_at = NOW() WHERE id = $1 AND org_id = $2`,
-        [planId, orgId, JSON.stringify(merged)]
+        [planId, orgId, JSON.stringify(capped)]
       );
-      return NextResponse.json({ success: true, steps: merged });
+      return NextResponse.json({ success: true, steps: capped });
     }
 
     return NextResponse.json({ error: 'Unsupported action' }, { status: 400 });

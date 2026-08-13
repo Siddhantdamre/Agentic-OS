@@ -44,6 +44,7 @@ Read in this order if you are planning a phase or writing a vertical pack:
 | 12 | [12-security-compliance-tenancy.md](./12-security-compliance-tenancy.md) | RLS, industry compliance, audit, residency |
 | 13 | [13-phased-roadmap.md](./13-phased-roadmap.md) | Phases 6–18 with exit criteria |
 | 14 | [14-build-principles.md](./14-build-principles.md) | Rules future agents must not break |
+| 15 | [15-open-source-research-landscape.md](./15-open-source-research-landscape.md) | OSS libs, remote APIs, people, papers; keep / adopt / study / reject |
 
 ---
 
@@ -62,7 +63,9 @@ Read in this order if you are planning a phase or writing a vertical pack:
    (offers, leases, disbursements) makes this more important, not less.
 6. **Clone infrastructure, build the brain.** Nango, Temporal, LiteLLM,
    Langfuse, SuperTokens, pgvector stay. Vertical IP is skills, data
-   contracts, workflows, and employee personas.
+   contracts, workflows, and employee personas. The 2026 research
+   catalog of *other* agent OS / memory / orchestration libraries
+   lives in `15` — steal patterns, do not swap the kernel.
 
 ---
 
@@ -74,6 +77,8 @@ Read in this order if you are planning a phase or writing a vertical pack:
   await LLM calls inside webhooks.
 - It is **not** a commitment to every P3 integration in year one. Priority
   waves live in `13-phased-roadmap.md` and `06-integrations-catalog.md`.
+- It is **not** a shopping list to replace the kernel. `15` catalogs
+  OSS and commercial work so we steal patterns; keep/reject is binding.
 
 ---
 
@@ -88,3 +93,24 @@ Read in this order if you are planning a phase or writing a vertical pack:
 When a future phase ships, update `BUILD_STATE.md` and `docs/current-working/`,
 then mark the matching item in this pack as **absorbed** (do not delete
 history; add a “Shipped” note).
+
+---
+
+## Alternatives in every file (how to read them)
+
+Every numbered file now ends with **“Alternatives in the world”**:
+
+1. **What Darex does** (this pack’s choice).
+2. **4–5 existing products/repos** that solve a similar job, often
+   better at *one* axis (speed, depth, OSS, enterprise).
+3. **Why those can be better** — honest, so we know the trade.
+4. **Why we still do ours** — tenancy, confirm, WhatsApp, packs.
+5. **Five things to steal** — code/patterns we should copy *into*
+   Darex without swapping the kernel.
+6. **Refs** — GitHub, papers, articles.
+7. **Open-source GitHub (at least 5)** — repos doing similar work we
+   can copy into Darex. Commercial products stay in the table;
+   this list is cloneable code.
+
+Master catalog: [`15-open-source-research-landscape.md`](./15-open-source-research-landscape.md).
+If `15` and a layer file disagree on a **keep**, `14` + `15` §14 win.

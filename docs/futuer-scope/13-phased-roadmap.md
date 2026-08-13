@@ -33,6 +33,10 @@ file `01`. Exit criteria are testable.
 **Exit:** returning contact context retrieved on new thread; eval #7
 style; disconnected sources still honest; RLS two-org vector test.
 
+**Research (do not block on vendors):** hybrid vector+FTS, temporal
+fact columns, async extract — `10` §10 and `15` §4. Not Mem0 Cloud,
+not Neo4j, not GraphRAG on the webhook.
+
 ---
 
 ## Phase 7 — Insight engine (not templates)
@@ -217,3 +221,41 @@ healthcare in year one.
 | Y2 | 16–18 as pull |
 
 If capacity is one team: **never skip Phase 6**. Skip Wave 4 first.
+
+---
+
+## Alternatives in the world (instead of this phase order)
+
+**What Darex does:** Phase 6 memory first, then insight, scale,
+billing, connectors, RE pack. Never skip memory.
+
+| # | Alternative | Why it can be better | Why we still do ours | Refs |
+|---|-------------|----------------------|----------------------|------|
+| 1 | **Ship RE pack first** (Elise-shaped demo) | Revenue and story | Theater without RAG, mounted skills, live WhatsApp (`01` §2) | This pack `13` + `05` |
+| 2 | **Buy Mastra/Letta and skip kernel work** | Faster agent UX | Dual runtime = hang class + tenancy holes | `15` §3 |
+| 3 | **Insight/analytics before memory** | Dashboard looks smart | Templates without recall are the current Insight page | `01` Insight row |
+| 4 | **Connector spray (Wave E) first** | Logo wall for sales | Stubs already lie; finish GBP/Meet before vanity | `06` Wave A |
+| 5 | **Voice/computer-use (Phase 17) as launch** | Demo wow | Last resort; APIs first (`14`) | LiveKit, OpenHands, CUA |
+
+**Five things to steal anyway**
+
+1. Hygiene in Phase 6: skills mount, sandbox git, hermes delete, Chatwoot→agent.
+2. Eval-runner CI from Phase 6 (Promptfoo + τ-bench shape).
+3. Two dashboard replicas + Redis before “scale marketing.”
+4. Sheets wedge for RE IN — do not wait on MLS license.
+5. Absorb shipped rows into `01` with dates.
+
+### Open-source GitHub (at least 5) — same job as this file
+
+Repos that **accelerate a phase** without changing order:
+
+| Repo | Phase it helps | We take |
+|------|----------------|---------|
+| [pgvector/pgvector](https://github.com/pgvector/pgvector) | 6 memory | Tables + HNSW |
+| [promptfoo/promptfoo](https://github.com/promptfoo/promptfoo) | 6 eval CI | Golden YAML |
+| [langfuse/langfuse](https://github.com/langfuse/langfuse) | 6–7 learning | KEEP; Redis split in 8 |
+| [NangoHQ/nango](https://github.com/NangoHQ/nango) | 10 connectors | Finish stubs |
+| [temporalio/temporal](https://github.com/temporalio/temporal) | 8–13 durable | WorkItemWorkflow |
+| [chatwoot/chatwoot](https://github.com/chatwoot/chatwoot) | 6 hygiene | Agent on webhook |
+| [livekit/agents](https://github.com/livekit/agents) | 17 voice | After APIs |
+| [calcom/cal.com](https://github.com/calcom/cal.com) | 11 RE showings | Calendar SoR |

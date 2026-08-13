@@ -12,6 +12,12 @@ interface OnboardingState {
   setBusinessType: (type: string) => void;
   toggleChannel: (channel: string) => void;
   setStep: (step: number) => void;
+  hydrateFromServer: (partial: {
+    businessName?: string;
+    teamSize?: number;
+    businessType?: string;
+    selectedChannels?: string[];
+  }) => void;
   reset: () => void;
 }
 
@@ -32,6 +38,16 @@ export const useOnboardingStore = create<OnboardingState>((set) => ({
         : [...state.selectedChannels, channel],
     })),
   setStep: (step) => set({ step }),
+  hydrateFromServer: (partial) =>
+    set((state) => ({
+      businessName: state.businessName || partial.businessName || '',
+      teamSize: partial.teamSize ?? state.teamSize,
+      businessType: state.businessType || partial.businessType || '',
+      selectedChannels:
+        partial.selectedChannels && partial.selectedChannels.length > 0
+          ? partial.selectedChannels
+          : state.selectedChannels,
+    })),
   reset: () =>
     set({
       step: 1,

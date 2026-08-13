@@ -384,3 +384,59 @@ Cal.com, Zoom.
 **Wave E:** Everything P2–P3 as customers pull.
 
 This catalog is intentionally long. Shipping is intentionally not.
+
+---
+
+## 17. Integration *planes* vs this catalog (research)
+
+This file is **which APIs to wire**. `15` §6 is **which OSS/remote
+products people use as the plane**. Binding calls:
+
+| Plane | KEEP | REJECT / WATCH |
+|-------|------|----------------|
+| OAuth / tokens | **Nango** | Composio; do not rebuild |
+| Tool protocol | **MCP** `mcp.darex.*` | Second MCP server per vertical |
+| World search | **Jina** | Tavily/Exa/Firecrawl only if Jina fails |
+| iPaaS | — | n8n/Zapier as *customer* automation later, not our executor |
+| Unified CRM APIs | — | unified.to / Merge **WATCH** if 40 CRMs drown Wave C |
+| Browser | Playwright in sandbox, Phase 17 | Browserbase as default muscle |
+
+Connector rows above still ship as TypeScript executors with honest
+`notConnected`. A new logo in this catalog is not a reason to add a
+new agent runtime.
+
+---
+
+## 18. Alternatives in the world (instead of Nango + our executors)
+
+**What Darex does:** Nango holds OAuth; TypeScript executors act;
+honest `notConnected`. MCP names `mcp.darex.*`.
+
+| # | Alternative | Why it can be better | Why we still do ours | Refs |
+|---|-------------|----------------------|----------------------|------|
+| 1 | **Composio** tool+auth | Huge tool catalog, agent-native | **REJECT** — closed + breach history (original spec) | composio.dev — do not adopt |
+| 2 | **Pipedream / Zapier / Workato / Make** | 5000+ apps, no executor code | Not tenant-RLS; not confirm; we would be a thin Zapier | Pipedream GitHub; Zapier |
+| 3 | **unified.to / Merge.dev / Knit** | One CRM API for 50 CRMs | WATCH if Wave C drowns us; OAuth still Nango | unified.to; merge.dev |
+| 4 | **n8n** self-host iPaaS | OSS, visual, MCP nodes in 2026 | Customer automation later; not the kernel executor | [n8n-io/n8n](https://github.com/n8n-io/n8n) |
+| 5 | **Raw Google/Meta SDKs only** (skip Nango) | Fewer moving parts for 3 providers | Token refresh + 40 providers is why Nango exists | Nango [NangoHQ/nango](https://github.com/NangoHQ/nango) |
+
+**Five things to steal anyway**
+
+1. Keep Nango. Finish GBP/Meet/GA4/GSC stubs before vanity logos.
+2. MCP spec updates — official TS SDK, not a second bridge.
+3. Jina KEEP; Firecrawl/Tavily only if search quality dies.
+4. Playwright last-resort (`08` computer-use), confirm every write.
+5. E2B/Daytona as *ideas* for sandbox isolation vs our Docker image.
+
+### Open-source GitHub (at least 5) — same job as this file
+
+| Repo | Similar to | We take |
+|------|------------|---------|
+| [NangoHQ/nango](https://github.com/NangoHQ/nango) | OAuth + 400 APIs | **KEEP** token plane |
+| [modelcontextprotocol/servers](https://github.com/modelcontextprotocol/servers) | Official MCP server examples | `mcp.darex.*` design |
+| [n8n-io/n8n](https://github.com/n8n-io/n8n) | 1500+ integrations + MCP | Customer iPaaS later |
+| [PipedreamHQ/pipedream](https://github.com/PipedreamHQ/pipedream) | Source-available iPaaS | Connector coverage, not kernel |
+| [activepieces/activepieces](https://github.com/activepieces/activepieces) | MIT Zapier-class | Same |
+| [windmill-labs/windmill](https://github.com/windmill-labs/windmill) | Scripts as jobs | Embed/sync workers later |
+| [microsoft/playwright](https://github.com/microsoft/playwright) | Browser last-resort | Phase 17 sandbox |
+| [jina-ai/reader](https://github.com/jina-ai/reader) / Jina search | World-sense we already use | KEEP cite-not-SoR |

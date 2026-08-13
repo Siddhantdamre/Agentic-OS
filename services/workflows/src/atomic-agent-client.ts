@@ -13,8 +13,16 @@ export interface AgentTurnResult {
 }
 
 const ATOMIC_AGENT_URL = process.env.ATOMIC_AGENT_URL || 'http://localhost:8787';
-const ATOMIC_AGENT_API_KEY = process.env.ATOMIC_AGENT_API_KEY || 'darex-atomic-agent-dev-key';
 const ATOMIC_AGENT_MODEL = process.env.ATOMIC_AGENT_MODEL || 'atomic-agent';
+
+function requireAtomicAgentKey(): string {
+  const key = process.env.ATOMIC_AGENT_API_KEY;
+  if (key) return key;
+  if (process.env.NODE_ENV === 'production') {
+    throw new Error('ATOMIC_AGENT_API_KEY is required in production');
+  }
+  return 'darex-atomic-agent-dev-key';
+}
 const AGENT_TURN_TIMEOUT_MS = parseInt(process.env.ATOMIC_AGENT_TIMEOUT_MS || '180000', 10);
 const AGENT_MAX_RETRIES = parseInt(process.env.ATOMIC_AGENT_MAX_RETRIES || '2', 10);
 
@@ -53,15 +61,27 @@ function buildGroundedUserMessage(input: AgentTaskInput): string {
     `- When any mcp.darex.* tool requires org_id, pass org_id=${JSON.stringify(input.orgId)}. Never ask the user for it and never search memory/profile/notes/resources/prompts to find it.`,
     `- If a mcp.darex.* tool needs an argument you do not have (besides org_id), ask the user for that specific value directly.`,
   ];
-  if (input.connectedChannels && input.connectedChannels.length > 0) {
+  const connected = (input.connectedChannels || []).map((c: any) => {
+    if (typeof c === 'string') return c;
+    if (c && typeof c === 'object' && c.channel_type) return String(c.channel_type);
+    return '';
+  }).filter(Boolean);
+  if (connected.length > 0) {
     facts.push(
-      `- CONNECTED CONNECTORS for this org (authoritative, already OAuth-authorized): ${input.connectedChannels.join(', ')}. Use these tools directly.`,
+      `- CONNECTED CONNECTORS for this org (authoritative, already OAuth-authorized): ${connected.join(', ')}. Use these tools directly.`,
       `- A tool response saying "not connected" for one connector (e.g. google-drive) does NOT mean other connectors are unavailable — each connector is independent. Verify per-connector by calling its tool.`,
     );
   } else {
     facts.push(
       `- No connectors are confirmed connected for this org yet — do not assume any external connector is available.`,
     );
+  }
+  if (input.priorToolResults && input.priorToolResults.length > 0) {
+    facts.push('', 'PRIOR TOOL RESULTS FROM THIS TASK (do not re-run unless they failed):');
+    for (const step of input.priorToolResults.slice(-12)) {
+      const toolBit = step.toolUsed ? ` [${step.toolUsed}]` : '';
+      facts.push(`- step ${step.step}: ${step.action}${toolBit} → ${String(step.result || '').slice(0, 400)}`);
+    }
   }
   facts.push(
     ``,
@@ -147,9 +167,9 @@ async function readSseStream(body: ReadableStream<Uint8Array>, sessionId: string
             continue;
           }
 
-          if (eventType === 'tool_progress') {
-            const toolStr = typeof json.tool === 'string' ? json.tool : 'unknown';
-            const labelStr = typeof json.label === 'string' ? json.label : '';
+          if (eventType === 'tool_progress' || eventType === 'tool_call' || eventType === 'tool') {
+            const toolStr = typeof json.tool === 'string' ? json.tool : (typeof json.name === 'string' ? json.name : 'unknown');
+            const labelStr = typeof json.label === 'string' ? json.label : (typeof json.arguments === 'string' ? json.arguments : '');
             state.tools.push({ tool: toolStr, argsLabel: labelStr });
             opts?.onToolProgress?.(toolStr, labelStr);
           } else if (eventType === 'session_id') {
@@ -162,6 +182,15 @@ async function readSseStream(body: ReadableStream<Uint8Array>, sessionId: string
             if (typeof delta === 'string' && delta.length > 0) {
               state.reply += delta;
               opts?.onChunk?.(delta);
+            }
+            const toolCalls = json.choices?.[0]?.delta?.tool_calls;
+            if (Array.isArray(toolCalls)) {
+              for (const tc of toolCalls) {
+                const toolStr = tc?.function?.name || tc?.name || 'unknown';
+                const labelStr = tc?.function?.arguments || '';
+                state.tools.push({ tool: String(toolStr), argsLabel: String(labelStr) });
+                opts?.onToolProgress?.(String(toolStr), String(labelStr));
+              }
             }
             if (typeof json.model === 'string') state.model = json.model;
           }
@@ -203,7 +232,7 @@ export async function runAgentTurn(input: AgentTaskInput, opts?: RunAgentOptions
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${ATOMIC_AGENT_API_KEY}`,
+          Authorization: `Bearer ${requireAtomicAgentKey()}`,
           'X-Atomic-Extensions': 'on',
         },
         body: JSON.stringify({
@@ -265,12 +294,22 @@ export function mapTurnToResult(turn: AgentTurnResult): AgentTaskResult {
       result: t.argsLabel ? `args: ${t.argsLabel}` : 'tool executed',
     });
   });
+  const hasReply = Boolean(turn.reply && turn.reply.trim());
   steps.push({
     step: steps.length + 1,
     action: 'Final Response Synthesis',
-    result: `Generated reply: "${turn.reply.slice(0, 60)}..."`,
+    result: hasReply ? `Generated reply: "${turn.reply.slice(0, 60)}..."` : 'Agent turn finished with no text reply',
   });
-  return { success: true, replyMessage: turn.reply, executedSteps: steps, usedTools };
+  return {
+    success: true,
+    replyMessage: turn.reply,
+    executedSteps: steps,
+    usedTools,
+    // atomic-agent already ran its full MCP tool loop in this turn. Mark done
+    // when we have a reply, or when no tools ran (plain Q&A). Empty reply after
+    // tools may be an incomplete stream — Temporal can retry with priorToolResults.
+    isDone: hasReply || usedTools.length === 0,
+  };
 }
 
 /**
@@ -351,10 +390,11 @@ export async function runAutonomousAgentDirect(
           result: `Failed: ${details}`,
         },
       ],
-      usedTools: input.toolAllowlist || [],
+      usedTools: [],
       error: details,
       partialReply,
       retryable: aborted,
+      isDone: !aborted,
     };
   }
 }

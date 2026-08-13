@@ -34,7 +34,12 @@ function LoginForm() {
       const res = await fetch('/api/auth/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password }),
+        body: JSON.stringify({
+          email,
+          password,
+          rememberMe,
+          inviteToken: searchParams?.get('invite') || undefined,
+        }),
       });
 
       const data = await res.json();
@@ -43,12 +48,11 @@ function LoginForm() {
         throw new Error(data.message || 'Login failed. Please check your credentials.');
       }
 
-      // Check if user has an org / has completed onboarding
       const redirectTo = searchParams?.get('redirect');
-      if (data.orgId) {
-        router.push(redirectTo && redirectTo.startsWith('/') ? redirectTo : '/');
-      } else {
+      if (!data.onboardingComplete) {
         router.push('/onboarding/name');
+      } else {
+        router.push(redirectTo && redirectTo.startsWith('/') ? redirectTo : '/');
       }
     } catch (err: any) {
       setError(err.message);
@@ -60,8 +64,9 @@ function LoginForm() {
   const handleOAuthLogin = (provider: string) => {
     setOauthLoading(provider);
     setError('');
-    // Full page redirect to our OAuth initiation route
-    window.location.href = `/api/auth/oauth/${provider}`;
+    const invite = searchParams?.get('invite');
+    const qs = invite ? `?invite=${encodeURIComponent(invite)}` : '';
+    window.location.href = `/api/auth/oauth/${provider}${qs}`;
   };
 
   const demoEmail = process.env.NEXT_PUBLIC_DEMO_EMAIL;
@@ -228,13 +233,12 @@ function LoginForm() {
         <div>
           <div className="flex items-center justify-between mb-1">
             <label className="block text-xs font-semibold text-emerald-300">Password</label>
-            <a
-              href="#"
-              onClick={(e) => { e.preventDefault(); alert('Password reset link sent.'); }}
+            <Link
+              href="/forgot-password"
               className="text-[11px] text-[#F0C05A] hover:underline"
             >
               Forgot password?
-            </a>
+            </Link>
           </div>
           <div className="relative">
             <Lock className="w-4 h-4 text-emerald-500 absolute left-3.5 top-3.5" />

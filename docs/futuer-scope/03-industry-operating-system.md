@@ -264,3 +264,40 @@ A pack is live when:
 Real estate brokerage is the first pack that must clear this bar.
 Other industries in `04-b2b-verticals.md` are designed to the same bar,
 phased by `13-phased-roadmap.md`.
+
+---
+
+## 12. Alternatives in the world (instead of “vertical packs”)
+
+**What Darex does:** installable YAML overlay (employees + entities +
+workflows + skills + KPIs + compliance) on one kernel. Not 40 apps.
+
+| # | Alternative | Why it can be better | Why we still do ours | Refs |
+|---|-------------|----------------------|----------------------|------|
+| 1 | **Odoo modules / Odoo Industry** | Real accounting, inventory, manufacturing; huge app store | We sit *above* Odoo as SoR via Nango, not replace ERP | [github.com/odoo/odoo](https://github.com/odoo/odoo), Odoo 18 industry apps |
+| 2 | **ERPNext / Frappe** (Python, GPL) | Cleaner OSS ERP; domain modules (healthcare, education, manufacturing) | Same: integrate, do not become ERPNext | [frappe/erpnext](https://github.com/frappe/erpnext) |
+| 3 | **Salesforce Industry Clouds** (Financial, Health, RE Cloud) | Deep objects, compliance, AppExchange | Closed; we would be a thin Einstein wrapper; no WhatsApp-first IN | Salesforce Industry Cloud docs |
+| 4 | **Twenty CRM custom objects** | Modern OSS Salesforce; GraphQL; AI chat with CRM | CRM is a connector, not the OS | [twentyhq/twenty](https://github.com/twentyhq/twenty) (~25k★) |
+| 5 | **Fork the product per vertical** (separate RE SaaS) | Faster realtor demo; simpler schema | Kills the OS thesis; every bug fixed 4 times | Anti-pattern; see `00` non-goals |
+
+**Five things to steal anyway**
+
+1. Odoo: pack.yaml = module manifest (`depends`, `data`, views).
+2. ERPNext: DocType JSON ≈ our `entities/*.json`.
+3. Salesforce: record types + validation rules ≈ compliance.yaml **as code**.
+4. Twenty: custom objects without migrating Postgres schema every pack — JSON schema + projection tables.
+5. Quality bar §11 is our AppExchange review. Do not ship a pack that fails it.
+
+Article: “Open Source CRM & ERP 2026” (Odoo, ERPNext, Twenty, SuiteCRM, EspoCRM).
+
+### Open-source GitHub (at least 5) — same job as this file
+
+| Repo | Similar to | We take |
+|------|------------|---------|
+| [odoo/odoo](https://github.com/odoo/odoo) | Industry modules on one kernel | `pack.yaml` manifest |
+| [frappe/erpnext](https://github.com/frappe/erpnext) | DocTypes + workflows per domain | `entities/*.json` |
+| [twentyhq/twenty](https://github.com/twentyhq/twenty) | Custom objects, modern CRM | Projection tables, not schema fork |
+| [salesagility/SuiteCRM](https://github.com/salesagility/SuiteCRM) | Classic OSS CRM modules | Entity names for core pack |
+| [espocrm/espocrm](https://github.com/espocrm/espocrm) | Self-host CRM + metadata | Pack metadata, not PHP runtime |
+| [calcom/cal.com](https://github.com/calcom/cal.com) | Scheduling as a pack-like app | Showing/demo booking connector |
+| [documenso/documenso](https://github.com/documenso/documenso) | OSS DocuSign | E-sign confirm class later |

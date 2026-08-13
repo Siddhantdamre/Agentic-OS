@@ -3,12 +3,21 @@
 // (or plain text) — they intentionally bypass atomic-agent's agent loop, which
 // would inject the full tool grammar and try to execute tools.
 
-const LITELLM_BASE_URL =
-  process.env.LITELLM_BASE_URL ||
-  (process.env.NODE_ENV === 'production' ? 'http://litellm:4000/v1' : 'http://localhost:4000/v1');
-const LITELLM_API_KEY =
-  process.env.LITELLM_API_KEY || process.env.LITELLM_MASTER_KEY || 'sk-darex-litellm-dev-key';
-const LITELLM_MODEL = process.env.LITELLM_MODEL || 'atomic-agent';
+function resolveLiteLLMConfig(): { baseUrl: string; apiKey: string; model: string } {
+  const isProd = process.env.NODE_ENV === 'production';
+  const baseUrl =
+    process.env.LITELLM_BASE_URL || (isProd ? '' : 'http://localhost:4000/v1');
+  const apiKey = process.env.LITELLM_API_KEY || process.env.LITELLM_MASTER_KEY || '';
+  const model = process.env.LITELLM_MODEL || 'atomic-agent';
+
+  if (!baseUrl) {
+    throw new Error('LITELLM_BASE_URL must be set');
+  }
+  if (!apiKey) {
+    throw new Error('LITELLM_API_KEY or LITELLM_MASTER_KEY must be set');
+  }
+  return { baseUrl, apiKey, model };
+}
 
 export interface ChatMessage {
   role: 'system' | 'user' | 'assistant';
@@ -32,6 +41,7 @@ export async function chatCompletion(
   messages: ChatMessage[],
   options: ChatOptions
 ): Promise<string> {
+  const { baseUrl, apiKey, model } = resolveLiteLLMConfig();
   const maxRetries = options.maxRetries ?? 2;
   const timeoutMs = options.timeoutMs ?? 120000;
 
@@ -40,14 +50,14 @@ export async function chatCompletion(
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), timeoutMs);
     try {
-      const res = await fetch(`${LITELLM_BASE_URL}/chat/completions`, {
+      const res = await fetch(`${baseUrl}/chat/completions`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${LITELLM_API_KEY}`,
+          Authorization: `Bearer ${apiKey}`,
         },
         body: JSON.stringify({
-          model: LITELLM_MODEL,
+          model,
           stream: false,
           max_tokens: options.maxTokens,
           temperature: options.temperature ?? 0,
@@ -63,7 +73,6 @@ export async function chatCompletion(
 
       if (res.ok) {
         const data = await res.json();
-        controller.abort();
         return data?.choices?.[0]?.message?.content || '';
       }
 

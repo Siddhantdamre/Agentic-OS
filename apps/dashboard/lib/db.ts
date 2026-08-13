@@ -1,19 +1,30 @@
 import { Pool, PoolClient } from 'pg';
 import { cookies } from 'next/headers';
+import { parseSessionCookie, SESSION_COOKIE } from '@/lib/session-cookie';
+import { attachUserToOrg, lookupUserById } from '@/lib/auth-user';
 
-const globalForDb = global as unknown as { pool: Pool };
-
-export const pool =
-  globalForDb.pool ||
-  new Pool({
+function createPool(): Pool {
+  const isProd = process.env.NODE_ENV === 'production';
+  if (isProd && !process.env.DB_PASSWORD) {
+    throw new Error('DB_PASSWORD must be set in production');
+  }
+  if (isProd && !process.env.DB_HOST) {
+    throw new Error('DB_HOST must be set in production');
+  }
+  return new Pool({
     host: process.env.DB_HOST || 'localhost',
-    port: parseInt(process.env.DB_PORT || '5432'),
+    port: parseInt(process.env.DB_PORT || '5432', 10),
     user: process.env.DB_USER || 'darex',
-    password: process.env.DB_PASSWORD, // Must be set — no insecure hardcoded fallback
+    password: process.env.DB_PASSWORD,
     database: process.env.DB_NAME || 'darex',
     max: 10,
     idleTimeoutMillis: 30000,
   });
+}
+
+const globalForDb = global as unknown as { pool: Pool };
+
+export const pool = globalForDb.pool || createPool();
 
 if (process.env.NODE_ENV !== 'production') globalForDb.pool = pool;
 
@@ -23,7 +34,7 @@ if (process.env.NODE_ENV !== 'production') globalForDb.pool = pool;
  */
 export async function getScopedClient(): Promise<{ client: PoolClient; orgId: string; userId: string }> {
   const cookieStore = await cookies();
-  const userId = cookieStore.get('darex_session')?.value;
+  const userId = await parseSessionCookie(cookieStore.get(SESSION_COOKIE)?.value);
 
   if (!userId) {
     throw new Error('Unauthorized');
@@ -31,49 +42,62 @@ export async function getScopedClient(): Promise<{ client: PoolClient; orgId: st
 
   const client = await pool.connect();
   try {
-    // 1. Resolve user's explicit org_id from users table
-    const userRes = await client.query('SELECT org_id, email FROM users WHERE id = $1', [userId]);
+    await client.query("SELECT set_config('app.current_user_id', $1, false)", [userId]);
 
-    if (userRes.rows.length === 0) {
+    const user = await lookupUserById(client, userId);
+    if (!user) {
       throw new Error('Unauthorized');
     }
 
-    let orgId = userRes.rows[0]?.org_id;
-    const userEmail = userRes.rows[0]?.email || 'user';
-
-    // 2. If user doesn't have a dedicated organization, create one dynamically
+    let orgId = user.org_id;
     if (!orgId) {
-      const orgName = `${userEmail.split('@')[0]}'s Organization`;
-      const orgSlug = `org-${userId.slice(0, 8)}`;
-      const newOrgRes = await client.query(
-        `INSERT INTO orgs (name, slug, plan, status) VALUES ($1, $2, 'pro', 'active') RETURNING id`,
-        [orgName, orgSlug]
-      );
-      orgId = newOrgRes.rows[0].id;
-      await client.query('UPDATE users SET org_id = $1 WHERE id = $2', [orgId, userId]);
+      orgId = await createOrgForEmail(client, user.email || 'user');
+      await attachUserToOrg(client, userId, orgId, 'owner');
     }
 
-    // 3. Set PostgreSQL RLS Context — SESSION-level (`is_local=false`) so the
-    //    org binding survives the caller's own autocommit queries (SET LOCAL
-    //    with `true` only lasted for the single statement that set it, which
-    //    made RLS a no-op). The client is wrapped so `release()` resets the
-    //    context, keeping it from leaking to the next pooled borrower.
     await client.query("SELECT set_config('app.current_org_id', $1, false)", [orgId]);
-
-    const scopedClient = client;
-    const originalRelease = scopedClient.release.bind(scopedClient);
-    scopedClient.release = function (err?: Error | boolean) {
-      scopedClient
-        .query('RESET app.current_org_id')
-        .catch(() => {})
-        .finally(() => originalRelease(err));
-    } as typeof scopedClient.release;
-
-    return { client: scopedClient, orgId, userId };
+    wrapClientRelease(client);
+    return { client, orgId, userId };
   } catch (err) {
     client.release();
     throw err;
   }
+}
+
+/**
+ * Scope a pooled client to an org that was already resolved (webhooks, background
+ * agent follow-up). Session-level RLS, reset on release. Never takes org_id from
+ * an untrusted request body — the caller must resolve tenant first.
+ */
+export async function getOrgScopedClient(orgId: string): Promise<{ client: PoolClient; orgId: string }> {
+  if (!orgId) {
+    throw new Error('orgId is required');
+  }
+  const client = await pool.connect();
+  try {
+    await client.query("SELECT set_config('app.current_org_id', $1, false)", [orgId]);
+    wrapClientRelease(client);
+    return { client, orgId };
+  } catch (err) {
+    client.release();
+    throw err;
+  }
+}
+
+function wrapClientRelease(client: PoolClient): void {
+  const marked = client as PoolClient & { _darexScoped?: boolean };
+  if (marked._darexScoped) return;
+  marked._darexScoped = true;
+  const originalRelease = client.release.bind(client);
+  client.release = function (err?: Error | boolean) {
+    const finish = () => originalRelease(err);
+    client
+      .query('RESET app.current_org_id')
+      .catch(() => undefined)
+      .then(() => client.query('RESET app.current_user_id'))
+      .catch(() => undefined)
+      .then(finish, finish);
+  } as typeof client.release;
 }
 
 /**
@@ -84,7 +108,7 @@ export async function createOrgForEmail(client: PoolClient, email: string): Prom
   const name = `${(email || 'user').split('@')[0]}'s Organization`;
   const slug = `org-${(email || 'user').replace(/[^a-z0-9]+/gi, '-').slice(0, 24)}-${Date.now()}`;
   const res = await client.query(
-    `INSERT INTO orgs (name, slug, plan, status) VALUES ($1, $2, 'pro', 'active') RETURNING id`,
+    `INSERT INTO orgs (name, slug, plan, status) VALUES ($1, $2, 'starter', 'provisioning') RETURNING id`,
     [name, slug]
   );
   return res.rows[0].id;
@@ -99,11 +123,11 @@ export async function ensureUserOrg(
   userId: string,
   email: string
 ): Promise<string> {
-  const userRes = await client.query('SELECT org_id FROM users WHERE id = $1', [userId]);
-  const existing = userRes.rows[0]?.org_id;
+  const user = await lookupUserById(client, userId);
+  const existing = user?.org_id;
   if (existing) return existing;
 
   const orgId = await createOrgForEmail(client, email);
-  await client.query('UPDATE users SET org_id = $1 WHERE id = $2', [orgId, userId]);
+  await attachUserToOrg(client, userId, orgId, 'owner');
   return orgId;
 }

@@ -1,4 +1,5 @@
 export * from './types';
+export * from './providers';
 export * from './client';
 export * from './hubspot';
 export * from './whatsapp';
@@ -7,3 +8,4 @@ export * from './calendar';
 export * from './razorpay';
 export * from './meta-ads';
 export * from './google-ads';
+export * from './test-connection';

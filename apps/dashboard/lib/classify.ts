@@ -8,8 +8,10 @@
 
 import { chatCompletion } from './litellm-client';
 
+export type ClassifyType = 'simple' | 'complex';
+
 export interface ClassifyResult {
-  type: 'simple' | 'complex';
+  type: ClassifyType;
   confidence: number;
   usedFallback: boolean;
   model?: string;
@@ -27,8 +29,10 @@ const COMPLEX_HINTS = new RegExp(
     '\\b(check\\s+availability|free\\s+slot|when\\s+is\\s+(everyone|the team)\\s+free)\\b',
     '\\b(ticket|lead|contact|crm|issue|deal)\\b',
     '\\b(analyze|report|metrics|roas|ctr|campaign)\\b',
+    '\\b(google\\s+analytics|ga4|search\\s+console|business\\s+profile|google\\s+chat|google\\s+meet|google\\s+cloud)\\b',
     '\\b(whatsapp|slack|message)\\s.*\\b(send|notify)\\b',
     '\\b(find|search|read|fetch)\\b.*\\b(email|doc|file|spreadsheet|ticket)\\b',
+    '\\b(then|after that|and then|multi-?step|workflow|automat)\\b',
   ].join('|'),
   'i'
 );
@@ -48,7 +52,9 @@ const SIMPLE_HINTS = new RegExp(
  * The deepseek reasoning model burns small budgets in `reasoning_content`, so
  * we allow a modest completion budget and check the final content.
  */
-async function classifyWithAgent(prompt: string, orgId: string): Promise<'simple' | 'complex' | 'unknown'> {
+type AgentClassify = 'simple' | 'complex' | 'unknown';
+
+async function classifyWithAgent(prompt: string, orgId: string): Promise<AgentClassify> {
   try {
     const systemPrompt = [
       'You are a strict router for a business AI assistant.',
@@ -57,7 +63,7 @@ async function classifyWithAgent(prompt: string, orgId: string): Promise<'simple
       'Reply with ONLY a JSON object, no prose, no code fences, no preamble.',
       'Use exactly {"type":"SIMPLE"} or {"type":"COMPLEX"}.',
       'SIMPLE = plain Q&A / explanation / greeting / knowledge-only. No tool execution, no record changes.',
-      'COMPLEX = any request that should use connected tools (gmail, calendar, drive, docs, sheets, hubspot, zendesk, notion, github, ads, whatsapp, slack, stripe, sql) or requires multi-step work: read/triage inbox, draft/send email, OTP/attachment extraction, schedule/book, availability check, create/update/find records, upload/share/append files, analytics over data, or any action needing approval before running.',
+      'COMPLEX = any request that should use connected tools (gmail, calendar, drive, docs, sheets, hubspot, zendesk, notion, github, ads, whatsapp, slack, stripe, sql, google analytics, google chat, google meet, search console, business profile, google cloud) or requires multi-step work: read/triage inbox, draft/send email, OTP/attachment extraction, schedule/book, availability check, create/update/find records, upload/share/append files, analytics over data, or any action needing approval before running.',
       'When in doubt, choose SIMPLE.',
       'Begin your reply with the JSON object directly.',
     ].join('\n');
@@ -103,8 +109,19 @@ export async function classifyRequest(prompt: string, orgId: string): Promise<Cl
 
   // 2. Slow-path: If ambiguous, ask the LLM router.
   const agentType = await classifyWithAgent(trimmed, orgId);
-  if (agentType === 'complex') return { type: 'complex', confidence: 0.75, usedFallback: false, model: 'atomic-agent' };
-  if (agentType === 'simple') return { type: 'simple', confidence: 0.7, usedFallback: false, model: 'atomic-agent' };
+  switch (agentType) {
+    case 'complex':
+      return { type: 'complex', confidence: 0.75, usedFallback: false, model: 'litellm' };
+    case 'simple':
+      return { type: 'simple', confidence: 0.7, usedFallback: false, model: 'litellm' };
+    case 'unknown':
+      break;
+    default: {
+      const _exhaustive: never = agentType;
+      void _exhaustive;
+      break;
+    }
+  }
 
   // 3. Fallback if LLM fails: bias to SIMPLE on any remaining ambiguity to prevent getting stuck.
   if (complex) return { type: 'complex', confidence: 0.6, usedFallback: true };

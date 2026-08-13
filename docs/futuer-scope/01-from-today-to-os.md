@@ -33,7 +33,10 @@ These are the load-bearing walls. Future scope **extends** them.
 
 **Do not** replace atomic-agent with LangGraph/Hermes. `apps/agents/` is
 legacy. `hermes` route is broken and should be deleted or rewired, not
-revived as a second runtime.
+revived as a second runtime. The 2026 library/people catalog and the
+keep/reject list live in `15`. If a gap looks like “we need Mem0 /
+CrewAI / Letta,” it is almost certainly a **pattern** to copy into
+our tables and YAML, not a kernel swap.
 
 ---
 
@@ -215,3 +218,39 @@ A row in section 2 or 3 is closed when:
 
 Then add `Shipped: YYYY-MM-DD` under the row in this file. Do not rewrite
 history.
+
+---
+
+## 8. Alternatives in the world (instead of “close these gaps ourselves”)
+
+**What Darex does:** keep the live kernel; close hygiene + Phase 6
+memory ourselves; do not buy a second agent OS.
+
+| # | Alternative | Why it can be better | Why we still do ours | Refs |
+|---|-------------|----------------------|----------------------|------|
+| 1 | **Mastra + Vercel AI SDK** on Next.js | TS-native agents, memory, MCP, Studio; 1.0 in 2026 | We already left LangGraph for atomic-agent; dual loop = the hang class | [mastra-ai/mastra](https://github.com/mastra-ai/mastra), mastra.ai |
+| 2 | **Mem0 / Graphiti self-host** as the memory gap-closer | Fastest path to “returning customer remembers” | Tenant facts must live in *our* RLS tables; hosted memory is a second SoR | [mem0ai/mem0](https://github.com/mem0ai/mem0), [getzep/graphiti](https://github.com/getzep/graphiti) |
+| 3 | **n8n / Inngest** for Chatwoot→agent and realtime | Days not weeks to wire ingest + jobs | Webhooks already Temporal; n8n is not RLS-aware | [n8n-io/n8n](https://github.com/n8n-io/n8n), Inngest AgentKit |
+| 4 | **Langfuse Cloud / Phoenix** instead of self-host Redis pain | Traces that actually persist | Self-host is the residency story; fix Redis split (Phase 8) | [langfuse/langfuse](https://github.com/langfuse/langfuse), [Arize-ai/phoenix](https://github.com/Arize-ai/phoenix) |
+| 5 | **Skip to RE pack** (Elise/Lofty-shaped) before RAG | Revenue demo faster | Pack on dead skills + no memory + expired WhatsApp is theater (`01` §2) | This file §2; `13` “never skip Phase 6” |
+
+**Five things to steal anyway**
+
+1. Mount `SKILL.md` into the atomic-agent image (Cursor/Claude skill pattern) — hygiene, not a new runtime.
+2. Hybrid retrieve from Mem0/Graphiti — implement in pgvector+FTS (`10`).
+3. Chatwoot → WorkItemWorkflow now; do not wait for a Zapier.
+4. Promptfoo YAML for golden gaps (`promptfoo/promptfoo`).
+5. Sandbox context into git (OpenHands SDK lesson: local→remote same agent).
+
+### Open-source GitHub (at least 5) — same job as this file
+
+| Repo | Similar to | We take |
+|------|------------|---------|
+| [promptfoo/promptfoo](https://github.com/promptfoo/promptfoo) | Golden eval YAML in CI | Eval-runner for gap close |
+| [langfuse/langfuse](https://github.com/langfuse/langfuse) | Traces we already run | Dedicated Redis, not a swap |
+| [Arize-ai/phoenix](https://github.com/Arize-ai/phoenix) | OSS eval/OTel if Langfuse hurts | Optional CI traces |
+| [mastra-ai/mastra](https://github.com/mastra-ai/mastra) | TS agent+memory+MCP on Next | Patterns only; keep atomic-agent |
+| [mem0ai/mem0](https://github.com/mem0ai/mem0) | Drop-in returning-user memory | Hybrid retrieve in *our* tables |
+| [getzep/graphiti](https://github.com/getzep/graphiti) | Temporal facts | `valid_from` columns (`10`) |
+| [n8n-io/n8n](https://github.com/n8n-io/n8n) | Chatwoot→agent wiring | Do it in Temporal, steal the trigger list |
+| [chatwoot/chatwoot](https://github.com/chatwoot/chatwoot) | Inbox we already wrap | Wire webhook to agent (gap) |

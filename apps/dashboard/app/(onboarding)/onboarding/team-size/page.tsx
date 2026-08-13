@@ -12,6 +12,11 @@ export default function OnboardingTeamSizePage() {
   const handleNext = (e: React.FormEvent) => {
     e.preventDefault();
     setStep(3);
+    void fetch('/api/org/onboarding', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ wizardStep: 'business-type', teamSize }),
+    });
     router.push('/onboarding/business-type');
   };
 

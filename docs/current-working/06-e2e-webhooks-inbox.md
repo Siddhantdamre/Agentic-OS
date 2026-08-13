@@ -29,9 +29,12 @@ flowchart TD
 
 Rules:
 
+- Verify `X-Hub-Signature-256` when the app secret is set.
 - Return 200 **before** the LLM.
-- Org match `ORDER BY connected_at DESC` (no random `LIMIT 1`).
-- `chatwoot_msg_id` is **text** (Meta `wamid.*`) — migration 006.
+- Org via SECURITY DEFINER resolvers (phone_number_id / WABA / single-org).
+  Never from the JSON body.
+- `chatwoot_msg_id` is **text** (Meta `wamid.*`) — migration 006; per-org
+  unique with conversation ids in migration 010.
 - Duplicate assistant row avoided with `savedByWorkflow`.
 - First active AI employee is used as the persona.
 
@@ -54,7 +57,8 @@ File: `apps/dashboard/app/api/webhooks/chatwoot/route.ts`
    `X-Darex-Org-Id`, or single-org fallback.
 3. Upsert channel / conversation / message.
 4. Publish `needs_attention`.
-5. **Does not start the AI agent.** Ingest only.
+5. **Starts the AI agent** via `fireInboundAgent` (Temporal, then direct).
+   Body `org_id` is ignored.
 
 Phase 3 check script signs the body; **6/6 PASS**.
 
@@ -68,8 +72,8 @@ wrong**. Actual code:
 | Route | Behavior |
 |-------|----------|
 | `GET /health` | `{ status: 'ok' }` |
-| `POST /webhook/inbound` | Forwards JSON to `{DASHBOARD_URL}/api/webhooks/chatwoot` |
-| `POST /api/inbox/send` | **Stub.** Logs and returns `{ success: true }` without sending |
+| `POST /webhook/inbound` | HMAC-signs and forwards JSON to `{DASHBOARD_URL}/api/webhooks/chatwoot` |
+| `POST /api/inbox/send` | Forwards to dashboard `/api/webhooks/outbound` (HMAC) |
 
 ---
 
@@ -109,9 +113,9 @@ Publishers: WhatsApp webhook, Chatwoot webhook, conversation PATCH, messages POS
 | Path | Works? |
 |------|--------|
 | WhatsApp verify + inbound persist + agent + log outbound | Yes (outbound Graph 401 until token rotation) |
-| Chatwoot ingest + HMAC + SSE | Yes |
-| Chatwoot → AI auto-reply | **No** |
-| Inbox inbound proxy | Yes |
-| Inbox outbound send | **No** (fake success) |
+| Chatwoot ingest + HMAC + SSE + agent | Yes |
+| Chatwoot → AI auto-reply | **Yes** (`fireInboundAgent`) |
+| Inbox inbound proxy | Yes (HMAC) |
+| Inbox outbound send | **Yes** → `/api/webhooks/outbound` |
 | Inbox UI live toast | Yes (one process) |
-| Settings Meta webhook URL | **Wrong** — points at `/api/webhooks/chatwoot` |
+| Settings Meta webhook URL | **Correct** — `/api/webhooks/whatsapp` |

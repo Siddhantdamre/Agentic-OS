@@ -1,47 +1,64 @@
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
+import {
+  ONBOARDING_COOKIE,
+  SESSION_COOKIE,
+  isAuthenticatedPublicPath,
+  isPublicApiPath,
+  isPublicAuthPath,
+  parseSessionCookie,
+} from '@/lib/session-cookie';
 
-export function middleware(request: NextRequest) {
+export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
-  // Never intercept these
   const isApiRoute = pathname.startsWith('/api/');
   const isStaticAsset =
     pathname.startsWith('/_next') ||
     pathname.startsWith('/favicon.ico') ||
     pathname.includes('.');
 
-  if (isApiRoute || isStaticAsset) {
+  if (isStaticAsset) {
     return NextResponse.next();
   }
 
-  // Public auth pages that don't require a session
-  const isPublicAuthPage =
-    pathname === '/login' ||
-    pathname === '/register' ||
-    pathname.startsWith('/login') ||
-    pathname.startsWith('/register');
+  const rawSession = request.cookies.get(SESSION_COOKIE)?.value;
+  const userId = await parseSessionCookie(rawSession);
+  const hasSession = !!userId;
+  const needsOnboarding = request.cookies.get(ONBOARDING_COOKIE)?.value === '1';
 
-  // Read session cookie
-  const sessionCookie = request.cookies.get('darex_session')?.value;
-  const hasSession = !!sessionCookie && sessionCookie.trim().length > 0;
+  if (isApiRoute) {
+    if (!hasSession && !isPublicApiPath(pathname)) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+    return NextResponse.next();
+  }
 
-  // 1. Unauthenticated user accessing protected route → redirect to login
-  if (!hasSession && !isPublicAuthPage) {
+  const isPublicPage = isPublicAuthPath(pathname);
+  const isOnboarding = pathname.startsWith('/onboarding');
+
+  if (!hasSession && !isPublicPage) {
     const loginUrl = new URL('/login', request.url);
-    // Preserve the intended destination so we can redirect after login
     if (pathname !== '/') {
       loginUrl.searchParams.set('redirect', pathname);
     }
     return NextResponse.redirect(loginUrl);
   }
 
-  // 2. Authenticated user hitting login/register → redirect to dashboard
-  if (hasSession && isPublicAuthPage) {
+  if (hasSession && isPublicPage) {
+    if (isAuthenticatedPublicPath(pathname)) {
+      return NextResponse.next();
+    }
+    if (needsOnboarding) {
+      return NextResponse.redirect(new URL('/onboarding/name', request.url));
+    }
     return NextResponse.redirect(new URL('/', request.url));
   }
 
-  // 3. Authenticated user on dashboard with no org cookie — dashboard/API provisions org on first call
+  if (hasSession && needsOnboarding && !isOnboarding && !isAuthenticatedPublicPath(pathname)) {
+    return NextResponse.redirect(new URL('/onboarding/name', request.url));
+  }
+
   return NextResponse.next();
 }
 

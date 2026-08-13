@@ -309,7 +309,7 @@ const TOOLS: ToolDef[] = [
   },
   {
     name: 'web_search',
-    description: 'Perform a live web search (DuckDuckGo) for a query.',
+    description: 'Perform a live web search via Jina for a query. Requires JINA_API_KEY.',
     schema: { org_id: z.string(), query: z.string() },
     tool: 'web_search',
     action: 'search',
@@ -457,6 +457,117 @@ const TOOLS: ToolDef[] = [
     action: 'tasks_list',
   },
   {
+    name: 'code_execution',
+    description: 'Run python, node, or bash in the isolated Darex sandbox (no network, no DB).',
+    schema: {
+      org_id: z.string(),
+      language: z.string().optional(),
+      code: z.string(),
+      timeoutMs: z.number().optional(),
+    },
+    tool: 'code_execution',
+    action: 'execute',
+  },
+  {
+    name: 'stripe_create_customer',
+    description: 'Create a Stripe customer on the org-connected Stripe account.',
+    schema: { org_id: z.string(), email: z.string(), name: z.string().optional() },
+    tool: 'stripe',
+    action: 'create_customer',
+  },
+  {
+    name: 'stripe_get_customer',
+    description: 'Get a Stripe customer by id or email from the org-connected Stripe account.',
+    schema: { org_id: z.string(), customerId: z.string().optional(), email: z.string().optional() },
+    tool: 'stripe',
+    action: 'get_customer',
+  },
+  {
+    name: 'intercom_reply',
+    description: 'Reply to an Intercom conversation as the connected admin.',
+    schema: {
+      org_id: z.string(),
+      conversationId: z.string(),
+      body: z.string(),
+      adminId: z.string().optional(),
+    },
+    tool: 'intercom',
+    action: 'reply_conversation',
+  },
+  {
+    name: 'intercom_create_conversation',
+    description: 'Create an Intercom conversation from a user/contact or admin.',
+    schema: {
+      org_id: z.string(),
+      body: z.string(),
+      userId: z.string().optional(),
+      adminId: z.string().optional(),
+    },
+    tool: 'intercom',
+    action: 'create_conversation',
+  },
+  {
+    name: 'chat_list_spaces',
+    description: 'List Google Chat spaces for the org-connected Google Chat account.',
+    schema: { org_id: z.string() },
+    tool: 'google-chat',
+    action: 'chat_list_spaces',
+  },
+  {
+    name: 'chat_send_message',
+    description: 'Send a text message to a Google Chat space (spaces/xxx).',
+    schema: { org_id: z.string(), space: z.string(), text: z.string() },
+    tool: 'google-chat',
+    action: 'chat_send_message',
+  },
+  {
+    name: 'meet_create_space',
+    description: 'Create a Google Meet space and return the meeting URI.',
+    schema: { org_id: z.string() },
+    tool: 'google-meet',
+    action: 'meet_create_space',
+  },
+  {
+    name: 'meet_get_space',
+    description: 'Get a Google Meet space by name (spaces/xxx).',
+    schema: { org_id: z.string(), space: z.string() },
+    tool: 'google-meet',
+    action: 'meet_get_space',
+  },
+  {
+    name: 'search_console_sites',
+    description: 'List sites in the org-connected Google Search Console account.',
+    schema: { org_id: z.string() },
+    tool: 'google-search-console',
+    action: 'search_console_sites',
+  },
+  {
+    name: 'search_console_query',
+    description: 'Query Search Console search analytics for a siteUrl.',
+    schema: {
+      org_id: z.string(),
+      siteUrl: z.string(),
+      startDate: z.string().optional(),
+      endDate: z.string().optional(),
+    },
+    tool: 'google-search-console',
+    action: 'search_console_query',
+  },
+  {
+    name: 'business_list_locations',
+    description: 'List Google Business Profile accounts and locations.',
+    schema: { org_id: z.string(), account: z.string().optional() },
+    tool: 'google-business-profile',
+    action: 'business_list_locations',
+  },
+  {
+    name: 'cloud_list_projects',
+    description: 'List GCP projects via Cloud Resource Manager for the org-connected Google Cloud account.',
+    schema: { org_id: z.string() },
+    tool: 'google-cloud',
+    action: 'cloud_list_projects',
+  },
+  {
     name: 'analytics_report',
     description: 'Run a report query against the org-connected Google Analytics property.',
     schema: { org_id: z.string(), propertyId: z.string() },
@@ -467,7 +578,7 @@ const TOOLS: ToolDef[] = [
 
 function createServer(): McpServer {
   const server = new McpServer({
-    name: 'darex-connectors',
+    name: 'darex',
     version: '0.1.0',
   });
 
@@ -477,42 +588,47 @@ function createServer(): McpServer {
       description,
       inputSchema: schema as any,
     }, async (args: any) => {
-      const orgId = String(args.org_id || '');
-      const payload: Record<string, any> = { ...args };
-      delete payload.org_id;
+      try {
+        const orgId = String(args.org_id || '');
+        const payload: Record<string, any> = { ...args };
+        delete payload.org_id;
 
-      // The bridge is localhost-only, but still validate the org id before any
-      // side-effect: reject missing / malformed org ids instead of passing a
-      // garbage value downstream.
-      const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-      if (!UUID_RE.test(orgId)) {
-        return textContent(JSON.stringify({
-          status: 'error',
-          message: 'A valid org_id (UUID) is required for this tool call.',
-          data: null,
-        }, null, 2));
-      }
+        const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+        if (!UUID_RE.test(orgId)) {
+          return textContent(JSON.stringify({
+            status: 'error',
+            message: 'A valid org_id (UUID) is required for this tool call.',
+            data: null,
+            connected: false,
+          }, null, 2));
+        }
 
-      // file_ops uses the tool-level action field for read/write.
-      if (tool === 'file_ops') {
-        const fileAction = String(args.action || 'read_file');
-        delete payload.action;
+        if (tool === 'file_ops') {
+          const fileAction = String(args.action || 'read_file');
+          delete payload.action;
+          const result = await executeAutonomousToolAction({
+            tool,
+            action: fileAction,
+            payload,
+            orgId,
+          });
+          return textContent(formatResult(result));
+        }
+
         const result = await executeAutonomousToolAction({
           tool,
-          action: fileAction,
+          action,
           payload,
           orgId,
         });
         return textContent(formatResult(result));
+      } catch (err: any) {
+        return textContent(JSON.stringify({
+          status: 'error',
+          message: err?.message || 'Tool execution failed',
+          data: null,
+        }, null, 2));
       }
-
-      const result = await executeAutonomousToolAction({
-        tool,
-        action,
-        payload,
-        orgId,
-      });
-      return textContent(formatResult(result));
     });
   }
 
@@ -520,11 +636,15 @@ function createServer(): McpServer {
 }
 
 function formatResult(result: any): string {
+  const data = result?.data ?? null;
   return JSON.stringify(
     {
       status: result?.status,
       message: result?.message,
-      data: result?.data ?? null,
+      data,
+      connected: data?.connected,
+      setupUrl: data?.setupUrl,
+      configured: data?.configured,
     },
     null,
     2
@@ -539,6 +659,12 @@ const transports: Record<string, SSEServerTransport> = {};
 
 const httpServer = http.createServer(async (req, res) => {
   const url = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`);
+
+  if (req.method === 'GET' && (url.pathname === '/health' || url.pathname === '/')) {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ ok: true, server: 'darex', tools: TOOLS.length, sse: SSE_ENDPOINT }));
+    return;
+  }
 
   if (req.method === 'GET' && url.pathname === SSE_ENDPOINT) {
     const transport = new SSEServerTransport(MESSAGE_ENDPOINT, res);
@@ -571,7 +697,7 @@ const httpServer = http.createServer(async (req, res) => {
 
 httpServer.listen(PORT, '0.0.0.0', () => {
   console.log(
-    `[atomic-bridge] MCP SSE server listening on http://0.0.0.0:${PORT}${SSE_ENDPOINT} (${TOOLS.length} tools exposed)`
+    `[atomic-bridge] MCP SSE server 'darex' listening on http://0.0.0.0:${PORT}${SSE_ENDPOINT} (${TOOLS.length} mcp.darex.* tools)`
   );
 });
 

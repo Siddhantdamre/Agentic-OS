@@ -3,6 +3,19 @@ import { realtimeHub } from '@/lib/realtime-hub';
 
 export const dynamic = 'force-dynamic';
 
+function sseEventName(type: string): string {
+  switch (type) {
+    case 'needs_attention':
+      return 'needs_attention';
+    case 'conversation_updated':
+      return 'conversation_updated';
+    case 'message_received':
+      return 'message_received';
+    default:
+      return 'event';
+  }
+}
+
 /**
  * GET /api/stream/events
  * Server-Sent Events stream for per-org real-time inbox notifications.
@@ -40,8 +53,7 @@ export async function GET(request: Request) {
       send('connected', { orgId, message: 'Realtime stream connected' });
 
       const unsubscribe = realtimeHub.subscribe(orgId, (payload) => {
-        const eventName = payload.type === 'needs_attention' ? 'needs_attention' : 'event';
-        send(eventName, payload);
+        send(sseEventName(payload.type), payload);
       });
 
       const keepAlive = setInterval(() => {

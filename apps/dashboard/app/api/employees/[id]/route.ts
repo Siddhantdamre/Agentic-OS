@@ -25,16 +25,20 @@ export async function PATCH(
         values.push(role);
       }
       if (persona !== undefined) {
-        fields.push(`persona = $${valIdx++}`);
-        values.push(persona);
+        fields.push(`persona = $${valIdx++}::jsonb`);
+        values.push(JSON.stringify(typeof persona === 'string' ? persona : persona));
       }
       if (tool_allowlist !== undefined) {
         fields.push(`tool_allowlist = $${valIdx++}`);
-        values.push(JSON.stringify(tool_allowlist));
+        values.push(
+          Array.isArray(tool_allowlist)
+            ? tool_allowlist.filter((item: unknown): item is string => typeof item === 'string')
+            : []
+        );
       }
       if (status !== undefined) {
         fields.push(`status = $${valIdx++}`);
-        values.push(status);
+        values.push(status === 'paused' ? 'paused' : 'active');
       }
 
       fields.push(`updated_at = NOW()`);

@@ -1,27 +1,16 @@
 import { NextResponse } from 'next/server';
-import { pool } from '@/lib/db';
-import { cookies } from 'next/headers';
+import { getScopedClient } from '@/lib/db';
 
 export const dynamic = 'force-dynamic';
 
 export async function GET() {
-  const cookieStore = await cookies();
-  const session = cookieStore.get('darex_session')?.value;
-  const orgId = cookieStore.get('darex_org_id')?.value;
-
-  if (!session || !orgId) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
-
-  const client = await pool.connect();
   try {
-    // Set RLS context
-    await client.query("SELECT set_config('app.current_org_id', $1, true)", [orgId]);
-
+    const { client, orgId, userId } = await getScopedClient();
+    try {
     const orgRes = await client.query('SELECT name FROM orgs WHERE id = $1', [orgId]);
     const orgName = orgRes.rows[0]?.name || 'Unknown Org';
 
-    const userRes = await client.query('SELECT email, role FROM users WHERE id = $1', [session]);
+    const userRes = await client.query('SELECT email, role FROM users WHERE id = $1', [userId]);
     const userEmail = userRes.rows[0]?.email || '';
     const userRole = userRes.rows[0]?.role || '';
 
@@ -142,10 +131,14 @@ export async function GET() {
       aiEmployeeCount,
       aiEmployees,
     });
-  } catch (error) {
+    } finally {
+      client.release();
+    }
+  } catch (error: unknown) {
+    if (error instanceof Error && error.message === 'Unauthorized') {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
     console.error('Stats API Error:', error);
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
-  } finally {
-    client.release();
   }
 }

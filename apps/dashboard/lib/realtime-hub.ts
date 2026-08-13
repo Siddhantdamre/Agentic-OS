@@ -12,7 +12,7 @@ type EventPayload = {
   orgId: string;
   conversationId?: string;
   message?: string;
-  contactId?: string;
+  contactId?: string | null;
   channelType?: string;
   ts: number;
 };
@@ -23,9 +23,16 @@ class RealtimeHub {
   private emitter = new EventEmitter();
   private readonly channel = 'org-event';
 
+  constructor() {
+    this.emitter.setMaxListeners(100);
+  }
+
   subscribe(orgId: string, cb: Subscriber): () => void {
-    this.emitter.addListener(this.channel, cb);
-    return () => this.emitter.removeListener(this.channel, cb);
+    const wrapped: Subscriber = (payload) => {
+      if (payload.orgId === orgId) cb(payload);
+    };
+    this.emitter.addListener(this.channel, wrapped);
+    return () => this.emitter.removeListener(this.channel, wrapped);
   }
 
   publish(orgId: string, event: Omit<EventPayload, 'orgId' | 'ts'>): void {

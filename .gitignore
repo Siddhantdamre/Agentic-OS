@@ -76,9 +76,9 @@ graphify-out/
 # Windows
 nul
 
-# Runtime working dirs
+# Runtime working dirs (root sandbox/ only — keep infra/docker/sandbox tracked)
 workspace_storage/
-sandbox/
+/sandbox/
 
 # Terraform
 infra/.terraform/

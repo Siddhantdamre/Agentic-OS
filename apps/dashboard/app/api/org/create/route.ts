@@ -1,74 +1,59 @@
 import { NextResponse } from 'next/server';
-import { cookies } from 'next/headers';
-import { pool } from '@/lib/db';
+import { getScopedClient } from '@/lib/db';
+import { applySessionCookies } from '@/lib/session-cookie';
 
 /**
  * POST /api/org/create
  * Called at the final step of onboarding to persist org name, team size,
  * business type, and selected channels (initial channel seed).
+ * Org is resolved from the session — body org_id is ignored.
  */
 export async function POST(request: Request) {
-  const cookieStore = await cookies();
-  const sessionUserId = cookieStore.get('darex_session')?.value;
-
-  if (!sessionUserId) {
-    return NextResponse.json({ status: 'ERROR', message: 'Unauthorized' }, { status: 401 });
-  }
-
-  const { businessName, teamSize, businessType, channels } = await request.json().catch(() => ({}));
-
-  if (!businessName) {
-    return NextResponse.json({ status: 'ERROR', message: 'Business name is required' }, { status: 400 });
-  }
-
-  const client = await pool.connect();
+  let scoped: Awaited<ReturnType<typeof getScopedClient>> | null = null;
   try {
-    // 1. Get or create org for this user
-    const userRes = await client.query(
-      `SELECT id, email, org_id FROM users WHERE id = $1 LIMIT 1`,
-      [sessionUserId]
+    scoped = await getScopedClient();
+  } catch (err) {
+    if (err instanceof Error && err.message === 'Unauthorized') {
+      return NextResponse.json({ status: 'ERROR', message: 'Unauthorized' }, { status: 401 });
+    }
+    throw err;
+  }
+
+  const { client, orgId, userId } = scoped;
+  try {
+    const body = (await request.json().catch(() => ({}))) as {
+      businessName?: string;
+      teamSize?: number;
+      businessType?: string;
+      channels?: string[];
+      orgId?: string;
+      org_id?: string;
+    };
+
+    if (body.orgId || body.org_id) {
+      return NextResponse.json(
+        { status: 'ERROR', message: 'org_id is not accepted from the client; it is resolved from the session.' },
+        { status: 400 }
+      );
+    }
+
+    const businessName = typeof body.businessName === 'string' ? body.businessName.trim() : '';
+    if (!businessName) {
+      return NextResponse.json({ status: 'ERROR', message: 'Business name is required' }, { status: 400 });
+    }
+
+    const teamSize = typeof body.teamSize === 'number' ? body.teamSize : null;
+    const businessType = typeof body.businessType === 'string' ? body.businessType : null;
+    const channels = Array.isArray(body.channels)
+      ? body.channels.filter((c): c is string => typeof c === 'string' && c.length > 0)
+      : [];
+
+    await client.query(
+      `UPDATE orgs SET name = $1, status = 'active', updated_at = NOW() WHERE id = $2`,
+      [businessName, orgId]
     );
 
-    if (userRes.rows.length === 0) {
-      return NextResponse.json({ status: 'ERROR', message: 'User not found' }, { status: 404 });
-    }
-
-    const user = userRes.rows[0];
-    let orgId = user.org_id;
-
-    const slug = businessName
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, '-')
-      .replace(/^-|-$/g, '');
-
-    if (!orgId) {
-      // Create a fresh org for this user
-      const orgRes = await client.query(
-        `INSERT INTO orgs (name, slug, plan, status)
-         VALUES ($1, $2, 'starter', 'active')
-         ON CONFLICT (slug) DO UPDATE SET name = EXCLUDED.name
-         RETURNING id`,
-        [businessName, `${slug}-${Date.now()}`]
-      );
-      orgId = orgRes.rows[0].id;
-
-      // Link user to org
-      await client.query(
-        `UPDATE users SET org_id = $1, role = 'owner' WHERE id = $2`,
-        [orgId, sessionUserId]
-      );
-    } else {
-      // Update org name/metadata
-      await client.query(
-        `UPDATE orgs SET name = $1 WHERE id = $2`,
-        [businessName, orgId]
-      );
-    }
-
-    await client.query(`SELECT set_config('app.current_org_id', $1, true)`, [orgId]);
-
-    // 2. Seed initial channels from selection
-    if (Array.isArray(channels) && channels.length > 0) {
+    if (channels.length > 0) {
       for (const channelType of channels) {
         await client.query(
           `INSERT INTO channels (org_id, channel_type, status)
@@ -79,29 +64,41 @@ export async function POST(request: Request) {
       }
     }
 
-    // 3. Set the org cookie
+    await client.query(
+      `INSERT INTO org_onboarding (
+         org_id, wizard_step, business_name, team_size, business_type,
+         channels_selected, provisioning_started_at, provisioning_completed_at, updated_at
+       ) VALUES ($1, 'channels', $2, $3, $4, $5, NOW(), NOW(), NOW())
+       ON CONFLICT (org_id) DO UPDATE SET
+         wizard_step = 'channels',
+         business_name = EXCLUDED.business_name,
+         team_size = EXCLUDED.team_size,
+         business_type = EXCLUDED.business_type,
+         channels_selected = EXCLUDED.channels_selected,
+         provisioning_started_at = COALESCE(org_onboarding.provisioning_started_at, NOW()),
+         provisioning_completed_at = NOW(),
+         updated_at = NOW()`,
+      [orgId, businessName, teamSize, businessType, channels]
+    );
+
     const res = NextResponse.json({
       status: 'OK',
       orgId,
       businessName,
       teamSize,
       businessType,
-      channelsSeeded: channels?.length || 0,
+      channelsSeeded: channels.length,
     });
-
-    res.cookies.set('darex_org_id', orgId, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: 'lax',
-      path: '/',
-      maxAge: 60 * 60 * 24 * 7,
-    });
-
+    await applySessionCookies(res, { userId, orgId, onboardingComplete: true });
     return res;
-  } catch (err: any) {
+  } catch (err) {
     console.error('Org create error:', err);
-    return NextResponse.json({ status: 'ERROR', message: err.message }, { status: 500 });
+    return NextResponse.json(
+      { status: 'ERROR', message: err instanceof Error ? err.message : 'Failed to create organization' },
+      { status: 500 }
+    );
   } finally {
     client.release();
   }
 }
+

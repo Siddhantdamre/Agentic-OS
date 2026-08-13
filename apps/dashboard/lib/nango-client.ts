@@ -5,40 +5,119 @@ export interface NangoConnectResult {
   connectionId?: string;
   provider?: string;
   error?: string;
+  oauthConfigured?: boolean;
+  nangoUiUrl?: string;
+}
+
+function errorMessage(err: unknown): string {
+  if (err instanceof Error) return err.message;
+  if (err && typeof err === 'object' && 'message' in (err as object)) {
+    return String((err as { message: unknown }).message);
+  }
+  return 'OAuth popup flow failed or was cancelled';
+}
+
+export interface NangoOAuthOptions {
+  extraParams?: Record<string, string>;
 }
 
 /**
-  * Launches real Nango OAuth consent popup for Google, Meta, GitHub, etc.
-  * Connects to Nango instance running at http://localhost:3003
-  */
-export async function startRealNangoOAuth(providerId: string): Promise<NangoConnectResult> {
+ * Launches real Nango OAuth consent popup. Never reports success unless the
+ * server confirmed a live Nango connection for this org.
+ */
+export async function startRealNangoOAuth(
+  providerId: string,
+  options: NangoOAuthOptions = {}
+): Promise<NangoConnectResult> {
   try {
-    // 1. Get Nango public key & connectionId from API
     const tokenRes = await fetch(`/api/integrations/nango-token?provider=${encodeURIComponent(providerId)}`);
+    const tokenData = await tokenRes.json().catch(() => ({}));
     if (!tokenRes.ok) {
-      throw new Error(`Failed to fetch Nango session token (HTTP ${tokenRes.status})`);
+      return {
+        success: false,
+        provider: providerId,
+        error: tokenData.error || tokenData.message || `Failed to fetch Nango session (HTTP ${tokenRes.status})`,
+        oauthConfigured: tokenData.oauthConfigured,
+        nangoUiUrl: tokenData.nangoUiUrl,
+      };
     }
 
-    const { nangoPublicKey, nangoHost, connectionId } = await tokenRes.json();
+    const {
+      nangoPublicKey,
+      nangoHost,
+      connectionId,
+      providerConfigKey,
+      oauthConfigured,
+      missingConfigReason,
+      nangoUiUrl,
+      authMode,
+      extraConnectFields,
+      authorizationParams,
+    } = tokenData;
+
+    if (authMode && authMode !== 'oauth') {
+      return {
+        success: false,
+        provider: providerId,
+        error: `${providerId} is not Nango OAuth (${authMode}). Use the API-key / BYOK form instead.`,
+        nangoUiUrl,
+      };
+    }
+
+    if (oauthConfigured === false) {
+      return {
+        success: false,
+        provider: providerId,
+        oauthConfigured: false,
+        nangoUiUrl,
+        error:
+          missingConfigReason ||
+          `OAuth client is not configured in Nango. Open ${nangoUiUrl || nangoHost || 'http://localhost:3003'} and paste a real client ID for ${providerId}.`,
+      };
+    }
 
     if (!nangoPublicKey) {
-      throw new Error('Nango public key is not configured (NEXT_PUBLIC_NANGO_PUBLIC_KEY)');
+      return {
+        success: false,
+        provider: providerId,
+        error: 'Nango public key is not configured (NEXT_PUBLIC_NANGO_PUBLIC_KEY)',
+        nangoUiUrl,
+      };
     }
 
-    // 2. Initialize Nango Frontend SDK
+    const requiredFields: Array<{ key: string; label: string; required?: boolean }> = extraConnectFields || [];
+    const extraParams = { ...(options.extraParams || {}) };
+    for (const field of requiredFields) {
+      if (field.required && !extraParams[field.key]) {
+        return {
+          success: false,
+          provider: providerId,
+          error: `${field.label} is required before connecting ${providerId}`,
+          nangoUiUrl,
+        };
+      }
+    }
+
     const nango = new Nango({
       host: nangoHost || 'http://localhost:3003',
       publicKey: nangoPublicKey,
     });
 
-    console.log(`[Nango OAuth] Opening OAuth Popup for provider "${providerId}" with connectionId "${connectionId}"...`);
+    const authKey = providerConfigKey || providerId;
+    const nangoParams: Record<string, string> = {};
+    if (extraParams.shopDomain) {
+      nangoParams.subdomain = extraParams.shopDomain.replace(/\.myshopify\.com$/i, '').replace(/^https?:\/\//, '');
+    }
+    if (extraParams.subdomain) nangoParams.subdomain = extraParams.subdomain;
 
-    // 3. Open real OAuth popup window
-    const authResult = await nango.auth(providerId, connectionId);
+    const authOptions: Record<string, unknown> = {};
+    if (Object.keys(nangoParams).length > 0) authOptions.params = nangoParams;
+    if (authorizationParams && typeof authorizationParams === 'object') {
+      authOptions.authorization_params = authorizationParams;
+    }
 
-    console.log('[Nango OAuth] OAuth popup completed with result:', authResult);
+    await nango.auth(authKey, connectionId, authOptions);
 
-    // 4. Confirm successful OAuth completion in backend DB
     const confirmRes = await fetch('/api/integrations/nango-token', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -46,23 +125,98 @@ export async function startRealNangoOAuth(providerId: string): Promise<NangoConn
         provider: providerId,
         connectionId,
         success: true,
+        extra: extraParams,
       }),
     });
+    const confirmData = await confirmRes.json().catch(() => ({}));
 
-    const confirmData = await confirmRes.json();
+    if (!confirmRes.ok || !confirmData.success) {
+      return {
+        success: false,
+        connectionId,
+        provider: providerId,
+        nangoUiUrl,
+        error:
+          confirmData.message ||
+          confirmData.error ||
+          'OAuth popup finished but Nango has no connection — the provider was not marked connected.',
+      };
+    }
 
     return {
       success: true,
       connectionId,
       provider: providerId,
+      nangoUiUrl,
     };
-  } catch (err: any) {
+  } catch (err: unknown) {
     console.error(`[Nango OAuth Error] Provider "${providerId}":`, err);
-
-    // If popup was cancelled or failed, report error
+    const msg = errorMessage(err);
+    const looksUnconfigured = /not configured|does not exist|invalid_client|client.?id|unauthorized_client/i.test(msg);
     return {
       success: false,
-      error: err.message || 'OAuth popup flow failed or was cancelled',
+      provider: providerId,
+      error: looksUnconfigured
+        ? `${msg}. Paste a real OAuth client ID for ${providerId} in the Nango UI (http://localhost:3003).`
+        : msg,
     };
+  }
+}
+
+export async function disconnectProvider(providerId: string): Promise<NangoConnectResult> {
+  try {
+    const res = await fetch('/api/integrations', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ provider: providerId, action: 'disconnect' }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.success) {
+      return { success: false, provider: providerId, error: data.message || data.error || `HTTP ${res.status}` };
+    }
+    return { success: true, provider: providerId };
+  } catch (err: unknown) {
+    return { success: false, provider: providerId, error: errorMessage(err) };
+  }
+}
+
+export async function connectWhatsAppByok(payload: {
+  accessToken: string;
+  phoneNumberId: string;
+  wabaId?: string;
+}): Promise<NangoConnectResult> {
+  try {
+    const res = await fetch('/api/integrations/whatsapp', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.success) {
+      return { success: false, provider: 'whatsapp', error: data.message || data.error || `HTTP ${res.status}` };
+    }
+    return { success: true, provider: 'whatsapp' };
+  } catch (err: unknown) {
+    return { success: false, provider: 'whatsapp', error: errorMessage(err) };
+  }
+}
+
+export async function connectRazorpayByok(payload: {
+  keyId: string;
+  keySecret: string;
+}): Promise<NangoConnectResult> {
+  try {
+    const res = await fetch('/api/integrations/razorpay', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.success) {
+      return { success: false, provider: 'razorpay', error: data.message || data.error || `HTTP ${res.status}` };
+    }
+    return { success: true, provider: 'razorpay' };
+  } catch (err: unknown) {
+    return { success: false, provider: 'razorpay', error: errorMessage(err) };
   }
 }

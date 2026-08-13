@@ -12,6 +12,7 @@ a new session cannot “helpfully” fork the architecture.
 2. `docs/current-working/README.md` + `00-status-at-a-glance.md`
 3. `BUILD_STATE.md`
 4. This pack (`docs/futuer-scope/`), especially `01`, `02`, `12`,
+   `15` (libraries/people — so you do not swap the kernel),
    and the phase in `13` you are on
 5. Vertical file if the task is RE (`05`) or another pack (`04`)
 
@@ -49,6 +50,10 @@ eval.
 
 Do not: Composio, new agent OS, new OAuth broker, our own MLS, our
 own bank, LangGraph revival (`apps/agents/` is legacy).
+
+The long keep/adopt/study/reject list, with people and papers, is
+`15-open-source-research-landscape.md`. If you are about to `pnpm
+add langgraph` / `mem0ai` / `crewai` / `letta`, read `15` §14 first.
 
 ---
 
@@ -122,3 +127,40 @@ If your change does not improve one of those for a tenant, it is
 probably noise. If it improves one by breaking tenancy, it is a
 bug. If it is a realtor feature that cannot be a pack, you are
 forking the product — stop and re-read `03`.
+
+---
+
+## 11. Alternatives in the world (instead of these standing orders)
+
+**What Darex does:** invariants in this file. Clone infra, build
+packs. Read `15` before adding a framework.
+
+| # | Alternative | Why it can be better | Why we still do ours | Refs |
+|---|-------------|----------------------|----------------------|------|
+| 1 | **“Whatever LangChain tutorial says”** | Fast for greenfield | We are not greenfield; hang is documented | BUILD_STATE.md |
+| 2 | **Move fast, skip RLS tests** | Demo speed | One leak ends the company | `12`, pgvector multitenancy |
+| 3 | **Await model in webhook** (simple) | Less Temporal | Inbox deadlocks; Meta retries storms | `AGENTS.md` rule 2 |
+| 4 | **Fabricate listings when MLS is down** | “Helpful” UX | Product law; fair housing/RERA | `05` golden #5 |
+| 5 | **Composio + LangGraph revival** | Catalog + graphs | Closed decisions; `15` §14 REJECT | `14` §3 |
+
+**Five things to steal anyway (from research, into *our* code)**
+
+1. Hybrid memory retrieve (`10`).
+2. Pack YAML like Odoo manifests (`03`).
+3. τ-bench goldens (`08`).
+4. Temporal activities around every LLM (`09`).
+5. Dust/Glean permission dual-layer (`12`).
+
+### Open-source GitHub (at least 5) — same job as this file
+
+Repos whose **code encodes similar standing orders**:
+
+| Repo | Similar invariant | We take |
+|------|-------------------|---------|
+| [temporalio/temporal](https://github.com/temporalio/temporal) | Side effects in activities | Never await LLM in webhook |
+| [pgvector/pgvector](https://github.com/pgvector/pgvector) | Tenant-aware ANN | RLS vector tests |
+| [NangoHQ/nango](https://github.com/NangoHQ/nango) | Tokens not in git | KEEP OAuth plane |
+| [openfga/openfga](https://github.com/openfga/openfga) | Explicit authz | Allowlists as data |
+| [langfuse/langfuse](https://github.com/langfuse/langfuse) | Every call traced | Span on tools |
+| [promptfoo/promptfoo](https://github.com/promptfoo/promptfoo) | Evals before ship | Golden + disconnected |
+| [supertokens/supertokens-core](https://github.com/supertokens/supertokens-core) | Session, not body org_id | KEEP |

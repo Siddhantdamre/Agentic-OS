@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getScopedClient } from '@/lib/db';
+import { pingWhatsApp } from '@darex/connectors';
 
 export async function POST(request: Request) {
   try {
@@ -11,11 +12,24 @@ export async function POST(request: Request) {
         return NextResponse.json({ message: 'Access Token and Phone Number ID are required' }, { status: 400 });
       }
 
-      // Store manual credentials in the dedicated meta JSONB column (org-isolated by RLS).
-      // Both camelCase (tool-executor reads meta.accessToken/meta.phoneNumberId) and
-      // snake_case (webhook route reads meta->>'phone_number_id' / 'meta_access_token') keys
-      // are persisted so every consumer resolves the same channel. nango_connection_id is
-      // reserved for actual Nango connection IDs and stays NULL here.
+      const ping = await pingWhatsApp({ accessToken, phoneNumberId });
+      if (!ping.ok) {
+        await client.query(
+          `INSERT INTO channel_logs (org_id, channel_type, event_type, status, status_code, message, payload)
+           VALUES ($1, 'whatsapp', 'connect', 'error', $2, $3, $4)`,
+          [orgId, ping.status, ping.message, JSON.stringify({ phoneNumberId })]
+        );
+        return NextResponse.json(
+          {
+            success: false,
+            connected: false,
+            message: ping.message,
+            setupUrl: '/connectors',
+          },
+          { status: ping.status === 401 || ping.status === 400 ? 400 : 502 }
+        );
+      }
+
       const metaPayload = JSON.stringify({
         accessToken,
         phoneNumberId,
@@ -23,6 +37,7 @@ export async function POST(request: Request) {
         phone_number_id: phoneNumberId,
         whatsapp_business_account_id: wabaId,
         meta_access_token: accessToken,
+        verifiedAt: new Date().toISOString(),
       });
 
       await client.query(
@@ -41,7 +56,9 @@ export async function POST(request: Request) {
 
       return NextResponse.json({
         success: true,
-        message: `WhatsApp connected successfully`,
+        connected: true,
+        message: 'WhatsApp connected successfully',
+        phone: ping.data,
       });
     } finally {
       client.release();
@@ -51,6 +68,36 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
     console.error('WhatsApp Manual Connect Error:', err);
+    return NextResponse.json({ message: err.message }, { status: 500 });
+  }
+}
+
+export async function GET() {
+  try {
+    const { client, orgId } = await getScopedClient();
+    try {
+      const res = await client.query(
+        `SELECT status, meta, connected_at FROM channels WHERE org_id = $1 AND channel_type = 'whatsapp'`,
+        [orgId]
+      );
+      const row = res.rows[0];
+      const meta = row?.meta || {};
+      const hasToken = Boolean(meta.accessToken || meta.meta_access_token);
+      const phoneNumberId = meta.phoneNumberId || meta.phone_number_id || null;
+      return NextResponse.json({
+        connected: Boolean(hasToken && phoneNumberId && (row?.status === 'connected' || row?.status === 'active')),
+        phoneNumberId,
+        wabaId: meta.wabaId || meta.whatsapp_business_account_id || null,
+        connectedAt: row?.connected_at || null,
+        hasToken,
+      });
+    } finally {
+      client.release();
+    }
+  } catch (err: any) {
+    if (err.message === 'Unauthorized') {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
     return NextResponse.json({ message: err.message }, { status: 500 });
   }
 }

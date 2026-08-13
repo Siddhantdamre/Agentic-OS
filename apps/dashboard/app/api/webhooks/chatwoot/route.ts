@@ -1,48 +1,180 @@
 import { NextResponse } from 'next/server';
-import { pool } from '@/lib/db';
+import { pool, getOrgScopedClient } from '@/lib/db';
 import { realtimeHub } from '@/lib/realtime-hub';
-import crypto from 'crypto';
+import { assertChatwootWebhookSignature } from '@/lib/webhook-crypto';
+import {
+  employeePersonaText,
+  fireInboundAgent,
+  parseToolAllowlist,
+} from '@/lib/inbound-agent';
+import { replyTargetFromChannelMeta } from '@/lib/channel-outbound';
 
-/**
- * Resolve the correct org_id from the webhook request.
- * The webhook URL must include ?org_id=<orgId> or use a per-org secret token.
- * Falls back to matching by channel meta if token is provided.
- */
-async function resolveOrgFromRequest(
-  request: Request,
-  client: any
-): Promise<string | null> {
+type ChatwootEvent =
+  | 'message_created'
+  | 'message_updated'
+  | 'conversation_created'
+  | 'conversation_status_changed'
+  | 'ignored';
+
+function classifyEvent(event: string): ChatwootEvent {
+  switch (event) {
+    case 'message_created':
+      return 'message_created';
+    case 'message_updated':
+      return 'message_updated';
+    case 'conversation_created':
+      return 'conversation_created';
+    case 'conversation_status_changed':
+      return 'conversation_status_changed';
+    default:
+      return 'ignored';
+  }
+}
+
+function coerceAccountId(value: unknown): string | number | null {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value === 'string' && value.trim()) return value.trim();
+  return null;
+}
+
+function parseChatwootConvId(value: unknown): number | null {
+  if (typeof value === 'number' && Number.isFinite(value)) return Math.trunc(value);
+  if (typeof value === 'string' && /^\d+$/.test(value)) return parseInt(value, 10);
+  return null;
+}
+
+type NormalizedInbound = {
+  skipAgent: boolean;
+  ignore: boolean;
+  channelType: string;
+  chatwootConvId: number | null;
+  chatwootMsgId: string | null;
+  contactId: string;
+  senderName: string;
+  content: string;
+  employeeId: string | null;
+  meta: Record<string, unknown>;
+  chatwootAccountId: string | number | null;
+  viaChatwootApi: boolean;
+};
+
+function isOutgoingMessage(payload: Record<string, unknown>): boolean {
+  const messageType = payload.message_type;
+  if (messageType === 'outgoing' || messageType === 1 || messageType === '1') return true;
+  if (payload.private === true) return true;
+  const sender = payload.sender as { type?: string } | undefined;
+  if (sender?.type === 'user') return true;
+  return false;
+}
+
+function normalizeInbound(payload: Record<string, unknown>): NormalizedInbound {
+  const conversation = (payload.conversation as Record<string, unknown> | undefined) || {};
+  const sender = (payload.sender as Record<string, unknown> | undefined) || {};
+  const account = (payload.account as Record<string, unknown> | undefined) || {};
+  const contactInbox = (conversation.contact_inbox as Record<string, unknown> | undefined) || {};
+
+  const nativeContent = typeof payload.content === 'string' ? payload.content : '';
+  const darexContent = nativeContent || 'Inbound message';
+
+  const contactId =
+    (typeof payload.contact_id === 'string' && payload.contact_id) ||
+    (typeof sender.phone_number === 'string' && sender.phone_number) ||
+    (typeof sender.email === 'string' && sender.email) ||
+    (typeof contactInbox.source_id === 'string' && contactInbox.source_id) ||
+    (sender.id != null ? String(sender.id) : '');
+
+  const senderName =
+    (typeof payload.sender_name === 'string' && payload.sender_name) ||
+    (typeof sender.name === 'string' && sender.name) ||
+    'Customer';
+
+  const channelFromNative =
+    typeof conversation.channel === 'string'
+      ? conversation.channel.replace(/^Channel::/i, '').toLowerCase()
+      : null;
+  const channelType =
+    (typeof payload.channel_type === 'string' && payload.channel_type) ||
+    channelFromNative ||
+    'whatsapp';
+
+  const chatwootConvId = parseChatwootConvId(payload.chatwoot_conv_id ?? conversation.id);
+  const chatwootMsgId =
+    payload.chatwoot_msg_id != null
+      ? String(payload.chatwoot_msg_id)
+      : payload.id != null
+        ? String(payload.id)
+        : null;
+
+  const employeeId = typeof payload.employee_id === 'string' ? payload.employee_id : null;
+  const extraMeta = (payload.meta as Record<string, unknown> | undefined) || {};
+
+  return {
+    skipAgent: isOutgoingMessage(payload),
+    ignore: false,
+    channelType,
+    chatwootConvId,
+    chatwootMsgId,
+    contactId,
+    senderName,
+    content: darexContent,
+    employeeId,
+    meta: extraMeta,
+    chatwootAccountId: coerceAccountId(account.id) ?? coerceAccountId(extraMeta.chatwoot_account_id),
+    viaChatwootApi: conversation.id != null,
+  };
+}
+
+async function resolveOrgFromRequest(request: Request, payload: Record<string, unknown>): Promise<string | null> {
+  void payload.org_id;
+  void payload.orgId;
+
   const url = new URL(request.url);
-
-  // Option 1: org_id passed explicitly in query (for internal/trusted calls)
   const orgIdParam = url.searchParams.get('org_id');
   if (orgIdParam) {
-    const orgRes = await client.query('SELECT id FROM orgs WHERE id = $1 AND status = $2', [
-      orgIdParam,
-      'active',
-    ]);
-    if (orgRes.rows.length > 0) return orgRes.rows[0].id;
+    try {
+      const res = await pool.query(`SELECT resolve_active_org($1::uuid) AS id`, [orgIdParam]);
+      if (res.rows[0]?.id) return res.rows[0].id as string;
+    } catch {
+      const res = await pool.query('SELECT id FROM orgs WHERE id = $1 AND status = $2', [orgIdParam, 'active']);
+      if (res.rows[0]?.id) return res.rows[0].id as string;
+    }
   }
 
-  // Option 2: secret token in Authorization header -> match to org
   const authHeader = request.headers.get('Authorization') || '';
-  const token = authHeader.replace('Bearer ', '').trim();
+  const token = authHeader.replace(/^Bearer\s+/i, '').trim();
   if (token) {
-    const orgRes = await client.query(
-      `SELECT id FROM orgs WHERE meta->>'webhook_secret' = $1 AND status = 'active' LIMIT 1`,
-      [token]
-    );
-    if (orgRes.rows.length > 0) return orgRes.rows[0].id;
+    try {
+      const res = await pool.query(`SELECT resolve_org_by_webhook_secret($1) AS id`, [token]);
+      if (res.rows[0]?.id) return res.rows[0].id as string;
+    } catch {
+      const res = await pool.query(
+        `SELECT id FROM orgs WHERE meta->>'webhook_secret' = $1 AND status = 'active' LIMIT 1`,
+        [token]
+      );
+      if (res.rows[0]?.id) return res.rows[0].id as string;
+    }
   }
 
-  // Option 3: X-Chatwoot-User-Id header  
-  const chatwootOrgHeader = request.headers.get('X-Darex-Org-Id');
-  if (chatwootOrgHeader) {
-    const orgRes = await client.query('SELECT id FROM orgs WHERE id = $1 AND status = $2', [
-      chatwootOrgHeader,
-      'active',
-    ]);
-    if (orgRes.rows.length > 0) return orgRes.rows[0].id;
+  const orgHeader = request.headers.get('X-Darex-Org-Id');
+  if (orgHeader) {
+    try {
+      const res = await pool.query(`SELECT resolve_active_org($1::uuid) AS id`, [orgHeader]);
+      if (res.rows[0]?.id) return res.rows[0].id as string;
+    } catch {
+      const res = await pool.query('SELECT id FROM orgs WHERE id = $1 AND status = $2', [orgHeader, 'active']);
+      if (res.rows[0]?.id) return res.rows[0].id as string;
+    }
+  }
+
+  try {
+    const res = await pool.query(`SELECT single_active_org_id() AS id`);
+    if (res.rows[0]?.id) return res.rows[0].id as string;
+  } catch {
+    const orgCount = await pool.query('SELECT COUNT(*) as count FROM orgs WHERE status = $1', ['active']);
+    if (parseInt(orgCount.rows[0].count, 10) === 1) {
+      const orgRes = await pool.query("SELECT id FROM orgs WHERE status = 'active' LIMIT 1");
+      return orgRes.rows[0]?.id ?? null;
+    }
   }
 
   return null;
@@ -50,171 +182,216 @@ async function resolveOrgFromRequest(
 
 export async function POST(request: Request) {
   const startTime = Date.now();
-
-  // Clone request so we can read body twice (once for sig check, once for JSON)
   const rawBody = await request.text();
 
-  // Optional HMAC signature verification
-  const chatwootSecret = process.env.CHATWOOT_WEBHOOK_SECRET;
-  if (chatwootSecret) {
-    const signature = request.headers.get('x-chatwoot-signature') || '';
-    const expectedSig = crypto
-      .createHmac('sha256', chatwootSecret)
-      .update(rawBody)
-      .digest('hex');
-    if (signature !== `sha256=${expectedSig}`) {
-      return NextResponse.json({ error: 'Invalid webhook signature' }, { status: 401 });
-    }
+  const sig = assertChatwootWebhookSignature(rawBody, request.headers.get('x-chatwoot-signature'));
+  if (!sig.ok) {
+    return NextResponse.json({ error: sig.error || 'Invalid webhook signature' }, { status: sig.status });
   }
 
-  let payload: any;
+  let payload: Record<string, unknown>;
   try {
-    payload = JSON.parse(rawBody);
+    payload = JSON.parse(rawBody) as Record<string, unknown>;
   } catch {
     return NextResponse.json({ error: 'Invalid JSON payload' }, { status: 400 });
   }
 
-  const client = await pool.connect();
+  const eventName = typeof payload.event === 'string' ? payload.event : 'message_created';
+  const event = classifyEvent(eventName);
+  switch (event) {
+    case 'ignored':
+    case 'conversation_created':
+    case 'conversation_status_changed':
+    case 'message_updated':
+      return NextResponse.json({ success: true, ignored: true, event: eventName });
+    case 'message_created':
+      break;
+    default: {
+      const _never: never = event;
+      return NextResponse.json({ success: true, ignored: true, event: String(_never) });
+    }
+  }
+
+  const inbound = normalizeInbound(payload);
+  if (!inbound.contactId) {
+    return NextResponse.json(
+      { error: 'contact_id is required in webhook payload for multi-tenant routing' },
+      { status: 400 }
+    );
+  }
+
+  const orgId = await resolveOrgFromRequest(request, payload);
+  if (!orgId) {
+    console.error('[Chatwoot Webhook] Cannot resolve org_id — webhook must include org_id param or auth token');
+    return NextResponse.json(
+      { error: 'Cannot resolve organization. Include org_id in webhook URL or Authorization header.' },
+      { status: 400 }
+    );
+  }
+
+  const { client } = await getOrgScopedClient(orgId);
+  let conversationId = '';
+  let messageId = '';
+  let channelId: string | null = null;
+  let employee: { id?: string; name?: string; role?: string; persona?: unknown; tool_allowlist?: unknown } | undefined;
+  let connectedChannels: string[] = [];
+  let chanMeta: Record<string, unknown> = {};
+  let shouldFireAgent = !inbound.skipAgent;
 
   try {
-    const {
-      event = 'message_created',
-      channel_type = 'whatsapp',
-      chatwoot_conv_id,
-      contact_id,
-      sender_name = 'Customer',
-      content = 'Inbound message',
-      employee_id = null,
-      meta = {},
-    } = payload;
-
-    if (!contact_id) {
-      console.error('[Chatwoot Webhook] contact_id is required to route messages in a multi-tenant system');
-      return NextResponse.json(
-        { error: 'contact_id is required in webhook payload for multi-tenant routing' },
-        { status: 400 }
-      );
-    }
-
-    // Resolve org — MUST be correct org, not just LIMIT 1
-    let orgId = await resolveOrgFromRequest(request, client);
-
-    if (!orgId) {
-      // Last resort: if only 1 org exists (single-tenant test env), use it
-      const orgCount = await client.query('SELECT COUNT(*) as count FROM orgs WHERE status = $1', ['active']);
-      if (parseInt(orgCount.rows[0].count, 10) === 1) {
-        const orgRes = await client.query("SELECT id FROM orgs WHERE status = 'active' LIMIT 1");
-        orgId = orgRes.rows[0].id;
-      } else {
-        console.error('[Chatwoot Webhook] Cannot resolve org_id — webhook must include org_id param or auth token');
-        return NextResponse.json(
-          { error: 'Cannot resolve organization. Include org_id in webhook URL or Authorization header.' },
-          { status: 400 }
-        );
-      }
-    }
-
-    // Enforce Row Level Security
-    await client.query(`SELECT set_config('app.current_org_id', $1, true)`, [orgId]);
-
-    // Ensure channel exists
-    let channelId: string | null = null;
     const channelRes = await client.query(
-      `SELECT id FROM channels WHERE org_id = $1 AND channel_type = $2 LIMIT 1`,
-      [orgId, channel_type]
+      `SELECT id, meta FROM channels WHERE org_id = $1 AND channel_type = $2 LIMIT 1`,
+      [orgId, inbound.channelType]
     );
 
     if (channelRes.rows.length > 0) {
       channelId = channelRes.rows[0].id;
+      chanMeta = (channelRes.rows[0].meta || {}) as Record<string, unknown>;
     } else {
       const newChan = await client.query(
         `INSERT INTO channels (org_id, channel_type, status, meta, connected_at)
-         VALUES ($1, $2, 'active', $3, NOW()) RETURNING id`,
-        [orgId, channel_type, JSON.stringify({ name: `${channel_type} Channel` })]
+         VALUES ($1, $2, 'active', $3, NOW()) RETURNING id, meta`,
+        [orgId, inbound.channelType, JSON.stringify({ name: `${inbound.channelType} Channel` })]
       );
       channelId = newChan.rows[0].id;
+      chanMeta = (newChan.rows[0].meta || {}) as Record<string, unknown>;
     }
 
-    // Find or create conversation by chatwoot_conv_id or contact_id
-    let conversationId: string;
-    const convIdInput = chatwoot_conv_id || null; // Do NOT generate random IDs — use null if not provided
+    const existingConv = inbound.chatwootConvId
+      ? await client.query(
+          `SELECT id, status FROM conversations WHERE org_id = $1 AND chatwoot_conv_id = $2 LIMIT 1`,
+          [orgId, inbound.chatwootConvId]
+        )
+      : await client.query(
+          `SELECT id, status FROM conversations WHERE org_id = $1 AND contact_id = $2 AND status != 'resolved' LIMIT 1`,
+          [orgId, inbound.contactId]
+        );
 
-    const existingConv = await client.query(
-      `SELECT id, status FROM conversations WHERE org_id = $1 AND ($2::text IS NULL OR chatwoot_conv_id::text = $2::text) AND contact_id = $3 LIMIT 1`,
-      [orgId, convIdInput, contact_id]
+    const empRes = await client.query(
+      `SELECT id, name, role, persona, tool_allowlist FROM ai_employees WHERE org_id = $1 AND status = 'active' LIMIT 1`,
+      [orgId]
     );
+    employee = empRes.rows[0];
+    let assignedEmployeeId = employee?.id ?? null;
+    if (inbound.employeeId) {
+      const requested = await client.query(
+        `SELECT id FROM ai_employees WHERE org_id = $1 AND id = $2 LIMIT 1`,
+        [orgId, inbound.employeeId]
+      );
+      if (requested.rows[0]?.id) assignedEmployeeId = requested.rows[0].id;
+    }
+
+    const connectedRes = await client.query(
+      `SELECT channel_type FROM channels WHERE org_id = $1 AND status IN ('active', 'connected')`,
+      [orgId]
+    );
+    connectedChannels = connectedRes.rows.map((row: { channel_type: string }) => row.channel_type);
+
+    const metadata = {
+      sender_name: inbound.senderName,
+      chatwoot_account_id: inbound.chatwootAccountId,
+      ...inbound.meta,
+    };
 
     if (existingConv.rows.length > 0) {
       conversationId = existingConv.rows[0].id;
       await client.query(
-        `UPDATE conversations SET updated_at = NOW(), summary = $1, metadata = metadata || $2 WHERE id = $3 AND org_id = $4`,
-        [content.slice(0, 100), JSON.stringify({ sender_name, ...meta }), conversationId, orgId]
+        `UPDATE conversations SET updated_at = NOW(), summary = $1, metadata = metadata || $2::jsonb WHERE id = $3 AND org_id = $4`,
+        [inbound.content.slice(0, 100), JSON.stringify(metadata), conversationId, orgId]
       );
     } else {
-      // Pick the default active employee for this org
-      const empRes = await client.query(
-        `SELECT id FROM ai_employees WHERE org_id = $1 AND status = 'active' LIMIT 1`,
-        [orgId]
-      );
-      const assignedEmployeeId = employee_id || (empRes.rows[0]?.id ?? null);
-
       const newConv = await client.query(
-        `INSERT INTO conversations (org_id, channel_id, chatwoot_conv_id, status, contact_id, employee_id, summary, metadata, started_at)
-         VALUES ($1, $2, $3, 'open', $4, $5, $6, $7, NOW())
+        `INSERT INTO conversations (org_id, channel_id, chatwoot_conv_id, status, contact_id, employee_id, summary, metadata, started_at, updated_at)
+         VALUES ($1, $2, $3, 'open', $4, $5, $6, $7, NOW(), NOW())
          RETURNING id`,
-        [orgId, channelId, convIdInput, contact_id, assignedEmployeeId, content.slice(0, 100), JSON.stringify({ sender_name, ...meta })]
+        [
+          orgId,
+          channelId,
+          inbound.chatwootConvId,
+          inbound.contactId,
+          assignedEmployeeId,
+          inbound.content.slice(0, 100),
+          JSON.stringify(metadata),
+        ]
       );
       conversationId = newConv.rows[0].id;
     }
 
-    // Insert message
-    // chatwoot_msg_id: use provided value, don't fabricate random IDs
-    const chatwootMsgId = payload.chatwoot_msg_id || null;
-    const msgRes = await client.query(
-      `INSERT INTO messages (org_id, conversation_id, role, content, chatwoot_msg_id, created_at)
-       VALUES ($1, $2, 'user', $3, $4, NOW())
-       RETURNING id, created_at`,
-      [orgId, conversationId, content, chatwootMsgId]
-    );
+    if (inbound.chatwootMsgId) {
+      const dup = await client.query(
+        `SELECT id FROM messages WHERE org_id = $1 AND chatwoot_msg_id = $2 LIMIT 1`,
+        [orgId, inbound.chatwootMsgId]
+      );
+      if (dup.rows.length > 0) {
+        messageId = dup.rows[0].id;
+        shouldFireAgent = false;
+      }
+    }
 
-    // Audit log
+    if (!messageId) {
+      const msgRes = await client.query(
+        `INSERT INTO messages (org_id, conversation_id, role, content, chatwoot_msg_id, created_at)
+         VALUES ($1, $2, 'user', $3, $4, NOW())
+         RETURNING id, created_at`,
+        [orgId, conversationId, inbound.content, inbound.chatwootMsgId]
+      );
+      messageId = msgRes.rows[0].id;
+    }
+
     await client.query(
       `INSERT INTO channel_logs (org_id, channel_type, event_type, status, status_code, message, payload)
        VALUES ($1, $2, 'inbound_message', 'success', 200, $3, $4)`,
       [
         orgId,
-        channel_type,
-        `Inbound message from ${sender_name} (${contact_id})`,
-        JSON.stringify({ conversationId, messageId: msgRes.rows[0].id, content }),
+        inbound.channelType,
+        `Inbound message from ${inbound.senderName} (${inbound.contactId})`,
+        JSON.stringify({ conversationId, messageId, content: inbound.content.slice(0, 300) }),
       ]
     );
 
-    const latencyMs = Date.now() - startTime;
-
-    // Publish real-time needs_attention event
-    if (orgId) {
-      realtimeHub.publish(orgId, {
-        type: 'needs_attention',
-        conversationId,
-        message: content.slice(0, 200),
-        contactId: contact_id ?? 'unknown',
-        channelType: channel_type,
-      });
-    }
-
-    return NextResponse.json({
-      success: true,
-      latencyMs,
-      org_id: orgId,
-      conversation_id: conversationId,
-      message_id: msgRes.rows[0].id,
-      event,
-      channel_type,
+    realtimeHub.publish(orgId, {
+      type: 'needs_attention',
+      conversationId,
+      message: inbound.content.slice(0, 200),
+      contactId: inbound.contactId,
+      channelType: inbound.channelType,
     });
-  } catch (err: any) {
-    console.error('Chatwoot Webhook Ingestion Error:', err);
-    return NextResponse.json({ success: false, error: err.message }, { status: 500 });
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error('Chatwoot Webhook Ingestion Error:', message);
+    return NextResponse.json({ success: false, error: message }, { status: 500 });
   } finally {
     client.release();
   }
+
+  if (shouldFireAgent) {
+    fireInboundAgent({
+      orgId,
+      conversationId,
+      channelId: channelId ?? undefined,
+      employeeId: employee?.id,
+      employeeName: employee?.name ?? 'AI Assistant',
+      employeeRole: employee?.role ?? 'Support',
+      employeePersona: employeePersonaText(employee?.persona),
+      toolAllowlist: parseToolAllowlist(employee?.tool_allowlist),
+      connectedChannels,
+      userMessage: inbound.content,
+      replyTarget: replyTargetFromChannelMeta(
+        inbound.viaChatwootApi ? 'chatwoot' : inbound.channelType,
+        inbound.contactId,
+        { ...chanMeta, chatwoot_account_id: inbound.chatwootAccountId ?? chanMeta.chatwoot_account_id },
+        { chatwootConvId: inbound.chatwootConvId }
+      ),
+    });
+  }
+
+  return NextResponse.json({
+    success: true,
+    latencyMs: Date.now() - startTime,
+    org_id: orgId,
+    conversation_id: conversationId,
+    message_id: messageId,
+    event: eventName,
+    channel_type: inbound.channelType,
+  });
 }

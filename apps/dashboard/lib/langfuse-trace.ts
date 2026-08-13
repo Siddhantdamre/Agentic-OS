@@ -13,12 +13,14 @@ interface TraceParams {
 }
 
 export async function logLangfuseTrace(params: TraceParams): Promise<void> {
-  const langfuseHost = process.env.LANGFUSE_HOST || 'http://localhost:3002';
+  const isProd = process.env.NODE_ENV === 'production';
+  const langfuseHost =
+    process.env.LANGFUSE_HOST || (isProd ? '' : 'http://localhost:3002');
   const publicKey = process.env.LANGFUSE_PUBLIC_KEY || process.env.LANGFUSE_INIT_PROJECT_PUBLIC_KEY;
   const secretKey = process.env.LANGFUSE_SECRET_KEY || process.env.LANGFUSE_INIT_PROJECT_SECRET_KEY;
 
-  if (!publicKey || !secretKey) {
-    console.debug('[Langfuse] No API keys configured — skipping trace');
+  if (!publicKey || !secretKey || !langfuseHost) {
+    console.debug('[Langfuse] No API keys or host configured — skipping trace');
     return;
   }
 

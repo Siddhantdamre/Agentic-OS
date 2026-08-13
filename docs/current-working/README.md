@@ -29,6 +29,7 @@ and **confirm before running multi-step plans**.
 | [13-what-works.md](./13-what-works.md) | Verified working paths (from code + BUILD_STATE) |
 | [14-what-does-not-work.md](./14-what-does-not-work.md) | Gaps, stubs, expired tokens, missing files |
 | [15-env-and-run.md](./15-env-and-run.md) | Commands to boot and verify |
+| [16-updates-2026-08-13.md](./16-updates-2026-08-13.md) | Changelog: last commit → 13 Aug working tree |
 
 ## Source of truth order
 
@@ -43,7 +44,9 @@ and **confirm before running multi-step plans**.
 runtime, Nango connectors, WhatsApp inbound, Temporal worker, and SSE inbox
 updates all exist and have been live-verified at least once.
 
-**Not production-ready:** several OAuth providers need real client IDs; Meta
-WhatsApp outbound token is expired; sandbox Docker context is missing from git;
-custom atomic-agent skill playbooks are not mounted; Insight is rule-based, not
-LLM; realtime SSE is in-process only (one Node process).
+**Not production-ready:** several OAuth providers need real client IDs in the
+Nango UI; Meta WhatsApp outbound token is expired; Insight is rule-based, not
+LLM; realtime SSE is in-process only (one Node process). Sandbox Docker context
+and custom atomic-agent SKILL.md playbooks are in this working tree (see
+[16](./16-updates-2026-08-13.md)). Operator must still run `pnpm db:migrate`
+for 009–011.

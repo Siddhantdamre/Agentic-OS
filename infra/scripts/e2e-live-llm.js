@@ -1,4 +1,5 @@
 const http = require('http');
+const crypto = require('crypto');
 const path = require('path');
 const fs = require('fs');
 const { Pool } = require(path.join(__dirname, '../../apps/dashboard/node_modules/pg'));
@@ -38,7 +39,7 @@ const pool = new Pool({
   database: process.env.DB_NAME || 'darex',
 });
 
-function makeRequest(url, method = 'GET', body = null, cookie = null) {
+function makeRequest(url, method = 'GET', body = null, cookie = null, extraHeaders = {}) {
   return new Promise((resolve, reject) => {
     const parsedUrl = new URL(url);
     const postData = body ? JSON.stringify(body) : null;
@@ -51,6 +52,7 @@ function makeRequest(url, method = 'GET', body = null, cookie = null) {
         'Content-Type': 'application/json',
         ...(cookie ? { Cookie: cookie } : {}),
         ...(postData ? { 'Content-Length': Buffer.byteLength(postData) } : {}),
+        ...extraHeaders,
       },
     };
     const req = http.request(options, (res) => {
@@ -158,7 +160,12 @@ async function run() {
     };
 
     const startT = Date.now();
-    const webhookRes = await makeRequest('http://localhost:3000/api/webhooks/whatsapp', 'POST', metaPayload);
+    const rawBody = JSON.stringify(metaPayload);
+    const metaSecret = process.env.WHATSAPP_APP_SECRET || process.env.META_APP_SECRET;
+    const metaHeaders = metaSecret
+      ? { 'X-Hub-Signature-256': `sha256=${crypto.createHmac('sha256', metaSecret).update(rawBody).digest('hex')}` }
+      : {};
+    const webhookRes = await makeRequest('http://localhost:3000/api/webhooks/whatsapp', 'POST', metaPayload, null, metaHeaders);
     const elapsed = Date.now() - startT;
     if (webhookRes.statusCode === 200) {
       console.log(`  [PASS] Webhook accepted in ${elapsed}ms (HTTP 200)`);

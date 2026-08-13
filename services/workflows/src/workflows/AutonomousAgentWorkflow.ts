@@ -9,7 +9,7 @@ const { runAgentTurnActivity, saveMessageActivity, logChannelActivity } = proxyA
   scheduleToCloseTimeout: '20 minutes',
   retry: {
     initialInterval: '5s',
-    maximumAttempts: 2,       // avoid thundering-herd on slow external APIs
+    maximumAttempts: 2,
     backoffCoefficient: 2,
     nonRetryableErrorTypes: ['AuthorizationError', 'InvalidArgumentError'],
   },
@@ -18,12 +18,14 @@ const { runAgentTurnActivity, saveMessageActivity, logChannelActivity } = proxyA
 export const agentProgressQuery = defineQuery<AgentTaskResult['executedSteps']>('agentProgressQuery');
 
 export async function AutonomousAgentWorkflow(input: AgentTaskInput): Promise<AgentTaskResult> {
-  // Full agent reasoning + tool dispatch happens inside atomic-agent; this
-  // workflow only drives the turn and persists the outcome.
+  // atomic-agent already runs a complete MCP tool loop per turn. This workflow
+  // is the durable wrapper: one primary turn, then at most two retries when
+  // the turn timed out or returned no reply after tools. priorToolResults is
+  // fed back into the next turn so the model does not blindly re-run work.
 
-  const MAX_STEPS = 8;
-  
-  let currentInput = { ...input };
+  const MAX_TURNS = 3;
+
+  let currentInput: AgentTaskInput = { ...input };
   let finalResult: AgentTaskResult | null = null;
   const allExecutedSteps: AgentTaskResult['executedSteps'] = [];
   const allUsedTools = new Set<string>();
@@ -31,19 +33,18 @@ export async function AutonomousAgentWorkflow(input: AgentTaskInput): Promise<Ag
 
   setHandler(agentProgressQuery, () => allExecutedSteps);
 
-  for (let step = 1; step <= MAX_STEPS; step++) {
+  for (let step = 1; step <= MAX_TURNS; step++) {
     const result = await runAgentTurnActivity(currentInput);
-    
-    // Accumulate results
+
     allExecutedSteps.push(...result.executedSteps);
     for (const tool of result.usedTools) {
       allUsedTools.add(tool);
     }
-    
+
     if (result.replyMessage) {
       finalReplyMessage = result.replyMessage;
     }
-    
+
     finalResult = {
       ...result,
       replyMessage: finalReplyMessage,
@@ -51,17 +52,20 @@ export async function AutonomousAgentWorkflow(input: AgentTaskInput): Promise<Ag
       usedTools: Array.from(allUsedTools),
     };
 
-    if (result.usedTools.length === 0 || result.isDone) {
+    const shouldContinue =
+      result.retryable === true ||
+      (result.success && !result.isDone && !result.replyMessage && result.usedTools.length > 0);
+
+    if (!shouldContinue || step === MAX_TURNS) {
       break;
     }
 
-    // Pass priorToolResults back into the input for the next turn
     currentInput = {
       ...currentInput,
       priorToolResults: allExecutedSteps,
     };
   }
-  
+
   const resultToSave = finalResult!;
 
   if (input.orgId) {
@@ -75,16 +79,18 @@ export async function AutonomousAgentWorkflow(input: AgentTaskInput): Promise<Ag
         stepsCount: resultToSave.executedSteps.length,
         engine: 'atomic-agent',
       },
+      idempotencyKey: input.idempotencyKey ? `${input.idempotencyKey}:log` : undefined,
     });
   }
 
-  if (input.conversationId && input.orgId) {
+  if (input.conversationId && input.orgId && resultToSave.replyMessage) {
     await saveMessageActivity({
       orgId: input.orgId,
       conversationId: input.conversationId,
       role: 'assistant',
       content: resultToSave.replyMessage,
       toolCalls: resultToSave.executedSteps,
+      idempotencyKey: input.idempotencyKey ? `${input.idempotencyKey}:save` : undefined,
     });
   }
 

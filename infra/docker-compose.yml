@@ -119,6 +119,18 @@ services:
       timeout: 3s
       retries: 10
 
+  langfuse-redis:
+    image: redis:7-alpine
+    container_name: darex-langfuse-redis
+    restart: unless-stopped
+    networks:
+      - darex-net
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
   # ─────────────────────────────────────────────────────────────────────────
   # Nango — self-hosted OAuth / connector platform
   # Uses the same Postgres instance (nango schema) + Redis for queues.
@@ -232,7 +244,7 @@ services:
         condition: service_healthy
       langfuse-clickhouse:
         condition: service_healthy
-      redis:
+      langfuse-redis:
         condition: service_healthy
       langfuse-minio-createbuckets:
         condition: service_completed_successfully
@@ -240,10 +252,10 @@ services:
       - "3002:3000"   # Langfuse UI + API
     environment:
       DATABASE_URL: postgresql://darex:${DB_PASSWORD:-darex_dev_secret}@postgres:5432/langfuse
-      REDIS_HOST: redis
+      REDIS_HOST: langfuse-redis
       REDIS_PORT: "6379"
-      REDIS_URL: redis://redis:6379
-      REDIS_CONNECTION_STRING: redis://redis:6379
+      REDIS_URL: redis://langfuse-redis:6379
+      REDIS_CONNECTION_STRING: redis://langfuse-redis:6379
       NEXTAUTH_URL: http://localhost:3002
       NEXTAUTH_SECRET: darex-langfuse-nextauth-secret-dev
       SALT: darex-langfuse-salt-dev-change-in-prod
@@ -293,16 +305,16 @@ services:
     depends_on:
       langfuse-server:
         condition: service_healthy
-      redis:
+      langfuse-redis:
         condition: service_healthy
       langfuse-minio-createbuckets:
         condition: service_completed_successfully
     environment:
       DATABASE_URL: postgresql://darex:${DB_PASSWORD:-darex_dev_secret}@postgres:5432/langfuse
-      REDIS_HOST: redis
+      REDIS_HOST: langfuse-redis
       REDIS_PORT: "6379"
-      REDIS_URL: redis://redis:6379
-      REDIS_CONNECTION_STRING: redis://redis:6379
+      REDIS_URL: redis://langfuse-redis:6379
+      REDIS_CONNECTION_STRING: redis://langfuse-redis:6379
       SALT: darex-langfuse-salt-dev-change-in-prod
       CLICKHOUSE_URL: http://darex-langfuse-clickhouse:8123
       CLICKHOUSE_MIGRATION_URL: clickhouse://langfuse:langfuse_dev_secret@darex-langfuse-clickhouse:9000/langfuse
@@ -369,6 +381,9 @@ services:
       - DATABASE_URL=postgresql://darex:${DB_PASSWORD:-darex_dev_secret}@postgres:5432/litellm
       # OpenRouter key used by the model fallback chain in config.yaml
       - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
+      - LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY:-pk-lf-darex-dev-public}
+      - LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY:-sk-lf-darex-dev-secret}
+      - LANGFUSE_HOST=http://darex-langfuse-server:3000
     depends_on:
       postgres:
         condition: service_healthy
@@ -407,10 +422,14 @@ services:
       - DB_HOST=postgres
       - NANGO_HOST=http://nango-server:3003
     env_file:
-      - ../.env
-      - ../apps/dashboard/.env.local
-      - ./.env
-      - ../services/connectors/.env
+      - path: ../.env
+        required: false
+      - path: ../apps/dashboard/.env.local
+        required: false
+      - path: ./.env
+        required: false
+      - path: ../services/connectors/.env
+        required: false
     networks:
       - darex-net
     healthcheck:
@@ -446,9 +465,12 @@ services:
       - LITELLM_MODEL=atomic-agent
       - ATOMIC_AGENT_ACTIVE_PROVIDER=${ATOMIC_AGENT_ACTIVE_PROVIDER:-darex-litellm}
     env_file:
-      - ../.env
-      - ../apps/dashboard/.env.local
-      - ./.env
+      - path: ../.env
+        required: false
+      - path: ../apps/dashboard/.env.local
+        required: false
+      - path: ./.env
+        required: false
     volumes:
       - atomic-agent-data:/data
       - atomic-agent-work:/work
@@ -500,7 +522,8 @@ services:
       - "3004:3004"
     environment:
       - PORT=3004
-      - DASHBOARD_URL=http://localhost:3000
+      - DASHBOARD_URL=http://dashboard:3000
+      - CHATWOOT_WEBHOOK_SECRET=${CHATWOOT_WEBHOOK_SECRET:-}
     depends_on:
       postgres:
         condition: service_healthy
@@ -542,15 +565,20 @@ services:
       - NANGO_HOST=http://nango-server:3003
       - ATOMIC_AGENT_URL=http://atomic-agent:8787
       - ATOMIC_AGENT_API_KEY=${ATOMIC_AGENT_API_KEY:-darex-atomic-agent-dev-key}
-      - ATOMIC_AGENT_ACTIVE_PROVIDER=${ATOMIC_AGENT_ACTIVE_PROVIDER:-darex-openrouter}
+      - ATOMIC_AGENT_ACTIVE_PROVIDER=${ATOMIC_AGENT_ACTIVE_PROVIDER:-darex-litellm}
       - ATOMIC_AGENT_TIMEOUT_MS=${ATOMIC_AGENT_TIMEOUT_MS:-300000}
       - SANDBOX_API_URL=http://sandbox:8080
       - LANGFUSE_HOST=http://langfuse-server:3000
+      - LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY:-pk-lf-darex-dev-public}
+      - LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY:-sk-lf-darex-dev-secret}
       - JINA_API_KEY=${JINA_API_KEY:-}
     env_file:
-      - ../.env
-      - ../apps/dashboard/.env.local
-      - ./.env
+      - path: ../.env
+        required: false
+      - path: ../apps/dashboard/.env.local
+        required: false
+      - path: ./.env
+        required: false
     networks:
       - darex-net
     healthcheck:
@@ -590,16 +618,28 @@ services:
       - NANGO_HOST=http://nango-server:3003
       - TEMPORAL_ADDRESS=temporal:7233
       - SUPERTOKENS_CONNECTION_URI=http://supertokens:3567
-      - LANGFUSE_HOST=http://langfuse-server:3000
       - ATOMIC_AGENT_URL=http://atomic-agent:8787
       - ATOMIC_AGENT_API_KEY=${ATOMIC_AGENT_API_KEY:-darex-atomic-agent-dev-key}
       - JINA_API_KEY=${JINA_API_KEY:-}
       - ATOMIC_AGENT_TIMEOUT_MS=${ATOMIC_AGENT_TIMEOUT_MS:-300000}
       - SANDBOX_API_URL=http://sandbox:8080
+      - LANGFUSE_HOST=http://langfuse-server:3000
+      - LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY:-pk-lf-darex-dev-public}
+      - LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY:-sk-lf-darex-dev-secret}
+      - CHATWOOT_WEBHOOK_SECRET=${CHATWOOT_WEBHOOK_SECRET:-}
     env_file:
-      - ../.env
-      - ../apps/dashboard/.env.local
-      - ./.env
+      - path: ../.env
+        required: false
+      - path: ../apps/dashboard/.env.local
+        required: false
+      - path: ./.env
+        required: false
     networks:
       - darex-net
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"require('http').get('http://localhost:3000/api/health', r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))\""]
+      interval: 15s
+      timeout: 10s
+      retries: 20
+      start_period: 45s
 

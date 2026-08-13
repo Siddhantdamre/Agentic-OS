@@ -43,7 +43,7 @@ Providers: `google`, `github`, `meta`/`facebook`, `microsoft`.
 
 ## Org resolution (`lib/db.ts`)
 
-`getScopedClient()`:
+`getScopedClient()` / `getOrgScopedClient()`:
 
 1. Read `darex_session`.
 2. Load `users.org_id`.
@@ -72,12 +72,15 @@ Home `?warmup=true` shows a **UI-only** progress bar (no real provisioning job).
 
 - Register → unique org → login → scoped APIs.
 - SuperTokens when keys match; Postgres fallback when they don’t.
-- OAuth callbacks with real client IDs.
-- Onboarding writes org + channel stubs.
+- OAuth callbacks with real client IDs; `?invite=` survives the round-trip.
+- Forgot / reset password; invite accept while signed in.
+- Onboarding writes org + channel stubs. Body `org_id` is rejected.
 
 ## What does not
 
-- Middleware does not send users without an org into onboarding.
-- Invite member (`POST /api/settings`) inserts a placeholder user; **no email**.
+- Middleware does not send users without an org into onboarding (it uses the
+  onboarding cookie).
+- Invite email needs `RESEND_API_KEY`; without it Settings still returns a
+  copyable `/invite/{token}` link (`org_invites`).
 - Demo OAuth bypass is dangerous if `ALLOW_DEMO_AUTH` leaks to prod.
 - SuperTokens Dashboard recipe is initialized; not a product surface.

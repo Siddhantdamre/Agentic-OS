@@ -22,8 +22,9 @@ and treats `_` / `-` as equal.
 | `database_query`, `db_query`, `sql_analytics` | query | Yes | RLS SELECT/WITH, max 25 rows |
 | `file_ops`, `file_system`, `workspace_file` | read_file, write_file | Yes | `workspace_storage/{orgId}/` basename-only |
 
-Sandbox is **not** on MCP. Plan execute and `POST /api/agent/tools` can still
-call it. Compose service exists; **`infra/docker/sandbox/` is not in git.**
+Sandbox is on MCP as `code_execution`. Plan execute and `POST /api/agent/tools`
+can still call it. Compose service exists; **`infra/docker/sandbox/` is in this
+working tree** (untracked vs commit `99b5f04`).
 
 ---
 
@@ -74,8 +75,8 @@ All real APIs when Nango is connected. Extra ids:
 
 - Shopify: `shopDomain`
 - Zendesk: `subdomain`
-- Stripe customer create/get exist in executor, **not** on MCP
-- Intercom: **read-only** (`fetch_conversations`). No create/reply.
+- Stripe: payment link on MCP; customer create/get **also** on MCP
+- Intercom: fetch **and** reply/create (`intercom_reply`, `intercom_create_conversation`)
 
 Need real OAuth client IDs in Nango UI before connect popups complete.
 
@@ -83,8 +84,8 @@ Need real OAuth client IDs in Nango UI before connect popups complete.
 
 ## Razorpay — MCP: `razorpay_create_payment_link`
 
-Uses **env** `RAZORPAY_KEY_ID` + `RAZORPAY_KEY_SECRET`, not per-org Nango.
-Empty in typical dashboard `.env.local`.
+Uses **per-org** `channels.meta` keys first, then env
+`RAZORPAY_KEY_ID` + `RAZORPAY_KEY_SECRET`, then `notConnected`.
 
 ---
 
@@ -102,23 +103,22 @@ Empty in typical dashboard `.env.local`.
 
 ---
 
-## Stubs (MCP or UI list, no executor)
+## Google Chat / Meet / Analytics / Search Console / Business / Cloud
 
-| Name | What happens |
-|------|----------------|
-| `google-analytics` `analytics_report` | MCP registered; executor `"Unhandled Google tool"` |
-| `google-chat` | Case label only |
-| `google-meet` | Case label only |
-| `google-search-console` | Case label only |
-| `google-business-profile` | Case label only |
-| `google-cloud` | Case label only |
-| Unknown tool | `"Unknown tool — no executor registered"` |
+Executors are **real HTTP** (Nango token or `notConnected`). MCP names:
+`chat_list_spaces`, `chat_send_message`, `meet_create_space`, `meet_get_space`,
+`analytics_report`, `search_console_sites`, `search_console_query`,
+`business_list_locations`, `cloud_list_projects`.
 
-These still appear on `/integrations` as connectable catalog rows.
+The `/integrations` catalog still labels several of these `catalog_only` with
+stale “no executor” hints. Trust this file and `tool-executor.ts`. Google Cloud
+has no OAuth popup (`service_account` in the UI).
+
+Unknown tool → `"Unknown tool — no executor registered"`.
 
 ---
 
-## MCP name → executor (49)
+## MCP name → executor (62)
 
 `whatsapp_send`, `gmail_fetch`, `gmail_send`, `gmail_triage`, `gmail_extract_otp`,
 `gmail_extract_attachment`, `gmail_draft_email`, `calendar_list_events`,
@@ -133,7 +133,11 @@ These still appear on `/integrations` as connectable catalog rows.
 `file_ops`, `drive_search`, `drive_list`, `drive_get_text`, `drive_upload`,
 `drive_share`, `docs_create`, `docs_read`, `docs_append`, `sheets_create`,
 `sheets_read`, `sheets_append_row`, `slides_create`, `forms_get`,
-`contacts_list`, `tasks_list`, `analytics_report` (stub).
+`contacts_list`, `tasks_list`, `code_execution`, `stripe_create_customer`,
+`stripe_get_customer`, `intercom_reply`, `intercom_create_conversation`,
+`chat_list_spaces`, `chat_send_message`, `meet_create_space`, `meet_get_space`,
+`search_console_sites`, `search_console_query`, `business_list_locations`,
+`cloud_list_projects`, `analytics_report`.
 
 atomic-agent prefixes them `mcp.darex.*`.
 

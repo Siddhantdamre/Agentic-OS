@@ -3,7 +3,7 @@
 File: `infra/docker-compose.yml`. Network `darex-net`. Boot: `pnpm infra:up`
 from repo root (compose file under `infra/`).
 
-Live compose has **18** services (older docs say 15).
+Live compose has **19** services (older docs say 15).
 
 ## Services
 
@@ -12,7 +12,8 @@ Live compose has **18** services (older docs say 15).
 | postgres | 5432 | Postgres 16 + pgvector | `pg_isready` |
 | temporal | 7233 | Workflow server | `temporal workflow list` |
 | temporal-ui | 8233 | UI | none |
-| redis | 6379 | Nango + Langfuse queues | `PING` |
+| redis | 6379 | Nango queues | `PING` |
+| langfuse-redis | internal | Langfuse BullMQ | `PING` |
 | nango-server | 3003 | OAuth | `/health` |
 | langfuse-clickhouse | 8123 / 9000 | Trace store | `SELECT 1` |
 | langfuse-minio | 9090 / 9091 | S3 blobs | `mc ready` |
@@ -23,10 +24,10 @@ Live compose has **18** services (older docs say 15).
 | litellm | 4000 | LLM gateway | `/health/readiness` |
 | atomic-bridge | 127.0.0.1:8790 | MCP | TCP 8790 |
 | atomic-agent | 127.0.0.1:8787 | Agent loop | TCP 8787 |
-| sandbox | internal 8080 | Code exec | `/health` — **build context missing** |
+| sandbox | internal 8080 | Code exec | `/health` — context in working tree |
 | inbox | 3004 | Chatwoot proxy | `/health` |
 | worker | — | Temporal worker | no-op |
-| dashboard | 3000 | Next.js `next start` | none |
+| dashboard | 3000 | Next.js `next start` | `GET /api/health` |
 
 ## LiteLLM (`infra/litellm/config.yaml`)
 
@@ -37,30 +38,23 @@ Classify/plan/revise set `reasoning: { enabled: false }`.
 atomic-agent compose default provider: `darex-litellm`. Worker may still
 reference `darex-openrouter` depending on env.
 
-## Sandbox gap
+## Sandbox
 
-Compose:
+`infra/docker/sandbox/` is in this working tree (`Dockerfile` + `server.mjs`,
+unprivileged uid 10001). It is **untracked vs commit `99b5f04`**. Compose can
+build it. `SANDBOX_API_URL=http://sandbox:8080` is wired on worker + dashboard.
 
-```yaml
-sandbox:
-  build:
-    context: ./docker/sandbox
-```
-
-**`infra/docker/sandbox/` is not in the git tree.** `docker compose up` will
-fail to build this service until the Dockerfile is committed. Executor and
-env `SANDBOX_API_URL=http://sandbox:8080` are already wired. BUILD_STATE
-records a live python/node/bash smoke test from when the image existed locally.
-
-## Custom skills gap
+## Custom skills
 
 `infra/docker/atomic-agent/custom-skills/` has 11 SKILL.md playbooks.
-Dockerfile does not COPY them. Image uses upstream starter-skills.
+Dockerfile COPY merges them into `starter-skills`. Rebuild the atomic-agent
+image after playbook edits.
 
 ## Redis / Langfuse ops
 
-Shared Redis (~100 clients). Langfuse BullMQ can timeout; ingestion to the
-server works; ClickHouse persistence is flaky. Dedicated Redis is an ops item.
+Nango uses shared `redis`. Langfuse server/worker use dedicated
+`langfuse-redis`. Ingestion schema is fixed; ClickHouse persistence can still
+be flaky. Compose `env_file` entries are `required: false`.
 
 ## Verification scripts (`infra/scripts/`)
 

@@ -24,8 +24,9 @@ Payments: stripe, razorpay
 Knowledge / shop: notion, shopify  
 Dev: github  
 Google productivity: drive, docs, sheets, slides, forms, contacts, tasks  
-Listed **without a working executor:** google-analytics, google-search-console,
-google-business-profile, google-cloud, google-meet, google-chat
+Also listed: google-analytics, google-search-console, google-business-profile,
+google-cloud, google-meet, google-chat — **executors exist**; UI catalog may
+still say `catalog_only` (see [08](./08-tools-catalog.md)).
 
 ## Connect flow (real OAuth)
 
@@ -40,19 +41,20 @@ google-business-profile, google-cloud, google-meet, google-chat
 `GET /api/integrations` re-verifies every DB-connected row against Nango in
 parallel. UI “Connected” means Nango agrees.
 
-Disconnect: `POST /api/integrations` `{ action: 'disconnect' }`.
+Disconnect: `POST /api/integrations` `{ action: 'disconnect' }` **deletes**
+the Nango connection then clears `channels`.
 
 ## WhatsApp BYOK (bypasses Nango)
 
-`POST /api/integrations/whatsapp` stores `{ accessToken, phoneNumberId, wabaId }`
-in `channels.meta` (both camelCase and snake_case keys). `nango_connection_id`
-is reserved for real Nango ids.
+`POST /api/integrations/whatsapp` Graph-pings then stores
+`{ accessToken, phoneNumberId, wabaId }` in `channels.meta`.
 
 ## Test proxy (not the agent)
 
-`POST /api/integrations/test` uses `@darex/connectors` for **seven** providers:
-WhatsApp, Gmail, Calendar, HubSpot, Razorpay, Meta Ads, Google Ads.
-Writes `channel_logs`. This is a diagnostic, not the MCP path.
+`POST /api/integrations/test` is a **read-only ping** by default (Nango /
+WhatsApp Graph / Razorpay). Writes `channel_logs`. This is a diagnostic, not
+the MCP path. Shopify/Zendesk require shop/subdomain **before** the OAuth
+popup. Missing OAuth client IDs point at Nango UI `:3003`.
 
 The **agent** uses `tool-executor.ts` direct HTTP + Nango tokens. It does not
 import `@darex/connectors`.
@@ -73,6 +75,7 @@ import `@darex/connectors`.
   **real OAuth client IDs** in the Nango UI (`http://localhost:3003`) before
   the popup can finish.
 - WhatsApp outbound needs a rotated `META_ACCESS_TOKEN`.
-- Several Google products are catalog-only (see [08-tools-catalog.md](./08-tools-catalog.md)).
+- Several Google products have executors now; the UI catalog may still say
+  `catalog_only` (see [08](./08-tools-catalog.md) and [16](./16-updates-2026-08-13.md)).
 - `POST /api/integrations/webhooks` is an authenticated **logger**, not Meta’s
   public webhook.

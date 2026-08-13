@@ -42,10 +42,18 @@ export async function GET() {
         const seeded = [];
         for (const emp of DEFAULT_ROSTER) {
           const insertRes = await client.query(
-            `INSERT INTO ai_employees (org_id, name, role, persona, tool_allowlist, status) 
-             VALUES ($1, $2, $3, $4, $5, $6) 
+            `INSERT INTO ai_employees (org_id, name, role, persona, tool_allowlist, graph_id, status) 
+             VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7) 
              RETURNING id, name, role, persona, tool_allowlist, graph_id, status, created_at, updated_at`,
-            [orgId, emp.name, emp.role, emp.persona, JSON.stringify(emp.tool_allowlist), emp.status]
+            [
+              orgId,
+              emp.name,
+              emp.role,
+              JSON.stringify(emp.persona),
+              emp.tool_allowlist,
+              `default-${emp.name.toLowerCase()}`,
+              emp.status,
+            ]
           );
           seeded.push(insertRes.rows[0]);
         }
@@ -76,14 +84,17 @@ export async function POST(request: Request) {
         return NextResponse.json({ error: 'Name and role are required' }, { status: 400 });
       }
 
-      const tools = Array.isArray(tool_allowlist) ? JSON.stringify(tool_allowlist) : JSON.stringify([]);
-      const empStatus = status || 'active';
+      const tools = Array.isArray(tool_allowlist)
+        ? tool_allowlist.filter((item: unknown): item is string => typeof item === 'string' && item.length > 0)
+        : [];
+      const empStatus = status === 'paused' ? 'paused' : 'active';
+      const personaJson = JSON.stringify(typeof persona === 'string' ? persona : persona ?? '');
 
       const res = await client.query(
-        `INSERT INTO ai_employees (org_id, name, role, persona, tool_allowlist, status) 
-         VALUES ($1, $2, $3, $4, $5, $6) 
+        `INSERT INTO ai_employees (org_id, name, role, persona, tool_allowlist, graph_id, status) 
+         VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7) 
          RETURNING id, name, role, persona, tool_allowlist, graph_id, status, created_at, updated_at`,
-        [orgId, name, role, persona || '', tools, empStatus]
+        [orgId, name, role, personaJson, tools, `emp-${crypto.randomUUID()}`, empStatus]
       );
 
       return NextResponse.json({ employee: res.rows[0] }, { status: 201 });

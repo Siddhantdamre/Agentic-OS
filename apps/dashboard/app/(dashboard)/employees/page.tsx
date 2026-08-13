@@ -28,11 +28,18 @@ interface AIEmployee {
 }
 
 const AVAILABLE_TOOLS = [
-  { id: 'gmail', label: 'Gmail API' },
+  { id: 'gmail', label: 'Gmail' },
   { id: 'whatsapp', label: 'WhatsApp' },
   { id: 'google-calendar', label: 'Google Calendar' },
-  { id: 'meta-ads', label: 'Meta Ads' },
+  { id: 'google-drive', label: 'Google Drive' },
+  { id: 'google-docs', label: 'Google Docs' },
+  { id: 'google-sheets', label: 'Google Sheets' },
   { id: 'hubspot', label: 'HubSpot CRM' },
+  { id: 'github', label: 'GitHub' },
+  { id: 'slack', label: 'Slack' },
+  { id: 'notion', label: 'Notion' },
+  { id: 'meta-ads', label: 'Meta Ads' },
+  { id: 'web_search', label: 'Web search' },
 ];
 
 export default function EmployeesPage() {
@@ -200,7 +207,7 @@ export default function EmployeesPage() {
           <div className="text-3xl font-bold text-heading">
             {empStats?.automationRate ? empStats.automationRate + '%' : (employees.length > 0 ? (activeCount / Math.max(employees.length, 1) * 100).toFixed(0) + '%' : '--')}
           </div>
-          <span className="text-xs text-emerald-600 font-medium">AI self-resolved</span>
+          <span className="text-xs text-slate-500 font-medium">Share of roster currently active</span>
         </div>
 
         <div className="bg-cream-200/70 border border-cream-300 p-5 rounded-2xl space-y-2 shadow-sm">
@@ -208,7 +215,7 @@ export default function EmployeesPage() {
           <div className="text-3xl font-bold text-heading">
             {empStats?.avgResolutionSec ? empStats.avgResolutionSec.toFixed(1) + 's' : '--'}
           </div>
-          <span className="text-xs text-slate-500 font-medium">Real-time response</span>
+          <span className="text-xs text-slate-500 font-medium">Time to conversation.resolved_at when present</span>
         </div>
       </div>
 
@@ -291,7 +298,11 @@ export default function EmployeesPage() {
 
                   {/* Persona description */}
                   <p className="text-xs text-slate-600 leading-relaxed line-clamp-3">
-                    {employee.persona || 'Specialized AI employee for processing inquiries and handling user interactions.'}
+                    {typeof employee.persona === 'string'
+                      ? employee.persona
+                      : employee.persona
+                        ? JSON.stringify(employee.persona)
+                        : 'Specialized AI employee for processing inquiries and handling user interactions.'}
                   </p>
 
                   {/* Tools allowlist badges */}

@@ -1,37 +1,43 @@
 import { NextResponse } from 'next/server';
 import { getScopedClient } from '@/lib/db';
-import { nangoConnectionExists } from '@/lib/nango-server';
+import {
+  INTEGRATION_CATALOG,
+  getIntegration,
+  isIntegrationId,
+  isPublicMetaKey,
+  nangoUiUrl,
+} from '@/lib/integrations-catalog';
+import {
+  deleteNangoConnection,
+  isNangoSecretConfigured,
+  listNangoConfigs,
+  listNangoConnections,
+  nangoConnectionExists,
+  primaryConnectionId,
+} from '@/lib/nango-server';
 
-// All supported connectivity tools
-const ALL_INTEGRATIONS = [
-  { id: 'whatsapp', name: 'WhatsApp Business', category: 'Messaging', icon: 'MessageSquare', desc: 'Meta Cloud API for inbound & outbound WhatsApp customer messaging' },
-  { id: 'gmail', name: 'Gmail / Email', category: 'Email', icon: 'Mail', desc: 'Inbound email triage & outbound response drafting via Gmail API' },
-  { id: 'google-calendar', name: 'Google Calendar', category: 'Calendar', icon: 'Calendar', desc: 'Real-time slot checking & appointment booking' },
-  { id: 'google-ads', name: 'Google Ads', category: 'Advertising', icon: 'BarChart2', desc: 'Search campaign analytics, conversion logging & ROAS metrics' },
-  { id: 'meta-ads', name: 'Meta Ads', category: 'Advertising', icon: 'Megaphone', desc: 'ROAS tracking & Meta ad campaign performance monitoring' },
-  { id: 'hubspot', name: 'HubSpot CRM', category: 'CRM', icon: 'Database', desc: 'Automatic contact creation, deal stage updates & lead tracking' },
-  { id: 'stripe', name: 'Stripe Payments', category: 'Payments', icon: 'CreditCard', desc: 'Subscription tracking, payment links & customer billing sync' },
-  { id: 'notion', name: 'Notion Workspace', category: 'Knowledge', icon: 'BookOpen', desc: 'Sync knowledge bases, product docs & team task databases' },
-  { id: 'slack', name: 'Slack Notifications', category: 'Messaging', icon: 'Slack', desc: 'Team alerts, channel notifications & human-handoff triggers' },
-  { id: 'shopify', name: 'Shopify Store', category: 'E-Commerce', icon: 'ShoppingBag', desc: 'Order tracking, inventory queries & customer fulfillment sync' },
-  { id: 'zendesk', name: 'Zendesk Support', category: 'Support', icon: 'Headphones', desc: 'Helpdesk ticket creation & customer escalation sync' },
-  { id: 'intercom', name: 'Intercom Inbox', category: 'Support', icon: 'MessageCircle', desc: 'Live customer chat sync & agent assignment' },
-  { id: 'github', name: 'GitHub Code', category: 'Development', icon: 'Github', desc: 'Repository sync, pull request logs & issue tracking' },
-  { id: 'razorpay', name: 'Razorpay Invoices', category: 'Payments', icon: 'CreditCard', desc: 'Instant payment link generation & invoice status queries' },
-  { id: 'google-drive', name: 'Google Drive', category: 'Productivity', icon: 'FolderOpen', desc: 'Search, read, upload & share files across Google Drive' },
-  { id: 'google-docs', name: 'Google Docs', category: 'Productivity', icon: 'FileText', desc: 'Create, read & append content in Google Docs documents' },
-  { id: 'google-sheets', name: 'Google Sheets', category: 'Productivity', icon: 'Table', desc: 'Read, create & append rows in Google Sheets spreadsheets' },
-  { id: 'google-slides', name: 'Google Slides', category: 'Productivity', icon: 'Presentation', desc: 'Create & present slide decks in Google Slides' },
-  { id: 'google-forms', name: 'Google Forms', category: 'Productivity', icon: 'FileCheck', desc: 'Read & capture form structure and responses' },
-  { id: 'google-chat', name: 'Google Chat', category: 'Messaging', icon: 'MessageSquare', desc: 'Send & receive messages in Google Chat spaces' },
-  { id: 'google-meet', name: 'Google Meet', category: 'Meetings', icon: 'Video', desc: 'Schedule and manage Google Meet video spaces' },
-  { id: 'google-contacts', name: 'Google Contacts', category: 'Contacts', icon: 'Users', desc: 'Sync & query organization contacts and directory' },
-  { id: 'google-tasks', name: 'Google Tasks', category: 'Productivity', icon: 'CheckSquare', desc: 'Create and manage task lists in Google Tasks' },
-  { id: 'google-analytics', name: 'Google Analytics', category: 'Analytics', icon: 'TrendingUp', desc: 'Fetch web & app property traffic reports and conversions' },
-  { id: 'google-search-console', name: 'Google Search Console', category: 'SEO', icon: 'Search', desc: 'Analyze search performance, sitemaps & URL inspection' },
-  { id: 'google-business-profile', name: 'Google Business Profile', category: 'Marketing', icon: 'Store', desc: 'Manage Google business locations, posts & reviews' },
-  { id: 'google-cloud', name: 'Google Cloud Platform', category: 'Infrastructure', icon: 'Cloud', desc: 'Cloud resources, BigQuery & infrastructure management' },
-];
+function publicMeta(meta: Record<string, unknown> | null | undefined): Record<string, unknown> {
+  const src = meta && typeof meta === 'object' ? meta : {};
+  const out: Record<string, unknown> = {};
+  if (src.shopDomain) out.shopDomain = src.shopDomain;
+  if (src.subdomain) out.subdomain = src.subdomain;
+  if (src.adAccountId) out.adAccountId = src.adAccountId;
+  if (src.customerId) out.customerId = src.customerId;
+  if (src.phoneNumberId || src.phone_number_id) out.phoneNumberId = src.phoneNumberId || src.phone_number_id;
+  if (src.wabaId || src.whatsapp_business_account_id) {
+    out.wabaId = src.wabaId || src.whatsapp_business_account_id;
+  }
+  out.hasAccessToken = Boolean(src.accessToken || src.meta_access_token);
+  out.hasApiKey = Boolean(src.keyId || src.key_id);
+  return out;
+}
+
+function whatsappByokConnected(meta: Record<string, unknown> | null | undefined): boolean {
+  const src = meta && typeof meta === 'object' ? meta : {};
+  const token = src.accessToken || src.meta_access_token;
+  const phone = src.phoneNumberId || src.phone_number_id;
+  return Boolean(token && phone);
+}
 
 // ── GET: Ultra-fast batch fetch of integrations for current orgId ─────────────
 export async function GET() {
@@ -40,35 +46,88 @@ export async function GET() {
     try {
       // Fetch channels from DB strictly for current org_id
       const channelsRes = await client.query(
-        `SELECT channel_type, status, nango_connection_id, connected_at FROM channels WHERE org_id = $1`,
+        `SELECT channel_type, status, nango_connection_id, connected_at, meta FROM channels WHERE org_id = $1`,
         [orgId]
       );
       const dbChannelsMap = new Map(channelsRes.rows.map((r: any) => [r.channel_type, r]));
 
-      // Verify every DB-reported connection against Nango (source of truth for the agent tools).
-      // Only providers with an existing connection are reported as connected.
-      const candidates = ALL_INTEGRATIONS.filter(
-        (item) => dbChannelsMap.get(item.id) && (dbChannelsMap.get(item.id).status === 'active' || dbChannelsMap.get(item.id).status === 'connected')
+      const nangoSecretOk = isNangoSecretConfigured();
+      const [nangoConns, nangoConfigs] = await Promise.all([
+        listNangoConnections(orgId),
+        listNangoConfigs(),
+      ]);
+      const nangoConnectedIds = new Set(
+        nangoConns.map((c) => c.catalogId).filter((id): id is string => Boolean(id))
       );
-      const verifiedMap = new Map<string, boolean>();
-      await Promise.all(
-        candidates.map(async (item) => {
-          verifiedMap.set(item.id, await nangoConnectionExists(orgId, item.id));
+      const nangoListUsable = nangoConns.some((c) => Boolean(c.catalogId));
+      const configByKey = new Map(nangoConfigs.map((c) => [c.uniqueKey, c]));
+
+      const integrations = await Promise.all(
+        INTEGRATION_CATALOG.map(async (item) => {
+          const dbRecord = dbChannelsMap.get(item.id) as any;
+          const meta = publicMeta(dbRecord?.meta);
+
+          let oauthConfigured = item.authMode !== 'oauth';
+          let missingConfigReason: string | undefined = item.operatorHint;
+          if (item.authMode === 'oauth') {
+            const keys = item.id === 'whatsapp' ? ['whatsapp', 'whatsapp-business'] : [item.id];
+            const match = keys.map((k) => configByKey.get(k)).find(Boolean);
+            if (match) {
+              oauthConfigured = match.configured;
+              missingConfigReason = match.reason || item.operatorHint;
+            } else if (nangoConfigs.length === 0 && nangoSecretOk) {
+              oauthConfigured = false;
+              missingConfigReason = `No Nango integration named ${item.id}. Create it in ${nangoUiUrl()} and paste a real OAuth client ID.`;
+            } else if (!nangoSecretOk) {
+              oauthConfigured = false;
+              missingConfigReason = 'NANGO_SECRET_KEY is not set on the dashboard — cannot verify Nango configs.';
+            } else {
+              oauthConfigured = false;
+              missingConfigReason =
+                `No Nango integration named ${item.id}. Create it in ${nangoUiUrl()} and paste a real OAuth client ID.`;
+            }
+          }
+
+          let isConnected = false;
+          let connectionSource: 'nango' | 'byok' | 'env' | null = null;
+
+          if (item.authMode === 'oauth') {
+            if (nangoConnectedIds.has(item.id)) {
+              isConnected = true;
+              connectionSource = 'nango';
+            } else if (!nangoListUsable) {
+              const exists = await nangoConnectionExists(orgId, item.id);
+              isConnected = exists;
+              connectionSource = exists ? 'nango' : null;
+            }
+          } else if (item.id === 'whatsapp') {
+            const byok = whatsappByokConnected(dbRecord?.meta);
+            const nangoWa = nangoConnectedIds.has('whatsapp') || (await nangoConnectionExists(orgId, 'whatsapp'));
+            isConnected = byok || nangoWa;
+            connectionSource = byok ? 'byok' : nangoWa ? 'nango' : null;
+          } else if (item.id === 'razorpay') {
+            const perOrg = Boolean(
+              dbRecord?.meta && (dbRecord.meta.keyId || dbRecord.meta.key_id) && (dbRecord.meta.keySecret || dbRecord.meta.key_secret)
+            );
+            const envKeys = Boolean(process.env.RAZORPAY_KEY_ID && process.env.RAZORPAY_KEY_SECRET);
+            isConnected = perOrg || envKeys;
+            connectionSource = perOrg ? 'byok' : envKeys ? 'env' : null;
+          }
+
+          return {
+            ...item,
+            connected: Boolean(isConnected),
+            status: isConnected ? 'Connected' : 'Disconnected',
+            nangoConnectionId: dbRecord?.nango_connection_id || (isConnected && connectionSource === 'nango' ? `${orgId}_${item.id}` : null),
+            lastSyncedAt: dbRecord?.connected_at || null,
+            oauthConfigured,
+            missingConfigReason: isConnected ? undefined : missingConfigReason,
+            connectionSource,
+            meta,
+            nangoUiUrl: nangoUiUrl(),
+          };
         })
       );
-
-      const integrations = ALL_INTEGRATIONS.map((item) => {
-        const dbRecord = dbChannelsMap.get(item.id) as any;
-        const isConnected = verifiedMap.get(item.id) === true;
-
-        return {
-          ...item,
-          connected: Boolean(isConnected),
-          status: isConnected ? 'Connected' : 'Disconnected',
-          nangoConnectionId: dbRecord?.nango_connection_id || (isConnected ? `${orgId}_${item.id}` : null),
-          lastSyncedAt: dbRecord?.connected_at || null,
-        };
-      });
 
       // Fetch stats & logs
       const todayLogsRes = await client.query(
@@ -104,6 +163,10 @@ export async function GET() {
           apiQuotaUsed: `${apiQuotaPct}%`,
         },
         logs: logsRes.rows,
+        nango: {
+          secretConfigured: nangoSecretOk,
+          uiUrl: nangoUiUrl(),
+        },
       });
     } finally {
       client.release();
@@ -122,33 +185,61 @@ export async function POST(request: Request) {
   try {
     const { client, orgId } = await getScopedClient();
     try {
-      const { provider, action } = await request.json();
+      const { provider, action, extra } = await request.json();
 
       if (!provider || !action) {
         return NextResponse.json({ message: 'provider and action are required' }, { status: 400 });
       }
+      if (!isIntegrationId(provider)) {
+        return NextResponse.json({ message: `Unknown provider: ${provider}` }, { status: 400 });
+      }
 
-      const nangoConnId = `${orgId}_${provider}`;
+      const spec = getIntegration(provider);
+      const nangoConnId = primaryConnectionId(orgId, provider);
 
       if (action === 'connect') {
-        // Nango is the source of truth: never mark "connected" without a real OAuth connection.
+        if (!spec || spec.authMode !== 'oauth') {
+          return NextResponse.json(
+            {
+              success: false,
+              message:
+                spec?.authMode === 'byok'
+                  ? `Use POST /api/integrations/whatsapp for WhatsApp BYOK.`
+                  : spec?.authMode === 'api_key'
+                    ? `Use POST /api/integrations/razorpay for Razorpay API keys.`
+                    : `${provider} cannot be connected via Nango OAuth.`,
+            },
+            { status: 400 }
+          );
+        }
+
         const realConnection = await nangoConnectionExists(orgId, provider);
         if (!realConnection) {
           return NextResponse.json(
             {
               success: false,
               message: `No real Nango OAuth connection found for ${provider}. Complete the OAuth popup first — the connection was not persisted.`,
+              setupUrl: '/connectors',
+              nangoUiUrl: nangoUiUrl(),
             },
             { status: 400 }
           );
         }
 
+        const extraMeta =
+          extra && typeof extra === 'object'
+            ? Object.fromEntries(
+                Object.entries(extra).filter(([k, v]) => isPublicMetaKey(k) && v != null && String(v).length > 0)
+              )
+            : {};
+
         await client.query(
-          `INSERT INTO channels (org_id, channel_type, status, nango_connection_id, connected_at)
-           VALUES ($1, $2, 'connected', $3, NOW())
+          `INSERT INTO channels (org_id, channel_type, status, nango_connection_id, connected_at, meta)
+           VALUES ($1, $2, 'connected', $3, NOW(), $4::jsonb)
            ON CONFLICT (org_id, channel_type)
-           DO UPDATE SET status = 'connected', nango_connection_id = $3, connected_at = NOW()`,
-          [orgId, provider, nangoConnId]
+           DO UPDATE SET status = 'connected', nango_connection_id = $3, connected_at = NOW(),
+             meta = COALESCE(channels.meta, '{}'::jsonb) || $4::jsonb`,
+          [orgId, provider, nangoConnId, JSON.stringify(extraMeta)]
         );
 
         await client.query(
@@ -165,21 +256,43 @@ export async function POST(request: Request) {
       }
 
       if (action === 'disconnect') {
+        await deleteNangoConnection(orgId, provider);
+
         await client.query(
-          `UPDATE channels SET status = 'disconnected', nango_connection_id = NULL WHERE org_id = $1 AND channel_type = $2`,
+          `INSERT INTO channels (org_id, channel_type, status, nango_connection_id, meta, connected_at)
+           VALUES ($1, $2, 'disconnected', NULL, '{}'::jsonb, NULL)
+           ON CONFLICT (org_id, channel_type)
+           DO UPDATE SET status = 'disconnected', nango_connection_id = NULL, meta = '{}'::jsonb, connected_at = NULL`,
           [orgId, provider]
         );
 
         await client.query(
           `INSERT INTO channel_logs (org_id, channel_type, event_type, status, status_code, message)
            VALUES ($1, $2, 'disconnect', 'success', 200, $3)`,
-          [orgId, provider, `${provider} disconnected`]
+          [orgId, provider, `${provider} disconnected (Nango connection deleted)`]
         );
 
         return NextResponse.json({ success: true, message: `${provider} disconnected` });
       }
 
-      return NextResponse.json({ message: 'Invalid action. Use "connect" or "disconnect".' }, { status: 400 });
+      if (action === 'update_config') {
+        const extraMeta =
+          extra && typeof extra === 'object'
+            ? Object.fromEntries(
+                Object.entries(extra).filter(([k, v]) => isPublicMetaKey(k) && v != null && String(v).length > 0)
+              )
+            : {};
+        await client.query(
+          `INSERT INTO channels (org_id, channel_type, status, meta)
+           VALUES ($1, $2, 'disconnected', $3::jsonb)
+           ON CONFLICT (org_id, channel_type)
+           DO UPDATE SET meta = COALESCE(channels.meta, '{}'::jsonb) || $3::jsonb`,
+          [orgId, provider, JSON.stringify(extraMeta)]
+        );
+        return NextResponse.json({ success: true, message: `${provider} config saved` });
+      }
+
+      return NextResponse.json({ message: 'Invalid action. Use "connect", "disconnect", or "update_config".' }, { status: 400 });
     } finally {
       client.release();
     }

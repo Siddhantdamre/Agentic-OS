@@ -6,13 +6,18 @@ import { useOnboardingStore } from '@/lib/store';
 import { ArrowRight } from 'lucide-react';
 
 export default function OnboardingNamePage() {
-  const router = Router();
+  const router = useRouter();
   const { businessName, setBusinessName, setStep } = useOnboardingStore();
 
   const handleNext = (e: React.FormEvent) => {
     e.preventDefault();
     if (!businessName.trim()) return;
     setStep(2);
+    void fetch('/api/org/onboarding', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ wizardStep: 'team-size', businessName }),
+    });
     router.push('/onboarding/team-size');
   };
 
@@ -49,8 +54,4 @@ export default function OnboardingNamePage() {
       </button>
     </form>
   );
-}
-
-function Router() {
-  return useRouter();
 }

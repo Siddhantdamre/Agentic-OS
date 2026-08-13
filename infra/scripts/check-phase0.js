@@ -16,7 +16,8 @@ const containers = [
   'darex-langfuse-minio',
   'darex-langfuse-server',
   'darex-langfuse-worker',
-  'darex-litellm'
+  'darex-litellm',
+  'darex-langfuse-redis',
 ];
 
 console.log('--- Container Status ---');

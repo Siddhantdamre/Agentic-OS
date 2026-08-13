@@ -1,24 +1,26 @@
 import { NextResponse } from 'next/server';
 import { getScopedClient } from '@/lib/db';
 import { runAutonomousAgentDirect } from '@darex/workflows/dist/atomic-agent-client';
+import { triggerAutonomousAgentWorkflow } from '@darex/workflows/dist/workflow-client';
+import { channelTypesFromRows, mergeRuntimeAllowlist } from '@darex/workflows/dist/tool-executor';
 import { logLangfuseTrace } from '@/lib/langfuse-trace';
 
 export async function POST(request: Request) {
   try {
     const { client, orgId } = await getScopedClient();
+    let employeeName = 'AI Assistant';
+    let employeeRole = 'General Assistant';
+    let employeePersona = 'A helpful business AI assistant.';
+    let toolAllowlist: string[] = [];
+    let connectedChannels: string[] = [];
+    let body: any;
     try {
-      const body = await request.json();
-      const { userMessage, employeeId, conversationId, channelId } = body;
+      body = await request.json();
+      const { userMessage, employeeId } = body;
 
       if (!userMessage) {
         return NextResponse.json({ error: 'userMessage is required' }, { status: 400 });
       }
-
-      // Fetch employee profile from DB
-      let employeeName = 'AI Assistant';
-      let employeeRole = 'General Assistant';
-      let employeePersona = 'A helpful business AI assistant.';
-      let toolAllowlist: string[] = [];
 
       if (employeeId) {
         const empRes = await client.query(
@@ -51,75 +53,79 @@ export async function POST(request: Request) {
       }
 
       const channelsRes = await client.query(
-        `SELECT * FROM channels WHERE org_id = $1 AND status IN ('active', 'connected')`,
+        `SELECT channel_type FROM channels WHERE org_id = $1 AND status IN ('active', 'connected')`,
         [orgId]
       );
-      const connectedChannels = channelsRes.rows;
+      connectedChannels = channelTypesFromRows(channelsRes.rows);
 
-      const agentInput = {
-        orgId,
-        conversationId,
-        channelId,
-        employeeName,
-        employeeRole,
-        employeePersona,
-        toolAllowlist,
-        userMessage,
-        connectedChannels,
-      };
-
-      // Try Temporal first for durable, retryable execution
-      let result: any = null;
-      try {
-        const { triggerAutonomousAgentWorkflow } = await import('@darex/workflows/dist/workflow-client');
-        result = await triggerAutonomousAgentWorkflow(agentInput);
-        console.log('[Agent Run] Task executed via Temporal workflow');
-      } catch (temporalErr: any) {
-        console.warn('[Agent Run] Temporal unavailable, falling back to direct execution:', temporalErr.message);
-      }
-
-      // Fallback: direct in-process execution via atomic-agent
-      if (!result) {
-        result = await runAutonomousAgentDirect(agentInput);
-        console.log('[Agent Run] Task executed via direct atomic-agent loop');
-      }
-
-      // Save to DB if conversationId provided
-      if (conversationId) {
+      if (body.conversationId) {
         await client.query(
           `INSERT INTO messages (org_id, conversation_id, role, content) VALUES ($1, $2, 'user', $3)`,
-          [orgId, conversationId, userMessage]
-        );
-        await client.query(
-          `INSERT INTO messages (org_id, conversation_id, role, content, tool_calls) VALUES ($1, $2, 'assistant', $3, $4)`,
-          [orgId, conversationId, result.replyMessage, JSON.stringify(result.executedSteps)]
+          [orgId, body.conversationId, body.userMessage]
         );
       }
-
-      await logLangfuseTrace({
-        name: `AgentExecution-${employeeName}`,
-        orgId,
-        input: { userMessage, employeeName, employeeRole },
-        output: result.replyMessage,
-        metadata: { usedTools: result.usedTools, steps: result.executedSteps.length },
-      });
-
-      try {
-        await client.query(
-          `INSERT INTO channel_logs (org_id, channel_type, event_type, status, status_code, message, payload) VALUES ($1, $2, $3, 'success', 200, $4, $5)`,
-          [orgId, channelId || 'agent', 'AGENT_EXECUTION', 'AGENT_EXECUTION', JSON.stringify({ employeeName, tools: result.usedTools })]
-        );
-      } catch (e) { /* non-critical */ }
-
-      return NextResponse.json({
-        success: true,
-        replyMessage: result.replyMessage,
-        executedSteps: result.executedSteps,
-        usedTools: result.usedTools,
-      });
     } finally {
       client.release();
     }
+
+    const { userMessage, employeeId, conversationId, channelId } = body;
+    const agentInput = {
+      orgId,
+      conversationId,
+      channelId,
+      employeeId,
+      employeeName,
+      employeeRole,
+      employeePersona,
+      toolAllowlist: mergeRuntimeAllowlist(toolAllowlist, connectedChannels),
+      userMessage,
+      connectedChannels,
+      idempotencyKey: conversationId ? `run:${conversationId}:${Date.now()}` : `run:${Date.now()}`,
+    };
+
+    let result: any = null;
+    let usedTemporal = false;
+    try {
+      result = await triggerAutonomousAgentWorkflow(agentInput);
+      if (result) {
+        usedTemporal = true;
+        console.log('[Agent Run] Task executed via Temporal workflow');
+      }
+    } catch (temporalErr: any) {
+      console.warn('[Agent Run] Temporal unavailable, falling back to direct execution:', temporalErr.message);
+    }
+
+    if (!result) {
+      result = await runAutonomousAgentDirect(agentInput);
+      console.log('[Agent Run] Task executed via direct atomic-agent loop');
+    }
+
+    if (conversationId && !usedTemporal) {
+      const { client: persistClient } = await getScopedClient();
+      try {
+        await persistClient.query(
+          `INSERT INTO messages (org_id, conversation_id, role, content, tool_calls) VALUES ($1, $2, 'assistant', $3, $4)`,
+          [orgId, conversationId, result.replyMessage, JSON.stringify(result.executedSteps)]
+        );
+      } finally {
+        persistClient.release();
+      }
+    }
+
+    await logLangfuseTrace({
+      name: `AgentExecution-${employeeName}`,
+      orgId,
+      input: { userMessage, employeeName, employeeRole },
+      output: result.replyMessage,
+      metadata: { usedTools: result.usedTools, steps: result.executedSteps.length, engine: usedTemporal ? 'temporal' : 'direct' },
+    });
+
+    return NextResponse.json({
+      success: result.success !== false,
+      replyMessage: result.replyMessage,
+      executedSteps: result.executedSteps,
+      usedTools: result.usedTools,
+    });
   } catch (error: any) {
     if (error.message === 'Unauthorized') {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });

@@ -1,7 +1,8 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { startRealNangoOAuth } from '@/lib/nango-client';
+import Link from 'next/link';
+import { connectRazorpayByok, connectWhatsAppByok, disconnectProvider, startRealNangoOAuth } from '@/lib/nango-client';
 import {
   Plug,
   MessageSquare,
@@ -27,6 +28,14 @@ import {
   Check,
   ExternalLink,
   AlertCircle,
+  Presentation,
+  FileCheck,
+  Video,
+  Users,
+  CheckSquare,
+  TrendingUp,
+  Store,
+  Cloud,
 } from 'lucide-react';
 
 interface Integration {
@@ -39,6 +48,11 @@ interface Integration {
   status: string;
   nangoConnectionId?: string | null;
   lastSyncedAt?: string | null;
+  authMode?: string;
+  oauthConfigured?: boolean;
+  missingConfigReason?: string;
+  extraConnectFields?: Array<{ key: string; label: string; placeholder: string; required: boolean; secret?: boolean; type?: string }>;
+  operatorHint?: string;
 }
 
 const CATEGORIES = [
@@ -53,6 +67,13 @@ const CATEGORIES = [
   'Knowledge',
   'Support',
   'Development',
+  'Productivity',
+  'Meetings',
+  'Contacts',
+  'Analytics',
+  'SEO',
+  'Marketing',
+  'Infrastructure',
 ];
 
 export default function ConnectorsPage() {
@@ -76,6 +97,12 @@ export default function ConnectorsPage() {
   const [waPhoneId, setWaPhoneId] = useState('');
   const [waWabaId, setWaWabaId] = useState('');
   const [waConnecting, setWaConnecting] = useState(false);
+  const [showRazorpayModal, setShowRazorpayModal] = useState(false);
+  const [rzpKeyId, setRzpKeyId] = useState('');
+  const [rzpKeySecret, setRzpKeySecret] = useState('');
+  const [rzpConnecting, setRzpConnecting] = useState(false);
+  const [extraModal, setExtraModal] = useState<Integration | null>(null);
+  const [extraValues, setExtraValues] = useState<Record<string, string>>({});
 
   const fetchIntegrations = async () => {
     try {
@@ -103,19 +130,13 @@ export default function ConnectorsPage() {
     setStatusNotification(null);
 
     try {
-      const res = await fetch('/api/integrations/whatsapp', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ accessToken: waToken, phoneNumberId: waPhoneId, wabaId: waWabaId }),
-      });
-
-      if (res.ok) {
-        setStatusNotification({ type: 'success', message: 'WhatsApp manually connected successfully!' });
+      const result = await connectWhatsAppByok({ accessToken: waToken, phoneNumberId: waPhoneId, wabaId: waWabaId });
+      if (result.success) {
+        setStatusNotification({ type: 'success', message: 'WhatsApp connected (token verified against Meta Graph).' });
         setShowWhatsAppModal(false);
         fetchIntegrations();
       } else {
-        const errorData = await res.json();
-        setStatusNotification({ type: 'error', message: errorData.message || 'Failed to connect WhatsApp' });
+        setStatusNotification({ type: 'error', message: result.error || 'Failed to connect WhatsApp' });
       }
     } catch (err: any) {
       setStatusNotification({ type: 'error', message: err.message || 'Network error' });
@@ -130,35 +151,36 @@ export default function ConnectorsPage() {
 
     try {
       if (item.connected) {
-        // Disconnect
-        const res = await fetch('/api/integrations', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ provider: item.id, action: 'disconnect' }),
-        });
-
-        if (res.ok) {
+        const result = await disconnectProvider(item.id);
+        if (result.success) {
           setStatusNotification({ type: 'success', message: `Disconnected ${item.name}` });
-          fetchIntegrations();
+        } else {
+          setStatusNotification({ type: 'error', message: result.error || `Failed to disconnect ${item.name}` });
         }
-      } else if (item.id === 'whatsapp') {
+        fetchIntegrations();
+      } else if (item.authMode === 'service_account') {
+        setStatusNotification({
+          type: 'error',
+          message: item.missingConfigReason || item.operatorHint || `${item.name} is not OAuth and cannot be connected from the dashboard.`,
+        });
+      } else if (item.authMode === 'byok' || item.id === 'whatsapp') {
         setShowWhatsAppModal(true);
+      } else if (item.authMode === 'api_key' || item.id === 'razorpay') {
+        setShowRazorpayModal(true);
+      } else if ((item.extraConnectFields || []).some((f) => f.required)) {
+        setExtraModal(item);
+        setExtraValues({});
       } else {
-        // Connect — Launch Real Nango OAuth Popup
-        console.log(`Launching Real Nango OAuth Popup for ${item.name} (${item.id})...`);
         const oauthResult = await startRealNangoOAuth(item.id);
-
         if (oauthResult.success) {
           setStatusNotification({ type: 'success', message: `Successfully connected ${item.name} via OAuth!` });
-          fetchIntegrations();
         } else {
-          // If popup failed or fell back
           setStatusNotification({
             type: 'error',
             message: oauthResult.error || `OAuth flow for ${item.name} was cancelled or closed.`,
           });
-          fetchIntegrations();
         }
+        fetchIntegrations();
       }
     } catch (err: any) {
       console.error('Failed to toggle connection:', err);
@@ -187,6 +209,15 @@ export default function ConnectorsPage() {
       case 'FolderOpen': return <FolderOpen className="w-6 h-6 text-sky-700" />;
       case 'FileText': return <FileText className="w-6 h-6 text-blue-700" />;
       case 'Table': return <Table className="w-6 h-6 text-emerald-700" />;
+      case 'Presentation': return <Presentation className="w-6 h-6 text-orange-600" />;
+      case 'FileCheck': return <FileCheck className="w-6 h-6 text-teal-700" />;
+      case 'Video': return <Video className="w-6 h-6 text-green-700" />;
+      case 'Users': return <Users className="w-6 h-6 text-sky-800" />;
+      case 'CheckSquare': return <CheckSquare className="w-6 h-6 text-lime-700" />;
+      case 'TrendingUp': return <TrendingUp className="w-6 h-6 text-rose-700" />;
+      case 'Search': return <Search className="w-6 h-6 text-slate-700" />;
+      case 'Store': return <Store className="w-6 h-6 text-amber-800" />;
+      case 'Cloud': return <Cloud className="w-6 h-6 text-slate-600" />;
       default: return <Plug className="w-6 h-6 text-amber-600" />;
     }
   };
@@ -359,8 +390,10 @@ export default function ConnectorsPage() {
                 {/* Bottom Connection Action */}
                 <div className="pt-4 border-t border-cream-200 flex items-center justify-between">
                   <span className="text-[10px] text-slate-400 font-mono flex items-center space-x-1">
-                    <ExternalLink className="w-3 h-3 text-slate-400" />
-                    <span>{item.connected ? 'OAuth Verified' : 'Launch OAuth'}</span>
+                    <Link href={`/connectors/${item.id}`} className="flex items-center space-x-1 hover:text-amber-700">
+                      <ExternalLink className="w-3 h-3" />
+                      <span>Test & details</span>
+                    </Link>
                   </span>
 
                   <button
@@ -423,6 +456,85 @@ export default function ConnectorsPage() {
                   {waConnecting && <RefreshCw className="w-4 h-4 animate-spin" />}
                   <span>Secure Connect</span>
                 </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {showRazorpayModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 backdrop-blur-sm">
+          <div className="bg-white p-8 rounded-3xl max-w-lg w-full shadow-2xl space-y-6">
+            <h2 className="text-2xl font-serif font-bold text-heading">Connect Razorpay</h2>
+            <p className="text-sm text-slate-500">
+              Keys are verified against Razorpay before this org is marked connected. Agent Razorpay tools still use RAZORPAY_KEY_ID/SECRET env.
+            </p>
+            <form
+              onSubmit={async (e) => {
+                e.preventDefault();
+                setRzpConnecting(true);
+                const result = await connectRazorpayByok({ keyId: rzpKeyId, keySecret: rzpKeySecret });
+                setRzpConnecting(false);
+                if (result.success) {
+                  setStatusNotification({ type: 'success', message: 'Razorpay keys verified for this org.' });
+                  setShowRazorpayModal(false);
+                  fetchIntegrations();
+                } else {
+                  setStatusNotification({ type: 'error', message: result.error || 'Razorpay connect failed' });
+                }
+              }}
+              className="space-y-4"
+            >
+              <input required type="text" value={rzpKeyId} onChange={(e) => setRzpKeyId(e.target.value)} className="w-full px-4 py-2 border rounded-xl text-sm" placeholder="rzp_live_..." />
+              <input required type="password" value={rzpKeySecret} onChange={(e) => setRzpKeySecret(e.target.value)} className="w-full px-4 py-2 border rounded-xl text-sm" placeholder="Key secret" />
+              <div className="flex justify-end space-x-3 pt-2">
+                <button type="button" onClick={() => setShowRazorpayModal(false)} className="px-5 py-2 text-sm font-semibold text-slate-500">Cancel</button>
+                <button type="submit" disabled={rzpConnecting} className="px-5 py-2 bg-amber-500 text-heading text-sm font-semibold rounded-xl">
+                  {rzpConnecting ? 'Verifying...' : 'Verify & Connect'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {extraModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 backdrop-blur-sm">
+          <div className="bg-white p-8 rounded-3xl max-w-lg w-full shadow-2xl space-y-6">
+            <h2 className="text-2xl font-serif font-bold text-heading">Connect {extraModal.name}</h2>
+            <p className="text-sm text-slate-500">{extraModal.missingConfigReason || extraModal.operatorHint || 'These fields are required before the Nango OAuth popup.'}</p>
+            <form
+              onSubmit={async (e) => {
+                e.preventDefault();
+                setConnectingId(extraModal.id);
+                const oauthResult = await startRealNangoOAuth(extraModal.id, { extraParams: extraValues });
+                setConnectingId(null);
+                setExtraModal(null);
+                if (oauthResult.success) {
+                  setStatusNotification({ type: 'success', message: `Connected ${extraModal.name}` });
+                } else {
+                  setStatusNotification({ type: 'error', message: oauthResult.error || 'OAuth failed' });
+                }
+                fetchIntegrations();
+              }}
+              className="space-y-4"
+            >
+              {(extraModal.extraConnectFields || []).map((field) => (
+                <div key={field.key} className="space-y-1">
+                  <label className="text-xs font-bold text-slate-700">{field.label}</label>
+                  <input
+                    required={field.required}
+                    type={field.type === 'password' ? 'password' : 'text'}
+                    value={extraValues[field.key] || ''}
+                    onChange={(e) => setExtraValues({ ...extraValues, [field.key]: e.target.value })}
+                    className="w-full px-4 py-2 border rounded-xl text-sm"
+                    placeholder={field.placeholder}
+                  />
+                </div>
+              ))}
+              <div className="flex justify-end space-x-3 pt-2">
+                <button type="button" onClick={() => setExtraModal(null)} className="px-5 py-2 text-sm font-semibold text-slate-500">Cancel</button>
+                <button type="submit" className="px-5 py-2 bg-amber-500 text-heading text-sm font-semibold rounded-xl">Continue to OAuth</button>
               </div>
             </form>
           </div>

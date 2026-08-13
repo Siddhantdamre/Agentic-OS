@@ -35,9 +35,9 @@ Agentic-Os-SaaS/
 | Classifier / planner | `apps/dashboard/lib/classify.ts`, `plan-generator.ts` | LiteLLM JSON (not the agent loop) |
 | LLM gateway | `darex-litellm` `:4000` | OpenRouter `deepseek-chat` as alias `atomic-agent` |
 | Agent loop | `darex-atomic-agent` `:8787` | Multi-step tool calling via MCP |
-| MCP bridge | `darex-atomic-bridge` `:8790` | 49 tools → `executeAutonomousToolAction` |
+| MCP bridge | `darex-atomic-bridge` `:8790` | 62 tools → `executeAutonomousToolAction` |
 | Tool executor | `services/workflows/src/tool-executor.ts` | Real HTTP + Nango tokens + allowlist |
-| Temporal | `darex-temporal` `:7233` + `darex-worker` | Durable wrapper around one agent turn |
+| Temporal | `darex-temporal` `:7233` + `darex-worker` | Durable wrapper (up to 3 turns) |
 | Auth | SuperTokens `:3567` + Postgres fallback | Session cookie `darex_session` = `users.id` |
 | OAuth vault | Nango `:3003` | Connection id `{orgId}_{provider}` |
 | Traces | Langfuse `:3002` | Ask AI + plan + agent turns |

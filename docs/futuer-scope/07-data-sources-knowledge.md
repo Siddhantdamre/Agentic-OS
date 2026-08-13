@@ -202,3 +202,39 @@ then not pretend Slack knowledge exists.
 
 This page is how we earn the word **OS**: the customer can see the
 brain’s senses, not a magic black box.
+
+---
+
+## 12. Alternatives in the world (instead of our ingest/RAG plane)
+
+**What Darex does:** class A–H sources, structured tables first,
+pgvector second, cite, forget. Embed-worker off the webhook.
+
+| # | Alternative | Why it can be better | Why we still do ours | Refs |
+|---|-------------|----------------------|----------------------|------|
+| 1 | **Unstructured.io** ETL for 60+ file types | Production parse/chunk/embed; MCP server | Python service we can *call* from embed-worker; not the SoR | [Unstructured-IO/unstructured](https://github.com/Unstructured-IO/unstructured) |
+| 2 | **LlamaParse / LiteParse** (LlamaIndex) | Vision-language tables in PDFs (OMs, rent rolls) | ADOPT for RE PDFs; keep our tables + RLS | LlamaIndex blog “Beyond raw text”; llama_parse |
+| 3 | **Docling** (IBM) / **Apache Tika** | Local OSS parse, no cloud | Good default before LlamaParse cost | [docling-project/docling](https://github.com/docling-project/docling), Apache Tika |
+| 4 | **Airbyte / dlt** for CRM/SoR sync | Cursors, 300+ sources, OSS | Our sync-worker must be org-scoped + Nango tokens | [airbytehq/airbyte](https://github.com/airbytehq/airbyte), [dlt-hub/dlt](https://github.com/dlt-hub/dlt) |
+| 5 | **Microsoft GraphRAG** batch communities | Best for static SOP dumps | Lethal on live listings; `/brain` backfill only | [microsoft/graphrag](https://github.com/microsoft/graphrag) |
+
+**Five things to steal anyway**
+
+1. Tables in PDFs → LlamaParse/Docling, not naive chunking (`07` §2.2).
+2. Airbyte cursor model → `sync_cursors` (`02`).
+3. Trust classes A>F stay; GraphRAG never overwrites class A.
+4. Virus scan + hash before embed (Unstructured partition step).
+5. Source health UI like Airbyte connections page → `/brain`.
+
+### Open-source GitHub (at least 5) — same job as this file
+
+| Repo | Similar to | We take |
+|------|------------|---------|
+| [Unstructured-IO/unstructured](https://github.com/Unstructured-IO/unstructured) | File ETL for agents | Call from embed-worker |
+| [docling-project/docling](https://github.com/docling-project/docling) | Local PDF/Office parse | Default parser |
+| [run-llama/llama_index](https://github.com/run-llama/llama_index) | RAG + LlamaParse | Table-preserving chunks |
+| [deepset-ai/haystack](https://github.com/deepset-ai/haystack) | Production RAG pipelines | Hybrid + eval metrics |
+| [airbytehq/airbyte](https://github.com/airbytehq/airbyte) | SoR sync cursors | `sync_cursors` |
+| [dlt-hub/dlt](https://github.com/dlt-hub/dlt) | Python ingest | Same, lighter |
+| [microsoft/graphrag](https://github.com/microsoft/graphrag) | Static SOP communities | `/brain` backfill only |
+| [pgvector/pgvector](https://github.com/pgvector/pgvector) | Vectors in Postgres | **KEEP** |

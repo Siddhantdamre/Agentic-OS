@@ -29,23 +29,21 @@ Ask AI **plan execute** skips atomic-agent and calls the executor per step.
 | Ask AI simple stream | Never | Always `runAutonomousAgentDirect` |
 | Ask AI execute | Never | Direct `executeAutonomousToolAction` |
 | `POST /api/agent/run` | First | If Temporal returns null |
-| WhatsApp webhook | First | Fire-and-forget after 200 |
+| WhatsApp / Chatwoot webhooks | First (`fireInboundAgent`) | Fire-and-forget after 200 |
 | Conversations create / message | `startAutonomousAgentWorkflow` | Persist reply locally |
-| `POST /api/agent/stream` | Only | **No fallback** |
+| `POST /api/agent/stream` | First | Direct SSE if Temporal is down |
 
 ## AutonomousAgentWorkflow
 
 1. Activity `runAgentTurnActivity` → `runAgentTurn()` → POST atomic-agent
    `/v1/chat/completions`.
 2. atomic-agent runs its own tool loop via MCP.
-3. Workflow may loop up to **8** times if `usedTools.length > 0 && !isDone`.
+3. Workflow may loop up to **3** durable turns (`isDone` / `priorToolResults`).
 4. Then `logChannelActivity` + `saveMessageActivity`.
 
 Timeouts: 12 min start-to-close, 20 min schedule-to-close, max 2 retries.
-
-**Gap:** `priorToolResults` is written between loops but `runAgentTurn` never
-reads it. `isDone` is never set by `mapTurnToResult`. The extra loop is mostly
-inert. Idempotency table exists; activities **do not** use it.
+Activities use `idempotency_keys`. `isDone` and `priorToolResults` are wired
+(max 3 durable turns). Worker reconnects with backoff 2s–30s.
 
 ## atomic-agent client
 
@@ -72,37 +70,38 @@ Embeddings / lessons / procedures are **off**. That is **not** Darex pgvector RA
 - `GET /sse`, `POST /messages?sessionId=`.
 - Server name `darex` (hyphen-free so cloud LLM tool names resolve).
 - Requires a UUID `org_id` before any side effect.
-- 49 tools — full list in [08-tools-catalog.md](./08-tools-catalog.md).
+- 62 tools — full list in [08-tools-catalog.md](./08-tools-catalog.md).
+- `GET /health` (and `/`) for liveness.
 
-Not on MCP: `sandbox` / `code_execution` / Stripe customer ops (executor-only).
+Not on MCP historically: sandbox was executor-only. **`code_execution` is now
+on MCP.** Stripe customer create/get and Intercom reply/create are on MCP.
 
-## Custom skills (not live)
+## Custom skills (in the image)
 
 11 playbooks under `infra/docker/atomic-agent/custom-skills/`
 (gmail, calendar, drive, docs, sheets, notion, sales-crm, payments, ecommerce,
 support-tickets, nango-integrations-playbook).
 
-The Dockerfile does **not** COPY them. Runtime uses upstream `starter-skills`
-only. Playbooks are repo docs until mounted.
+The Dockerfile **COPY**s them into `starter-skills`. Rebuild the atomic-agent
+image after changing playbooks.
 
 ## Employee console
 
 `/employees` embeds `AutonomousActionConsole` → `POST /api/agent/run` with that
 employee’s persona + `tool_allowlist`.
 
-`GET /api/agent/tools` returns a static catalog and is **unauthenticated**.
+`GET /api/agent/tools` returns the catalog and **requires a session**.
 `POST /api/agent/tools` runs one action with session org.
 
 ## What works
 
 - Direct Ask AI stream + Temporal E2E (`mcp.darex.database_query` → real count).
-- MCP 49-tool surface for implemented executors.
+- MCP 62-tool surface for implemented executors.
 - Allowlist union of employees + connected channels + core tools (fixed 2026-08-13).
-- Fallback when Temporal is down (except `/api/agent/stream`).
+- Fallback when Temporal is down, including `/api/agent/stream`.
 
 ## What does not
 
-- Workflow multi-turn loop / `priorToolResults` / idempotency keys unused.
-- Custom skills not in the image.
-- `/api/agent/stream` dies if Temporal is down.
-- Sandbox image context missing from git (executor is ready).
+- Custom skills require an image rebuild after playbook edits.
+- Sandbox needs the compose image built from `infra/docker/sandbox/`.
+- Realtime still one Next.js process.

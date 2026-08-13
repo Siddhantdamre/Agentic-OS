@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getScopedClient } from '@/lib/db';
+import { reviseDraft } from '@/lib/plan-generator';
 
 export const dynamic = 'force-dynamic';
 
@@ -46,7 +47,6 @@ export async function POST(request: Request) {
     const currentDraft = String(plan.draft?.content || '');
     const summary = String(plan.summary || '');
 
-    const { reviseDraft } = await import('@/lib/plan-generator');
     const revised = (await reviseDraft(summary || '', currentDraft, String(feedback))).trim();
     if (!revised) {
       return NextResponse.json({ error: 'Draft revision produced empty output' }, { status: 502 });

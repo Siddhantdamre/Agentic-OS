@@ -6,7 +6,6 @@ export async function POST(request: Request) {
     const { client, orgId } = await getScopedClient();
     try {
       const payload = await request.json().catch(() => ({}));
-      await client.query(`SELECT set_config('app.current_org_id', $1, true)`, [orgId]);
 
       const provider = payload.provider || payload.type || 'nango';
       const eventType = payload.event || 'webhook_received';

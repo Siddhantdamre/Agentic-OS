@@ -26,6 +26,11 @@ export default function OnboardingBusinessTypePage() {
     e.preventDefault();
     if (!businessType) return;
     setStep(4);
+    void fetch('/api/org/onboarding', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ wizardStep: 'channels', businessType }),
+    });
     router.push('/onboarding/channels');
   };
 

@@ -253,6 +253,22 @@ more Next.js threads waiting on LLMs.
 Still: **never Composio** as the credential runtime (closed + breach
 history cited in the original spec).
 
+**Research mapping (2026):** the rest of the agent-OS ecosystem is
+catalogued in `15`. Short version for architecture:
+
+| Tempting swap | Why it shows up in research | Darex call |
+|---------------|-----------------------------|------------|
+| LangGraph / Mastra / Letta / CrewAI / Agno | “Production agent framework” | **REJECT kernel.** One employee loop (atomic-agent). Steal HITL/role YAML only. |
+| Mem0 Cloud / Zep / Cognee-as-brain | SOTA memory blogs | **REJECT SoR.** Own pgvector tables. Steal hybrid search + temporal facts. |
+| Restate / Inngest | Simpler durable execution | **WATCH.** Temporal stays until ops force a look. |
+| Neo4j + Graphiti | Temporal knowledge graphs | **STUDY** fact validity windows; **AGE/Postgres first**. |
+| LangSmith | Traces | **REJECT.** Langfuse stays. |
+| unified.to / Composio | One API for 50 CRMs | Nango + our executors. Composio never. |
+
+PydanticAI’s 2026 lesson is the one we already follow: **agent logic
+and the durable engine are different products.** They compose with
+Temporal. So do we.
+
 ---
 
 ## 10. Developer experience for adding a vertical
@@ -275,3 +291,55 @@ They must **not**:
 - Await embeddings inside the WhatsApp webhook.
 
 That contract is the architecture.
+
+---
+
+## 11. New architecture pieces (not in the stack today)
+
+**Do not list Temporal, Nango, LiteLLM, Postgres, pgvector, SuperTokens,
+Langfuse, Redis, atomic-agent, Chatwoot, or Next.js here.** Those are
+§2 KEEP. Supabase is the same job as Postgres+RLS+SuperTokens — it is
+not a new idea.
+
+This table is only **OSS we do not run**, mapped to gaps in §3
+(event-bus, ingest, embed, graph, semantic layer, sandbox, pool,
+media). 15 GitHub repos. We take the piece, not a rewrite.
+
+| # | Repo (not in Darex today) | Gap it fills | Why it can be better | Darex call |
+|---|---------------------------|--------------|----------------------|------------|
+| 1 | [nats-io/nats-server](https://github.com/nats-io/nats-server) | `event-bus` (in-process SSE today) | CNCF pub/sub + JetStream; multi-replica `needs_attention` without Redis-as-bus | **ADOPT when** Redis pub/sub is not enough (Phase 8+). Redis first. |
+| 2 | [apache/age](https://github.com/apache/age) | `graph-service` / `memory_edges` | Cypher **inside** Postgres; no Neo4j cluster | **ADOPT when** recursive CTE on edges is too slow. Not Phase 6. |
+| 3 | [paradedb/paradedb](https://github.com/paradedb/paradedb) | Hybrid retrieve (`tsvector` + vector) | BM25 (`pg_search`) in Postgres; better keyword than stock FTS | **STUDY** for `/brain` + listings search. Stay on stock FTS until proven. |
+| 4 | [cube-js/cube](https://github.com/cube-js/cube) | Semantic layer (`database_query` → metrics) | Metrics as code; Insight without LLM-SQL | **ADOPT idea** in YAML (`07`/`13` Phase 7). Full Cube only if we outgrow a metrics table. |
+| 5 | [duckdb/duckdb](https://github.com/duckdb/duckdb) | Insight OLAP without a warehouse | In-process analytics on exports; no BigQuery yet | **WATCH** for Phase 7 aggregates. OLTP Postgres stays SoR. |
+| 6 | [timgit/pg-boss](https://github.com/timgit/pg-boss) | `embed-worker` / `sync-worker` queue | Job queue **in Postgres** we already operate; no extra Redis queue | **ADOPT** for embed/sync if we do not want another Temporal workflow type for every chunk. Temporal still owns HITL. |
+| 7 | [graphile/worker](https://github.com/graphile/worker) | Same as pg-boss, Node-native | Fast PG jobs, SKIP LOCKED | **ADOPT alt** to pg-boss; pick one, not both. |
+| 8 | [pgbouncer/pgbouncer](https://github.com/pgbouncer/pgbouncer) | Pool max 10 / SSE deadlock | Connection pooling in front of Postgres | **ADOPT** Phase 8. Not a product swap. |
+| 9 | [e2b-dev/infra](https://github.com/e2b-dev/infra) | `sandbox` (Docker context not even in git) | Firecracker micro-VMs; real isolation vs our Docker | **STUDY** when sandbox must have no-egress + multi-tenant. Prefer our image until then. |
+| 10 | [daytonaio/daytona](https://github.com/daytonaio/daytona) | Same sandbox / browser-runner | Dev-env + isolated runtimes for agents | **WATCH** Phase 17 computer-use. |
+| 11 | [open-telemetry/opentelemetry-js](https://github.com/open-telemetry/opentelemetry-js) | Traces across dashboard + worker + MCP | Correlate Langfuse LLM spans with HTTP/Temporal | **ADOPT** export; do not replace Langfuse. |
+| 12 | [Unleash/unleash](https://github.com/Unleash/unleash) | Pack / skill flags per org | Kill-switch a vertical workflow without deploy | **WATCH** Phase 11+ packs. Env flags first. |
+| 13 | [minio/minio](https://github.com/minio/minio) | `media-service` (photos, voice, KYC pointers) | S3-compatible in our VPC | **ADOPT** when listing media leaves Drive. Virus-scan before put. |
+| 14 | [traefik/traefik](https://github.com/traefik/traefik) | Split ingest / SSE / dashboard hosts | Path-based routing so webhooks never share the Next.js thread | **ADOPT** when we split services (§3). Caddy is also fine. |
+| 15 | [electric-sql/electric](https://github.com/electric-sql/electric) | Owner mobile / offline inbox | Postgres → shape-synced clients | **WATCH** after Redis SSE works. Not year-one. |
+
+Honorable (still not in stack; pick from these if 15 is not enough):
+[redpanda-data/connect](https://github.com/redpanda-data/connect) (CDC/sync pipelines),
+[valkey-io/valkey](https://github.com/valkey-io/valkey) (dedicated Redis-compatible for Langfuse),
+[infisical/infisical](https://github.com/Infisical/infisical) (BYOK vault instead of env soup),
+[clamav/clamav](https://github.com/Cisco-Talos/clamav) (virus scan on uploads),
+[hatchet-dev/hatchet](https://github.com/hatchet-dev/hatchet) (PG-native workflows if Temporal ops explode — WATCH only).
+
+**Still reject as kernel (even if OSS):** LangGraph, Mastra, Letta, Agno,
+Supabase-as-backend, Composio. Same job as what we already run.
+
+**What we take from this list first (order):**
+
+1. PgBouncer — pool, Phase 8.  
+2. pg-boss **or** Graphile Worker — embed/sync off the dashboard.  
+3. Redis pub/sub; NATS only if that fails.  
+4. OTel JS → Langfuse.  
+5. ParadeDB/AGE only after Phase 6 stock FTS + edges table.  
+6. Cube/DuckDB ideas for Phase 7 metrics, not a new SoR.  
+7. MinIO when media exists.  
+8. E2B/Daytona only if Docker sandbox isolation fails tenants.

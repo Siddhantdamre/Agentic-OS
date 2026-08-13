@@ -2,6 +2,29 @@ import { NextResponse } from 'next/server';
 import { getScopedClient } from '@/lib/db';
 import { realtimeHub } from '@/lib/realtime-hub';
 import type { PoolClient } from 'pg';
+import {
+  employeePersonaText,
+  fireInboundAgent,
+  parseToolAllowlist,
+} from '@/lib/inbound-agent';
+import { replyTargetFromChannelMeta, sendChannelReply } from '@/lib/channel-outbound';
+
+type MessageRole = 'user' | 'customer' | 'human_agent' | 'assistant';
+
+function normalizeRole(role: unknown): MessageRole {
+  switch (role) {
+    case 'user':
+      return 'user';
+    case 'customer':
+      return 'customer';
+    case 'human_agent':
+      return 'human_agent';
+    case 'assistant':
+      return 'assistant';
+    default:
+      return 'user';
+  }
+}
 
 // GET message history for a conversation
 export async function GET(
@@ -67,7 +90,10 @@ export async function POST(
     try {
       // Check conversation exists & fetch assigned employee details
       const convRes = await client.query(
-        `SELECT c.id, c.channel_id, c.employee_id, c.contact_id, ch.channel_type, e.name as employee_name, e.role as employee_role, e.persona as employee_persona
+        `SELECT c.id, c.channel_id, c.employee_id, c.contact_id, c.chatwoot_conv_id, c.metadata,
+                ch.channel_type, ch.meta as channel_meta,
+                e.name as employee_name, e.role as employee_role, e.persona as employee_persona,
+                e.tool_allowlist as employee_tool_allowlist
          FROM conversations c
          LEFT JOIN channels ch ON c.channel_id = ch.id
          LEFT JOIN ai_employees e ON c.employee_id = e.id
@@ -80,84 +106,80 @@ export async function POST(
       }
 
       const conv = convRes.rows[0];
-      const chatwootMsgId = Math.floor(100000 + Math.random() * 900000);
+      const messageRole = normalizeRole(role);
 
-      // Insert incoming message
       const userMsgRes = await client.query(
-        `INSERT INTO messages (org_id, conversation_id, role, content, chatwoot_msg_id, created_at)
-         VALUES ($1, $2, $3, $4, $5, NOW())
+        `INSERT INTO messages (org_id, conversation_id, role, content, created_at)
+         VALUES ($1, $2, $3, $4, NOW())
          RETURNING id, org_id, conversation_id, role, content, chatwoot_msg_id, created_at`,
-        [orgId, conversationId, role, content, chatwootMsgId]
+        [orgId, conversationId, messageRole === 'customer' ? 'user' : messageRole, content]
       );
 
-      // Update conversation timestamp & summary
       await client.query(
         `UPDATE conversations SET updated_at = NOW(), summary = $1 WHERE id = $2 AND org_id = $3`,
         [content.slice(0, 100), conversationId, orgId]
       );
 
-      // Publish real-time event (new customer message → needs_attention)
-      if (conv.channel_id) {
+      const connectedRes = await client.query(
+        `SELECT channel_type FROM channels WHERE org_id = $1 AND status IN ('active', 'connected')`,
+        [orgId]
+      );
+      const connectedChannels = connectedRes.rows.map((row: { channel_type: string }) => row.channel_type);
+
+      const channelType = conv.channel_type ?? 'dashboard';
+      const contactId = conv.contact_id ?? 'unknown';
+      const chanMeta = (conv.channel_meta || {}) as Record<string, unknown>;
+      const replyTarget = replyTargetFromChannelMeta(channelType, contactId, chanMeta, {
+        chatwootConvId: conv.chatwoot_conv_id,
+      });
+
+      if (messageRole === 'user' || messageRole === 'customer') {
         realtimeHub.publish(orgId, {
           type: 'needs_attention',
           conversationId,
           message: content.slice(0, 200),
-          contactId: conv.contact_id ?? null,
-          channelType: conv.channel_type ?? 'dashboard',
+          contactId,
+          channelType,
+        });
+      } else {
+        realtimeHub.publish(orgId, {
+          type: 'conversation_updated',
+          conversationId,
+          message: content.slice(0, 200),
+          contactId,
+          channelType,
         });
       }
 
-      // Release the pooled client BEFORE kicking off the AI turn so the
-      // request handler never holds a pool slot while the model runs.
       client.release();
       client = null;
 
-      // If the user sent the message, trigger the AI response WITHOUT
-      // blocking the request. Prefer durable Temporal execution; fall back
-      // to a background direct atomic-agent turn. Either path persists the
-      // assistant reply itself.
-      if (role === 'user' || role === 'customer') {
-        const empName = conv.employee_name || 'Sarah';
-        const empRole = conv.employee_role || 'Sales & Support';
-        const empPersona = conv.employee_persona || 'Helpful customer support assistant.';
-
-        const agentInput = {
-          orgId,
-          conversationId,
-          employeeName: empName,
-          employeeRole: empRole,
-          employeePersona: empPersona,
-          toolAllowlist: ['gmail', 'whatsapp', 'google-calendar', 'hubspot', 'database_query'],
-          userMessage: content,
-        };
-
-        void (async () => {
-          try {
-            const { startAutonomousAgentWorkflow } = await import('@darex/workflows/dist/workflow-client');
-            const handle = await startAutonomousAgentWorkflow(agentInput);
-            if (handle) return; // workflow persists the assistant reply via saveMessageActivity
-          } catch (temporalErr: any) {
-            console.warn('[Messages] Temporal unavailable, direct fallback:', temporalErr.message);
-          }
-          try {
-            const { runAutonomousAgentDirect } = await import('@darex/workflows/dist/atomic-agent-client');
-            const aiResult = await runAutonomousAgentDirect(agentInput);
-            const pool = (await import('@/lib/db')).pool;
-            const pc = await pool.connect();
-            try {
-              await pc.query("SELECT set_config('app.current_org_id', $1, true)", [orgId]);
-              await pc.query(
-                `INSERT INTO messages (org_id, conversation_id, role, content, tool_calls, created_at)
-                 VALUES ($1, $2, 'assistant', $3, $4, NOW())`,
-                [orgId, conversationId, aiResult.replyMessage, JSON.stringify(aiResult.executedSteps || [])]
-              );
-            } finally {
-              pc.release();
-            }
-          } catch (agentErr: any) {
-            console.error('[Messages] Agent reply error:', agentErr.message);
-          }
-        })();
+      switch (messageRole) {
+        case 'user':
+        case 'customer':
+          fireInboundAgent({
+            orgId,
+            conversationId,
+            channelId: conv.channel_id ?? undefined,
+            employeeId: conv.employee_id ?? undefined,
+            employeeName: conv.employee_name || 'AI Assistant',
+            employeeRole: conv.employee_role || 'Support',
+            employeePersona: employeePersonaText(conv.employee_persona),
+            toolAllowlist: parseToolAllowlist(conv.employee_tool_allowlist),
+            connectedChannels,
+            userMessage: content,
+            replyTarget,
+          });
+          break;
+        case 'human_agent':
+          void sendChannelReply(orgId, replyTarget, content);
+          break;
+        case 'assistant':
+          break;
+        default: {
+          const _never: never = messageRole;
+          void _never;
+        }
       }
 
       return NextResponse.json({

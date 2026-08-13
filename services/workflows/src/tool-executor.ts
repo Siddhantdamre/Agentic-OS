@@ -1,5 +1,7 @@
-import http from 'http';
+import fs from 'fs';
+import path from 'path';
 import { Pool } from 'pg';
+import pdfParse from 'pdf-parse';
 
 export interface ToolExecutionParams {
   tool: string;
@@ -20,8 +22,18 @@ export interface ToolExecutionResult {
   timestamp: string;
 }
 
+export interface ToolCatalogEntry {
+  name: string;
+  category: string;
+  description: string;
+  mcpName?: string;
+  oauth: boolean;
+}
+
 const NANGO_HOST = process.env.NANGO_HOST || 'http://localhost:3003';
 const NANGO_SECRET_KEY = process.env.NANGO_SECRET_KEY; // Must be set — no insecure fallback
+const NANGO_TIMEOUT_MS = parseInt(process.env.NANGO_TIMEOUT_MS || '10000', 10);
+const TOOL_HTTP_TIMEOUT_MS = parseInt(process.env.TOOL_HTTP_TIMEOUT_MS || '20000', 10);
 
 // Shared connection pool — avoids leaking a new Pool per tool call.
 const dbPool = new Pool({
@@ -36,11 +48,41 @@ const dbPool = new Pool({
 // Tools that are safe to run for every org regardless of per-employee config.
 // These are the agent's own atomic capabilities (web search/extract, scoped SQL,
 // workspace files, and sandboxed code execution) — not external OAuth connectors.
-const ALWAYS_ALLOWED_CORE_TOOLS = [
-  'web_search', 'web_extract', 'database_query', 'db_query', 'sql_analytics',
+export const ALWAYS_ALLOWED_CORE_TOOLS = [
+  'web_search', 'search', 'google_search',
+  'web_extract', 'fetch_url', 'read_url',
+  'database_query', 'db_query', 'sql_analytics',
   'file_ops', 'workspace_file', 'file_system',
   'sandbox', 'code_execution', 'execute_code',
 ];
+
+function normalizeToolKey(value: string): string {
+  return String(value || '').toLowerCase().replace(/_/g, '-');
+}
+
+async function fetchWithTimeout(
+  url: string,
+  init: RequestInit = {},
+  timeoutMs: number = TOOL_HTTP_TIMEOUT_MS,
+): Promise<Response> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...init, signal: controller.signal });
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function apiError(
+  tool: string,
+  action: string,
+  timestamp: string,
+  message: string,
+  data: Record<string, unknown> | null = null,
+): ToolExecutionResult {
+  return { tool, action, status: 'error', message, data, timestamp };
+}
 
 // Org-wide tool allowlist — cached briefly to avoid a DB hit on every call.
 // The authoritative set for an org is:
@@ -94,14 +136,30 @@ async function resolveOrgToolAllowlist(orgId: string): Promise<string[]> {
   return keys;
 }
 
+export function channelTypesFromRows(rows: unknown[]): string[] {
+  const types: string[] = [];
+  for (const row of rows || []) {
+    if (typeof row === 'string' && row.trim()) types.push(row.trim());
+    else if (row && typeof row === 'object' && 'channel_type' in (row as any)) {
+      const t = String((row as any).channel_type || '').trim();
+      if (t) types.push(t);
+    }
+  }
+  return types;
+}
+
+export function mergeRuntimeAllowlist(employeeList: string[] | undefined, connectedChannels: string[] | undefined): string[] {
+  const union = new Set<string>(ALWAYS_ALLOWED_CORE_TOOLS.map(normalizeToolKey));
+  for (const t of employeeList || []) union.add(normalizeToolKey(t));
+  for (const t of connectedChannels || []) union.add(normalizeToolKey(t));
+  return Array.from(union).filter(Boolean);
+}
+
 function isToolAllowed(baseTool: string, allowlist: string[]): boolean {
-  const allowed = allowlist.map((t) => t.toLowerCase());
-  const normalizedTool = baseTool.replace(/_/g, '-');
-  return (
-    allowed.includes(baseTool) ||
-    allowed.includes(normalizedTool) ||
-    allowed.some((a) => baseTool.startsWith(a + '_') || baseTool.startsWith(a + '-'))
-  );
+  const tool = normalizeToolKey(baseTool);
+  const allowed = allowlist.map(normalizeToolKey).filter(Boolean);
+  if (allowed.includes(tool)) return true;
+  return allowed.some((a) => tool.startsWith(a + '-') || a.startsWith(tool + '-'));
 }
 
 /**
@@ -121,9 +179,9 @@ async function getNangoConnection(connectionId: string, providerKey: string): Pr
     return null;
   }
   try {
-    const res = await fetch(`${NANGO_HOST}/connection/${encodeURIComponent(connectionId)}?provider_config_key=${encodeURIComponent(providerKey)}`, {
+    const res = await fetchWithTimeout(`${NANGO_HOST}/connection/${encodeURIComponent(connectionId)}?provider_config_key=${encodeURIComponent(providerKey)}`, {
       headers: { Authorization: `Bearer ${NANGO_SECRET_KEY}` },
-    });
+    }, NANGO_TIMEOUT_MS);
     if (!res.ok) {
       console.warn(`[Nango] Token fetch failed for ${connectionId} (${providerKey}): HTTP ${res.status}`);
       return null;
@@ -433,7 +491,7 @@ export async function executeAutonomousToolAction(
       action: actionName,
       status: 'error',
       message: `Tool "${params.tool}" is not in this employee's allowed tool list.`,
-      data: { connected: false, allowed: effectiveAllowlist },
+      data: { allowed: false, allowlist: effectiveAllowlist },
       timestamp,
     };
   }
@@ -445,9 +503,18 @@ export async function executeAutonomousToolAction(
       case 'execute_code': {
         console.log(`[Darex Sandbox] Executing isolated code for ${params.orgId}...`);
         try {
-          const sandboxUrl = process.env.SANDBOX_API_URL || 'http://localhost:8080';
+          const sandboxUrl = process.env.SANDBOX_API_URL;
+          if (!sandboxUrl) {
+            return apiError(params.tool, params.action, timestamp, 'Sandbox is not configured. Set SANDBOX_API_URL to enable code execution.', { configured: false });
+          }
 
-          const language = (params.payload.language === 'javascript' || params.payload.language === 'node') ? 'node' : 'python';
+          const langRaw = String(params.payload.language || params.payload.runtime || 'python').toLowerCase();
+          let language: 'python' | 'node' | 'bash' = 'python';
+          if (langRaw === 'javascript' || langRaw === 'node' || langRaw === 'js' || langRaw === 'typescript' || langRaw === 'ts') {
+            language = 'node';
+          } else if (langRaw === 'bash' || langRaw === 'sh' || langRaw === 'shell' || langRaw === 'zsh') {
+            language = 'bash';
+          }
 
           let codeToRun = params.payload.code || params.payload.expression || params.payload.command;
           if (!codeToRun) {
@@ -544,9 +611,11 @@ export async function executeAutonomousToolAction(
             'Accept': 'application/json',
             'X-Retain-Images': 'none',
           };
-          // Jina requires an API key for search now; only send it when configured.
           const jinaKey = process.env.JINA_API_KEY || process.env.JINA_READ_API_KEY;
-          if (jinaKey) searchHeaders['Authorization'] = `Bearer ${jinaKey}`;
+          if (!jinaKey) {
+            return apiError('web_search', 'search', timestamp, 'web_search requires JINA_API_KEY. No fake results are returned.', { configured: false });
+          }
+          searchHeaders['Authorization'] = `Bearer ${jinaKey}`;
           const searchRes = await fetch(`https://s.jina.ai/${encodeURIComponent(query)}`, {
             headers: searchHeaders,
             signal: controller.signal
@@ -628,14 +697,17 @@ export async function executeAutonomousToolAction(
           try {
             await client.query('BEGIN');
             await client.query("SELECT set_config('app.current_org_id', $1, true)", [params.orgId]);
-            const dbRes = await client.query(sql);
+            const limitedSql = /\blimit\b/i.test(sql) ? sql : `${sql} LIMIT 26`;
+            const dbRes = await client.query(limitedSql);
             await client.query('COMMIT');
+            const truncated = dbRes.rows.length > 25;
+            const rows = dbRes.rows.slice(0, 25);
             return {
               tool: 'database_query',
               action: 'query',
               status: 'executed',
-              message: `✅ SQL query executed safely. Returned ${dbRes.rows.length} rows`,
-              data: { rows: dbRes.rows.slice(0, 25), totalRows: dbRes.rows.length },
+              message: `✅ SQL query executed safely. Returned ${rows.length} rows${truncated ? ' (truncated to 25)' : ''}`,
+              data: { rows, totalRows: dbRes.rows.length, truncated },
               timestamp,
             };
           } catch (execErr) {
@@ -654,8 +726,6 @@ export async function executeAutonomousToolAction(
       case 'workspace_file': {
         const fileAction = actionName || params.payload.fileAction || 'read';
         const filePath = params.payload.path || params.payload.filePath || 'notes.txt';
-        const fs = require('fs');
-        const path = require('path');
         const baseDir = path.resolve(process.cwd(), 'workspace_storage', params.orgId || 'default');
 
         if (!fs.existsSync(baseDir)) {
@@ -834,7 +904,6 @@ export async function executeAutonomousToolAction(
             const isText = att.mimeType.startsWith('text/') || /\.(txt|csv|md|json|log)$/i.test(att.filename);
             if (isPdf) {
               try {
-                const pdfParse = require('pdf-parse');
                 const parsed = await pdfParse(buffer);
                 content = (parsed && parsed.text) || '';
                 parseType = 'pdf';
@@ -1297,8 +1366,8 @@ export async function executeAutonomousToolAction(
                   timestamp,
                 };
               } else {
-                const errData = await createRes.json();
-                console.error('GitHub API Create Error:', errData);
+                const errData = await createRes.json().catch(() => ({}));
+                return apiError('github', 'create_repo', timestamp, `GitHub repo creation failed: ${createRes.status} ${errData.message || ''}`, { status: createRes.status });
               }
             } else {
               // FETCH REPOS
@@ -1354,11 +1423,21 @@ export async function executeAutonomousToolAction(
           };
         }
 
-        const dbRes = await dbPool.query('SELECT meta, nango_connection_id FROM channels WHERE org_id = $1 AND channel_type = $2', [params.orgId, 'whatsapp']);
         let metaAccessToken = null;
         let phoneNumberId = params.payload.phoneNumberId;
-        
-        const channel = dbRes.rows[0] as any;
+        let channel: any = null;
+        const waClient = await dbPool.connect();
+        try {
+          await waClient.query("SELECT set_config('app.current_org_id', $1, true)", [params.orgId]);
+          const dbRes = await waClient.query(
+            'SELECT meta, nango_connection_id FROM channels WHERE org_id = $1 AND channel_type = $2',
+            [params.orgId, 'whatsapp']
+          );
+          channel = dbRes.rows[0];
+        } finally {
+          waClient.release();
+        }
+
         if (channel?.meta?.accessToken) {
           metaAccessToken = channel.meta.accessToken;
           phoneNumberId = phoneNumberId || channel.meta.phoneNumberId;
@@ -1578,6 +1657,9 @@ export async function executeAutonomousToolAction(
         if (metaAdsToken) {
           try {
             const adAccountId = params.payload.adAccountId || process.env.META_AD_ACCOUNT_ID;
+            if (!adAccountId) {
+              return apiError('meta-ads', 'fetch_campaign_metrics', timestamp, 'adAccountId is required (payload or META_AD_ACCOUNT_ID). Token is connected.');
+            }
             if (adAccountId) {
               const fields = 'campaign_name,impressions,clicks,ctr,spend,reach';
               const metaRes = await fetch(
@@ -1609,6 +1691,13 @@ export async function executeAutonomousToolAction(
         if (googleAdsToken) {
           try {
             const customerId = params.payload.customerId || process.env.GOOGLE_ADS_CUSTOMER_ID;
+            const developerToken = process.env.GOOGLE_ADS_DEVELOPER_TOKEN;
+            if (!customerId) {
+              return apiError('google-ads', 'fetch_campaign_metrics', timestamp, 'customerId is required (payload or GOOGLE_ADS_CUSTOMER_ID). Token is connected.');
+            }
+            if (!developerToken) {
+              return apiError('google-ads', 'fetch_campaign_metrics', timestamp, 'GOOGLE_ADS_DEVELOPER_TOKEN is not set. Token is connected but Ads API calls cannot run.');
+            }
             if (customerId) {
               const gaRes = await fetch(
                 `https://googleads.googleapis.com/v14/customers/${customerId}/googleAds:search`,
@@ -1616,7 +1705,7 @@ export async function executeAutonomousToolAction(
                   method: 'POST',
                   headers: {
                     Authorization: `Bearer ${googleAdsToken}`,
-                    'developer-token': process.env.GOOGLE_ADS_DEVELOPER_TOKEN || '',
+                    'developer-token': developerToken,
                     'Content-Type': 'application/json',
                   },
                   body: JSON.stringify({
@@ -1785,72 +1874,83 @@ export async function executeAutonomousToolAction(
       case 'stripe': {
         const stripeConnId = `${params.orgId}_stripe`;
         const stripeToken = await getNangoAccessToken(stripeConnId, 'stripe');
-        if (stripeToken) {
-          try {
-            if (actionName.includes('customer')) {
-              const email = params.payload.email;
-              const name = params.payload.name;
-              const stripeRes = await fetch('https://api.stripe.com/v1/customers', {
-                method: actionName.includes('create') ? 'POST' : 'GET',
-                headers: {
-                  Authorization: `Bearer ${stripeToken}`,
-                  'Content-Type': 'application/x-www-form-urlencoded',
-                },
-                body: actionName.includes('create') && email ? new URLSearchParams({ email, name: name || '' }) : undefined,
-              });
-              if (stripeRes.ok) {
-                const customerData = await stripeRes.json();
-                return {
-                  tool: 'stripe',
-                  action: actionName,
-                  status: 'executed',
-                  message: `Stripe customer action completed`,
-                  data: customerData,
-                  timestamp,
-                };
-              }
-            } else {
-              const amount = params.payload.amount || 5000; // cents
-              const currency = params.payload.currency || 'usd';
-              const productName = params.payload.name || 'DareX AI Service';
-              const stripeRes = await fetch('https://api.stripe.com/v1/payment_links', {
-                method: 'POST',
-                headers: {
-                  Authorization: `Bearer ${stripeToken}`,
-                  'Content-Type': 'application/x-www-form-urlencoded',
-                },
-                body: new URLSearchParams({
-                  'line_items[0][price_data][currency]': currency,
-                  'line_items[0][price_data][product_data][name]': productName,
-                  'line_items[0][price_data][unit_amount]': String(amount),
-                  'line_items[0][quantity]': '1',
-                }),
-              });
-              if (stripeRes.ok) {
-                const stripeData = await stripeRes.json();
-                return {
-                  tool: 'stripe',
-                  action: 'create_payment_link',
-                  status: 'executed',
-                  message: `✅ Created Stripe payment link for ${productName}`,
-                  data: { checkoutUrl: stripeData.url, paymentLinkId: stripeData.id, active: stripeData.active },
-                  timestamp,
-                };
-              }
+        if (!stripeToken) return notConnected('stripe', actionName, timestamp);
+        const stripeHeaders = {
+          Authorization: `Bearer ${stripeToken}`,
+          'Content-Type': 'application/x-www-form-urlencoded',
+        };
+        try {
+          if (actionName.includes('customer') && (actionName.includes('get') || actionName.includes('fetch') || actionName.includes('retrieve'))) {
+            const customerId = params.payload.customerId || params.payload.id;
+            const email = params.payload.email;
+            const url = customerId
+              ? `https://api.stripe.com/v1/customers/${encodeURIComponent(customerId)}`
+              : `https://api.stripe.com/v1/customers${email ? `?email=${encodeURIComponent(email)}&limit=1` : '?limit=10'}`;
+            const stripeRes = await fetchWithTimeout(url, { headers: { Authorization: `Bearer ${stripeToken}` } });
+            const customerData = await stripeRes.json().catch(() => ({}));
+            if (!stripeRes.ok) {
+              return apiError('stripe', 'get_customer', timestamp, `Stripe get customer failed: ${stripeRes.status}`, customerData);
             }
-          } catch (e: any) {
-            console.error('[Stripe] API error:', e.message);
+            return { tool: 'stripe', action: 'get_customer', status: 'executed', message: 'Fetched Stripe customer(s)', data: customerData, timestamp };
           }
+          if (actionName.includes('customer')) {
+            const email = params.payload.email;
+            if (!email) return apiError('stripe', 'create_customer', timestamp, 'email is required to create a Stripe customer');
+            const stripeRes = await fetchWithTimeout('https://api.stripe.com/v1/customers', {
+              method: 'POST',
+              headers: stripeHeaders,
+              body: new URLSearchParams({ email, name: params.payload.name || '' }),
+            });
+            const customerData = await stripeRes.json().catch(() => ({}));
+            if (!stripeRes.ok) {
+              return apiError('stripe', 'create_customer', timestamp, `Stripe create customer failed: ${stripeRes.status}`, customerData);
+            }
+            return { tool: 'stripe', action: 'create_customer', status: 'executed', message: `Created Stripe customer ${email}`, data: customerData, timestamp };
+          }
+          const amount = params.payload.amount || 5000;
+          const currency = params.payload.currency || 'usd';
+          const productName = params.payload.name || 'DareX AI Service';
+          const stripeRes = await fetchWithTimeout('https://api.stripe.com/v1/payment_links', {
+            method: 'POST',
+            headers: stripeHeaders,
+            body: new URLSearchParams({
+              'line_items[0][price_data][currency]': currency,
+              'line_items[0][price_data][product_data][name]': productName,
+              'line_items[0][price_data][unit_amount]': String(amount),
+              'line_items[0][quantity]': '1',
+            }),
+          });
+          const stripeData = await stripeRes.json().catch(() => ({}));
+          if (!stripeRes.ok) {
+            return apiError('stripe', 'create_payment_link', timestamp, `Stripe payment link failed: ${stripeRes.status}`, stripeData);
+          }
+          return {
+            tool: 'stripe',
+            action: 'create_payment_link',
+            status: 'executed',
+            message: `Created Stripe payment link for ${productName}`,
+            data: { checkoutUrl: stripeData.url, paymentLinkId: stripeData.id, active: stripeData.active },
+            timestamp,
+          };
+        } catch (e: any) {
+          return apiError('stripe', actionName, timestamp, `Stripe API error: ${e.message}`);
         }
-        return notConnected('stripe', actionName, timestamp);
       }
 
       case 'shopify': {
         const shopifyConnId = `${params.orgId}_shopify`;
-        const shopifyToken = await getNangoAccessToken(shopifyConnId, 'shopify');
+        const shopifyConn = await getNangoConnection(shopifyConnId, 'shopify');
+        const shopifyToken = shopifyConn?.credentials?.raw?.access_token || shopifyConn?.credentials?.access_token || null;
         if (shopifyToken) {
           try {
-            const shopDomain = params.payload.shopDomain || process.env.SHOPIFY_SHOP_DOMAIN;
+            const shopDomain = params.payload.shopDomain
+              || process.env.SHOPIFY_SHOP_DOMAIN
+              || shopifyConn?.connection_config?.shop
+              || shopifyConn?.metadata?.shop
+              || shopifyConn?.metadata?.shopDomain;
+            if (!shopDomain) {
+              return apiError('shopify', actionName, timestamp, 'shopDomain is required (payload, SHOPIFY_SHOP_DOMAIN, or Nango connection metadata).');
+            }
             if (shopDomain) {
               if (actionName.includes('product')) {
                 const shopifyRes = await fetch(
@@ -1897,10 +1997,17 @@ export async function executeAutonomousToolAction(
 
       case 'zendesk': {
         const zendeskConnId = `${params.orgId}_zendesk`;
-        const zendeskToken = await getNangoAccessToken(zendeskConnId, 'zendesk');
+        const zendeskConn = await getNangoConnection(zendeskConnId, 'zendesk');
+        const zendeskToken = zendeskConn?.credentials?.raw?.access_token || zendeskConn?.credentials?.access_token || null;
         if (zendeskToken) {
           try {
-            const subdomain = params.payload.subdomain || process.env.ZENDESK_SUBDOMAIN;
+            const subdomain = params.payload.subdomain
+              || process.env.ZENDESK_SUBDOMAIN
+              || zendeskConn?.connection_config?.subdomain
+              || zendeskConn?.metadata?.subdomain;
+            if (!subdomain) {
+              return apiError('zendesk', actionName, timestamp, 'Zendesk subdomain is required (payload, ZENDESK_SUBDOMAIN, or Nango metadata).');
+            }
             if (subdomain) {
               if (actionName.includes('update') || actionName.includes('edit')) {
                 const ticketId = params.payload.ticketId || params.payload.id;
@@ -1981,60 +2088,131 @@ export async function executeAutonomousToolAction(
       case 'intercom': {
         const intercomConnId = `${params.orgId}_intercom`;
         const intercomToken = await getNangoAccessToken(intercomConnId, 'intercom');
-        if (intercomToken) {
-          try {
-            const intercomRes = await fetch('https://api.intercom.io/conversations?state=open&per_page=10', {
-              headers: { Authorization: `Bearer ${intercomToken}`, Accept: 'application/json', 'Intercom-Version': '2.11' },
+        if (!intercomToken) return notConnected('intercom', actionName, timestamp);
+        const intercomHeaders = {
+          Authorization: `Bearer ${intercomToken}`,
+          Accept: 'application/json',
+          'Content-Type': 'application/json',
+          'Intercom-Version': '2.11',
+        };
+        try {
+          if (actionName.includes('reply') || actionName.includes('comment')) {
+            const conversationId = params.payload.conversationId || params.payload.id;
+            const body = params.payload.body || params.payload.message || params.payload.text;
+            if (!conversationId) return apiError('intercom', 'reply_conversation', timestamp, 'conversationId is required to reply.');
+            if (!body) return apiError('intercom', 'reply_conversation', timestamp, 'message body is required to reply.');
+            const meRes = await fetchWithTimeout('https://api.intercom.io/me', { headers: intercomHeaders });
+            const me = await meRes.json().catch(() => ({}));
+            const adminId = params.payload.adminId || me?.id;
+            if (!adminId) return apiError('intercom', 'reply_conversation', timestamp, 'Could not resolve Intercom admin id for the connected app.');
+            const replyRes = await fetchWithTimeout(`https://api.intercom.io/conversations/${conversationId}/reply`, {
+              method: 'POST',
+              headers: intercomHeaders,
+              body: JSON.stringify({ type: 'admin', message_type: 'comment', admin_id: adminId, body }),
             });
-            if (intercomRes.ok) {
-              const intercomData = await intercomRes.json();
-              const conversations = intercomData.conversations || [];
-              return {
-                tool: 'intercom',
-                action: 'fetch_conversations',
-                status: 'executed',
-                message: `Synced ${conversations.length} live conversations from Intercom`,
-                data: { openConversations: conversations.length, conversations: conversations.slice(0, 5) },
-                timestamp,
-              };
+            const replyData = await replyRes.json().catch(() => ({}));
+            if (!replyRes.ok) {
+              return apiError('intercom', 'reply_conversation', timestamp, `Intercom reply failed: ${replyRes.status}`, replyData);
             }
-          } catch (e: any) {
-            console.error('[Intercom] API error:', e.message);
+            return { tool: 'intercom', action: 'reply_conversation', status: 'executed', message: `Replied to Intercom conversation ${conversationId}`, data: replyData, timestamp };
           }
+          if (actionName.includes('create')) {
+            const body = params.payload.body || params.payload.message || params.payload.text;
+            if (!body) return apiError('intercom', 'create_conversation', timestamp, 'message body is required to create a conversation.');
+            const meRes = await fetchWithTimeout('https://api.intercom.io/me', { headers: intercomHeaders });
+            const me = await meRes.json().catch(() => ({}));
+            const adminId = params.payload.adminId || me?.id;
+            const fromUserId = params.payload.userId || params.payload.contactId;
+            if (!fromUserId && !adminId) {
+              return apiError('intercom', 'create_conversation', timestamp, 'userId (contact) or a resolvable admin id is required to create a conversation.');
+            }
+            const createRes = await fetchWithTimeout('https://api.intercom.io/conversations', {
+              method: 'POST',
+              headers: intercomHeaders,
+              body: JSON.stringify({
+                from: fromUserId ? { type: 'user', id: fromUserId } : { type: 'admin', id: adminId },
+                body,
+              }),
+            });
+            const createData = await createRes.json().catch(() => ({}));
+            if (!createRes.ok) {
+              return apiError('intercom', 'create_conversation', timestamp, `Intercom create failed: ${createRes.status}`, createData);
+            }
+            return { tool: 'intercom', action: 'create_conversation', status: 'executed', message: 'Created Intercom conversation', data: createData, timestamp };
+          }
+          const intercomRes = await fetchWithTimeout('https://api.intercom.io/conversations?state=open&per_page=10', { headers: intercomHeaders });
+          const intercomData = await intercomRes.json().catch(() => ({}));
+          if (!intercomRes.ok) {
+            return apiError('intercom', 'fetch_conversations', timestamp, `Intercom fetch failed: ${intercomRes.status}`, intercomData);
+          }
+          const conversations = intercomData.conversations || [];
+          return {
+            tool: 'intercom',
+            action: 'fetch_conversations',
+            status: 'executed',
+            message: `Synced ${conversations.length} live conversations from Intercom`,
+            data: { openConversations: conversations.length, conversations: conversations.slice(0, 5) },
+            timestamp,
+          };
+        } catch (e: any) {
+          return apiError('intercom', actionName, timestamp, `Intercom API error: ${e.message}`);
         }
-        return notConnected('intercom', actionName, timestamp);
       }
 
       case 'razorpay': {
-        const razorpayKeyId = process.env.RAZORPAY_KEY_ID;
-        const razorpayKeySecret = process.env.RAZORPAY_KEY_SECRET;
-        if (razorpayKeyId && razorpayKeySecret) {
-          try {
-            const amount = params.payload.amount || 50000; // paise (₹500)
-            const currency = params.payload.currency || 'INR';
-            const description = params.payload.description || 'DareX AI Invoice';
-            const auth = Buffer.from(`${razorpayKeyId}:${razorpayKeySecret}`).toString('base64');
-            const rzpRes = await fetch('https://api.razorpay.com/v1/payment_links', {
-              method: 'POST',
-              headers: { Authorization: `Basic ${auth}`, 'Content-Type': 'application/json' },
-              body: JSON.stringify({ amount, currency, description, accept_partial: false }),
-            });
-            if (rzpRes.ok) {
-              const rzpData = await rzpRes.json();
-              return {
-                tool: 'razorpay',
-                action: 'create_invoice',
-                status: 'executed',
-                message: `✅ Created Razorpay payment link for ₹${(amount / 100).toFixed(2)}`,
-                data: { paymentLinkId: rzpData.id, shortUrl: rzpData.short_url, status: rzpData.status },
-                timestamp,
-              };
-            }
-          } catch (e: any) {
-            console.error('[Razorpay] API error:', e.message);
-          }
+        let razorpayKeyId = '';
+        let razorpayKeySecret = '';
+        const rzpClient = await dbPool.connect();
+        try {
+          await rzpClient.query("SELECT set_config('app.current_org_id', $1, true)", [params.orgId]);
+          const rzpChan = await rzpClient.query(
+            `SELECT meta FROM channels WHERE org_id = $1 AND channel_type = 'razorpay' AND status IN ('connected', 'active')`,
+            [params.orgId]
+          );
+          const meta = rzpChan.rows[0]?.meta || {};
+          razorpayKeyId = String(meta.keyId || meta.key_id || '');
+          razorpayKeySecret = String(meta.keySecret || meta.key_secret || '');
+        } finally {
+          rzpClient.release();
         }
-        return notConnected('razorpay', actionName, timestamp);
+        if (!razorpayKeyId || !razorpayKeySecret) {
+          razorpayKeyId = process.env.RAZORPAY_KEY_ID || '';
+          razorpayKeySecret = process.env.RAZORPAY_KEY_SECRET || '';
+        }
+        if (!razorpayKeyId || !razorpayKeySecret) {
+          return notConnected('razorpay', actionName, timestamp);
+        }
+        try {
+          const amount = params.payload.amount || 50000; // paise (₹500)
+          const currency = params.payload.currency || 'INR';
+          const description = params.payload.description || 'DareX AI Invoice';
+          const auth = Buffer.from(`${razorpayKeyId}:${razorpayKeySecret}`).toString('base64');
+          const rzpRes = await fetchWithTimeout('https://api.razorpay.com/v1/payment_links', {
+            method: 'POST',
+            headers: { Authorization: `Basic ${auth}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ amount, currency, description, accept_partial: false }),
+          });
+          const rzpData = await rzpRes.json().catch(() => ({}));
+          if (!rzpRes.ok) {
+            return apiError(
+              'razorpay',
+              'create_payment_link',
+              timestamp,
+              `Razorpay payment link failed: ${rzpRes.status} ${rzpData?.error?.description || ''}`.trim(),
+              rzpData,
+            );
+          }
+          return {
+            tool: 'razorpay',
+            action: 'create_payment_link',
+            status: 'executed',
+            message: `Created Razorpay payment link for ₹${(amount / 100).toFixed(2)}`,
+            data: { paymentLinkId: rzpData.id, shortUrl: rzpData.short_url, status: rzpData.status },
+            timestamp,
+          };
+        } catch (e: any) {
+          return apiError('razorpay', actionName, timestamp, `Razorpay API error: ${e.message}`);
+        }
       }
 
       case 'google-drive':
@@ -2449,31 +2627,194 @@ export async function executeAutonomousToolAction(
 
           // ── GOOGLE TASKS ────────────────────────────────────────────────
           if (gTool === 'google-tasks') {
-            const tasksRes = await fetch('https://tasks.googleapis.com/v1/users/@me/lists', {
+            const listsRes = await fetchWithTimeout('https://tasks.googleapis.com/v1/users/@me/lists', {
               headers: { Authorization: `Bearer ${gToken}` },
             });
-            if (!tasksRes.ok) {
-              return { tool: 'google-tasks', action: 'tasks_list', status: 'error', message: `Tasks error ${tasksRes.status}: ${await tasksRes.text()}`, data: null, timestamp };
+            if (!listsRes.ok) {
+              return apiError('google-tasks', 'tasks_list', timestamp, `Tasks error ${listsRes.status}: ${await listsRes.text()}`);
             }
-            const tasksData = await tasksRes.json();
+            const listsData = await listsRes.json();
+            const tasklistId = params.payload.tasklistId || params.payload.listId || listsData.items?.[0]?.id;
+            if (!tasklistId) {
+              return {
+                tool: 'google-tasks',
+                action: 'tasks_list',
+                status: 'executed',
+                message: 'No Google Task lists found',
+                data: { tasklists: [] },
+                timestamp,
+              };
+            }
+            const itemsRes = await fetchWithTimeout(`https://tasks.googleapis.com/v1/lists/${encodeURIComponent(tasklistId)}/tasks`, {
+              headers: { Authorization: `Bearer ${gToken}` },
+            });
+            if (!itemsRes.ok) {
+              return apiError('google-tasks', 'tasks_list', timestamp, `Tasks items error ${itemsRes.status}: ${await itemsRes.text()}`);
+            }
+            const itemsData = await itemsRes.json();
             return {
               tool: 'google-tasks',
               action: 'tasks_list',
               status: 'executed',
-              message: `Fetched ${tasksData.items?.length || 0} task lists`,
-              data: { tasklists: tasksData.items || [] },
+              message: `Fetched ${itemsData.items?.length || 0} tasks from list ${tasklistId}`,
+              data: { tasklistId, tasklists: listsData.items || [], tasks: itemsData.items || [] },
               timestamp,
             };
           }
 
-          return {
-            tool: gTool,
-            action: actionName,
-            status: 'error',
-            message: `Unhandled Google tool "${gTool}"`,
-            data: null,
-            timestamp,
-          };
+          // ── GOOGLE ANALYTICS (GA4 Data API) ─────────────────────────────
+          if (gTool === 'google-analytics') {
+            const propertyId = String(params.payload.propertyId || params.payload.property || '').replace(/^properties\//, '');
+            if (!propertyId) {
+              return apiError('google-analytics', 'analytics_report', timestamp, 'propertyId is required (GA4 numeric property id).');
+            }
+            const metrics = Array.isArray(params.payload.metrics) && params.payload.metrics.length
+              ? params.payload.metrics
+              : [{ name: 'activeUsers' }, { name: 'sessions' }];
+            const dimensions = Array.isArray(params.payload.dimensions) ? params.payload.dimensions : [{ name: 'date' }];
+            const dateRanges = params.payload.dateRanges || [{ startDate: '7daysAgo', endDate: 'today' }];
+            const reportRes = await fetchWithTimeout(
+              `https://analyticsdata.googleapis.com/v1beta/properties/${encodeURIComponent(propertyId)}:runReport`,
+              {
+                method: 'POST',
+                headers: { Authorization: `Bearer ${gToken}`, 'Content-Type': 'application/json' },
+                body: JSON.stringify({ metrics, dimensions, dateRanges, limit: params.payload.limit || 25 }),
+              },
+            );
+            const reportData = await reportRes.json().catch(() => ({}));
+            if (!reportRes.ok) {
+              return apiError('google-analytics', 'analytics_report', timestamp, `Analytics report failed: ${reportRes.status}`, reportData);
+            }
+            return {
+              tool: 'google-analytics',
+              action: 'analytics_report',
+              status: 'executed',
+              message: `Ran GA4 report for property ${propertyId}`,
+              data: { propertyId, rowCount: reportData.rowCount || 0, rows: reportData.rows || [], metricHeaders: reportData.metricHeaders, dimensionHeaders: reportData.dimensionHeaders },
+              timestamp,
+            };
+          }
+
+          // ── GOOGLE CHAT ─────────────────────────────────────────────────
+          if (gTool === 'google-chat') {
+            if (actionName.includes('send') || actionName.includes('message')) {
+              const space = params.payload.space || params.payload.spaceId;
+              const text = params.payload.text || params.payload.message || params.payload.body;
+              if (!space) return apiError('google-chat', 'chat_send_message', timestamp, 'space (spaces/xxx) is required to send a Chat message.');
+              if (!text) return apiError('google-chat', 'chat_send_message', timestamp, 'text is required to send a Chat message.');
+              const sendRes = await fetchWithTimeout(`https://chat.googleapis.com/v1/${space}/messages`, {
+                method: 'POST',
+                headers: { Authorization: `Bearer ${gToken}`, 'Content-Type': 'application/json' },
+                body: JSON.stringify({ text }),
+              });
+              const sendData = await sendRes.json().catch(() => ({}));
+              if (!sendRes.ok) return apiError('google-chat', 'chat_send_message', timestamp, `Chat send failed: ${sendRes.status}`, sendData);
+              return { tool: 'google-chat', action: 'chat_send_message', status: 'executed', message: `Sent Chat message to ${space}`, data: sendData, timestamp };
+            }
+            const listRes = await fetchWithTimeout('https://chat.googleapis.com/v1/spaces', {
+              headers: { Authorization: `Bearer ${gToken}` },
+            });
+            const listData = await listRes.json().catch(() => ({}));
+            if (!listRes.ok) return apiError('google-chat', 'chat_list_spaces', timestamp, `Chat list failed: ${listRes.status}`, listData);
+            return { tool: 'google-chat', action: 'chat_list_spaces', status: 'executed', message: `Listed ${listData.spaces?.length || 0} Chat spaces`, data: { spaces: listData.spaces || [] }, timestamp };
+          }
+
+          // ── GOOGLE MEET ─────────────────────────────────────────────────
+          if (gTool === 'google-meet') {
+            if (actionName.includes('get') || actionName.includes('fetch')) {
+              const spaceName = params.payload.space || params.payload.name;
+              if (!spaceName) return apiError('google-meet', 'meet_get_space', timestamp, 'space name is required (spaces/xxx).');
+              const getRes = await fetchWithTimeout(`https://meet.googleapis.com/v2/${spaceName}`, {
+                headers: { Authorization: `Bearer ${gToken}` },
+              });
+              const getData = await getRes.json().catch(() => ({}));
+              if (!getRes.ok) return apiError('google-meet', 'meet_get_space', timestamp, `Meet get failed: ${getRes.status}`, getData);
+              return { tool: 'google-meet', action: 'meet_get_space', status: 'executed', message: `Fetched Meet space ${spaceName}`, data: getData, timestamp };
+            }
+            const createRes = await fetchWithTimeout('https://meet.googleapis.com/v2/spaces', {
+              method: 'POST',
+              headers: { Authorization: `Bearer ${gToken}`, 'Content-Type': 'application/json' },
+              body: JSON.stringify({}),
+            });
+            const createData = await createRes.json().catch(() => ({}));
+            if (!createRes.ok) return apiError('google-meet', 'meet_create_space', timestamp, `Meet create failed: ${createRes.status}`, createData);
+            return { tool: 'google-meet', action: 'meet_create_space', status: 'executed', message: 'Created Google Meet space', data: createData, timestamp };
+          }
+
+          // ── GOOGLE SEARCH CONSOLE ───────────────────────────────────────
+          if (gTool === 'google-search-console') {
+            if (actionName.includes('query') || actionName.includes('analytics') || actionName.includes('report')) {
+              const siteUrl = params.payload.siteUrl || params.payload.site;
+              if (!siteUrl) return apiError('google-search-console', 'search_console_query', timestamp, 'siteUrl is required (e.g. sc-domain:example.com or https://example.com/).');
+              const startDate = params.payload.startDate || new Date(Date.now() - 7 * 86400000).toISOString().slice(0, 10);
+              const endDate = params.payload.endDate || new Date().toISOString().slice(0, 10);
+              const queryRes = await fetchWithTimeout(
+                `https://www.googleapis.com/webmasters/v3/sites/${encodeURIComponent(siteUrl)}/searchAnalytics/query`,
+                {
+                  method: 'POST',
+                  headers: { Authorization: `Bearer ${gToken}`, 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ startDate, endDate, dimensions: params.payload.dimensions || ['query'], rowLimit: params.payload.rowLimit || 25 }),
+                },
+              );
+              const queryData = await queryRes.json().catch(() => ({}));
+              if (!queryRes.ok) return apiError('google-search-console', 'search_console_query', timestamp, `Search Console query failed: ${queryRes.status}`, queryData);
+              return { tool: 'google-search-console', action: 'search_console_query', status: 'executed', message: `Search Console query for ${siteUrl}`, data: queryData, timestamp };
+            }
+            const sitesRes = await fetchWithTimeout('https://www.googleapis.com/webmasters/v3/sites', {
+              headers: { Authorization: `Bearer ${gToken}` },
+            });
+            const sitesData = await sitesRes.json().catch(() => ({}));
+            if (!sitesRes.ok) return apiError('google-search-console', 'search_console_sites', timestamp, `Search Console sites failed: ${sitesRes.status}`, sitesData);
+            return { tool: 'google-search-console', action: 'search_console_sites', status: 'executed', message: `Listed ${sitesData.siteEntry?.length || 0} Search Console sites`, data: { sites: sitesData.siteEntry || [] }, timestamp };
+          }
+
+          // ── GOOGLE BUSINESS PROFILE ─────────────────────────────────────
+          if (gTool === 'google-business-profile') {
+            const accountsRes = await fetchWithTimeout('https://mybusinessaccountmanagement.googleapis.com/v1/accounts', {
+              headers: { Authorization: `Bearer ${gToken}` },
+            });
+            const accountsData = await accountsRes.json().catch(() => ({}));
+            if (!accountsRes.ok) {
+              return apiError('google-business-profile', 'business_list_locations', timestamp, `Business Profile accounts failed: ${accountsRes.status}`, accountsData);
+            }
+            const accountName = params.payload.account || accountsData.accounts?.[0]?.name;
+            if (!accountName) {
+              return { tool: 'google-business-profile', action: 'business_list_locations', status: 'executed', message: 'No Business Profile accounts found', data: { accounts: [] }, timestamp };
+            }
+            const locRes = await fetchWithTimeout(
+              `https://mybusinessbusinessinformation.googleapis.com/v1/${accountName}/locations?readMask=name,title,storefrontAddress,phoneNumbers,websiteUri`,
+              { headers: { Authorization: `Bearer ${gToken}` } },
+            );
+            const locData = await locRes.json().catch(() => ({}));
+            if (!locRes.ok) return apiError('google-business-profile', 'business_list_locations', timestamp, `Business Profile locations failed: ${locRes.status}`, locData);
+            return {
+              tool: 'google-business-profile',
+              action: 'business_list_locations',
+              status: 'executed',
+              message: `Listed locations for ${accountName}`,
+              data: { account: accountName, accounts: accountsData.accounts || [], locations: locData.locations || [] },
+              timestamp,
+            };
+          }
+
+          // ── GOOGLE CLOUD (Resource Manager project list) ────────────────
+          if (gTool === 'google-cloud') {
+            const projRes = await fetchWithTimeout('https://cloudresourcemanager.googleapis.com/v1/projects', {
+              headers: { Authorization: `Bearer ${gToken}` },
+            });
+            const projData = await projRes.json().catch(() => ({}));
+            if (!projRes.ok) return apiError('google-cloud', 'cloud_list_projects', timestamp, `Cloud Resource Manager failed: ${projRes.status}`, projData);
+            return {
+              tool: 'google-cloud',
+              action: 'cloud_list_projects',
+              status: 'executed',
+              message: `Listed ${projData.projects?.length || 0} GCP projects`,
+              data: { projects: projData.projects || [] },
+              timestamp,
+            };
+          }
+
+          return apiError(gTool, actionName, timestamp, `Unhandled Google tool "${gTool}"`);
         } catch (e: any) {
           console.error(`[${gTool}] API error:`, e.message);
           return {
@@ -2509,3 +2850,38 @@ export async function executeAutonomousToolAction(
     };
   }
 }
+
+export const AUTONOMOUS_TOOL_CATALOG: ToolCatalogEntry[] = [
+  { name: 'whatsapp', category: 'Communication', description: 'Send WhatsApp messages via Meta Cloud API', mcpName: 'whatsapp_send', oauth: true },
+  { name: 'gmail', category: 'Communication', description: 'Fetch, triage, draft, send Gmail; extract OTP and attachments', mcpName: 'gmail_fetch', oauth: true },
+  { name: 'google-calendar', category: 'Productivity', description: 'List events, create events, check availability', mcpName: 'calendar_list_events', oauth: true },
+  { name: 'github', category: 'Development', description: 'Fetch repos, create repos and issues', mcpName: 'github_fetch_repos', oauth: true },
+  { name: 'hubspot', category: 'CRM', description: 'Create and update HubSpot contacts', mcpName: 'hubspot_create_contact', oauth: true },
+  { name: 'meta-ads', category: 'Marketing', description: 'Fetch Meta Ads campaign metrics', mcpName: 'meta_ads_metrics', oauth: true },
+  { name: 'google-ads', category: 'Marketing', description: 'Fetch Google Ads campaign metrics', mcpName: 'google_ads_metrics', oauth: true },
+  { name: 'slack', category: 'Communication', description: 'Send Slack channel messages', mcpName: 'slack_send', oauth: true },
+  { name: 'notion', category: 'Productivity', description: 'Search, create pages, append content', mcpName: 'notion_search', oauth: true },
+  { name: 'stripe', category: 'Finance', description: 'Payment links and customer create/get', mcpName: 'stripe_create_payment_link', oauth: true },
+  { name: 'shopify', category: 'E-Commerce', description: 'Fetch products and orders', mcpName: 'shopify_fetch_products', oauth: true },
+  { name: 'zendesk', category: 'Support', description: 'Fetch, create, update tickets', mcpName: 'zendesk_fetch_tickets', oauth: true },
+  { name: 'intercom', category: 'Support', description: 'Fetch, reply, create Intercom conversations', mcpName: 'intercom_fetch_conversations', oauth: true },
+  { name: 'razorpay', category: 'Finance', description: 'Create Razorpay payment links (per-org channels.meta keys, env fallback)', mcpName: 'razorpay_create_payment_link', oauth: false },
+  { name: 'google-drive', category: 'Productivity', description: 'Search, list, read, upload, share Drive files', mcpName: 'drive_search', oauth: true },
+  { name: 'google-docs', category: 'Productivity', description: 'Create, read, append Google Docs', mcpName: 'docs_create', oauth: true },
+  { name: 'google-sheets', category: 'Productivity', description: 'Create, read, append Google Sheets', mcpName: 'sheets_create', oauth: true },
+  { name: 'google-slides', category: 'Productivity', description: 'Create Google Slides presentations', mcpName: 'slides_create', oauth: true },
+  { name: 'google-forms', category: 'Productivity', description: 'Get Google Form details', mcpName: 'forms_get', oauth: true },
+  { name: 'google-contacts', category: 'Productivity', description: 'List Google Contacts', mcpName: 'contacts_list', oauth: true },
+  { name: 'google-tasks', category: 'Productivity', description: 'List Google Task lists and tasks', mcpName: 'tasks_list', oauth: true },
+  { name: 'google-analytics', category: 'Marketing', description: 'Run a GA4 Data API report', mcpName: 'analytics_report', oauth: true },
+  { name: 'google-chat', category: 'Communication', description: 'List Chat spaces and send messages', mcpName: 'chat_list_spaces', oauth: true },
+  { name: 'google-meet', category: 'Productivity', description: 'Create or get Google Meet spaces', mcpName: 'meet_create_space', oauth: true },
+  { name: 'google-search-console', category: 'Marketing', description: 'List sites and query Search Console analytics', mcpName: 'search_console_sites', oauth: true },
+  { name: 'google-business-profile', category: 'Marketing', description: 'List Business Profile accounts and locations', mcpName: 'business_list_locations', oauth: true },
+  { name: 'google-cloud', category: 'Development', description: 'List GCP projects via Resource Manager', mcpName: 'cloud_list_projects', oauth: true },
+  { name: 'web_search', category: 'Core', description: 'Live web search via Jina', mcpName: 'web_search', oauth: false },
+  { name: 'web_extract', category: 'Core', description: 'Extract page text via Jina', mcpName: 'web_extract', oauth: false },
+  { name: 'database_query', category: 'Core', description: 'Read-only org-scoped SQL (SELECT/WITH, max 25 rows)', mcpName: 'database_query', oauth: false },
+  { name: 'file_ops', category: 'Core', description: 'Read/write org workspace files', mcpName: 'file_ops', oauth: false },
+  { name: 'code_execution', category: 'Core', description: 'Run python/node/bash in the isolated sandbox', mcpName: 'code_execution', oauth: false },
+];

@@ -1,7 +1,6 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import Nango from '@nangohq/frontend';
 import {
   Layers,
   CheckCircle2,
@@ -22,7 +21,23 @@ import {
   FolderOpen,
   FileText,
   Table,
+  BookOpen,
+  Slack,
+  ShoppingBag,
+  Headphones,
+  MessageCircle,
+  Github,
+  Presentation,
+  FileCheck,
+  Video,
+  Users,
+  CheckSquare,
+  TrendingUp,
+  Search,
+  Store,
+  Cloud,
 } from 'lucide-react';
+import { disconnectProvider, startRealNangoOAuth } from '@/lib/nango-client';
 
 interface Integration {
   id: string;
@@ -33,6 +48,12 @@ interface Integration {
   status: string;
   nangoConnectionId?: string | null;
   lastSyncedAt?: string | null;
+  authMode?: string;
+  oauthConfigured?: boolean;
+  missingConfigReason?: string;
+  extraConnectFields?: Array<{ key: string; label: string; placeholder: string; required: boolean }>;
+  extraTestFields?: Array<{ key: string; label: string; placeholder: string; type?: string }>;
+  operatorHint?: string;
 }
 
 interface LogEntry {
@@ -51,8 +72,25 @@ const ICON_MAP: Record<string, any> = {
   'google-drive': FolderOpen,
   'google-docs': FileText,
   'google-sheets': Table,
+  'google-slides': Presentation,
+  'google-forms': FileCheck,
+  'google-chat': MessageSquare,
+  'google-meet': Video,
+  'google-contacts': Users,
+  'google-tasks': CheckSquare,
+  'google-analytics': TrendingUp,
+  'google-search-console': Search,
+  'google-business-profile': Store,
+  'google-cloud': Cloud,
   hubspot: Database,
   razorpay: CreditCard,
+  stripe: CreditCard,
+  notion: BookOpen,
+  slack: Slack,
+  shopify: ShoppingBag,
+  zendesk: Headphones,
+  intercom: MessageCircle,
+  github: Github,
   'meta-ads': Megaphone,
   'google-ads': BarChart2,
 };
@@ -95,43 +133,32 @@ export default function IntegrationsPage() {
     setNotification(null);
 
     try {
-      // Fetch org-scoped Nango session metadata from the API (public key + connectionId)
-      const tokenRes = await fetch(`/api/integrations/nango-token?provider=${encodeURIComponent(app.id)}`);
-      if (!tokenRes.ok) {
-        throw new Error('Failed to fetch Nango session token');
+      if (app.authMode === 'service_account') {
+        throw new Error(app.missingConfigReason || 'This connector is not OAuth and cannot be connected here.');
       }
-      const { nangoPublicKey, nangoHost, connectionId } = await tokenRes.json();
-
-      if (!nangoPublicKey) {
-        throw new Error('Nango public key is not configured (NEXT_PUBLIC_NANGO_PUBLIC_KEY)');
+      if (app.authMode === 'byok' || app.id === 'whatsapp') {
+        throw new Error('WhatsApp uses a Meta system-user token. Open /connectors and use the BYOK form — Graph verifies the token before Connected.');
       }
-
-      // 1. Initialize Nango frontend SDK
-      const nango = new Nango({ host: nangoHost || 'http://localhost:3003', publicKey: nangoPublicKey });
-
-      // 2. Trigger Nango OAuth Popup
-      await nango.auth(app.id, connectionId);
-
-      // 3. Persist connected status in Postgres (only after real OAuth completed)
-      const res = await fetch('/api/integrations', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ provider: app.id, action: 'connect' }),
-      });
-      const body = await res.json().catch(() => ({}));
-
-      if (res.ok && body.success) {
+      if (app.authMode === 'api_key' || app.id === 'razorpay') {
+        throw new Error('Razorpay uses API keys. Open /connectors and paste key_id + key_secret (verified against Razorpay).');
+      }
+      const extras: Record<string, string> = {};
+      for (const field of app.extraConnectFields || []) {
+        const value = testPayload[field.key];
+        if (value) extras[field.key] = String(value);
+      }
+      const result = await startRealNangoOAuth(app.id, { extraParams: extras });
+      if (result.success) {
         setNotification({ type: 'success', message: `${app.name} connected successfully via Nango OAuth!` });
-        fetchIntegrations();
       } else {
-        setNotification({ type: 'error', message: body.message || `Failed to confirm ${app.name} connection` });
-        fetchIntegrations();
+        setNotification({ type: 'error', message: result.error || `Failed to connect ${app.name}` });
       }
+      fetchIntegrations();
     } catch (err: any) {
       console.warn('Nango OAuth popup failed:', err);
       setNotification({
         type: 'error',
-        message: `${app.name} not connected — OAuth was cancelled or failed: ${err?.message || 'unknown error'}`,
+        message: `${app.name} not connected — ${err?.message || 'unknown error'}`,
       });
     } finally {
       setConnectingId(null);
@@ -141,15 +168,13 @@ export default function IntegrationsPage() {
   const handleDisconnect = async (app: Integration) => {
     setConnectingId(app.id);
     try {
-      const res = await fetch('/api/integrations', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ provider: app.id, action: 'disconnect' }),
-      });
-      if (res.ok) {
+      const result = await disconnectProvider(app.id);
+      if (result.success) {
         setNotification({ type: 'success', message: `${app.name} disconnected.` });
-        fetchIntegrations();
+      } else {
+        setNotification({ type: 'error', message: result.error || 'Failed to disconnect.' });
       }
+      fetchIntegrations();
     } catch (err: any) {
       setNotification({ type: 'error', message: err.message || 'Failed to disconnect.' });
     } finally {

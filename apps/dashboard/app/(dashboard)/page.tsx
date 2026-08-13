@@ -9,28 +9,45 @@ export const dynamic = 'force-dynamic';
 function HomeContent() {
   const searchParams = useSearchParams();
   const [isWarmup, setIsWarmup] = useState(searchParams?.get('warmup') === 'true');
-  const [provisionProgress, setProvisionProgress] = useState(35);
+  const [provisionProgress, setProvisionProgress] = useState(0);
+  const [warmupSteps, setWarmupSteps] = useState({ employees: false, channels: false });
   const [askQuery, setAskQuery] = useState('');
   
   const [stats, setStats] = useState<any>(null);
   const [needsAttention, setNeedsAttention] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
-  // Simulate warm-up state progress polling
+  // Warm-up after onboarding: poll real roster/channel counts (not a fake timer).
   useEffect(() => {
-    if (isWarmup) {
-      const timer = setInterval(() => {
-        setProvisionProgress((prev) => {
-          if (prev >= 100) {
-            clearInterval(timer);
-            setIsWarmup(false);
-            return 100;
-          }
-          return prev + 25;
-        });
-      }, 2500);
-      return () => clearInterval(timer);
-    }
+    if (!isWarmup) return;
+    let cancelled = false;
+    const tick = async () => {
+      try {
+        const [empRes, statsRes] = await Promise.all([
+          fetch('/api/employees'),
+          fetch('/api/dashboard/stats'),
+        ]);
+        const empData = empRes.ok ? await empRes.json() : { employees: [] };
+        const statsData = statsRes.ok ? await statsRes.json() : {};
+        if (cancelled) return;
+        const employeesReady = Array.isArray(empData.employees) && empData.employees.length > 0;
+        const channelsReady = Number(statsData.channelCount || 0) > 0;
+        setWarmupSteps({ employees: employeesReady, channels: channelsReady });
+        const pct = (employeesReady ? 60 : 15) + (channelsReady ? 40 : 0);
+        setProvisionProgress(pct);
+        if (employeesReady) {
+          setIsWarmup(false);
+        }
+      } catch (err) {
+        console.error(err);
+      }
+    };
+    tick();
+    const timer = setInterval(tick, 2500);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
   }, [isWarmup]);
 
   useEffect(() => {
@@ -90,7 +107,7 @@ function HomeContent() {
                 </span>
               </div>
               <p className="text-slate-600 text-sm">
-                Provisioning AI employee roster (Sarah, Emma, Marcus), establishing Nango OAuth connectors, and setting up Chatwoot channel webhooks.
+                Provisioning checks the real employee roster and active channel rows for this org.
               </p>
 
               {/* Progress bar */}
@@ -102,18 +119,14 @@ function HomeContent() {
               </div>
 
               {/* Live steps checklist */}
-              <div className="grid grid-cols-3 gap-4 pt-2 text-xs font-medium text-slate-600">
+              <div className="grid grid-cols-2 gap-4 pt-2 text-xs font-medium text-slate-600">
                 <div className="flex items-center space-x-2">
-                  <CheckCircle2 className="w-4 h-4 text-emerald-500" />
-                  <span>AI Employees Created</span>
+                  <CheckCircle2 className={`w-4 h-4 ${warmupSteps.employees ? 'text-emerald-500' : 'text-slate-300'}`} />
+                  <span>AI employees in roster</span>
                 </div>
                 <div className="flex items-center space-x-2">
-                  <CheckCircle2 className={`w-4 h-4 ${provisionProgress >= 50 ? 'text-emerald-500' : 'text-slate-300'}`} />
-                  <span>Nango Credentials Isolated</span>
-                </div>
-                <div className="flex items-center space-x-2">
-                  <CheckCircle2 className={`w-4 h-4 ${provisionProgress >= 100 ? 'text-emerald-500' : 'text-slate-300'}`} />
-                  <span>Channels Connected</span>
+                  <CheckCircle2 className={`w-4 h-4 ${warmupSteps.channels ? 'text-emerald-500' : 'text-slate-300'}`} />
+                  <span>At least one active channel</span>
                 </div>
               </div>
             </div>
@@ -130,7 +143,11 @@ function HomeContent() {
             <div className="bg-cream-200/70 border border-cream-300 p-5 rounded-2xl space-y-2 shadow-sm">
               <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Conversations</span>
               <div className="text-3xl font-bold text-heading">{stats?.conversationCount || 0}</div>
-              <span className="text-xs text-emerald-600 font-medium">{stats?.conversationChangePct || '↑ +18%'} from yesterday</span>
+              <span className="text-xs text-slate-500 font-medium">
+                {stats?.conversationChangePct == null
+                  ? 'No prior-day volume to compare'
+                  : `${stats.conversationChangePct >= 0 ? '+' : ''}${stats.conversationChangePct}% vs yesterday`}
+              </span>
             </div>
 
             <div className="bg-cream-200/70 border border-cream-300 p-5 rounded-2xl space-y-2 shadow-sm">

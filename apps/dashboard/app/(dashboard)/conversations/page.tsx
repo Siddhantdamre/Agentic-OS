@@ -86,35 +86,44 @@ export default function ConversationsPage() {
     channels: {} as Record<string, number>,
   });
 
+  const selectedConvIdRef = useRef<string | null>(null);
+  selectedConvIdRef.current = selectedConvId;
   const chatEndRef = useRef<HTMLDivElement>(null);
 
-  // Realtime notification toast
   const [notif, setNotif] = useState<string | null>(null);
   const [notifVisible, setNotifVisible] = useState(false);
   const notifTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     const es = new EventSource('/api/stream/events');
-    es.addEventListener('needs_attention', (e: MessageEvent) => {
+    const onInboxEvent = (e: MessageEvent) => {
       try {
         const payload = JSON.parse(e.data);
-        if (payload.conversationId) {
-          setSelectedConvId(payload.conversationId);
+        const conversationId = payload.conversationId as string | undefined;
+        if (conversationId) {
+          if (e.type === 'needs_attention') {
+            setSelectedConvId(conversationId);
+          }
+          fetchConversations();
+          if (conversationId === selectedConvIdRef.current) {
+            void fetchMessages(conversationId);
+          }
         }
-        fetchConversations();
-        const sender = payload.contactId?.toString() || 'Customer';
-        const preview = (payload.message?.toString() || '').slice(0, 80);
-        setNotif(`${sender}: ${preview}`);
-        setNotifVisible(true);
-        if (notifTimer.current) clearTimeout(notifTimer.current);
-        notifTimer.current = setTimeout(() => setNotifVisible(false), 6000);
+        if (e.type === 'needs_attention') {
+          const sender = payload.contactId?.toString() || 'Customer';
+          const preview = (payload.message?.toString() || '').slice(0, 80);
+          setNotif(`${sender}: ${preview}`);
+          setNotifVisible(true);
+          if (notifTimer.current) clearTimeout(notifTimer.current);
+          notifTimer.current = setTimeout(() => setNotifVisible(false), 6000);
+        }
       } catch (err) {
         console.error('Failed to parse realtime event:', err);
       }
-    });
-    es.addEventListener('conversation_updated', () => {
-      fetchConversations();
-    });
+    };
+    es.addEventListener('needs_attention', onInboxEvent);
+    es.addEventListener('conversation_updated', onInboxEvent);
+    es.addEventListener('message_received', onInboxEvent);
     es.addEventListener('connected', () => {
       console.log('[Realtime] SSE stream connected');
     });
@@ -161,9 +170,9 @@ export default function ConversationsPage() {
   }, []);
 
   // Fetch thread messages for selected conversation
-  const fetchMessages = async (convId: string) => {
+  const fetchMessages = async (convId: string, silent = false) => {
     try {
-      setMessagesLoading(true);
+      if (!silent) setMessagesLoading(true);
       const res = await fetch(`/api/conversations/${convId}/messages`);
       const data = await res.json();
       if (data.messages) {
@@ -172,7 +181,15 @@ export default function ConversationsPage() {
     } catch (err) {
       console.error('Failed to fetch messages:', err);
     } finally {
-      setMessagesLoading(false);
+      if (!silent) setMessagesLoading(false);
+    }
+  };
+
+  const pollForAssistant = async (convId: string) => {
+    for (let i = 0; i < 15; i++) {
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+      if (selectedConvIdRef.current !== convId) return;
+      await fetchMessages(convId, true);
     }
   };
 
@@ -209,7 +226,10 @@ export default function ConversationsPage() {
       if (data.success) {
         setReplyContent('');
         await fetchMessages(selectedConvId);
-        fetchConversations(); // refresh snippet & timestamps
+        fetchConversations();
+        if (replyAsCustomer) {
+          void pollForAssistant(selectedConvId);
+        }
       }
     } catch (err) {
       console.error('Failed to send message:', err);
@@ -243,6 +263,7 @@ export default function ConversationsPage() {
         setNewChatInitialMessage('');
         setSelectedConvId(data.conversation.id);
         fetchConversations();
+        void pollForAssistant(data.conversation.id);
       }
     } catch (err) {
       console.error('Failed to create new chat:', err);
@@ -271,12 +292,15 @@ export default function ConversationsPage() {
   const activeConv = conversations.find((c) => c.id === selectedConvId);
 
   const getChannelIcon = (type: string) => {
-    switch (type?.toLowerCase()) {
+    const kind = (type || '').toLowerCase();
+    switch (kind) {
       case 'whatsapp':
         return <MessageSquare className="w-4 h-4 text-emerald-400" />;
       case 'gmail':
       case 'email':
         return <Mail className="w-4 h-4 text-blue-400" />;
+      case 'chatwoot':
+        return <MessageSquare className="w-4 h-4 text-amber-400" />;
       default:
         return <MessageSquare className="w-4 h-4 text-amber-400" />;
     }
@@ -366,6 +390,7 @@ export default function ConversationsPage() {
               {[
                 { id: 'all', label: 'All Channels', icon: Filter },
                 { id: 'whatsapp', label: 'WhatsApp', icon: MessageSquare },
+                { id: 'chatwoot', label: 'Chatwoot', icon: MessageSquare },
                 { id: 'gmail', label: 'Email / Gmail', icon: Mail },
               ].map((item) => (
                 <button

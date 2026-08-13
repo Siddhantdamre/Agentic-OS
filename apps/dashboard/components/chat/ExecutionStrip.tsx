@@ -2,11 +2,12 @@
 
 import React from 'react';
 import { motion } from 'framer-motion';
-import { CheckCircle2, RefreshCw, XCircle, Minus, Activity } from 'lucide-react';
+import { CheckCircle2, RefreshCw, XCircle, Minus } from 'lucide-react';
 
 export interface StepRunStatus {
   status: 'pending' | 'running' | 'done' | 'error' | 'skipped';
   message?: string;
+  setupUrl?: string;
 }
 
 interface ExecutionStripProps {
@@ -77,11 +78,24 @@ export const ExecutionStrip: React.FC<ExecutionStripProps> = ({ steps, statuses,
             >
               <div className="flex items-start space-x-3 min-w-0 flex-1 pr-4">
                 <div className="pt-0.5 shrink-0">
-                  {st === 'done' && <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />}
-                  {st === 'running' && <RefreshCw className="w-3.5 h-3.5 text-blue-400 animate-spin" />}
-                  {st === 'error' && <XCircle className="w-3.5 h-3.5 text-red-500" />}
-                  {st === 'skipped' && <Minus className="w-3.5 h-3.5 text-slate-500" />}
-                  {st === 'pending' && <div className="w-3.5 h-3.5 rounded-full border-2 border-slate-700" />}
+                  {(() => {
+                    switch (st) {
+                      case 'done':
+                        return <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />;
+                      case 'running':
+                        return <RefreshCw className="w-3.5 h-3.5 text-blue-400 animate-spin" />;
+                      case 'error':
+                        return <XCircle className="w-3.5 h-3.5 text-red-500" />;
+                      case 'skipped':
+                        return <Minus className="w-3.5 h-3.5 text-slate-500" />;
+                      case 'pending':
+                        return <div className="w-3.5 h-3.5 rounded-full border-2 border-slate-700" />;
+                      default: {
+                        const _exhaustive: never = st;
+                        return _exhaustive;
+                      }
+                    }
+                  })()}
                 </div>
 
                 <div className="space-y-1">
@@ -98,6 +112,14 @@ export const ExecutionStrip: React.FC<ExecutionStripProps> = ({ steps, statuses,
                   {st === 'error' && statuses[i]?.message && (
                     <div className="text-[10px] text-red-400 font-mono mt-1 bg-red-950/30 p-2 rounded border border-red-900/30 break-words">
                       {statuses[i].message}
+                      {statuses[i]?.setupUrl && (
+                        <a
+                          href={statuses[i].setupUrl}
+                          className="block mt-1 text-amber-300 underline underline-offset-2"
+                        >
+                          Connect this tool
+                        </a>
+                      )}
                     </div>
                   )}
                 </div>

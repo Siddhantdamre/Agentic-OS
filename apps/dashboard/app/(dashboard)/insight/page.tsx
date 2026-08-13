@@ -12,7 +12,7 @@ interface InsightItem {
   impact: string;
   actionLabel: string;
   actionHref: string;
-  type: 'growth' | 'efficiency' | 'integration';
+  type: 'growth' | 'efficiency' | 'integration' | 'attention';
 }
 
 export default function InsightPage() {
@@ -40,7 +40,7 @@ export default function InsightPage() {
 
         <div className="flex items-center space-x-2 px-3 py-1.5 bg-amber-500/10 text-amber-700 rounded-full border border-amber-500/20 text-xs font-bold">
           <Sparkles className="w-4 h-4 text-amber-600" />
-          <span>Real-time Insight Engine</span>
+          <span>Rule-based from live SQL</span>
         </div>
       </div>
 
@@ -53,6 +53,9 @@ export default function InsightPage() {
         </div>
       ) : (
         <div className="space-y-6">
+          {insights.length === 0 ? (
+            <p className="text-sm text-slate-500">No insights yet — this page only shows facts from your org&apos;s live tables.</p>
+          ) : null}
           {insights.map((item) => (
             <div
               key={item.id}
@@ -65,16 +68,27 @@ export default function InsightPage() {
                       ? 'bg-emerald-500/10 text-emerald-600 border border-emerald-500/20'
                       : item.type === 'efficiency'
                       ? 'bg-amber-500/10 text-amber-600 border border-amber-500/20'
+                      : item.type === 'attention'
+                      ? 'bg-red-500/10 text-red-600 border border-red-500/20'
                       : 'bg-blue-500/10 text-blue-600 border border-blue-500/20'
                   }`}
                 >
-                  {item.type === 'growth' ? (
-                    <TrendingUp className="w-6 h-6" />
-                  ) : item.type === 'efficiency' ? (
-                    <Zap className="w-6 h-6" />
-                  ) : (
-                    <Lightbulb className="w-6 h-6" />
-                  )}
+                  {(() => {
+                    switch (item.type) {
+                      case 'growth':
+                        return <TrendingUp className="w-6 h-6" />;
+                      case 'efficiency':
+                        return <Zap className="w-6 h-6" />;
+                      case 'integration':
+                        return <Lightbulb className="w-6 h-6" />;
+                      case 'attention':
+                        return <ShieldAlert className="w-6 h-6" />;
+                      default: {
+                        const _exhaustive: never = item.type;
+                        return _exhaustive;
+                      }
+                    }
+                  })()}
                 </div>
 
                 <div className="space-y-2">

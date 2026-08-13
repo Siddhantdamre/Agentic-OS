@@ -22,10 +22,18 @@ interface Member {
   created_at: string;
 }
 
+interface PendingInvite {
+  id: string;
+  email: string;
+  role: string;
+  expires_at: string;
+  created_at: string;
+}
+
 interface WebhookDetails {
   chatwootWebhookUrl: string;
   metaWebhookUrl: string;
-  verifyToken: string;
+  verifyToken: string | null;
 }
 
 export default function SettingsPage() {
@@ -33,7 +41,10 @@ export default function SettingsPage() {
   const [loading, setLoading] = useState(true);
   const [orgName, setOrgName] = useState('');
   const [members, setMembers] = useState<Member[]>([]);
+  const [pendingInvites, setPendingInvites] = useState<PendingInvite[]>([]);
   const [webhooks, setWebhooks] = useState<WebhookDetails | null>(null);
+  const [mailConfigured, setMailConfigured] = useState(false);
+  const [inviteResult, setInviteResult] = useState<{ emailSent: boolean; inviteUrl?: string; emailReason?: string } | null>(null);
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
   const [savingOrg, setSavingOrg] = useState(false);
   const [savedSuccess, setSavedSuccess] = useState(false);
@@ -52,7 +63,9 @@ export default function SettingsPage() {
         const data = await res.json();
         setOrgName(data.org?.name || '');
         setMembers(data.members || []);
+        setPendingInvites(data.pendingInvites || []);
         setWebhooks(data.webhookDetails || null);
+        setMailConfigured(Boolean(data.mailConfigured));
       }
     } catch (err) {
       console.error('Failed to fetch settings:', err);
@@ -111,7 +124,12 @@ export default function SettingsPage() {
       });
 
       if (res.ok) {
-        setIsInviteOpen(false);
+        const data = await res.json();
+        setInviteResult({
+          emailSent: Boolean(data.emailSent),
+          inviteUrl: data.inviteUrl,
+          emailReason: data.emailReason,
+        });
         setInviteEmail('');
         fetchSettings();
       } else {
@@ -250,6 +268,35 @@ export default function SettingsPage() {
                   </tbody>
                 </table>
               </div>
+
+              {pendingInvites.length > 0 && (
+                <div className="bg-white border border-cream-300 rounded-3xl overflow-hidden shadow-sm">
+                  <div className="p-4 border-b border-cream-300">
+                    <h3 className="text-sm font-serif font-bold text-heading">Pending invites</h3>
+                    <p className="text-xs text-slate-500">Not accepted yet. Links expire after 7 days.</p>
+                  </div>
+                  <table className="w-full text-left border-collapse">
+                    <thead>
+                      <tr className="bg-cream-100 border-b border-cream-300 text-xs font-bold text-slate-500 uppercase tracking-wider">
+                        <th className="p-4">Email</th>
+                        <th className="p-4">Role</th>
+                        <th className="p-4">Expires</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-cream-200 text-sm">
+                      {pendingInvites.map((invite) => (
+                        <tr key={invite.id}>
+                          <td className="p-4 font-semibold text-heading">{invite.email}</td>
+                          <td className="p-4 text-xs font-bold uppercase text-amber-700">{invite.role}</td>
+                          <td className="p-4 text-slate-500 text-xs">
+                            {new Date(invite.expires_at).toLocaleDateString()}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
             </div>
           )}
 
@@ -263,7 +310,7 @@ export default function SettingsPage() {
                 <div className="space-y-4 pt-2">
                   <div>
                     <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
-                      WhatsApp / Chatwoot Webhook URL
+                      WhatsApp (Meta) Webhook URL
                     </label>
                     <div className="flex items-center space-x-2">
                       <input
@@ -283,18 +330,40 @@ export default function SettingsPage() {
 
                   <div>
                     <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
+                      Chatwoot Webhook URL
+                    </label>
+                    <div className="flex items-center space-x-2">
+                      <input
+                        type="text"
+                        readOnly
+                        value={webhooks.chatwootWebhookUrl}
+                        className="flex-1 px-4 py-2 bg-cream-100 border border-cream-300 rounded-xl text-xs font-mono font-medium text-slate-700"
+                      />
+                      <button
+                        onClick={() => handleCopy(webhooks.chatwootWebhookUrl, 'chatwootUrl')}
+                        className="p-2 bg-cream-200 hover:bg-cream-300 rounded-xl border border-cream-300 text-slate-700"
+                      >
+                        {copiedKey === 'chatwootUrl' ? <Check className="w-4 h-4 text-emerald-600" /> : <Copy className="w-4 h-4" />}
+                      </button>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
                       Verify Token (Meta Webhook)
                     </label>
                     <div className="flex items-center space-x-2">
                       <input
                         type="text"
                         readOnly
-                        value={webhooks.verifyToken}
+                        value={webhooks.verifyToken ?? 'VERIFY_TOKEN is not set'}
                         className="flex-1 px-4 py-2 bg-cream-100 border border-cream-300 rounded-xl text-xs font-mono font-medium text-slate-700"
                       />
                       <button
-                        onClick={() => handleCopy(webhooks.verifyToken, 'verifyToken')}
-                        className="p-2 bg-cream-200 hover:bg-cream-300 rounded-xl border border-cream-300 text-slate-700"
+                        type="button"
+                        disabled={!webhooks.verifyToken}
+                        onClick={() => webhooks.verifyToken && handleCopy(webhooks.verifyToken, 'verifyToken')}
+                        className="p-2 bg-cream-200 hover:bg-cream-300 rounded-xl border border-cream-300 text-slate-700 disabled:opacity-40"
                       >
                         {copiedKey === 'verifyToken' ? <Check className="w-4 h-4 text-emerald-600" /> : <Copy className="w-4 h-4" />}
                       </button>
@@ -346,6 +415,29 @@ export default function SettingsPage() {
                   <option value="admin">Admin</option>
                 </select>
               </div>
+
+              {!mailConfigured && (
+                <p className="text-xs text-slate-500">
+                  Email delivery is off until <code>RESEND_API_KEY</code> (and production <code>MAIL_FROM</code>) are set. You will get a copyable invite link instead.
+                </p>
+              )}
+
+              {inviteResult && (
+                <div className="text-xs rounded-xl border border-cream-300 bg-cream-50 p-3 space-y-1">
+                  {inviteResult.emailSent ? (
+                    <p className="text-emerald-700 font-semibold">Invitation email sent.</p>
+                  ) : (
+                    <>
+                      <p className="text-amber-700 font-semibold">
+                        Invite saved, but email was not sent{inviteResult.emailReason ? `: ${inviteResult.emailReason}` : '.'}
+                      </p>
+                      {inviteResult.inviteUrl && (
+                        <p className="break-all font-mono text-slate-700">{inviteResult.inviteUrl}</p>
+                      )}
+                    </>
+                  )}
+                </div>
+              )}
 
               <div className="pt-4 flex items-center justify-end space-x-3">
                 <button

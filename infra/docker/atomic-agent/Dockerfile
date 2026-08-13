@@ -47,6 +47,8 @@ COPY --from=builder /src/grammars ./grammars
 COPY --from=builder /src/starter-skills ./starter-skills
 COPY --from=builder /src/assets ./assets
 COPY --from=builder /src/node_modules ./node_modules
+COPY custom-skills ./custom-skills
+RUN cp -R /app/custom-skills/. /app/starter-skills/
 
 # Runtime config renderer + entrypoint
 COPY render-config.mjs ./render-config.mjs

@@ -2,11 +2,13 @@
 
 import React, { useState, Suspense } from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { Lock, Mail, ArrowRight, UserCheck, Eye, EyeOff, Check, Loader2 } from 'lucide-react';
 
 function RegisterForm() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const inviteToken = searchParams?.get('invite') || undefined;
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -51,7 +53,7 @@ function RegisterForm() {
       const res = await fetch('/api/auth/signup', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password }),
+        body: JSON.stringify({ email, password, inviteToken }),
       });
 
       const data = await res.json();
@@ -63,7 +65,11 @@ function RegisterForm() {
         throw new Error(data.message || 'Registration failed. Please try again.');
       }
 
-      router.push('/onboarding/name');
+      if (data.onboardingComplete) {
+        router.push('/');
+      } else {
+        router.push('/onboarding/name');
+      }
     } catch (err: any) {
       setError(err.message);
       setLoading(false);
@@ -73,7 +79,8 @@ function RegisterForm() {
   const handleOAuthRegister = (provider: string) => {
     setOauthLoading(provider);
     setError('');
-    window.location.href = `/api/auth/oauth/${provider}`;
+    const qs = inviteToken ? `?invite=${encodeURIComponent(inviteToken)}` : '';
+    window.location.href = `/api/auth/oauth/${provider}${qs}`;
   };
 
 

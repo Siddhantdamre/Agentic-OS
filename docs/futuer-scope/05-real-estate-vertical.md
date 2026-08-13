@@ -497,3 +497,42 @@ Consumer-facing sites remain the customer’s IDX/WordPress.
 Sheets-as-SoR is a **first-class** path. Many IN brokerages will never
 buy Follow Up Boss. The OS must shine on Gmail + WhatsApp + a Google
 Sheet of inventory. That is the wedge.
+
+---
+
+## 14. Alternatives in the world (instead of building an RE OS)
+
+**What Darex does:** RE as packs on the Brain OS. Sheets/WhatsApp wedge
+first. Not an MLS, not escrow, not a consumer portal.
+
+| # | Alternative | Why it can be better | Why we still do ours | Refs |
+|---|-------------|----------------------|----------------------|------|
+| 1 | **EliseAI** (multifamily, ~$2B) | After-hours leasing AI; 24/25 top owners; AI-first CRM | US multifamily only; we need IN WhatsApp + brokerage + confirm | EliseAI product; Hargreaves “Elise vs Funnel” 2026 |
+| 2 | **Funnel + Sierra** | CRM-first ops; AI *inside* workflows not a black box | Same US multifamily gravity; we agree “AI inside workflows” | Funnel / Sierra partnership coverage |
+| 3 | **Lofty / kvCORE / Follow Up Boss / BoomTown** | ISA + drip + IDX already sold to US teams | Closed; we integrate FUB as SoR (`06`), not clone | FUB API; kvCORE |
+| 4 | **AppFolio / Buildium / Yardi** + their AI | PM accounting, work orders, owner portals exist | We connect; never rebuild Yardi GL | AppFolio Realm-X; Yardi APIs |
+| 5 | **IDX Broker / RESO Web API / Trestle** as the product | Licensed listings, photos, status | We are not an MLS; feed is class A source (`07`) | RESO Web API, RESOStandards on GitHub |
+
+**Five things to steal anyway**
+
+1. Elise: 24/7 inbound on WhatsApp *is* the brokerage pack v1.
+2. Funnel: AI inside WorkItemWorkflow, not a shadow CRM.
+3. FUB: inquiry statuses and ISA cadences → pack YAML, not hardcoded.
+4. AppFolio work-order object → `pm.work_order` schema.
+5. RESO fields → `re.listing` mapping; never invent beds/baths.
+
+Do not clone Zillow/99acres. Operator OS, not consumer search.
+
+### Open-source GitHub (at least 5) — same job as this file
+
+RE has almost no full OSS “brokerage OS”. We take **adjacent** repos:
+
+| Repo | Similar to | We take |
+|------|------------|---------|
+| [RESOStandards/web-api](https://github.com/RESOStandards) (RESO Web API specs) | Listing field dictionary | `re.listing` mapping; never invent beds |
+| [openstreetmap/Nominatim](https://github.com/osm-search/Nominatim) | Geocoding fallback | Address lat/lng; never guess |
+| [calcom/cal.com](https://github.com/calcom/cal.com) | Showing / tour booking | ShowingScheduleWorkflow |
+| [documenso/documenso](https://github.com/documenso/documenso) | OSS e-sign | Confirm `sign`; Leegality/DocuSign stay IN/US SoR |
+| [twentyhq/twenty](https://github.com/twentyhq/twenty) | CRM for inquiries | Inquiry pipeline until FUB/Zoho |
+| [chatwoot/chatwoot](https://github.com/chatwoot/chatwoot) | WhatsApp-class inbox | Inbound inquiry loop |
+| [mapbox](https://github.com/mapbox/mapbox-gl-js) | Listing map pins | Dashboard map (`05` UI) |

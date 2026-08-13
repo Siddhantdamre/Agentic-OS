@@ -219,4 +219,69 @@ orchestrators:
 
 If a proposal adds LangGraph, CrewAI, AutoGen, or a second MCP
 bridge per vertical: reject. The workforce is configuration on this
-stack.
+stack. Why those exist and what to steal instead: `15` §3 and §11
+(ReAct, Magentic-One, CrewAI roles, Letta memory metaphor).
+
+---
+
+## 13. Research that deepens this file (do not import as runtime)
+
+**Multi-agent is expensive.** Magentic-One (Fourney, Bansal, et al.
+2024) uses an Orchestrator with a progress ledger plus specialists
+(WebSurfer, Coder, FileSurfer). That is our manager employee +
+Temporal steps, not eight atomic-agent sessions per inbound “hi”.
+
+**Roles are YAML.** CrewAI’s Agent(role, goal, backstory) is exactly
+pack employee seed. Copy the *shape* into pack YAML (`03`). Do not
+run CrewAI Flows.
+
+**Handoffs are routing.** OpenAI Agents SDK “handoff” = our
+`route(work_item) -> employeeId`. Guardrails = critic JSON + confirm
+classes.
+
+**Skills that grow.** Voyager’s skill library and MetaGPT’s SOPs are
+the academic names for “promote a confirmed plan to an org skill.”
+
+**Eval like τ-bench** (Yao, Shinn, Narasimhan, ICLR 2025): a *user
+simulator + tools in a domain*. Pack golden transcripts in `05`/`08`
+§10 are that. Promptfoo YAML in CI is the cheap implementation.
+
+**Computer-use last.** OpenHands (Wang, Neubig, et al.) and SWE-agent
+are the right papers for sandbox + confirm + traces. Playwright in
+`browser-runner` only when an SoR has no API.
+
+---
+
+## 14. Alternatives in the world (instead of atomic-agent employees)
+
+**What Darex does:** employees = config; one atomic-agent loop; Temporal
+orchestrates multi-agent; critic is LiteLLM JSON.
+
+| # | Alternative | Why it can be better | Why we still do ours | Refs |
+|---|-------------|----------------------|----------------------|------|
+| 1 | **CrewAI Crews + Flows** | Role/goal/backstory; human review; MCP adapter | Would be a second orchestrator; copy YAML only | [crewAIInc/crewAI](https://github.com/crewAIInc/crewAI) |
+| 2 | **Magentic-One / Microsoft Agent Framework** | Orchestrator ledger + specialists; AutoGen lineage | Azure gravity; we have manager + Temporal ledger | arXiv:2411.04468, AutoGen |
+| 3 | **OpenAI Agents SDK** handoffs + guardrails | Clean API; tracing | Vendor lock-in; our router + critic already map | OpenAI Agents SDK |
+| 4 | **Letta** long-lived employees with memory | Identity survives process death | Letta *is* a runtime; Temporal + our memory do that | [letta-ai/letta](https://github.com/letta-ai/letta) |
+| 5 | **Relevance AI / Lindy** no-code workforces | Buyers get “hire Sarah” in a day | We sell an OS + packs, not a Zapier | relevanceai.com; lindy.ai |
+
+**Five things to steal anyway**
+
+1. CrewAI role cards → pack `employees/*.yaml`.
+2. Magentic-One progress ledger → WorkItemWorkflow state.
+3. Guardrails → confirm classes + critic (not a new SDK).
+4. τ-bench domain evals → golden WhatsApp+CRM (`promptfoo/promptfoo`).
+5. Default solo + memory; never 8 agents per “hi”.
+
+### Open-source GitHub (at least 5) — same job as this file
+
+| Repo | Similar to | We take |
+|------|------------|---------|
+| [AtomicBot-ai/atomic-agent](https://github.com/AtomicBot-ai/atomic-agent) | Employee loop we pin | **KEEP** v0.1.73; mount skills |
+| [crewAIInc/crewAI](https://github.com/crewAIInc/crewAI) | Role + task + crew | YAML personas |
+| [microsoft/autogen](https://github.com/microsoft/autogen) | Multi-agent actors | Magentic-One ledger |
+| [letta-ai/letta](https://github.com/letta-ai/letta) | Long-lived employee memory | Hierarchy, not runtime |
+| [agno-agi/agno](https://github.com/agno-agi/agno) | Teams + AgentOS | Roster UI |
+| [openai/openai-agents-python](https://github.com/openai/openai-agents-python) | Handoffs + guardrails | Router + critic |
+| [promptfoo/promptfoo](https://github.com/promptfoo/promptfoo) | Golden conversations | Eval-runner |
+| [noahshinn024/reflexion](https://github.com/noahshinn024/reflexion) | Verbal critic | Write-back + critic JSON |

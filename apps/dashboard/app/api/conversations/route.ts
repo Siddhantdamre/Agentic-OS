@@ -1,6 +1,8 @@
 import { NextResponse } from 'next/server';
 import { getScopedClient } from '@/lib/db';
 import type { PoolClient } from 'pg';
+import { employeePersonaText, fireInboundAgent, parseToolAllowlist } from '@/lib/inbound-agent';
+import { replyTargetFromChannelMeta } from '@/lib/channel-outbound';
 
 export async function GET(request: Request) {
   try {
@@ -131,8 +133,9 @@ export async function POST(request: Request) {
           channelId = chanRes.rows[0].id;
         } else {
           const newChan = await client.query(
-            `INSERT INTO channels (org_id, channel_type, name, status) VALUES ($1, $2, $3, 'active') RETURNING id`,
-            [orgId, channelType, `${channelType.toUpperCase()} Channel`]
+            `INSERT INTO channels (org_id, channel_type, status, meta, connected_at)
+             VALUES ($1, $2, 'active', $3, NOW()) RETURNING id`,
+            [orgId, channelType, JSON.stringify({ name: `${channelType} Channel` })]
           );
           channelId = newChan.rows[0].id;
         }
@@ -153,12 +156,8 @@ export async function POST(request: Request) {
         if (empRes.rows.length > 0) {
           empName = empRes.rows[0].name;
           empRole = empRes.rows[0].role;
-          empPersona = empRes.rows[0].persona || empPersona;
-          try {
-            empToolAllowlist = typeof empRes.rows[0].tool_allowlist === 'string'
-              ? JSON.parse(empRes.rows[0].tool_allowlist)
-              : (empRes.rows[0].tool_allowlist ?? []);
-          } catch { empToolAllowlist = []; }
+          empPersona = employeePersonaText(empRes.rows[0].persona);
+          empToolAllowlist = parseToolAllowlist(empRes.rows[0].tool_allowlist, []);
         }
       } else {
         const empRes = await client.query(
@@ -169,12 +168,8 @@ export async function POST(request: Request) {
           assignedEmployeeId = empRes.rows[0].id;
           empName = empRes.rows[0].name;
           empRole = empRes.rows[0].role;
-          empPersona = empRes.rows[0].persona || empPersona;
-          try {
-            empToolAllowlist = typeof empRes.rows[0].tool_allowlist === 'string'
-              ? JSON.parse(empRes.rows[0].tool_allowlist)
-              : (empRes.rows[0].tool_allowlist ?? []);
-          } catch { empToolAllowlist = []; }
+          empPersona = employeePersonaText(empRes.rows[0].persona);
+          empToolAllowlist = parseToolAllowlist(empRes.rows[0].tool_allowlist, []);
         }
       }
 
@@ -194,50 +189,33 @@ export async function POST(request: Request) {
           [orgId, conversation.id, initialMessage]
         );
 
-        // Release the pooled client before the AI turn so this handler never
-        // holds a pool slot during the (potentially slow) model call.
+        const connectedRes = await client.query(
+          `SELECT channel_type, meta FROM channels WHERE org_id = $1 AND status IN ('active', 'connected')`,
+          [orgId]
+        );
+        const connectedChannels = connectedRes.rows.map((row: { channel_type: string }) => row.channel_type);
+        const chanMetaRow = connectedRes.rows.find((row: { channel_type: string }) => row.channel_type === channelType);
+
         client.release();
         client = null;
 
-        const aiAgentInput = {
+        fireInboundAgent({
           orgId,
           conversationId: conversation.id,
+          channelId: channelId ?? undefined,
+          employeeId: assignedEmployeeId ?? undefined,
           employeeName: empName,
           employeeRole: empRole,
           employeePersona: empPersona,
           toolAllowlist: empToolAllowlist,
+          connectedChannels,
           userMessage: initialMessage,
-        };
-
-        // Fire-and-forget: prefer durable Temporal; fall back to a background
-        // direct atomic-agent turn. Either path persists the assistant reply.
-        void (async () => {
-          try {
-            const { startAutonomousAgentWorkflow } = await import('@darex/workflows/dist/workflow-client');
-            const handle = await startAutonomousAgentWorkflow(aiAgentInput);
-            if (handle) return;
-          } catch (temporalErr: any) {
-            console.warn('[Conversations] Temporal unavailable, direct fallback:', temporalErr.message);
-          }
-          try {
-            const { runAutonomousAgentDirect } = await import('@darex/workflows/dist/atomic-agent-client');
-            const aiResult = await runAutonomousAgentDirect(aiAgentInput);
-            const pool = (await import('@/lib/db')).pool;
-            const pc = await pool.connect();
-            try {
-              await pc.query("SELECT set_config('app.current_org_id', $1, true)", [orgId]);
-              await pc.query(
-                `INSERT INTO messages (org_id, conversation_id, role, content, tool_calls, created_at)
-                 VALUES ($1, $2, 'assistant', $3, $4, NOW())`,
-                [orgId, conversation.id, aiResult.replyMessage, JSON.stringify(aiResult.executedSteps || [])]
-              );
-            } finally {
-              pc.release();
-            }
-          } catch (agentErr: any) {
-            console.error('[Conversations] Agent reply error:', agentErr.message);
-          }
-        })();
+          replyTarget: replyTargetFromChannelMeta(
+            channelType || 'dashboard',
+            contact,
+            (chanMetaRow?.meta || {}) as Record<string, unknown>
+          ),
+        });
       }
 
       return NextResponse.json({ success: true, conversation });

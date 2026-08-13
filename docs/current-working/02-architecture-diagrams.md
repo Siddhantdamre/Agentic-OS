@@ -134,13 +134,13 @@ sequenceDiagram
   T->>Graph: outbound reply
 ```
 
-Chatwoot webhook **stops after persist + SSE**. It does not start the agent.
+Chatwoot webhook persists, returns 200, then starts the agent (`fireInboundAgent`). Body `org_id` is ignored.
 
 ## 7. Agent runtime (Temporal vs direct)
 
 ```mermaid
 flowchart TD
-  Callers["WhatsApp / conversations / agent/run"] --> TryT{"Temporal up?"}
+  Callers["WhatsApp / Chatwoot / conversations / agent/run / agent/stream"] --> TryT{"Temporal up?"}
   TryT -->|yes| WF["AutonomousAgentWorkflow"]
   WF --> ACT["runAgentTurnActivity"]
   TryT -->|no| DIR["runAutonomousAgentDirect"]

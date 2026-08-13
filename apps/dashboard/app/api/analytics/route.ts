@@ -80,6 +80,25 @@ export async function GET() {
         ? `${((resolvedCsat / totalConvsCsat) * 5).toFixed(1)} / 5`
         : 'N/A';
 
+      const weekCurrentRes = await client.query(
+        `SELECT COUNT(*)::int AS count
+         FROM conversations
+         WHERE org_id = $1 AND started_at >= NOW() - INTERVAL '7 days'`,
+        [orgId]
+      );
+      const weekPriorRes = await client.query(
+        `SELECT COUNT(*)::int AS count
+         FROM conversations
+         WHERE org_id = $1
+           AND started_at >= NOW() - INTERVAL '14 days'
+           AND started_at < NOW() - INTERVAL '7 days'`,
+        [orgId]
+      );
+      const weekCurrent = parseInt(String(weekCurrentRes.rows[0]?.count || '0'), 10);
+      const weekPrior = parseInt(String(weekPriorRes.rows[0]?.count || '0'), 10);
+      const conversationChangePct =
+        weekPrior > 0 ? Math.round(((weekCurrent - weekPrior) / weekPrior) * 100) : null;
+
       // Real weekly trend from DB
       const weeklyRes = await client.query(
         `SELECT TO_CHAR(started_at, 'Dy') as day, COUNT(*) as count
@@ -102,6 +121,8 @@ export async function GET() {
           automationRate,
           avgResponseTime,
           csatScore,
+          csatIsProxy: true,
+          conversationChangePct,
         },
         channelBreakdown,
         weeklyTrend,

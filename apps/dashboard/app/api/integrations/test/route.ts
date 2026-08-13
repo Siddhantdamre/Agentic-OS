@@ -2,127 +2,199 @@ import { NextResponse } from 'next/server';
 import { getScopedClient } from '@/lib/db';
 import {
   NangoConnectorClient,
-  sendWhatsAppMessage,
-  sendGmailEmail,
   createGoogleCalendarEvent,
   createHubspotContact,
-  createRazorpayInvoice,
-  getMetaAdsInsights,
-  getGoogleAdsPerformance,
+  createRazorpayInvoiceWithCreds,
+  pingNangoProvider,
+  pingRazorpay,
+  pingWhatsApp,
+  sendGmailEmail,
+  sendWhatsAppWithCreds,
 } from '@darex/connectors';
+import { getIntegration, isIntegrationId } from '@/lib/integrations-catalog';
 
-const nangoClient = new NangoConnectorClient();
+function getNangoClient(): NangoConnectorClient {
+  return new NangoConnectorClient();
+}
+
+function whatsappCredsFromMeta(meta: Record<string, unknown> | null | undefined): {
+  accessToken: string;
+  phoneNumberId: string;
+} | null {
+  const src = meta && typeof meta === 'object' ? meta : {};
+  const accessToken = String(src.accessToken || src.meta_access_token || process.env.META_ACCESS_TOKEN || '');
+  const phoneNumberId = String(src.phoneNumberId || src.phone_number_id || process.env.WHATSAPP_PHONE_NUMBER_ID || '');
+  if (!accessToken || !phoneNumberId) return null;
+  return { accessToken, phoneNumberId };
+}
+
+function razorpayCredsFromMeta(meta: Record<string, unknown> | null | undefined): {
+  keyId: string;
+  keySecret: string;
+} | null {
+  const src = meta && typeof meta === 'object' ? meta : {};
+  const keyId = String(src.keyId || src.key_id || process.env.RAZORPAY_KEY_ID || '');
+  const keySecret = String(src.keySecret || src.key_secret || process.env.RAZORPAY_KEY_SECRET || '');
+  if (!keyId || !keySecret) return null;
+  return { keyId, keySecret };
+}
 
 export async function POST(request: Request) {
   try {
     const { client, orgId } = await getScopedClient();
     try {
-      const { provider, payload } = await request.json();
+      const { provider, payload: rawPayload } = await request.json();
+      const payload = rawPayload && typeof rawPayload === 'object' ? rawPayload : {};
 
-    let result: any = null;
-    let statusCode = 200;
-    let message = '';
+      if (!provider || !isIntegrationId(provider)) {
+        return NextResponse.json({ message: `Unknown provider: ${provider || '(missing)'}` }, { status: 400 });
+      }
 
-    try {
-      switch (provider) {
-        case 'whatsapp': {
-          const phoneNumberId = payload.phoneNumberId || 'me';
-          result = await sendWhatsAppMessage(nangoClient, orgId, phoneNumberId, {
-            recipient: payload.recipient || '+14155552671',
-            text: payload.text || 'Hello from DareX AI Employee!',
-          });
-          message = `WhatsApp message triggered for ${payload.recipient || 'recipient'}`;
-          break;
-        }
+      const spec = getIntegration(provider);
+      const channelRes = await client.query(
+        `SELECT status, meta, nango_connection_id FROM channels WHERE org_id = $1 AND channel_type = $2`,
+        [orgId, provider]
+      );
+      const channel = channelRes.rows[0] as { status?: string; meta?: Record<string, unknown>; nango_connection_id?: string } | undefined;
 
-        case 'gmail': {
+      let result: any = null;
+      let statusCode = 200;
+      let message = '';
+      let connected = false;
+
+      try {
+        if (provider === 'whatsapp') {
+          const creds = whatsappCredsFromMeta(channel?.meta);
+          if (!creds) {
+            statusCode = 404;
+            connected = false;
+            message = 'WhatsApp is not connected. Paste a Meta system-user token at /connectors.';
+            result = { connected: false, setupUrl: '/connectors' };
+          } else if (payload.recipient && payload.text) {
+            const sent = await sendWhatsAppWithCreds(creds, {
+              recipient: String(payload.recipient),
+              text: String(payload.text),
+            });
+            connected = true;
+            statusCode = sent.status;
+            result = sent.data;
+            message = sent.ok
+              ? `WhatsApp message sent to ${payload.recipient}`
+              : `WhatsApp send failed (HTTP ${sent.status}). Rotate the Meta token if this is 401.`;
+          } else {
+            const ping = await pingWhatsApp(creds);
+            connected = ping.ok;
+            statusCode = ping.status;
+            result = ping;
+            message = ping.message;
+          }
+        } else if (provider === 'razorpay') {
+          const creds = razorpayCredsFromMeta(channel?.meta);
+          if (!creds) {
+            statusCode = 404;
+            message = 'Razorpay keys are not set (per-org or RAZORPAY_KEY_ID/SECRET env).';
+            result = { connected: false, setupUrl: '/connectors' };
+          } else if (payload.customerEmail && payload.amountInPaisa) {
+            const created = await createRazorpayInvoiceWithCreds(creds, {
+              customerEmail: String(payload.customerEmail),
+              amountInPaisa: Number(payload.amountInPaisa),
+              description: String(payload.description || 'Darex test invoice'),
+            });
+            connected = created.ok;
+            statusCode = created.status;
+            result = created.data;
+            message = created.ok
+              ? `Razorpay invoice created for ${payload.customerEmail}`
+              : `Razorpay invoice failed (HTTP ${created.status})`;
+          } else {
+            const ping = await pingRazorpay(creds);
+            connected = ping.ok;
+            statusCode = ping.status;
+            result = ping;
+            message = ping.message;
+          }
+        } else if (provider === 'google-cloud' || spec?.authMode === 'service_account') {
+          statusCode = 400;
+          message = 'Google Cloud is service-account only — there is no OAuth connect or diagnostic ping.';
+          result = { connected: false, setupUrl: '/connectors' };
+        } else if (provider === 'gmail' && payload.recipient && payload.text) {
+          const nangoClient = getNangoClient();
           result = await sendGmailEmail(nangoClient, orgId, {
-            recipient: payload.recipient || 'user@example.com',
-            text: payload.text || 'Hello from DareX AI Employee Email!',
+            recipient: String(payload.recipient),
+            text: String(payload.text),
           });
-          message = `Gmail email sent to ${payload.recipient || 'recipient'}`;
-          break;
-        }
-
-        case 'google-calendar': {
+          connected = true;
+          message = `Gmail email sent to ${payload.recipient}`;
+        } else if (provider === 'google-calendar' && payload.title) {
+          const nangoClient = getNangoClient();
+          const attendeeEmails = Array.isArray(payload.attendeeEmails)
+            ? payload.attendeeEmails
+            : String(payload.attendeesStr || '')
+                .split(',')
+                .map((s: string) => s.trim())
+                .filter(Boolean);
           result = await createGoogleCalendarEvent(nangoClient, orgId, {
-            title: payload.title || 'DareX AI Strategy Call',
-            description: payload.description || 'Discussing Q3 AI Workforce Deployment',
+            title: String(payload.title),
+            description: payload.description ? String(payload.description) : undefined,
             startTime: payload.startTime || new Date(Date.now() + 3600000).toISOString(),
             endTime: payload.endTime || new Date(Date.now() + 7200000).toISOString(),
-            attendeeEmails: payload.attendeeEmails || ['client@example.com'],
+            attendeeEmails,
           });
-          message = `Google Calendar event "${payload.title || 'Strategy Call'}" created`;
-          break;
-        }
-
-        case 'hubspot': {
+          connected = true;
+          message = `Google Calendar event "${payload.title}" created`;
+        } else if (provider === 'hubspot' && payload.email) {
+          const nangoClient = getNangoClient();
           result = await createHubspotContact(nangoClient, orgId, {
-            email: payload.email || 'lead@example.com',
-            firstName: payload.firstName || 'Jane',
-            lastName: payload.lastName || 'Doe',
-            company: payload.company || 'DareX Tech',
-            phone: payload.phone || '+15550199',
+            email: String(payload.email),
+            firstName: payload.firstName ? String(payload.firstName) : undefined,
+            lastName: payload.lastName ? String(payload.lastName) : undefined,
+            company: payload.company ? String(payload.company) : undefined,
+            phone: payload.phone ? String(payload.phone) : undefined,
           });
-          message = `HubSpot contact created for ${payload.email || 'lead'}`;
-          break;
+          connected = true;
+          message = `HubSpot contact created for ${payload.email}`;
+        } else {
+          const nangoClient = getNangoClient();
+          const ping = await pingNangoProvider(nangoClient, orgId, provider);
+          connected = ping.ok;
+          statusCode = ping.status;
+          result = ping;
+          message = ping.message;
+          if (spec?.executorStatus === 'catalog_only' && ping.ok) {
+            message = `${ping.message} Agent tools for ${spec.name} are not implemented yet.`;
+          }
         }
-
-        case 'razorpay': {
-          result = await createRazorpayInvoice(nangoClient, orgId, {
-            customerEmail: payload.customerEmail || 'billing@example.com',
-            amountInPaisa: payload.amountInPaisa || 499900,
-            description: payload.description || 'DareX AI Pro Subscription Invoice',
-          });
-          message = `Razorpay invoice created for ${payload.customerEmail || 'customer'}`;
-          break;
-        }
-
-        case 'meta-ads': {
-          const adAccountId = payload.adAccountId || 'act_123456789';
-          result = await getMetaAdsInsights(nangoClient, orgId, adAccountId);
-          message = `Meta Ads insights fetched for ${adAccountId}`;
-          break;
-        }
-
-        case 'google-ads': {
-          const customerId = payload.customerId || '123-456-7890';
-          result = await getGoogleAdsPerformance(nangoClient, orgId, customerId);
-          message = `Google Ads performance metrics query executed for customer ${customerId}`;
-          break;
-        }
-
-        default:
-          return NextResponse.json({ message: `Unknown provider: ${provider}` }, { status: 400 });
+      } catch (err: any) {
+        statusCode = err.status || 500;
+        connected = err.connected === true;
+        result = { error: err.message || 'API Proxy Execution Failed', connected: false, setupUrl: '/connectors' };
+        message = `${provider} execution error: ${err.message || 'Failed'}`;
       }
-    } catch (err: any) {
-      statusCode = err.status || 500;
-      result = { error: err.message || 'API Proxy Execution Failed' };
-      message = `${provider} execution error: ${err.message || 'Failed'}`;
-    }
 
-    // Record proxy call into channel_logs
-    await client.query(
-      `INSERT INTO channel_logs (org_id, channel_type, event_type, status, status_code, message, payload, response)
-       VALUES ($1, $2, 'proxy_call', $3, $4, $5, $6, $7)`,
-      [
-        orgId,
+      await client.query(
+        `INSERT INTO channel_logs (org_id, channel_type, event_type, status, status_code, message, payload, response)
+         VALUES ($1, $2, 'proxy_call', $3, $4, $5, $6, $7)`,
+        [
+          orgId,
+          provider,
+          statusCode === 200 ? 'success' : 'error',
+          statusCode,
+          message,
+          JSON.stringify(payload || {}),
+          JSON.stringify(result || {}),
+        ]
+      );
+
+      return NextResponse.json({
+        success: statusCode === 200,
+        connected,
         provider,
-        statusCode === 200 ? 'success' : 'error',
-        statusCode,
         message,
-        JSON.stringify(payload || {}),
-        JSON.stringify(result || {}),
-      ]
-    );
-
-    return NextResponse.json({
-      success: statusCode === 200,
-      provider,
-      message,
-      statusCode,
-      result,
-    });
+        statusCode,
+        result,
+        executorStatus: spec?.executorStatus,
+        setupUrl: statusCode === 200 ? undefined : '/connectors',
+      });
     } finally {
       client.release();
     }

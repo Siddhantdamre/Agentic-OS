@@ -18,7 +18,9 @@ table `_migrations`).
 | `conversations` | Forced | employee, channel, `chatwoot_conv_id`, status, contact, metadata |
 | `messages` | Forced | role, content, `tool_calls`, `chatwoot_msg_id` **text** |
 | `org_onboarding` | Forced | Wizard state |
-| `idempotency_keys` | Forced | Intended for Temporal exactly-once — **unused by activities** |
+| `org_invites` | Forced | Invite tokens (migration 009) |
+| `password_reset_tokens` | No FORCE RLS | Hashed reset tokens (009) |
+| `idempotency_keys` | Forced | Used by Temporal activities |
 | `channel_logs` | Forced | Connector / webhook / agent audit |
 | `agent_plans` | Forced | Ask AI plan steps, draft, status, reasoning |
 
@@ -34,8 +36,9 @@ table `_migrations`).
 | 006 | `006_messages_chatwoot_msg_id_text.sql` | Meta `wamid.*` |
 | 007 | `007_agent_plans.sql` | Plan-confirm-execute |
 | 008 | `008_rls_with_check.sql` | `WITH CHECK` + `darex_app` grants |
-
-Older docs that say “migrations 001–006 only” or “no WITH CHECK” are **wrong**.
+| 009 | `009_auth_tenancy.sql` | Unique email, invites, reset tokens, auth helpers |
+| 010 | `010_webhook_inbox.sql` | `orgs.meta`, per-org Chatwoot ids, webhook resolvers |
+| 011 | `011_employees_app_role.sql` | `graph_id` default; `darex_app` CONNECT + table grants |
 
 ## RLS pattern (008)
 
@@ -44,8 +47,9 @@ USING (org_id = current_setting('app.current_org_id', true)::UUID)
 WITH CHECK (org_id = current_setting('app.current_org_id', true)::UUID)
 ```
 
-`getScopedClient()` sets `app.current_org_id` at **session** level and resets
-on release. Pool `max: 10` — do not hold a client across SSE.
+`getScopedClient()` / `getOrgScopedClient()` set `app.current_org_id` at
+**session** level and reset on release. Pool `max: 10` — do not hold a client
+across SSE.
 
 Role `darex_app` exists (password in init SQL). App still defaults to superuser
 `darex`. Switching `DB_USER=darex_app` is optional hardening, not done.
@@ -65,9 +69,6 @@ Role `darex_app` exists (password in init SQL). App still defaults to superuser
 
 ## What does not
 
-- App still connects as `darex` superuser (RLS bypass possible if a query
-  forgets `getScopedClient`).
-- `idempotency_keys` unused.
+- App still connects as `darex` superuser by default (011 grants `darex_app`;
+  switching `DB_USER=darex_app` is optional).
 - `pgvector` enabled, no embeddings tables/pipeline.
-- `/api/dashboard/stats` uses cookie org + shared pool — weaker than
-  `getScopedClient` (still not body `org_id`).

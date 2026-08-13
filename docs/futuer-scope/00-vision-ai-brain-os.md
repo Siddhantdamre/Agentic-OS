@@ -259,3 +259,66 @@ for a newly onboarded org in a supported vertical:
 
 Until then, Darex is a strong agent platform. The rest of this folder is
 the plan to close that gap.
+
+---
+
+## 9. Where this sits in the 2026 market (so we do not clone the wrong thing)
+
+The world is full of “AI employee” products. They are not the Brain OS.
+Full catalog of libraries, people, and papers: `15-open-source-research-landscape.md`.
+
+| Shape | Examples | Darex is |
+|-------|----------|----------|
+| No-code task bots | Lindy, Gumloop, n8n | No — we are an OS with packs, not a Zapier with an LLM |
+| Agent *builders* | Relevance AI, CrewAI AMP | No — employees are config on *our* runtime |
+| Enterprise search + chat | Glean | Partial cousin on retrieval; they are not the action/confirm plane |
+| Specialist employees | Devin, 11x, Artisan, Sierra | Learn depth; we stay platform + vertical packs |
+| Multiplayer company AI | Dust.tt | Closest UX cousin (shared knowledge, MCP, permissions). We add tenancy-as-product, WhatsApp, plan-confirm, Nango muscles |
+| Agent *frameworks* | LangGraph, Mastra, Letta, Agno | Libraries. We already picked atomic-agent + Temporal + MCP |
+
+The academic name for what we are building is closest to **CoALA**
+(cognitive architecture for language agents: memory, action, decision)
+plus **Generative Agents** memory stream — applied to a *real tenant*,
+not a simulated village.
+
+**Non-goal restated:** we do not become LangChain, Mem0 Cloud, or
+Dust. We become the OS a brokerage or agency *runs on*.
+
+---
+
+## 10. Alternatives in the world (instead of “Brain OS”, 5 other bets)
+
+**What Darex does:** one multi-tenant OS (sense → memory → plan-confirm
+→ MCP tools) with industry **packs**, not 40 products.
+
+| # | Alternative | Why it can be better | Why we still do ours | Refs |
+|---|-------------|----------------------|----------------------|------|
+| 1 | **Dust.tt** — multiplayer company AI, MCP, EU residency, semantic layer | Permissions and “AI operator” UX are years ahead; SOC2/GDPR story is sellable | Not multi-tenant *SaaS for SMBs*; no WhatsApp/RE pack; closed core | [dust.tt](https://dust.tt), GitHub `dust-tt/dust` |
+| 2 | **Glean** — permission-aware enterprise search + agents | ACL-correct retrieval; already in Fortune 500 | Search company, not action/confirm/Nango OS | [glean.com/blog/agent-orchestration-platforms-compared](https://www.glean.com/blog/agent-orchestration-platforms-compared) |
+| 3 | **Odoo / ERPNext** — full industry ERP, modules as “packs” | Real inventory, accounting, manufacturing; 20 years of verticals | We are the *brain on top of* their SoR, not a second ERP | [github.com/odoo/odoo](https://github.com/odoo/odoo), [frappe/erpnext](https://github.com/frappe/erpnext) |
+| 4 | **Letta (MemGPT)** — agent *is* the OS (core + archival memory) | Best “LLM as OS” research; agents survive restarts with self-paging memory | Replacing atomic-agent splits MCP/allowlists; we already have Temporal+Postgres | [letta-ai/letta](https://github.com/letta-ai/letta), arXiv:2310.08560 |
+| 5 | **Specialist AI employees** (Sierra CX, 11x SDR, Devin/OpenHands code, EliseAI leasing) | They win one job 10× deeper than a pack v1 | We stay platform; packs copy their *job design* | OpenHands [All-Hands-AI/OpenHands](https://github.com/All-Hands-AI/OpenHands); Elise vs Funnel (Thesis Driven / Hargreaves 2026) |
+
+**Five things to steal anyway**
+
+1. Dust dual-layer permissions (agent access vs who may invoke) → `12`.
+2. Glean: retrieval must honor the same ACL as Drive → `/brain` RLS.
+3. Odoo: pack = module with entities + workflows + views, not a fork.
+4. MemGPT: core vs archival hierarchy → `10`.
+5. EliseAI: after-hours inbound *is* the product for RE/PM — WhatsApp 24/7.
+
+CoALA (Sumers, Yao, Narasimhan, Griffiths, TMLR 2024) is the academic
+name for our six layers. Generative Agents (Park et al. 2023) is the
+memory-stream paper. Neither is a product we install.
+
+### Open-source GitHub (at least 5) — same job as this file
+
+| Repo | Similar to | We take |
+|------|------------|---------|
+| [letta-ai/letta](https://github.com/letta-ai/letta) | Agent as OS (core + archival memory) | Hierarchy for `10`, not the runtime |
+| [RightNow-AI/openfang](https://github.com/RightNow-AI/openfang) | Rust “agent OS”: sandbox, MCP, channels, scheduled hands | Sandbox + scheduled briefing; not a rewrite |
+| [agno-agi/agno](https://github.com/agno-agi/agno) | Multi-tenant AgentOS + control plane | Roster UI ideas; Python-only so not kernel |
+| [All-Hands-AI/OpenHands](https://github.com/All-Hands-AI/OpenHands) | Production software employee, sandbox, confirm | Sandbox + event-source lessons |
+| [dust-tt/dust](https://github.com/dust-tt/dust) | Company knowledge + agents + MCP | Permission dual-layer, operator UX |
+| [frappe/erpnext](https://github.com/frappe/erpnext) | Industry modules on one kernel | Pack = DocType + workflow, not a fork |
+| [odoo/odoo](https://github.com/odoo/odoo) | Industry apps on one ERP | Pack manifest shape (`03`) |

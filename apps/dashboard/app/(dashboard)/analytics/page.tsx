@@ -22,6 +22,8 @@ interface AnalyticsData {
     automationRate: string;
     avgResponseTime: string;
     csatScore: string;
+    csatIsProxy?: boolean;
+    conversationChangePct?: number | null;
   };
   channelBreakdown: { channel: string; count: number }[];
   weeklyTrend: { day: string; count: number }[];
@@ -39,17 +41,12 @@ export default function AnalyticsPage() {
       .finally(() => setLoading(false));
   }, []);
 
-  const metrics = data?.metrics || {
-    totalConversations: 0,
-    resolvedConversations: 0,
-    activeConversations: 0,
-    totalMessages: 0,
-    automationRate: '99.4%',
-    avgResponseTime: '1.2s',
-    csatScore: '4.9 / 5',
-  };
-
-  const trendMax = Math.max(...(data?.weeklyTrend.map((t) => t.count) || [100]), 10);
+  const metrics = data?.metrics ?? null;
+  const weeklyTrend = data?.weeklyTrend ?? [];
+  const channelBreakdown = data?.channelBreakdown ?? [];
+  const trendMax = Math.max(...weeklyTrend.map((t) => t.count), 1);
+  const channelMax = Math.max(...channelBreakdown.map((c) => c.count), 1);
+  const changePct = metrics?.conversationChangePct;
 
   return (
     <div className="max-w-7xl mx-auto space-y-8 pb-12">
@@ -65,26 +62,30 @@ export default function AnalyticsPage() {
       <div className="grid grid-cols-4 gap-4">
         <div className="bg-cream-200/70 border border-cream-300 p-5 rounded-2xl space-y-2 shadow-sm">
           <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Total Conversations</span>
-          <div className="text-3xl font-bold text-heading">{metrics.totalConversations}</div>
-          <span className="text-xs text-emerald-600 font-medium">↑ +24% growth rate</span>
+          <div className="text-3xl font-bold text-heading">{loading || !metrics ? '—' : metrics.totalConversations}</div>
+          <span className="text-xs text-slate-500 font-medium">
+            {changePct == null
+              ? 'Not enough prior-week data for a trend'
+              : `${changePct >= 0 ? '+' : ''}${changePct}% vs previous 7 days`}
+          </span>
         </div>
 
         <div className="bg-cream-200/70 border border-cream-300 p-5 rounded-2xl space-y-2 shadow-sm">
           <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">AI Automation Rate</span>
-          <div className="text-3xl font-bold text-emerald-600">{metrics.automationRate}</div>
-          <span className="text-xs text-emerald-600 font-medium">Zero human intervention</span>
+          <div className="text-3xl font-bold text-emerald-600">{loading || !metrics ? '—' : metrics.automationRate}</div>
+          <span className="text-xs text-slate-500 font-medium">Assistant messages that used tools</span>
         </div>
 
         <div className="bg-cream-200/70 border border-cream-300 p-5 rounded-2xl space-y-2 shadow-sm">
           <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Avg Response Time</span>
-          <div className="text-3xl font-bold text-heading">{metrics.avgResponseTime}</div>
-          <span className="text-xs text-slate-500 font-medium">Instantaneous SLA</span>
+          <div className="text-3xl font-bold text-heading">{loading || !metrics ? '—' : metrics.avgResponseTime}</div>
+          <span className="text-xs text-slate-500 font-medium">User message to next assistant reply</span>
         </div>
 
         <div className="bg-cream-200/70 border border-cream-300 p-5 rounded-2xl space-y-2 shadow-sm">
-          <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">CSAT Score</span>
-          <div className="text-3xl font-bold text-amber-600">{metrics.csatScore}</div>
-          <span className="text-xs text-amber-600 font-medium">★★★★★ 98% positive</span>
+          <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">CSAT (proxy)</span>
+          <div className="text-3xl font-bold text-amber-600">{loading || !metrics ? '—' : metrics.csatScore}</div>
+          <span className="text-xs text-slate-500 font-medium">Resolved conversations mapped to a 5-point scale — not a survey</span>
         </div>
       </div>
 
@@ -104,13 +105,12 @@ export default function AnalyticsPage() {
 
           {/* Bar Chart Visual */}
           <div className="h-64 flex items-end justify-between gap-4 pt-8 px-4">
-            {(data?.weeklyTrend || []).map((t) => {
+            {weeklyTrend.map((t) => {
               const heightPercent = Math.round((t.count / trendMax) * 100);
               return (
                 <div key={t.day} className="flex-1 flex flex-col items-center gap-2 group relative">
-                  {/* Tooltip */}
                   <div className="absolute -top-8 px-2 py-1 bg-slate-900 text-white text-[10px] rounded-lg opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap font-bold">
-                    {t.count} messages
+                    {t.count} conversations
                   </div>
 
                   <div className="w-full bg-cream-200 rounded-t-xl h-full flex items-end overflow-hidden">
@@ -134,24 +134,24 @@ export default function AnalyticsPage() {
           </div>
 
           <div className="space-y-4">
-            {(data?.channelBreakdown || [
-              { channel: 'gmail', count: 12 },
-              { channel: 'whatsapp', count: 8 },
-              { channel: 'meta-ads', count: 4 },
-            ]).map((cb) => (
+            {channelBreakdown.length === 0 ? (
+              <p className="text-sm text-slate-500">No active channels yet.</p>
+            ) : (
+              channelBreakdown.map((cb) => (
               <div key={cb.channel} className="space-y-1.5">
                 <div className="flex items-center justify-between text-xs font-semibold text-slate-700 capitalize">
                   <span className="flex items-center space-x-2">
                     <Layers className="w-4 h-4 text-amber-600" />
                     <span>{cb.channel}</span>
                   </span>
-                  <span>{cb.count} channels</span>
+                  <span>{cb.count}</span>
                 </div>
                 <div className="w-full bg-cream-200 h-2.5 rounded-full overflow-hidden">
-                  <div className="bg-amber-500 h-full rounded-full" style={{ width: '75%' }} />
+                  <div className="bg-amber-500 h-full rounded-full" style={{ width: `${Math.round((cb.count / channelMax) * 100)}%` }} />
                 </div>
               </div>
-            ))}
+              ))
+            )}
           </div>
         </div>
       </div>

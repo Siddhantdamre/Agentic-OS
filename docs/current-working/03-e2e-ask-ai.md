@@ -18,8 +18,9 @@ Primary product path. Files:
 Chat UI components: `PlanCard`, `DraftPanel`, `ExecutionStrip`,
 `ActionPermissionCard`, `ReasoningStrip`, `FormattedMarkdownResponse`.
 
-Thread state lives in **localStorage** keyed by org + user (not the DB), except
-plans which persist in `agent_plans`.
+Thread state: canonical history is the `messages` table for the Ask AI
+conversation (`GET /api/ask-ai`). `localStorage` is a cache. Plans persist in
+`agent_plans` and reload on refresh.
 
 ---
 
@@ -68,8 +69,9 @@ an honest “not connected via Nango” reply (no `org_id` hunting loop).
   optional `draft`, `summary`.
 - `sanitizeSteps` keeps only tools in `VALID_TOOLS` (gmail, calendars, drive,
   docs, sheets, github, whatsapp, hubspot, ads, slack, notion, stripe, shopify,
-  zendesk, intercom, razorpay, database_query, web_search, web_extract, file_ops,
-  sandbox). Max 12 steps.
+  zendesk, intercom, razorpay, google-analytics, google-chat, google-meet,
+  google-search-console, google-business-profile, google-cloud, database_query,
+  web_search, web_extract, file_ops, sandbox). Max 12 steps.
 - Insert `agent_plans` row `status='pending'`.
 - Response is JSON (not a stream). UI shows `PlanCard` + `DraftPanel`.
 
@@ -112,17 +114,18 @@ re-connected with `gmail.compose`.
 
 ## What works
 
-- Simple streaming Q&A with real tools.
-- Complex plan persist / refresh-safe / approve / cancel / toggle / revise.
-- Parallel independent steps.
-- Honest `notConnected` when OAuth is missing.
+- Simple streaming Q&A with real tools. SSE `done` is applied on the page.
+- Complex plan persist / refresh-safe / approve / cancel / toggle / extra
+  instructions (notes, not a fake tool) / revise.
+- Execute 409s already-completed plans and finishes after SSE disconnect.
+- Home `/ask-ai?q=` works. History hydrates from `messages`.
+- Honest `notConnected` when OAuth is missing (`setupUrl`).
 - Daily session rotation (no unbounded poisoned WAL).
 
 ## What does not (on this path)
 
-- Plans cannot include Google Analytics / Chat / Meet (not in `VALID_TOOLS`,
-  and executors are stubs anyway).
-- Chat history is localStorage, not `messages` table.
-- No multi-user shared Ask AI thread.
 - Classifier can still mis-tag; fallback prefers simple (user may not see a
   plan when they expected one).
+- No multi-user shared Ask AI thread.
+- Google Chat/Meet/Analytics/etc. are in `VALID_TOOLS` and have executors, but
+  still need a live Nango token (UI catalog may still say catalog_only).

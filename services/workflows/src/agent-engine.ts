@@ -26,6 +26,8 @@ export interface AgentTaskInput {
    *  Ask AI) scope + rotate their own sessions instead of sharing the fallback
    *  `darex:{org}:chat` bucket forever. */
   sessionKey?: string;
+  /** Stable key for Temporal activity retries (save/log). */
+  idempotencyKey?: string;
   /** Results from previous steps in a multi-step agent loop. */
   priorToolResults?: {
     step: number;

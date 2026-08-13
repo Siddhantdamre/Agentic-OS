@@ -13,13 +13,18 @@ webhooks. **Never** trust body `org_id`.
 | POST | `/api/auth/register` | Yes | Creates org |
 | GET | `/api/auth/oauth/[provider]` | Partial | Real if client IDs; demo if `ALLOW_DEMO_AUTH` |
 | GET | `/api/auth/oauth/callback/[provider]` | Yes | Token exchange + upsert |
-| POST | `/api/org/create` | Yes | Onboarding |
+| POST | `/api/org/create` | Yes | Onboarding; rejects body `org_id` |
+| GET/POST | `/api/org/onboarding` | Yes | Wizard state; rejects body `org_id` |
+| POST | `/api/auth/forgot-password` | Yes | Creates hashed reset token |
+| POST | `/api/auth/reset-password` | Yes | Consumes token |
+| GET/POST | `/api/auth/invite/[token]` | Yes | Lookup / accept |
 
 ## Ask AI
 
 | Method | Path | Real? | Notes |
 |--------|------|-------|-------|
 | POST | `/api/ask-ai` | Yes | Classify → complex JSON plan or simple NDJSON |
+| GET | `/api/ask-ai` | Yes | Hydrate thread from `messages` + plans |
 | GET | `/api/ask-ai/plan` | Yes | `?planId=` |
 | PATCH | `/api/ask-ai/plan` | Yes | approve / cancel / toggle steps |
 | POST | `/api/ask-ai/revise` | Yes | `reviseDraft` |
@@ -30,8 +35,8 @@ webhooks. **Never** trust body `org_id`.
 | Method | Path | Real? | Notes |
 |--------|------|-------|-------|
 | POST | `/api/agent/run` | Yes | Temporal then direct; may save messages |
-| POST SSE | `/api/agent/stream` | Partial | Temporal only — no direct fallback |
-| GET | `/api/agent/tools` | Yes | **No auth.** Static catalog |
+| POST SSE | `/api/agent/stream` | Yes | Temporal then direct fallback |
+| GET | `/api/agent/tools` | Yes | Session required |
 | POST | `/api/agent/tools` | Yes | One `executeAutonomousToolAction` |
 
 ## Integrations
@@ -43,7 +48,8 @@ webhooks. **Never** trust body `org_id`.
 | GET | `/api/integrations/nango-token` | Yes | publicKey + connectionId |
 | POST | `/api/integrations/nango-token` | Yes | Confirm after OAuth |
 | POST | `/api/integrations/test` | Yes | 7 providers via `@darex/connectors` |
-| POST | `/api/integrations/whatsapp` | Yes | BYOK into `channels.meta` |
+| POST | `/api/integrations/whatsapp` | Yes | BYOK Graph-verified into `channels.meta` |
+| POST | `/api/integrations/razorpay` | Yes | Per-org verified keys |
 | POST | `/api/integrations/webhooks` | Logger | Authenticated log only |
 
 ## Webhooks (public)
@@ -52,7 +58,8 @@ webhooks. **Never** trust body `org_id`.
 |--------|------|-------|-------|
 | GET | `/api/webhooks/whatsapp` | Yes | Meta verify |
 | POST | `/api/webhooks/whatsapp` | Partial | Inbound+agent yes; outbound Graph 401 if token expired |
-| POST | `/api/webhooks/chatwoot` | Partial | HMAC ingest; **no AI** |
+| POST | `/api/webhooks/chatwoot` | Yes | HMAC ingest **and** starts agent |
+| POST | `/api/webhooks/outbound` | Yes | Inbox human send-back; org from conversation |
 
 ## Realtime
 
@@ -70,10 +77,11 @@ webhooks. **Never** trust body `org_id`.
 | GET/POST | `/api/employees` | Yes | GET auto-seeds roster |
 | PATCH/DELETE | `/api/employees/[id]` | Yes | |
 | GET | `/api/employees/stats` | Yes | |
-| GET/POST | `/api/settings` | Partial | Invite = row only; `metaWebhookUrl` wrong |
+| GET/POST | `/api/settings` | Yes | Invite = `org_invites` + copyable URL; webhook URLs correct |
 | GET | `/api/analytics` | Yes | Real aggregates + CSAT proxy |
-| GET | `/api/dashboard/stats` | Yes | Uses cookie `darex_org_id` + pool (not always `getScopedClient`) |
-| GET | `/api/insight` | Stub | Hardcoded templates parameterized by counts |
+| GET | `/api/dashboard/stats` | Yes | `getScopedClient` |
+| GET | `/api/insight` | Partial | Rule templates parameterized by counts |
+| GET | `/api/health` | Yes | `{ ok: true }` — no session |
 
 ## Deleted / do not use
 

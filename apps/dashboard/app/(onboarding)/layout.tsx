@@ -1,8 +1,9 @@
 'use client';
 
-import React from 'react';
+import React, { useEffect } from 'react';
 import { usePathname } from 'next/navigation';
 import { GrowthTree } from '@/components/onboarding/GrowthTree';
+import { useOnboardingStore } from '@/lib/store';
 
 export default function OnboardingLayout({
   children,
@@ -10,6 +11,22 @@ export default function OnboardingLayout({
   children: React.ReactNode;
 }) {
   const pathname = usePathname();
+  const hydrateFromServer = useOnboardingStore((s) => s.hydrateFromServer);
+
+  useEffect(() => {
+    fetch('/api/org/onboarding')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (!data || data.onboardingComplete) return;
+        hydrateFromServer({
+          businessName: data.businessName,
+          teamSize: data.teamSize,
+          businessType: data.businessType,
+          selectedChannels: data.selectedChannels,
+        });
+      })
+      .catch(() => undefined);
+  }, [hydrateFromServer]);
 
   // Determine progress based on route
   let progress = 0.25;

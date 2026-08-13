@@ -17,9 +17,12 @@ Insight, Analytics, Integrations, Connectors; Settings via profile area).
 | `/integrations` | `(dashboard)/integrations/page.tsx` | integrations + Nango + test | **Works if connected** |
 | `/connectors` | `(dashboard)/connectors/page.tsx` | same + WhatsApp modal | **Works if connected** |
 | `/connectors/[id]` | `(dashboard)/connectors/[id]/page.tsx` | `/api/integrations/test` | **Works if connected** |
-| `/settings` | `(dashboard)/settings/page.tsx` | `/api/settings` | **Partial** — rename works; invite has no email; Meta webhook URL wrong |
+| `/settings` | `(dashboard)/settings/page.tsx` | `/api/settings` | **Works** — rename; invites via `org_invites` + copyable link; webhook URLs correct |
 | `/login` | `(auth)/login/page.tsx` | `/api/auth/login`, OAuth | **Works** |
 | `/register` | `(auth)/register/page.tsx` | `/api/auth/register` | **Works** |
+| `/forgot-password` | `(auth)/forgot-password/page.tsx` | `/api/auth/forgot-password` | **Works** |
+| `/reset-password` | `(auth)/reset-password/page.tsx` | `/api/auth/reset-password` | **Works** (reachable while signed in) |
+| `/invite/[token]` | `(auth)/invite/[token]/page.tsx` | `/api/auth/invite/[token]` | **Works** (reachable while signed in) |
 | `/onboarding/name` | `(onboarding)/onboarding/name/page.tsx` | Zustand store | **Works** |
 | `/onboarding/team-size` | `.../team-size/page.tsx` | store | **Works** |
 | `/onboarding/business-type` | `.../business-type/page.tsx` | store | **Works** |
@@ -34,8 +37,10 @@ Insight, Analytics, Integrations, Connectors; Settings via profile area).
 
 ## Middleware
 
-Cookie `darex_session` on pages only. Does not protect API routes (those use
-`getScopedClient`). Does not require onboarding.
+Cookie `darex_session`. Unauthenticated **API** routes (except public auth/
+webhooks/health) return 401. Pages redirect to `/login`. Invite accept and
+reset-password remain reachable while signed in. Does not require onboarding
+from DB state (uses onboarding cookie).
 
 ## Chat / agent components
 
