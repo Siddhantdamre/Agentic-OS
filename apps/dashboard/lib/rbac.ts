@@ -77,6 +77,21 @@ export function canReadAudit(role: HumanRole): boolean {
   }
 }
 
+export function canManageOrgSettings(role: HumanRole): boolean {
+  switch (role) {
+    case 'owner':
+    case 'admin':
+      return true;
+    case 'member':
+    case 'auditor':
+      return false;
+    default: {
+      const _exhaustive: never = role;
+      return _exhaustive;
+    }
+  }
+}
+
 export function canExportDsr(role: HumanRole): boolean {
   switch (role) {
     case 'owner':

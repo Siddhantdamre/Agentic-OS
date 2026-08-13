@@ -1,18 +1,34 @@
 import { NextResponse } from 'next/server';
 import { getOrgScopedClient } from '@/lib/db';
-import { orgHasInstalledPack, requireWidgetOrg, widgetForbidden } from '../../_lib';
+import {
+  orgHasInstalledPack,
+  requireWidgetOrg,
+  widgetForbidden,
+  widgetPreflight,
+  withWidgetCors,
+} from '../../_lib';
 
 /**
  * GET /api/widget/listings/search
  * Pack-gated public listing search. Does not invent inventory. No admin APIs.
  */
+export const dynamic = 'force-dynamic';
+
+export async function OPTIONS(request: Request) {
+  return widgetPreflight(request);
+}
+
 export async function GET(request: Request) {
   const auth = await requireWidgetOrg(request);
   if (!auth.ok) return auth.response;
 
   const pack = await orgHasInstalledPack(auth.orgId);
   if (!pack) {
-    return widgetForbidden('Widget is deny-all until a pack is installed.');
+    return withWidgetCors(
+      request,
+      widgetForbidden('Widget is deny-all until a pack is installed.'),
+      auth.allowedOrigins
+    );
   }
 
   const url = new URL(request.url);
@@ -37,15 +53,23 @@ export async function GET(request: Request) {
     }
     sql += ` ORDER BY updated_at DESC LIMIT 20`;
     const res = await client.query(sql, params);
-    return NextResponse.json({
-      listings: res.rows,
-      count: res.rows.length,
-      invented: false,
-    });
+    return withWidgetCors(
+      request,
+      NextResponse.json({
+        listings: res.rows,
+        count: res.rows.length,
+        invented: false,
+      }),
+      auth.allowedOrigins
+    );
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
     console.warn('[widget listings.search]', message);
-    return NextResponse.json({ listings: [], count: 0, invented: false });
+    return withWidgetCors(
+      request,
+      NextResponse.json({ listings: [], count: 0, invented: false }),
+      auth.allowedOrigins
+    );
   } finally {
     client.release();
   }

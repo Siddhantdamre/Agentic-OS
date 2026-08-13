@@ -25,6 +25,16 @@ The owner-facing dashboard UI. Built fresh per the spec — not forked from anyt
 | `/analytics` | 7 | Trend charts over aggregated data |
 | `/settings` | 1 | Org settings |
 
+## Public chat widget (H6)
+
+Copy from **Settings → Webhooks & API Keys**, or paste:
+
+```html
+<script src="http://localhost:3000/embed/widget.js" data-site-key="YOUR_SITE_KEY" async></script>
+```
+
+`YOUR_SITE_KEY` comes from Settings (generate/rotate). `src` must be `NEXT_PUBLIC_APP_URL/embed/widget.js` in production. The script never includes `org_id`. Missing/invalid key → 401.
+
 ## Design System Tokens (from frontend architecture spec)
 ```
 background: #FAF9F0 (warm cream)

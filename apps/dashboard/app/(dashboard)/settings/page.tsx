@@ -37,6 +37,15 @@ interface WebhookDetails {
   verifyToken: string | null;
 }
 
+interface WidgetDetails {
+  siteKey: string | null;
+  hasActiveKey: boolean;
+  snippet: string | null;
+  scriptSrc: string;
+  allowedOrigins: string[];
+  hasPack: boolean;
+}
+
 export default function SettingsPage() {
   const [activeTab, setActiveTab] = useState<'general' | 'team' | 'webhooks'>('general');
   const [loading, setLoading] = useState(true);
@@ -44,6 +53,9 @@ export default function SettingsPage() {
   const [members, setMembers] = useState<Member[]>([]);
   const [pendingInvites, setPendingInvites] = useState<PendingInvite[]>([]);
   const [webhooks, setWebhooks] = useState<WebhookDetails | null>(null);
+  const [widget, setWidget] = useState<WidgetDetails | null>(null);
+  const [widgetOrigins, setWidgetOrigins] = useState('');
+  const [widgetBusy, setWidgetBusy] = useState(false);
   const [mailConfigured, setMailConfigured] = useState(false);
   const [inviteResult, setInviteResult] = useState<{ emailSent: boolean; inviteUrl?: string; emailReason?: string } | null>(null);
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
@@ -66,6 +78,8 @@ export default function SettingsPage() {
         setMembers(data.members || []);
         setPendingInvites(data.pendingInvites || []);
         setWebhooks(data.webhookDetails || null);
+        setWidget(data.widget || null);
+        setWidgetOrigins((data.widget?.allowedOrigins || []).join('\n'));
         setMailConfigured(Boolean(data.mailConfigured));
       }
     } catch (err) {
@@ -83,6 +97,54 @@ export default function SettingsPage() {
     navigator.clipboard.writeText(text);
     setCopiedKey(keyName);
     setTimeout(() => setCopiedKey(null), 2000);
+  };
+
+  const applyWidgetPayload = (next: WidgetDetails | null | undefined) => {
+    if (!next) return;
+    setWidget(next);
+    setWidgetOrigins((next.allowedOrigins || []).join('\n'));
+  };
+
+  const handleRotateWidgetKey = async () => {
+    try {
+      setWidgetBusy(true);
+      const res = await fetch('/api/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'rotate_widget_key' }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        applyWidgetPayload(data.widget);
+      }
+    } catch (err) {
+      console.error('Failed to rotate widget key:', err);
+    } finally {
+      setWidgetBusy(false);
+    }
+  };
+
+  const handleSaveWidgetOrigins = async (e: React.FormEvent) => {
+    e.preventDefault();
+    try {
+      setWidgetBusy(true);
+      const res = await fetch('/api/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'update_widget_origins',
+          allowedOrigins: widgetOrigins.split('\n'),
+        }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        applyWidgetPayload(data.widget);
+      }
+    } catch (err) {
+      console.error('Failed to save widget origins:', err);
+    } finally {
+      setWidgetBusy(false);
+    }
   };
 
   const handleSaveOrg = async (e: React.FormEvent) => {
@@ -303,8 +365,9 @@ export default function SettingsPage() {
           )}
 
           {/* TAB 3: WEBHOOKS & API KEYS */}
-          {activeTab === 'webhooks' && webhooks && (
+          {activeTab === 'webhooks' && (
             <div className="space-y-6 max-w-3xl">
+              {webhooks && (
               <div className="bg-white border border-cream-300 rounded-3xl p-6 space-y-4 shadow-sm">
                 <h2 className="text-lg font-serif font-bold text-heading">Webhook Endpoints</h2>
                 <p className="text-xs text-slate-500">Configure these URLs in your channel providers (Meta WhatsApp, Chatwoot, etc.)</p>
@@ -372,6 +435,83 @@ export default function SettingsPage() {
                     </div>
                   </div>
                 </div>
+              </div>
+              )}
+
+              <div className="bg-white border border-cream-300 rounded-3xl p-6 space-y-4 shadow-sm">
+                <h2 className="text-lg font-serif font-bold text-heading">Public chat widget</h2>
+                <p className="text-xs text-slate-500">
+                  Drop this script on your site. Messages persist immediately and return HTTP 200 without waiting on the model.
+                  The site key is public; it cannot call admin APIs. Tenant is resolved from the key — never send <code>org_id</code>.
+                </p>
+                {!widget?.hasPack && (
+                  <p className="text-xs text-amber-700 font-semibold">
+                    Install a pack (finish onboarding) before the widget will accept messages.
+                  </p>
+                )}
+                {widget?.snippet ? (
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
+                      Embed snippet
+                    </label>
+                    <div className="flex items-start space-x-2">
+                      <textarea
+                        readOnly
+                        rows={3}
+                        value={widget.snippet}
+                        className="flex-1 px-4 py-2 bg-cream-100 border border-cream-300 rounded-xl text-xs font-mono font-medium text-slate-700"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => handleCopy(widget.snippet || '', 'widgetSnippet')}
+                        className="p-2 bg-cream-200 hover:bg-cream-300 rounded-xl border border-cream-300 text-slate-700"
+                      >
+                        {copiedKey === 'widgetSnippet' ? <Check className="w-4 h-4 text-emerald-600" /> : <Copy className="w-4 h-4" />}
+                      </button>
+                    </div>
+                    {widget.siteKey && (
+                      <p className="mt-2 text-[11px] text-slate-500 font-mono break-all">Site key: {widget.siteKey}</p>
+                    )}
+                  </div>
+                ) : (
+                  <p className="text-xs text-slate-500">
+                    {widget?.hasActiveKey
+                      ? 'A key exists but cannot be re-shown. Rotate to get a copyable snippet.'
+                      : 'Generate a site key to copy the embed snippet.'}
+                  </p>
+                )}
+                <div className="flex items-center gap-3">
+                  <button
+                    type="button"
+                    disabled={widgetBusy}
+                    onClick={handleRotateWidgetKey}
+                    className="px-4 py-2 bg-amber-500 hover:bg-amber-600 font-semibold text-heading text-xs rounded-xl shadow-sm disabled:opacity-50"
+                  >
+                    {widgetBusy ? 'Working…' : widget?.hasActiveKey ? 'Rotate site key' : 'Generate site key'}
+                  </button>
+                </div>
+                <form onSubmit={handleSaveWidgetOrigins} className="space-y-2 pt-2">
+                  <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider">
+                    Allowed origins (optional)
+                  </label>
+                  <p className="text-[11px] text-slate-500">
+                    One origin per line, e.g. <code>https://www.example.com</code>. Empty allowlist accepts any origin. Use <code>*</code> to allow all.
+                  </p>
+                  <textarea
+                    rows={3}
+                    value={widgetOrigins}
+                    onChange={(e) => setWidgetOrigins(e.target.value)}
+                    placeholder="https://www.example.com"
+                    className="w-full px-4 py-2 bg-cream-100 border border-cream-300 rounded-xl text-xs font-mono font-medium text-slate-700"
+                  />
+                  <button
+                    type="submit"
+                    disabled={widgetBusy || !widget?.hasActiveKey}
+                    className="px-4 py-2 bg-cream-200 hover:bg-cream-300 font-semibold text-heading text-xs rounded-xl border border-cream-300 disabled:opacity-50"
+                  >
+                    Save origins
+                  </button>
+                </form>
               </div>
             </div>
           )}

@@ -3,6 +3,12 @@ import { getScopedClient } from '@/lib/db';
 import { lookupUserByEmail } from '@/lib/auth-user';
 import { isValidEmail, normalizeEmail, randomToken, sha256Hex } from '@/lib/password';
 import { appBaseUrl, sendTransactionalEmail } from '@/lib/mail';
+import {
+  loadWidgetSettings,
+  parseAllowedOrigins,
+  rotateWidgetSiteKey,
+  updateWidgetAllowedOrigins,
+} from '@/lib/widget-embed';
 
 const INVITE_TTL_DAYS = 7;
 
@@ -58,12 +64,14 @@ export async function GET() {
         metaWebhookUrl: `${appUrl}/api/webhooks/whatsapp`,
         verifyToken: process.env.VERIFY_TOKEN || null,
       };
+      const widget = await loadWidgetSettings(client, orgId, appUrl);
 
       return NextResponse.json({
         org,
         members: membersRes.rows,
         pendingInvites: invitesRes.rows,
         webhookDetails,
+        widget,
         mailConfigured: Boolean(process.env.RESEND_API_KEY),
       });
     } finally {
@@ -89,7 +97,7 @@ export async function POST(request: Request) {
           { status: 400 }
         );
       }
-      const { action, orgName, inviteEmail, inviteRole } = body;
+      const { action, orgName, inviteEmail, inviteRole, allowedOrigins } = body;
 
       if (action === 'update_org' && typeof orgName === 'string' && orgName.trim()) {
         await client.query('UPDATE orgs SET name = $1, updated_at = NOW() WHERE id = $2', [
@@ -163,6 +171,27 @@ export async function POST(request: Request) {
           inviteUrl,
           member: { email, role, expires_at: expiresAt.toISOString() },
         });
+      }
+
+      if (action === 'rotate_widget_key') {
+        const rotated = await rotateWidgetSiteKey(client, orgId, appBaseUrl());
+        const widget = await loadWidgetSettings(client, orgId, appBaseUrl());
+        return NextResponse.json({
+          success: true,
+          widget: { ...widget, siteKey: rotated.siteKey, snippet: rotated.snippet },
+        });
+      }
+
+      if (action === 'update_widget_origins') {
+        try {
+          const origins = parseAllowedOrigins(allowedOrigins);
+          const updated = await updateWidgetAllowedOrigins(client, orgId, origins);
+          const widget = await loadWidgetSettings(client, orgId, appBaseUrl());
+          return NextResponse.json({ success: true, widget: { ...widget, ...updated } });
+        } catch (err: unknown) {
+          const message = err instanceof Error ? err.message : 'Could not save origins';
+          return NextResponse.json({ error: message }, { status: 400 });
+        }
       }
 
       return NextResponse.json({ error: 'Invalid action' }, { status: 400 });

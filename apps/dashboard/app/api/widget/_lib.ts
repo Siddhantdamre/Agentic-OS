@@ -2,10 +2,12 @@
  * Public widget embed auth (H6).
  * Stolen token cannot call database_query / Drive / admin APIs.
  * Until a pack is installed, auth is deny-all except token resolution.
+ * Tenant comes from the site key hash — body org_id is ignored.
  */
 import { createHash } from 'crypto';
 import { NextResponse } from 'next/server';
 import { pool, getOrgScopedClient } from '@/lib/db';
+import { parseAllowedOrigins } from '@/lib/widget-embed';
 
 export const WIDGET_ALLOWLIST = ['listings.search'] as const;
 export type WidgetAllowlistedTool = (typeof WIDGET_ALLOWLIST)[number];
@@ -23,6 +25,14 @@ export function extractBearerToken(request: Request): string | null {
   const url = new URL(request.url);
   const q = url.searchParams.get('token') || url.searchParams.get('embed_token');
   return q && q.trim() ? q.trim() : null;
+}
+
+/** Public JSON bodies may include org_id; never use it for tenancy. */
+export function ignoreBodyOrgId(body: Record<string, unknown> | null | undefined): void {
+  if (!body) return;
+  void body.org_id;
+  void body.orgId;
+  void body.organizationId;
 }
 
 export async function resolveWidgetOrg(token: string): Promise<string | null> {
@@ -52,6 +62,61 @@ export async function resolveWidgetOrg(token: string): Promise<string | null> {
   } catch {
     return null;
   }
+}
+
+export async function loadWidgetAllowedOrigins(orgId: string): Promise<string[]> {
+  const { client } = await getOrgScopedClient(orgId);
+  try {
+    const res = await client.query(
+      `SELECT meta FROM channels WHERE org_id = $1 AND channel_type = 'widget' LIMIT 1`,
+      [orgId]
+    );
+    const meta = (res.rows[0]?.meta || {}) as Record<string, unknown>;
+    return parseAllowedOrigins(meta.allowed_origins);
+  } catch {
+    return [];
+  } finally {
+    client.release();
+  }
+}
+
+export function requestOrigin(request: Request): string | null {
+  const origin = (request.headers.get('origin') || '').trim();
+  return origin || null;
+}
+
+export function originAllowed(origin: string | null, allowlist: string[]): boolean {
+  if (!origin) return true;
+  if (allowlist.length === 0 || allowlist.includes('*')) return true;
+  return allowlist.includes(origin);
+}
+
+export function applyWidgetCors(request: Request, headers: Headers, allowedOrigins?: string[]): void {
+  const origin = requestOrigin(request);
+  if (!origin) return;
+  const list = allowedOrigins || [];
+  if (list.length > 0 && !list.includes('*') && !list.includes(origin)) return;
+  headers.set('Access-Control-Allow-Origin', origin);
+  headers.set('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  headers.set('Access-Control-Allow-Headers', 'Authorization, Content-Type');
+  headers.set('Access-Control-Max-Age', '86400');
+  headers.set('Vary', 'Origin');
+}
+
+export function withWidgetCors(
+  request: Request,
+  response: Response,
+  allowedOrigins?: string[]
+): NextResponse {
+  const headers = new Headers(response.headers);
+  applyWidgetCors(request, headers, allowedOrigins);
+  return new NextResponse(response.body, { status: response.status, headers });
+}
+
+export function widgetPreflight(request: Request): NextResponse {
+  const res = new NextResponse(null, { status: 204 });
+  applyWidgetCors(request, res.headers, ['*']);
+  return res;
 }
 
 export async function orgHasInstalledPack(orgId: string): Promise<boolean> {
@@ -110,12 +175,29 @@ export function widgetForbidden(message: string): NextResponse {
   );
 }
 
-export async function requireWidgetOrg(request: Request): Promise<
-  { ok: true; orgId: string; token: string } | { ok: false; response: NextResponse }
-> {
+export type WidgetAuthOk = { ok: true; orgId: string; token: string; allowedOrigins: string[] };
+export type WidgetAuthErr = { ok: false; response: NextResponse };
+
+export async function requireWidgetOrg(request: Request): Promise<WidgetAuthOk | WidgetAuthErr> {
   const token = extractBearerToken(request);
-  if (!token) return { ok: false, response: widgetUnauthorized() };
+  if (!token) {
+    return { ok: false, response: withWidgetCors(request, widgetUnauthorized(), ['*']) };
+  }
   const orgId = await resolveWidgetOrg(token);
-  if (!orgId) return { ok: false, response: widgetUnauthorized() };
-  return { ok: true, orgId, token };
+  if (!orgId) {
+    return { ok: false, response: withWidgetCors(request, widgetUnauthorized(), ['*']) };
+  }
+  const allowedOrigins = await loadWidgetAllowedOrigins(orgId);
+  const origin = requestOrigin(request);
+  if (!originAllowed(origin, allowedOrigins)) {
+    return {
+      ok: false,
+      response: withWidgetCors(
+        request,
+        NextResponse.json({ error: 'Forbidden', connected: false }, { status: 403 }),
+        allowedOrigins
+      ),
+    };
+  }
+  return { ok: true, orgId, token, allowedOrigins };
 }

@@ -146,6 +146,8 @@ export function isAuthenticatedPublicPath(pathname: string): boolean {
 
 export function isPublicApiPath(pathname: string): boolean {
   if (pathname.startsWith('/api/webhooks/')) return true;
+  // H6 public chat widget — tenant is the embed site key, not a session cookie.
+  if (pathname.startsWith('/api/widget')) return true;
   if (!pathname.startsWith('/api/auth/')) return false;
   if (pathname === '/api/auth/session') return true;
   if (pathname === '/api/auth/logout' || pathname === '/api/auth/signout') return true;

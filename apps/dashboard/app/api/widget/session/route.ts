@@ -1,25 +1,42 @@
 import { NextResponse } from 'next/server';
 import { persistInboundMessage } from '@/lib/channel-normalize';
-import { orgHasInstalledPack, requireWidgetOrg, widgetForbidden } from '../_lib';
+import {
+  ignoreBodyOrgId,
+  orgHasInstalledPack,
+  requireWidgetOrg,
+  widgetForbidden,
+  widgetPreflight,
+  withWidgetCors,
+} from '../_lib';
 
 /**
  * POST /api/widget/session
  * Public embed token → session (conversation). Deny-all until a pack is installed.
+ * Body org_id is ignored; tenant is the site key.
  */
+export const dynamic = 'force-dynamic';
+
+export async function OPTIONS(request: Request) {
+  return widgetPreflight(request);
+}
+
 export async function POST(request: Request) {
   const auth = await requireWidgetOrg(request);
   if (!auth.ok) return auth.response;
 
   const pack = await orgHasInstalledPack(auth.orgId);
   if (!pack) {
-    return widgetForbidden('Widget is deny-all until a pack is installed.');
+    return withWidgetCors(
+      request,
+      widgetForbidden('Widget is deny-all until a pack is installed.'),
+      auth.allowedOrigins
+    );
   }
 
   let contactHint = 'widget-visitor';
   try {
     const body = (await request.json()) as Record<string, unknown>;
-    void body.org_id;
-    void body.orgId;
+    ignoreBodyOrgId(body);
     if (typeof body.visitorId === 'string' && body.visitorId.trim()) {
       contactHint = body.visitorId.trim().slice(0, 80);
     }
@@ -37,9 +54,13 @@ export async function POST(request: Request) {
     extraMeta: { surface: 'widget' },
   });
 
-  return NextResponse.json({
-    sessionId: persisted.conversationId,
-    conversationId: persisted.conversationId,
-    allowlist: ['listings.search'],
-  });
+  return withWidgetCors(
+    request,
+    NextResponse.json({
+      sessionId: persisted.conversationId,
+      conversationId: persisted.conversationId,
+      allowlist: ['listings.search'],
+    }),
+    auth.allowedOrigins
+  );
 }
