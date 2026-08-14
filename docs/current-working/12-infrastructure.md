@@ -5,6 +5,106 @@ from repo root (compose file under `infra/`).
 
 Live compose has **19** services (older docs say 15).
 
+## Docker compose service map
+
+```mermaid
+graph TB
+  subgraph App["Application"]
+    Dashboard["dashboard :3000<br/>(Next.js)"]
+    Worker["worker<br/>(Temporal worker)"]
+    Inbox["inbox :3004<br/>(Express proxy)"]
+  end
+
+  subgraph Core["Core Services"]
+    Postgres["postgres :5432<br/>(Postgres 16 + pgvector)"]
+    Temporal["temporal :7233<br/>(Workflow server)"]
+    TemporalUI["temporal-ui :8233"]
+    Redis["redis :6379<br/>(sessions)"]
+  end
+
+  subgraph Auth["Auth & Config"]
+    ST["supertokens :3567"]
+    Nango["nango-server :3003<br/>(OAuth vault)"]
+  end
+
+  subgraph Agent["Agent & Tools"]
+    AtomicAgent["atomic-agent :8787<br/>(localhost only)"]
+    Bridge["atomic-bridge :8790<br/>(localhost only)"]
+    Sandbox["sandbox :8080<br/>(internal only)"]
+  end
+
+  subgraph LLM["LLM & Routing"]
+    LiteLLM["litellm :4000<br/>→ OpenRouter"]
+  end
+
+  subgraph Observability["Observability"]
+    Langfuse["langfuse-server :3002"]
+    ClickHouse["langfuse-clickhouse :8123/9000<br/>(trace store)"]
+    Minio["langfuse-minio :9090/9091<br/>(S3 blobs)"]
+    LangfuseRedis["langfuse-redis<br/>(BullMQ)"]
+    LangfuseWorker["langfuse-worker<br/>(async persist)"]
+  end
+
+  Dashboard --> Postgres
+  Dashboard --> Redis
+  Dashboard --> Temporal
+  Dashboard --> ST
+  Dashboard --> Nango
+  Dashboard --> LiteLLM
+  Dashboard --> Langfuse
+  Dashboard --> Inbox
+
+  Worker --> Temporal
+  Worker --> AtomicAgent
+  Worker --> Bridge
+  Worker --> Postgres
+  Worker --> Langfuse
+
+  AtomicAgent --> LiteLLM
+  Bridge --> Sandbox
+
+  Temporal --> Postgres
+
+  Langfuse --> ClickHouse
+  Langfuse --> Minio
+  Langfuse --> LangfuseRedis
+  LangfuseWorker --> Langfuse
+  LangfuseWorker --> ClickHouse
+```
+
+## Data flow: compose setup
+
+```mermaid
+flowchart TD
+  EnvFiles["Env files<br/>(.env, .env.local)"]
+  ComposeFile["docker-compose.yml<br/>(services defined)"]
+  Build["pnpm infra:up"]
+
+  Build --> ParseEnv["Parse env"]
+  Build --> ParseCompose["Parse compose"]
+
+  ParseEnv --> Postgres["postgres<br/>DB initialization"]
+  ParseEnv --> Redis["redis<br/>data volume"]
+  ParseEnv --> Langfuse["langfuse setup<br/>(ClickHouse + Minio)"]
+  ParseEnv --> Nango["nango<br/>DB + migrations"]
+  ParseEnv --> LiteLLM["litellm<br/>config.yaml"]
+  ParseEnv --> ST["supertokens<br/>API_KEY validation"]
+
+  Postgres --> Migration["Run migrations<br/>(001-011)"]
+  Migration --> Ready1["darex DB ready"]
+
+  Langfuse --> Ready2["Langfuse ready"]
+  Nango --> Ready3["Nango ready"]
+  LiteLLM --> Ready4["LiteLLM routing ready"]
+  ST --> Ready5["SuperTokens ready"]
+
+  Ready1 --> Dashboard["Dashboard<br/>(depends_on postgres)"]
+  Ready1 --> Worker["Worker<br/>(depends_on temporal + postgres)"]
+  Ready4 --> AtomicAgent["atomic-agent<br/>(LiteLLM provider)"]
+  Dashboard --> Run["Services running<br/>pnpm infra:logs"]
+  Worker --> Run
+```
+
 ## Services
 
 | Service | Host port | Job | Health |
