@@ -91,3 +91,4 @@ crash.*.log
 *.tfvars
 !*.tfvars.example
 infra/terraform/backend.hcl
+.setup-done

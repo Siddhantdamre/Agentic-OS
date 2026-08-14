@@ -18,6 +18,13 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$ROOT"
 
+# Ensure setup is complete before starting
+SETUP_MARKER="$ROOT/.setup-done"
+if [ ! -f "$SETUP_MARKER" ]; then
+  echo "Setup not complete. Running setup.sh first..."
+  bash "$ROOT/setup.sh" || exit 1
+fi
+
 DO_BUILD=1
 DO_DEV=0
 DO_SEED=0
