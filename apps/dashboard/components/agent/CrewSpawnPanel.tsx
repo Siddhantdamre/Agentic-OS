@@ -48,9 +48,8 @@ export const CrewSpawnPanel: React.FC = () => {
       }
       setResult(data);
       setPrompt('');
-    } catch (err) {
-      console.error('Failed to spawn crew:', err);
-      setError('Crew spawn failed');
+    } catch (err: any) {
+      setError(err?.message || 'Crew spawn failed');
     } finally {
       setRunning(false);
     }

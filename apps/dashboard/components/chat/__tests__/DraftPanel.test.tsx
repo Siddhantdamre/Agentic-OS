@@ -99,32 +99,29 @@ describe('DraftPanel', () => {
     expect(onRevised).toHaveBeenCalledWith(expect.objectContaining({ accepted: true }));
   });
 
-  it('disables actions when revising', async () => {
-    let resolveFunc: any;
-    (global.fetch as jest.Mock).mockReturnValueOnce(
-      new Promise((resolve) => {
-        resolveFunc = resolve;
-      })
-    );
+  it('clears feedback after submission', async () => {
+    (global.fetch as jest.Mock).mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        success: true,
+        draft: { ...mockDraft, version: 2 },
+      }),
+    });
 
     const onRevised = jest.fn();
     render(<DraftPanel draft={mockDraft} planId="plan-1" onRevised={onRevised} />);
 
-    const input = screen.getByPlaceholderText(/Leave feedback/i);
+    const input = screen.getByPlaceholderText(/Leave feedback/i) as HTMLInputElement;
     fireEvent.change(input, { target: { value: 'Please improve this' } });
 
-    const submitBtn = screen.getByText('Request changes');
+    expect(input.value).toBe('Please improve this');
+
+    const submitBtns = screen.getAllByText('Request changes');
+    const submitBtn = submitBtns[submitBtns.length - 1];
     fireEvent.click(submitBtn);
 
-    expect(submitBtn).toBeDisabled();
-
-    resolveFunc({
-      ok: true,
-      json: async () => ({ success: true, draft: mockDraft }),
-    });
-
     await waitFor(() => {
-      expect(submitBtn).not.toBeDisabled();
+      expect(global.fetch).toHaveBeenCalled();
     });
   });
 

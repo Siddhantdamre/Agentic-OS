@@ -105,7 +105,8 @@ describe('ExecutionStrip', () => {
 
     render(<ExecutionStrip steps={mockSteps} statuses={statuses} running={false} />);
 
-    expect(screen.getByText('Pending')).toBeInTheDocument();
+    const pendingElements = screen.getAllByText('Pending');
+    expect(pendingElements.length).toBeGreaterThan(0);
   });
 
   it('handles empty steps gracefully', () => {

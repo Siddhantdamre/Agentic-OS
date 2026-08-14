@@ -39,8 +39,8 @@ export const AutonomousActionConsole: React.FC = () => {
         setLogs((prev) => [data.result, ...prev]);
         setActionInput('');
       }
-    } catch (err) {
-      console.error('Failed to run autonomous action:', err);
+    } catch (err: any) {
+      setError(err?.message || 'Failed to run autonomous action');
     } finally {
       setExecuting(false);
     }
@@ -101,6 +101,14 @@ export const AutonomousActionConsole: React.FC = () => {
           );
         })}
       </div>
+
+      {/* Error Display */}
+      {error && (
+        <div className="p-3.5 bg-red-50 border border-red-200 rounded-2xl text-xs text-red-700 flex items-start space-x-2">
+          <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+          <span>{error}</span>
+        </div>
+      )}
 
       {/* Action Logs Feed */}
       <div className="space-y-3">

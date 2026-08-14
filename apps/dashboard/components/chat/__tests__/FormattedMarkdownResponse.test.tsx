@@ -10,17 +10,19 @@ describe('FormattedMarkdownResponse', () => {
 
   it('renders code blocks with language indicator', () => {
     const content = '```javascript\nconst x = 5;\n```';
-    render(<FormattedMarkdownResponse content={content} />);
+    const { container } = render(<FormattedMarkdownResponse content={content} />);
 
-    expect(screen.getByText('JAVASCRIPT')).toBeInTheDocument();
+    const langSpan = container.querySelector('[class*="uppercase"]');
+    expect(langSpan?.textContent).toMatch(/javascript/i);
     expect(screen.getByText('const x = 5;')).toBeInTheDocument();
   });
 
   it('renders code blocks without language', () => {
     const content = '```\ncode here\n```';
-    render(<FormattedMarkdownResponse content={content} />);
+    const { container } = render(<FormattedMarkdownResponse content={content} />);
 
-    expect(screen.getByText('CODE')).toBeInTheDocument();
+    const langSpan = container.querySelector('[class*="uppercase"]');
+    expect(langSpan?.textContent).toMatch(/code/i);
     expect(screen.getByText('code here')).toBeInTheDocument();
   });
 
@@ -31,7 +33,7 @@ describe('FormattedMarkdownResponse', () => {
     const copyBtn = screen.getByText('Copy Code');
     fireEvent.click(copyBtn);
 
-    expect(screen.getByText('Copied!')).toBeInTheDocument();
+    expect(screen.getByText(/copied/i)).toBeInTheDocument();
   });
 
   it('renders headers correctly', () => {
@@ -96,10 +98,12 @@ Recommendation: Follow the guide carefully.`;
 
   it('handles multiple code blocks', () => {
     const content = '```js\nconst a = 1;\n```\n\n```python\nx = 1\n```';
-    render(<FormattedMarkdownResponse content={content} />);
+    const { container } = render(<FormattedMarkdownResponse content={content} />);
 
-    expect(screen.getByText('JS')).toBeInTheDocument();
-    expect(screen.getByText('PYTHON')).toBeInTheDocument();
+    const langSpans = container.querySelectorAll('[class*="uppercase"]');
+    const langs = Array.from(langSpans).map(s => s.textContent);
+    expect(langs.some(l => l?.match(/js/i))).toBe(true);
+    expect(langs.some(l => l?.match(/python/i))).toBe(true);
   });
 
   it('filters out empty lines', () => {

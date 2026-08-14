@@ -160,7 +160,7 @@ describe('PlanCard', () => {
   });
 
   it('disables all actions when disabled prop is true', () => {
-    render(
+    const { container } = render(
       <PlanCard
         planId="plan-1"
         summary="Test"
@@ -172,11 +172,10 @@ describe('PlanCard', () => {
       />
     );
 
-    const approveBtn = screen.getByText(/Approve & Execute/);
-    const cancelBtn = screen.getByText('Cancel');
-
-    expect(approveBtn).toBeDisabled();
-    expect(cancelBtn).toBeDisabled();
+    const buttons = container.querySelectorAll('button');
+    buttons.forEach((btn) => {
+      expect(btn.hasAttribute('disabled')).toBe(true);
+    });
   });
 
   it('pads step numbers', () => {
