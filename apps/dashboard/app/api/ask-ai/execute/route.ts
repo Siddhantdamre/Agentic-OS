@@ -272,8 +272,8 @@ export async function GET(request: Request) {
                 try {
                   const payload = wireDependencies(step, results);
                   const result = await executeAutonomousToolAction({
-                    tool: step.tool,
-                    action: step.action,
+                    tool: step.tool || '',
+                    action: step.action || '',
                     payload,
                     orgId,
                     toolAllowlist: planTools,
