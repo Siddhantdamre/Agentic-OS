@@ -142,15 +142,15 @@ export const ActionPermissionCard: React.FC<ActionPermissionCardProps> = ({
           </div>
           <div className="bg-slate-50 rounded-xl border border-slate-100 p-4 space-y-3">
             <div className="flex items-center">
-              <span className="w-1/3 text-xs text-slate-500">Operation</span>
-              <span className="w-2/3 text-xs font-mono font-medium text-slate-900 bg-white px-2 py-1 rounded border border-slate-200 inline-block w-auto">
+              <span className="text-xs text-slate-500 min-w-fit">Operation</span>
+              <span className="text-xs font-mono font-medium text-slate-900 bg-white px-2 py-1 rounded border border-slate-200">
                 {actionData.action}
               </span>
             </div>
             {Object.entries(actionData.params).map(([key, val]) => (
-              <div key={key} className="flex items-start">
-                <span className="w-1/3 text-xs text-slate-500 pt-1 capitalize">{key}</span>
-                <span className="w-2/3 text-xs font-mono text-slate-700 bg-white px-2 py-1 rounded border border-slate-200 block break-words">
+              <div key={key} className="flex items-start gap-4">
+                <span className="text-xs text-slate-500 pt-1 capitalize min-w-fit">{key}</span>
+                <span className="text-xs font-mono text-slate-700 bg-white px-2 py-1 rounded border border-slate-200 break-words flex-1">
                   {String(val)}
                 </span>
               </div>
