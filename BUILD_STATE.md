@@ -2,6 +2,21 @@
 
 > Source of truth for agent context across sessions. Read this before starting any phase.
 
+Plan status audit **2026-08-14:** Immediate/Near scaffolding is largely in code. Remaining work is in `docs/plan/README.md` (ops creds, inbound retrieve activity, WorkItem HITL wait, RE live-verify).
+
+H6 public widget embed (2026-08-14): `/embed/widget.js` + Settings snippet. Persist inbound → 200 → `fireInboundAgent`. Tenant from site key hash, never body `org_id`.
+
+---
+
+## C6 Wave B leftovers — Zoho / Leegality / QuickBooks (2026-08-14)
+
+- New executors: `services/workflows/src/tools/zoho.ts`, `leegality.ts`, `quickbooks.ts`.
+- MCP: `mcp.darex.zoho_*`, `leegality_*`, `quickbooks_*`. Registry keys in `tools/index.ts` (allowlist same as other connectors — not always-allowed).
+- Seed: `connector_defs_wave_ab.sql` keys `zoho-crm`, `leegality`, `quickbooks`. No org_connectors rows; never mark connected from seed.
+- Honesty: disconnected → `status:'error'` + `connected:false` + `/connectors`. Goldens in `infra/evals/honesty-connectors.yaml`. Live module test `wave-b-c6-honesty.test.ts`.
+- Connected happy path needs live Nango OAuth (Zoho/QuickBooks) or Leegality BYOK `X-Auth-Token`. No committed secrets / fake client IDs.
+- C6 leftovers **done** as executors; live creds **ops-blocked**. Zoho Books / Pipedrive / FUB still out.
+
 ---
 
 ## Runtime Fixes — Tool Allowlist, Code Sandbox, Langfuse v3 (2026-08-13)

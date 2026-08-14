@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getScopedClient } from '@/lib/db';
 import { runAutonomousAgentDirect } from '@darex/workflows/dist/atomic-agent-client';
+import { retrieveMemory } from '@darex/workflows/dist/memory/retrieve';
 import { triggerAutonomousAgentWorkflow } from '@darex/workflows/dist/workflow-client';
 import { channelTypesFromRows, mergeRuntimeAllowlist } from '@darex/workflows/dist/tool-executor';
 import { logLangfuseTrace } from '@/lib/langfuse-trace';
@@ -69,6 +70,12 @@ export async function POST(request: Request) {
     }
 
     const { userMessage, employeeId, conversationId, channelId } = body;
+    const retrievedMemory = await retrieveMemory({
+      orgId,
+      query: userMessage,
+      employeeId: typeof employeeId === 'string' ? employeeId : undefined,
+      conversationId: typeof conversationId === 'string' ? conversationId : undefined,
+    });
     const agentInput = {
       orgId,
       conversationId,
@@ -96,7 +103,7 @@ export async function POST(request: Request) {
     }
 
     if (!result) {
-      result = await runAutonomousAgentDirect(agentInput);
+      result = await runAutonomousAgentDirect(agentInput, { retrievedMemory });
       console.log('[Agent Run] Task executed via direct atomic-agent loop');
     }
 

@@ -2,7 +2,7 @@ import http from 'http';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js';
 import { z } from 'zod';
-import { executeAutonomousToolAction } from './tool-executor.js';
+import { executeAutonomousToolAction, resolveToolRisk } from './tool-executor.js';
 
 const PORT = parseInt(process.env.ATOMIC_BRIDGE_PORT || '8790', 10);
 const SSE_ENDPOINT = '/sse';
@@ -14,6 +14,8 @@ interface ToolDef {
   schema: Record<string, z.ZodTypeAny>;
   tool: string;
   action: string;
+  risk?: string;
+  confirm?: boolean;
 }
 
 const TOOLS: ToolDef[] = [
@@ -324,7 +326,7 @@ const TOOLS: ToolDef[] = [
   {
     name: 'database_query',
     description:
-      'Run a read-only SELECT query against the org-scoped business database (RLS enforced). Returns up to 25 rows.',
+      'Run a read-only SELECT query against the org-scoped business database (RLS enforced). Returns up to 25 rows. Prefer metrics.query for KPIs such as Unworked inquiries.',
     schema: { org_id: z.string(), sql: z.string() },
     tool: 'database_query',
     action: 'query',
@@ -574,6 +576,386 @@ const TOOLS: ToolDef[] = [
     tool: 'google-analytics',
     action: 'analytics_report',
   },
+  {
+    name: 'outlook_list_messages',
+    description: 'List recent messages from the org-connected Microsoft Outlook mailbox.',
+    schema: { org_id: z.string(), count: z.number().optional() },
+    tool: 'microsoft-outlook',
+    action: 'list_messages',
+  },
+  {
+    name: 'outlook_draft_email',
+    description: 'Create an Outlook draft (does NOT send) for the org-connected Microsoft account.',
+    schema: {
+      org_id: z.string(),
+      to: z.string(),
+      subject: z.string(),
+      body: z.string(),
+      cc: z.string().optional(),
+    },
+    tool: 'microsoft-outlook',
+    action: 'draft_email',
+  },
+  {
+    name: 'outlook_send',
+    description: 'Send an email from the org-connected Microsoft Outlook account. Confirm class send.',
+    schema: {
+      org_id: z.string(),
+      to: z.string(),
+      subject: z.string(),
+      body: z.string(),
+      cc: z.string().optional(),
+    },
+    tool: 'microsoft-outlook',
+    action: 'send_email',
+  },
+  {
+    name: 'outlook_calendar_list_events',
+    description: 'List upcoming events from the org-connected Outlook Calendar.',
+    schema: {
+      org_id: z.string(),
+      startTime: z.string().optional(),
+      endTime: z.string().optional(),
+    },
+    tool: 'microsoft-calendar',
+    action: 'list_events',
+  },
+  {
+    name: 'outlook_calendar_create_event',
+    description: 'Create an event on the org-connected Outlook Calendar.',
+    schema: {
+      org_id: z.string(),
+      summary: z.string(),
+      startTime: z.string(),
+      endTime: z.string().optional(),
+      description: z.string().optional(),
+      location: z.string().optional(),
+      timeZone: z.string().optional(),
+      attendees: z.array(z.string()).optional(),
+    },
+    tool: 'microsoft-calendar',
+    action: 'create_event',
+  },
+  {
+    name: 'outlook_calendar_check_availability',
+    description: 'Find free slots on the org-connected Outlook Calendar.',
+    schema: {
+      org_id: z.string(),
+      startTime: z.string().optional(),
+      endTime: z.string().optional(),
+      durationMinutes: z.number().optional(),
+      dayStart: z.string().optional(),
+      dayEnd: z.string().optional(),
+    },
+    tool: 'microsoft-calendar',
+    action: 'check_availability',
+  },
+  {
+    name: 'salesforce_list_contacts',
+    description: 'List contacts from the org-connected Salesforce org.',
+    schema: { org_id: z.string(), count: z.number().optional(), email: z.string().optional() },
+    tool: 'salesforce',
+    action: 'list_contacts',
+  },
+  {
+    name: 'salesforce_create_contact',
+    description: 'Create a Contact in the org-connected Salesforce org.',
+    schema: {
+      org_id: z.string(),
+      lastName: z.string().optional(),
+      firstName: z.string().optional(),
+      email: z.string().optional(),
+      phone: z.string().optional(),
+      accountId: z.string().optional(),
+    },
+    tool: 'salesforce',
+    action: 'create_contact',
+  },
+  {
+    name: 'salesforce_create_lead',
+    description: 'Create a Lead in the org-connected Salesforce org.',
+    schema: {
+      org_id: z.string(),
+      lastName: z.string(),
+      company: z.string(),
+      firstName: z.string().optional(),
+      email: z.string().optional(),
+      phone: z.string().optional(),
+    },
+    tool: 'salesforce',
+    action: 'create_lead',
+  },
+  {
+    name: 'docusign_list_envelopes',
+    description: 'List envelopes from the org-connected DocuSign account.',
+    schema: { org_id: z.string(), fromDate: z.string().optional() },
+    tool: 'docusign',
+    action: 'list_envelopes',
+  },
+  {
+    name: 'docusign_create_envelope',
+    description: 'Create a DocuSign draft envelope (does NOT send). Requires a real document.',
+    schema: {
+      org_id: z.string(),
+      signerEmail: z.string().optional(),
+      signerName: z.string().optional(),
+      emailSubject: z.string().optional(),
+      documentText: z.string().optional(),
+      documentBase64: z.string().optional(),
+      documentName: z.string().optional(),
+    },
+    tool: 'docusign',
+    action: 'create_envelope',
+  },
+  {
+    name: 'docusign_send_envelope',
+    description: 'Send a DocuSign envelope for signature. Confirm class sign. Requires a real document.',
+    schema: {
+      org_id: z.string(),
+      signerEmail: z.string().optional(),
+      signerName: z.string().optional(),
+      emailSubject: z.string().optional(),
+      documentText: z.string().optional(),
+      documentBase64: z.string().optional(),
+      documentName: z.string().optional(),
+    },
+    tool: 'docusign',
+    action: 'send_envelope',
+  },
+  {
+    name: 'maps_geocode',
+    description: 'Geocode an address via Google Maps Geocoding API (GOOGLE_MAPS_API_KEY).',
+    schema: { org_id: z.string(), address: z.string() },
+    tool: 'maps',
+    action: 'geocode',
+  },
+  {
+    name: 'maps_reverse_geocode',
+    description: 'Reverse-geocode coordinates via Google Maps Geocoding API.',
+    schema: {
+      org_id: z.string(),
+      latlng: z.string().optional(),
+      lat: z.number().optional(),
+      lng: z.number().optional(),
+    },
+    tool: 'maps',
+    action: 'reverse_geocode',
+  },
+  {
+    name: 'twilio_send_sms',
+    description: 'Send an SMS via the org-connected Twilio account. Confirm class send.',
+    schema: {
+      org_id: z.string(),
+      to: z.string(),
+      body: z.string(),
+      from: z.string().optional(),
+    },
+    tool: 'twilio',
+    action: 'send_sms',
+  },
+  {
+    name: 'twilio_list_messages',
+    description: 'List recent SMS messages from the org-connected Twilio account.',
+    schema: { org_id: z.string(), count: z.number().optional() },
+    tool: 'twilio',
+    action: 'list_messages',
+  },
+  {
+    name: 'zoho_list_contacts',
+    description: 'List contacts from the org-connected Zoho CRM account.',
+    schema: { org_id: z.string(), count: z.number().optional(), email: z.string().optional() },
+    tool: 'zoho-crm',
+    action: 'list_contacts',
+  },
+  {
+    name: 'zoho_create_contact',
+    description: 'Create a Contact in the org-connected Zoho CRM account.',
+    schema: {
+      org_id: z.string(),
+      lastName: z.string().optional(),
+      firstName: z.string().optional(),
+      email: z.string().optional(),
+      phone: z.string().optional(),
+    },
+    tool: 'zoho-crm',
+    action: 'create_contact',
+  },
+  {
+    name: 'zoho_create_lead',
+    description: 'Create a Lead in the org-connected Zoho CRM account.',
+    schema: {
+      org_id: z.string(),
+      lastName: z.string(),
+      company: z.string(),
+      firstName: z.string().optional(),
+      email: z.string().optional(),
+      phone: z.string().optional(),
+    },
+    tool: 'zoho-crm',
+    action: 'create_lead',
+  },
+  {
+    name: 'leegality_list_documents',
+    description: 'List e-sign documents from the org-connected Leegality account.',
+    schema: { org_id: z.string(), count: z.number().optional(), irn: z.string().optional(), search: z.string().optional() },
+    tool: 'leegality',
+    action: 'list_documents',
+  },
+  {
+    name: 'leegality_create_document',
+    description: 'Create a Leegality e-sign request (confirm class sign). Requires a real document and workflow profileId. Leegality has no draft envelope.',
+    schema: {
+      org_id: z.string(),
+      profileId: z.string().optional(),
+      signerEmail: z.string().optional(),
+      signerName: z.string().optional(),
+      signerPhone: z.string().optional(),
+      documentText: z.string().optional(),
+      documentBase64: z.string().optional(),
+      documentName: z.string().optional(),
+      irn: z.string().optional(),
+    },
+    tool: 'leegality',
+    action: 'create_document',
+  },
+  {
+    name: 'leegality_send_document',
+    description: 'Send a Leegality e-sign request. Confirm class sign. Requires a real document — Darex will not invent contract contents.',
+    schema: {
+      org_id: z.string(),
+      profileId: z.string().optional(),
+      signerEmail: z.string().optional(),
+      signerName: z.string().optional(),
+      signerPhone: z.string().optional(),
+      documentText: z.string().optional(),
+      documentBase64: z.string().optional(),
+      documentName: z.string().optional(),
+      irn: z.string().optional(),
+    },
+    tool: 'leegality',
+    action: 'send_document',
+  },
+  {
+    name: 'quickbooks_list_customers',
+    description: 'List customers from the org-connected QuickBooks company.',
+    schema: { org_id: z.string(), count: z.number().optional(), email: z.string().optional() },
+    tool: 'quickbooks',
+    action: 'list_customers',
+  },
+  {
+    name: 'quickbooks_create_customer',
+    description: 'Create a Customer in the org-connected QuickBooks company.',
+    schema: {
+      org_id: z.string(),
+      displayName: z.string().optional(),
+      firstName: z.string().optional(),
+      lastName: z.string().optional(),
+      email: z.string().optional(),
+      phone: z.string().optional(),
+    },
+    tool: 'quickbooks',
+    action: 'create_customer',
+  },
+  {
+    name: 'quickbooks_list_invoices',
+    description: 'List invoices from the org-connected QuickBooks company. Never invents invoice rows.',
+    schema: { org_id: z.string(), count: z.number().optional() },
+    tool: 'quickbooks',
+    action: 'list_invoices',
+  },
+  {
+    name: 'metrics_query',
+    description:
+      'Query registered semantic metrics by id (e.g. core.inquiries_unworked / Unworked inquiries). Prefer this over raw database_query for KPIs. Numbers match the YAML SQL definitions under RLS.',
+    schema: {
+      org_id: z.string(),
+      metricIds: z.array(z.string()).optional(),
+      ids: z.array(z.string()).optional(),
+      query: z.string().optional(),
+      from: z.string().optional(),
+      to: z.string().optional(),
+    },
+    tool: 'metrics',
+    action: 'query',
+  },
+  {
+    name: 'metrics_list',
+    description: 'List registered semantic metric ids and aliases (Unworked inquiries, open conversations, etc.).',
+    schema: { org_id: z.string() },
+    tool: 'metrics',
+    action: 'list',
+  },
+  {
+    name: 're_listings_search',
+    description:
+      'Search org listing projection / Sheets inventory with structured filters (BHK, locality, maxPrice). Returns only stored rows. Zero matches does not invent inventory. Never scrape portals.',
+    schema: {
+      org_id: z.string(),
+      bhk: z.union([z.number(), z.string()]).optional(),
+      locality: z.string().optional(),
+      city: z.string().optional(),
+      area: z.string().optional(),
+      maxPrice: z.union([z.number(), z.string()]).optional(),
+      spreadsheetId: z.string().optional(),
+    },
+    tool: 're',
+    action: 'listings_search',
+  },
+  {
+    name: 're_listings_get',
+    description: 'Get one listing by id or source_ref from this org projection. Does not invent units.',
+    schema: {
+      org_id: z.string(),
+      id: z.string().optional(),
+      listingId: z.string().optional(),
+      sourceRef: z.string().optional(),
+    },
+    tool: 're',
+    action: 'listings_get',
+  },
+  {
+    name: 're_inquiry_create',
+    description: 'Create a re.inquiry row for this org. Does not mark connectors connected.',
+    schema: {
+      org_id: z.string(),
+      listingId: z.string().optional(),
+      contactId: z.string().optional(),
+      channel: z.string().optional(),
+      bhk: z.union([z.number(), z.string()]).optional(),
+      locality: z.string().optional(),
+      budget_max: z.union([z.number(), z.string()]).optional(),
+    },
+    tool: 're',
+    action: 'inquiry_create',
+  },
+  {
+    name: 're_showing_book',
+    description:
+      'Book a showing. Uses Google Calendar when connected; otherwise notConnected and not booked.',
+    schema: {
+      org_id: z.string(),
+      listingId: z.string().optional(),
+      inquiryId: z.string().optional(),
+      startTime: z.string(),
+      endTime: z.string().optional(),
+      summary: z.string().optional(),
+    },
+    tool: 're',
+    action: 'showing_book',
+  },
+  {
+    name: 'rera_lookup',
+    description:
+      'Look up a RERA id in the official cache (URL + retrieved_at). Never invents a registration number. Not a legal opinion.',
+    schema: {
+      org_id: z.string(),
+      rera_id: z.string().optional(),
+      reraId: z.string().optional(),
+      market: z.string().optional(),
+    },
+    tool: 'rera',
+    action: 'lookup',
+  },
 ];
 
 function createServer(): McpServer {
@@ -584,6 +966,9 @@ function createServer(): McpServer {
 
   for (const toolDef of TOOLS) {
     const { name, description, schema, tool, action } = toolDef;
+    const riskMeta = resolveToolRisk(tool, action);
+    toolDef.risk = riskMeta?.risk;
+    toolDef.confirm = riskMeta?.confirm;
     server.registerTool(name, {
       description,
       inputSchema: schema as any,

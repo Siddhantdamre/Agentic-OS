@@ -5,6 +5,10 @@ pack quality bar in `03` §11 for **Core B2B** and
 **real-estate-brokerage**. It is **not** every P3 connector, every
 Wave 4 vertical, or a public skill store.
 
+**Audit 2026-08-14: PARTIAL.** DSR, auditor, SSO routes, marketplace
+preview exist. Missing: test IdP proof, residency design, SCIM.
+Phases 16–18 remain pull.
+
 Linked from [00-phase-map.md](./00-phase-map.md) and
 [../00-executive-summary.md](../00-executive-summary.md).
 Documentation only.
@@ -68,7 +72,7 @@ These can trail Phase 15 without blocking the “complete OS” label
 if dated exceptions exist in current-working:
 
 - I7 split ingest host (later).
-- H4 Instagram / SMS; H6 public chat widget.
+- H4 Instagram / SMS (routes exist; provider go-live). H6 public chat widget **done**.
 - C7+ later CRM/MLS licenses that may never exist — Sheets wedge
   remains the honesty bar.
 - A5 / B4 promotion loop polish.

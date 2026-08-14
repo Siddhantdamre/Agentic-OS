@@ -72,6 +72,8 @@ InstallPackWorkflow, InsightActionWorkflow.
 
 ## 3. Gaps
 
+**Audit 2026-08-14:** O1–O6 **done**. O7 **done** (PlanExecute + WorkItem inbound `condition()` wait **before send/pay/sign tools**; conversation `needs_attention` while waiting). Compensation still `needs_attention`.
+
 | Item | Status |
 |------|--------|
 | Ask AI plan-confirm-execute + parallel steps | **done** |
@@ -79,7 +81,7 @@ InstallPackWorkflow, InsightActionWorkflow.
 | Chatwoot → agent | **done** (not WorkItem yet) |
 | `work_items` / `work_events` | **missing** |
 | WorkItemWorkflow | **missing** |
-| Temporal signal for approve | **missing** (HTTP PATCH today) |
+| Temporal signal for approve | **done** (PlanExecute + WorkItem inbound `condition()`) |
 | Scheduled briefing / stale chase | **missing** |
 | Playbook matcher | **missing** |
 | Nurture timers + cancel on reply | **missing** |

@@ -46,6 +46,9 @@ stop), unlicensed MLS extracts.
 
 ## 3. Gaps
 
+**Audit 2026-08-14:** K1/K3/K4 **done**. K2 **partial** (virus-scan
+stub). K5 RERA public tool exists.
+
 | Item | Status |
 |------|--------|
 | Message persist | **done** |

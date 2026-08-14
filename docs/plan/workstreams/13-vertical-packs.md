@@ -48,6 +48,11 @@ Never invent price, RERA, inventory, or “payment received”.
 
 ## 3. Gaps
 
+**Audit 2026-08-14:** P1/P2 **done**. P3 **partial** (UI scheduling
+wired 2026-08-14; `pack.yaml` `live: false` until §11 Calendar +
+live DB listing evals are green). P4–P5 **deferred** (RFC).
+`packs/RFC-wave-2-4.md`.
+
 Everything pack-shaped is **missing** except the default roster
 and onboarding business-type field. **Never ship RE before
 Phase 6 memory.**

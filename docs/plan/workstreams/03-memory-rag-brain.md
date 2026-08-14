@@ -74,6 +74,10 @@ GraphRAG on the webhook, dedicated vector DB in Phase 6.
 
 ## 3. Gaps
 
+**Audit 2026-08-14:** M1–M5 **done**. M6 **partial** (eval YAML
+exists; parent `retrieveMemoryActivity` now calls `retrieveMemory`;
+live eval still needs a migrated DB). AGE **deferred**.
+
 | Item | Status |
 |------|--------|
 | pgvector extension | **done** |

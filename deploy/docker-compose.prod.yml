@@ -1,17 +1,23 @@
 # Production overlay for infra/docker-compose.yml.
-# Callers: deploy/deploy.sh. Bind admin/data ports to loopback so they are
-# not on the public internet. Put Caddy/nginx in front of 127.0.0.1:3000.
+# Callers: deploy/deploy.sh (via infra/scripts/compose-cmd.sh --overlay).
+# Bind admin/data ports to loopback so they are not on the public internet.
+# Put Caddy/nginx in front of 127.0.0.1:3000.
 #
-#   docker compose --env-file .env \
-#     -f infra/docker-compose.yml \
-#     -f deploy/docker-compose.prod.yml up -d
+#   bash infra/scripts/compose-cmd.sh --overlay deploy/docker-compose.prod.yml up -d
 #
-# Does not replace Terraform / multi-instance (those are still unbuilt).
+# File order: kernel → compose-snippets → this overlay (later wins).
+# PgBouncer is in the kernel (darex-pgbouncer, host 127.0.0.1:6432).
+# Single-host compose + Caddy remains the supported production path.
 
 services:
   postgres:
     ports:
       - "127.0.0.1:5432:5432"
+    restart: always
+
+  pgbouncer:
+    ports:
+      - "127.0.0.1:6432:5432"
     restart: always
 
   temporal:
@@ -69,6 +75,9 @@ services:
 
   atomic-bridge:
     restart: always
+    environment:
+      - DAREX_PROD_FAILFAST=true
+      - DB_USER=darex_app
 
   atomic-agent:
     restart: always
@@ -83,6 +92,10 @@ services:
 
   worker:
     restart: always
+    environment:
+      - DAREX_PROD_FAILFAST=true
+      - DB_USER=darex_app
+      - ALLOW_DEMO_AUTH=false
 
   dashboard:
     ports:
@@ -91,3 +104,5 @@ services:
     environment:
       - NEXT_PUBLIC_APP_URL=${NEXT_PUBLIC_APP_URL}
       - ALLOW_DEMO_AUTH=false
+      - DB_USER=darex_app
+      - DAREX_PROD_FAILFAST=true

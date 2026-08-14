@@ -145,7 +145,10 @@ export function isAuthenticatedPublicPath(pathname: string): boolean {
 }
 
 export function isPublicApiPath(pathname: string): boolean {
+  if (pathname === '/api/health') return true;
   if (pathname.startsWith('/api/webhooks/')) return true;
+  // H6 public chat widget — tenant is the embed site key, not a session cookie.
+  if (pathname.startsWith('/api/widget')) return true;
   if (!pathname.startsWith('/api/auth/')) return false;
   if (pathname === '/api/auth/session') return true;
   if (pathname === '/api/auth/logout' || pathname === '/api/auth/signout') return true;
@@ -153,6 +156,7 @@ export function isPublicApiPath(pathname: string): boolean {
   if (pathname === '/api/auth/signup' || pathname === '/api/auth/register') return true;
   if (pathname === '/api/auth/forgot-password' || pathname === '/api/auth/reset-password') return true;
   if (pathname.startsWith('/api/auth/oauth/')) return true;
+  if (pathname.startsWith('/api/auth/sso')) return true;
   if (pathname.startsWith('/api/auth/invite/')) return true;
   return false;
 }

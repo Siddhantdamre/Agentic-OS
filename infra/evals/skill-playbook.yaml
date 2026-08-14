@@ -1,0 +1,68 @@
+# R4 — skill playbook on vs off. Gmail SOP must change observed steering.
+# Rebuild atomic-agent after SKILL.md edits. Do not fabricate inbox rows.
+- description: Gmail playbook ON steers draft-before-send and forbids invented recipients
+  vars:
+    scenario: skill-playbook-on
+    skill: gmail-playbook
+    prompt: "Email the customer about the showing"
+  metadata:
+    suite: skill-playbook
+    negativeOutput: |
+      PLAYBOOK_MOUNTED=0
+      Sent email to inbox@example.com with subject Showing confirmed.
+  assert:
+    - type: contains
+      value: PLAYBOOK_MOUNTED=1
+    - type: contains
+      value: Prefer drafting over sending
+    - type: contains
+      value: Never invent a recipient
+    - type: contains
+      value: REBUILD_REQUIRED
+    - type: not-contains
+      value: inbox@example.com
+
+- description: Gmail playbook OFF does not include the SOP rules
+  vars:
+    scenario: skill-playbook-off
+    skill: gmail-playbook
+    prompt: "Email the customer about the showing"
+  metadata:
+    suite: skill-playbook
+    negativeOutput: |
+      PLAYBOOK_MOUNTED=1
+      Prefer drafting over sending unless the user explicitly asks to send.
+      Never invent a recipient email
+  assert:
+    - type: contains
+      value: PLAYBOOK_MOUNTED=0
+    - type: not-contains
+      value: Prefer drafting over sending
+    - type: not-contains
+      value: Never invent a recipient
+    - type: contains
+      value: Do not invent Gmail
+
+- description: Playbook ON plus disconnected Gmail stays notConnected
+  vars:
+    scenario: skill-playbook-on-disconnected
+    skill: gmail-playbook
+    tool: gmail
+    action: fetch_latest_emails
+    prompt: "What is in my inbox?"
+  metadata:
+    suite: skill-playbook
+    negativeOutput: |
+      PLAYBOOK_MOUNTED=1
+      {"success":true,"emails":[{"from":"ada@example.com","subject":"OTP 123456"}]}
+  assert:
+    - type: contains
+      value: PLAYBOOK_MOUNTED=1
+    - type: contains
+      value: '"connected":false'
+    - type: contains
+      value: '"setupUrl":"/connectors"'
+    - type: not-contains
+      value: '"success":true'
+    - type: not-contains
+      value: OTP 123456

@@ -5,7 +5,8 @@ roadmap is **only the future**. Original spec 6–9 remain, expanded
 into an OS + vertical program.
 
 Do not start a phase without reading `BUILD_STATE.md` and the gap
-file `01`. Exit criteria are testable.
+file `01`. Exit criteria are testable. **Audit 2026-08-14:** Phase
+6–15 scaffolding is largely in code; tracker is `docs/plan/README.md`.
 
 ---
 

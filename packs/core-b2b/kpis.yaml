@@ -1,0 +1,8 @@
+metrics:
+  - id: core.inquiries_unworked
+    insightCopy: Unworked inquiries waiting more than 2 hours.
+    recommendedAction: Open Conversations and chase threads with no assistant reply.
+  - id: core.needs_attention
+    insightCopy: Threads marked needs_attention in SQL.
+  - id: core.conversations_open
+    insightCopy: Open conversation count from SQL, not a forecast.

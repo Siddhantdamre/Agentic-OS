@@ -215,8 +215,9 @@ org’s workflow.
 
 ## J13 — Real estate inquiry → match → showing (target)
 
-**Today:** Missing. No `re.listing`. Do not demo this before
-M6.
+**Today (2026-08-14):** Pack + `re_listings` projection + listings/inquiries
+UI can start `ShowingScheduleWorkflow`. Goldens in
+`infra/evals/re-brokerage.yaml`. Pack is **not** `live`.
 
 **Complete:** WhatsApp “2BHK in X under Y” filters the sheet
 first, then optional vector. Zero matches does not invent.

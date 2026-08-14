@@ -1,4 +1,4 @@
-# Atomic Agent — Local-first agent runtime (pinned release v0.1.73)
+# Atomic Agent — Local-first agent runtime (pinned release v0.1.72)
 # Builds from source (Node >= 25.7 required) and runs `atomic-agent serve`.
 #
 # Build:
@@ -15,7 +15,7 @@ RUN apt-get update \
   && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /src
-ARG ATOMIC_AGENT_TAG=v0.1.73
+ARG ATOMIC_AGENT_TAG=v0.1.72
 RUN git clone --depth 1 --branch "${ATOMIC_AGENT_TAG}" \
       https://github.com/AtomicBot-ai/atomic-agent.git .
 

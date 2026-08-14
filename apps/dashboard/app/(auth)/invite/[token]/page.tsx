@@ -5,11 +5,13 @@ import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
 import { Loader2 } from 'lucide-react';
 
+type InviteStatus = 'loading' | 'preview' | 'error' | 'accepting' | 'expired' | 'accepted';
+
 export default function InviteAcceptPage() {
   const params = useParams<{ token: string }>();
   const router = useRouter();
   const token = params?.token || '';
-  const [status, setStatus] = useState<'loading' | 'preview' | 'error' | 'accepting'>('loading');
+  const [status, setStatus] = useState<InviteStatus>('loading');
   const [message, setMessage] = useState('');
   const [orgName, setOrgName] = useState('');
   const [email, setEmail] = useState('');
@@ -28,7 +30,13 @@ export default function InviteAcceptPage() {
       if (!inviteRes.ok) {
         const err = await inviteRes.json().catch(() => ({ error: 'Invite not found' }));
         setMessage(err.error || 'Invite not found');
-        setStatus('error');
+        if (inviteRes.status === 410 || err.expired) {
+          setStatus('expired');
+        } else if (inviteRes.status === 409) {
+          setStatus('accepted');
+        } else {
+          setStatus('error');
+        }
         return;
       }
       const invite = await inviteRes.json();
@@ -36,7 +44,7 @@ export default function InviteAcceptPage() {
       setEmail(invite.email);
       setStatus('preview');
     }
-    if (token) load();
+    if (token) void load();
     return () => {
       cancelled = true;
     };
@@ -48,6 +56,10 @@ export default function InviteAcceptPage() {
     if (!res.ok) {
       const err = await res.json().catch(() => ({ error: 'Could not accept invite' }));
       setMessage(err.error || 'Could not accept invite');
+      if (res.status === 410 || err.expired) {
+        setStatus('expired');
+        return;
+      }
       setStatus('error');
       return;
     }
@@ -58,8 +70,17 @@ export default function InviteAcceptPage() {
     <div className="space-y-5 text-center">
       <h1 className="text-xl font-bold text-emerald-50">Organization invite</h1>
       {status === 'loading' && <Loader2 className="w-6 h-6 animate-spin mx-auto text-[#F0C05A]" />}
-      {status === 'error' && (
-        <p className="text-sm text-red-300">{message}</p>
+      {status === 'error' && <p className="text-sm text-red-300">{message}</p>}
+      {status === 'expired' && (
+        <div className="space-y-2">
+          <p className="text-sm text-red-300">{message || 'This invite has expired.'}</p>
+          <p className="text-xs text-emerald-300/80">
+            Ask an admin to send a new invite. An expired link cannot add you to an organization.
+          </p>
+        </div>
+      )}
+      {status === 'accepted' && (
+        <p className="text-sm text-emerald-200/80">{message || 'This invite was already accepted.'}</p>
       )}
       {(status === 'preview' || status === 'accepting') && (
         <>
@@ -70,7 +91,7 @@ export default function InviteAcceptPage() {
           {authenticated ? (
             <button
               type="button"
-              onClick={accept}
+              onClick={() => void accept()}
               disabled={status === 'accepting'}
               className="w-full py-3 bg-[#F0C05A] text-[#121917] font-bold text-xs rounded-2xl disabled:opacity-50"
             >

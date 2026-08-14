@@ -38,6 +38,7 @@ import {
   Cloud,
 } from 'lucide-react';
 import { disconnectProvider, startRealNangoOAuth } from '@/lib/nango-client';
+import { LiveRegion, StatusBadge } from '@/components/a11y';
 
 interface Integration {
   id: string;
@@ -204,9 +205,10 @@ export default function IntegrationsPage() {
   const filteredLogs = logs.filter((log) => !selectedApp || log.channel_type === selectedApp.id);
 
   return (
-    <div className="max-w-7xl mx-auto space-y-8">
+    <div className="max-w-7xl mx-auto space-y-8 pb-20 md:pb-8">
+      <LiveRegion message={notification?.message || ''} />
       {/* Header Bar */}
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
         <div>
           <h1 className="text-3xl font-serif font-bold text-heading">Integrations & Connectors</h1>
           <p className="text-slate-500 text-sm mt-1">
@@ -238,10 +240,10 @@ export default function IntegrationsPage() {
       )}
 
       {/* 4-Stat Header Bar */}
-      <div className="grid grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <div className="bg-cream-200/70 border border-cream-300 p-5 rounded-2xl space-y-1 shadow-sm">
           <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Connected Apps</span>
-          <div className="text-3xl font-bold text-heading">{stats.connectedApps} / {integrations.length || 17}</div>
+          <div className="text-3xl font-bold text-heading">{stats.connectedApps} / {integrations.length}</div>
           <span className="text-xs text-emerald-600 font-medium">Nango OAuth active</span>
         </div>
 
@@ -265,7 +267,7 @@ export default function IntegrationsPage() {
       </div>
 
       {/* Grid of 7 Integration Cards */}
-      <div className="grid grid-cols-3 gap-6">
+      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-6">
         {integrations.map((app) => {
           const Icon = ICON_MAP[app.id] || Layers;
           const isBusy = connectingId === app.id;
@@ -288,16 +290,11 @@ export default function IntegrationsPage() {
                   </div>
                 </div>
 
-                {app.connected ? (
-                  <span className="flex items-center space-x-1 px-3 py-1 bg-emerald-500/10 text-emerald-700 text-xs font-bold rounded-full">
-                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
-                    <span>Connected</span>
-                  </span>
-                ) : (
-                  <span className="px-3 py-1 bg-slate-100 text-slate-500 text-xs font-medium rounded-full">
-                    Disconnected
-                  </span>
-                )}
+                <StatusBadge
+                  label={app.connected ? 'Connected' : 'Disconnected'}
+                  tone={app.connected ? 'success' : 'neutral'}
+                  icon={app.connected ? 'connected' : 'plug'}
+                />
               </div>
 
               <p className="text-xs text-slate-600 leading-relaxed">{app.desc}</p>

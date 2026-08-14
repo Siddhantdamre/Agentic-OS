@@ -15,7 +15,7 @@ Sources: `docs/future-scope/15-open-source-research-landscape.md`
 §1 and §14; `14-build-principles.md`; current-working runtime.
 
 Darex already runs the KEEP kernel: Postgres+RLS, pgvector, Nango,
-Temporal, atomic-agent v0.1.73, MCP bridge, LiteLLM, Langfuse,
+Temporal, atomic-agent v0.1.72, MCP bridge, LiteLLM, Langfuse,
 SuperTokens, Redis, Chatwoot-thin, Next.js, Jina, Docker sandbox.
 
 Closed rejects already paid for: left LangGraph/Hermes; never
@@ -32,6 +32,9 @@ REJECT (closed decision).
 ---
 
 ## 3. Gaps
+
+**Audit 2026-08-14:** L1–L5 **done** (CI deny-list; Promptfoo YAML;
+hybrid retrieve; PgBouncer).
 
 Policy exists in future-scope. This plan must apply it so
 implementers do not add Mastra/Mem0/CrewAI as a kernel.

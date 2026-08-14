@@ -49,7 +49,7 @@ Notes:
 - Builds `@darex/connectors` + `@darex/workflows`; runs `node dist/mcp-bridge.js` (SSE server on 8790).
 
 ### `infra/docker/atomic-agent/Dockerfile` (tag `darex-atomic-agent`)
-- **Builds atomic-agent from source**: `node:25-bookworm`, `git clone --depth 1 --branch v0.1.73 https://github.com/AtomicBot-ai/atomic-agent.git`, `npm ci`, `npm run build`. Requires Node ≥ 25.7.
+- **Builds atomic-agent from source**: `node:25-bookworm`, `git clone --depth 1 --branch v0.1.72 https://github.com/AtomicBot-ai/atomic-agent.git`, `npm ci`, `npm run build`. Requires Node ≥ 25.7.
 - Runner: `node:25-bookworm`, copies `dist/`, `grammars/`, `starter-skills/`, `assets/`, `node_modules/`, plus `render-config.mjs` and `entrypoint.sh`.
 - `ENTRYPOINT ./entrypoint.sh`, `CMD ["serve", "--host", "0.0.0.0", "--port", "8787", "--cwd", "/work"]`. State dir `/data` (volume `atomic-agent-data`), workdir `/work` (volume `atomic-agent-work`).
 

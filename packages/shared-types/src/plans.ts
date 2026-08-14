@@ -7,6 +7,8 @@ export interface ClassifyResult {
   confidence: number;
   usedFallback: boolean;
   model?: string;
+  /** Named pack playbook when the matcher/classifier is confident (O6). */
+  playbookId?: string | null;
 }
 
 export interface PlanStep {

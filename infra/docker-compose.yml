@@ -1,12 +1,29 @@
 ##############################################################################
-# Darex — Local Development Infrastructure
+# Darex — Local Development Infrastructure (compose KERNEL)
 # Phase 0: Postgres (pgvector) + Temporal + Nango + Langfuse
 #
+# Kernel: 20 services (19 + pgbouncer). Do not add a second compose kernel.
+#   postgres, pgbouncer, temporal, temporal-ui, redis, langfuse-redis, nango-server,
+#   langfuse-clickhouse, langfuse-minio, langfuse-minio-createbuckets,
+#   langfuse-server, langfuse-worker, supertokens, litellm, atomic-bridge,
+#   atomic-agent, sandbox, inbox, worker, dashboard
+#
+# Other workstreams add overlays at infra/compose-snippets/WS-XX.yml.
+# WS-23 merges those into this file. infra/scripts/compose-cmd.sh also
+# passes any unmerged snippets as extra -f files (kernel first).
+# Merged this pass: WS-02 (darex_app on dashboard/worker/atomic-bridge),
+# WS-12 (Langfuse Redis keepalive / ClickHouse ulimits / ingest batch),
+# WS-11 (dashboard REDIS_URL → Nango redis:6379 for SSE; never langfuse-redis),
+# WS-04 (worker embed env via LiteLLM; no new broker; webhook path must not fail-fast).
+# langfuse-redis is Langfuse-only — never the SSE bus (use `redis` / I3).
+# Wave 3: pgbouncer (session pool, darex_app only). Migrations still hit postgres:5432.
+#
 # Usage:
-#   docker-compose up -d          # start all services
-#   docker-compose logs -f        # stream logs
-#   docker-compose down           # stop (preserve data volumes)
-#   docker-compose down -v        # stop + wipe all data volumes (reset)
+#   pnpm infra:up                 # compose-cmd.sh (kernel + snippets)
+#   docker compose -f infra/docker-compose.yml up -d
+#   docker compose logs -f
+#   docker compose down           # stop (preserve data volumes)
+#   docker compose down -v        # stop + wipe all data volumes (reset)
 ##############################################################################
 
 networks:
@@ -53,6 +70,39 @@ services:
       retries: 10
     networks:
       - darex-net
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # PgBouncer (I4) — session pooling in front of the darex DB only.
+  # pool_mode=session so SET app.current_org_id (RLS) still holds.
+  # Dashboard/worker/bridge pool max remains 10 in app code.
+  # Temporal / Nango / Langfuse / SuperTokens / LiteLLM stay on postgres:5432.
+  # Migrations still connect to postgres:5432 as superuser darex.
+  # ─────────────────────────────────────────────────────────────────────────
+  pgbouncer:
+    image: edoburu/pgbouncer:v1.23.1-p1
+    container_name: darex-pgbouncer
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "6432:5432"
+    environment:
+      DATABASE_URL: postgres://darex_app:${APP_DB_PASSWORD:-darex_app_dev_secret}@postgres:5432/darex
+      AUTH_TYPE: scram-sha-256
+      POOL_MODE: session
+      MAX_CLIENT_CONN: "200"
+      DEFAULT_POOL_SIZE: "25"
+      LISTEN_PORT: "5432"
+      ADMIN_USERS: darex_app
+    networks:
+      - darex-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -p 5432 -U darex_app -d darex"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
 
   # ─────────────────────────────────────────────────────────────────────────
   # Temporal (auto-setup image bundles server + frontend + Cassandra-free)
@@ -103,7 +153,8 @@ services:
       - darex-net
 
   # ─────────────────────────────────────────────────────────────────────────
-  # Redis — required by Nango for job queues
+  # Redis — Nango job queues. Future SSE / needs_attention bus (I3 / WS-11)
+  # must use THIS instance (or a dedicated bus Redis). Never langfuse-redis.
   # ─────────────────────────────────────────────────────────────────────────
   redis:
     image: redis:7-alpine
@@ -119,10 +170,28 @@ services:
       timeout: 3s
       retries: 10
 
+  # Dedicated Langfuse BullMQ Redis (WS-12 / A1). Isolated from Nango and
+  # from the dashboard SSE bus — do not point REDIS_URL / realtime-hub here.
   langfuse-redis:
     image: redis:7-alpine
     container_name: darex-langfuse-redis
     restart: unless-stopped
+    command:
+      - redis-server
+      - --appendonly
+      - "no"
+      - --save
+      - ""
+      - --maxmemory
+      - 256mb
+      - --maxmemory-policy
+      - noeviction
+      - --tcp-keepalive
+      - "60"
+      - --timeout
+      - "0"
+      - --tcp-backlog
+      - "511"
     networks:
       - darex-net
     healthcheck:
@@ -181,12 +250,17 @@ services:
     ports:
       - "8123:8123"   # HTTP
       - "9000:9000"   # Native
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
     volumes:
       - langfuse-clickhouse-data:/var/lib/clickhouse
     environment:
       - CLICKHOUSE_DB=langfuse
       - CLICKHOUSE_USER=langfuse
       - CLICKHOUSE_PASSWORD=langfuse_dev_secret
+      - CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT=1
     healthcheck:
       test: ["CMD-SHELL", "clickhouse-client --user langfuse --password langfuse_dev_secret --query 'SELECT 1'"]
       interval: 10s
@@ -256,6 +330,8 @@ services:
       REDIS_PORT: "6379"
       REDIS_URL: redis://langfuse-redis:6379
       REDIS_CONNECTION_STRING: redis://langfuse-redis:6379
+      REDIS_SOCKET_TIMEOUT_MS: "30000"
+      LANGFUSE_INGESTION_QUEUE_DELAY_MS: "5000"
       NEXTAUTH_URL: http://localhost:3002
       NEXTAUTH_SECRET: darex-langfuse-nextauth-secret-dev
       SALT: darex-langfuse-salt-dev-change-in-prod
@@ -315,6 +391,10 @@ services:
       REDIS_PORT: "6379"
       REDIS_URL: redis://langfuse-redis:6379
       REDIS_CONNECTION_STRING: redis://langfuse-redis:6379
+      REDIS_SOCKET_TIMEOUT_MS: "30000"
+      LANGFUSE_INGESTION_QUEUE_DELAY_MS: "5000"
+      LANGFUSE_INGESTION_CLICKHOUSE_WRITE_INTERVAL_MS: "1000"
+      LANGFUSE_INGESTION_CLICKHOUSE_WRITE_BATCH_SIZE: "1000"
       SALT: darex-langfuse-salt-dev-change-in-prod
       CLICKHOUSE_URL: http://darex-langfuse-clickhouse:8123
       CLICKHOUSE_MIGRATION_URL: clickhouse://langfuse:langfuse_dev_secret@darex-langfuse-clickhouse:9000/langfuse
@@ -414,12 +494,19 @@ services:
         condition: service_healthy
       nango-server:
         condition: service_healthy
+      pgbouncer:
+        condition: service_healthy
     ports:
       - "127.0.0.1:8790:8790"   # MCP SSE endpoint (localhost only)
     environment:
       # Inside Docker the DB and Nango are reachable by service name.
-      # `environment` wins over env_file.
-      - DB_HOST=postgres
+      # `environment` wins over env_file. Runtime role is darex_app (WS-02);
+      # migrations still use superuser darex on postgres:5432.
+      # App traffic goes through pgbouncer (session pool, I4).
+      - DB_HOST=pgbouncer
+      - DB_PORT=5432
+      - DB_USER=${APP_DB_USER:-darex_app}
+      - DB_PASSWORD=${APP_DB_PASSWORD:-darex_app_dev_secret}
       - NANGO_HOST=http://nango-server:3003
     env_file:
       - path: ../.env
@@ -442,7 +529,7 @@ services:
   # ─────────────────────────────────────────────────────────────────────────
   # Atomic Agent — Local-first AI agent (OpenAI-compatible HTTP serve)
   # Replaces the legacy Hermes agent. Full agent loop + memory fabric +
-  # MCP tool bridge lives here. Pinned release v0.1.73 (Node >= 25.7).
+  # MCP tool bridge lives here. Pinned release v0.1.72 (Node >= 25.7).
   # ─────────────────────────────────────────────────────────────────────────
   atomic-agent:
     build:
@@ -554,10 +641,12 @@ services:
         condition: service_healthy
       atomic-agent:
         condition: service_healthy
+      pgbouncer:
+        condition: service_healthy
     environment:
-      # `environment` wins over env_file.
+      # `environment` wins over env_file. Runtime role is darex_app (WS-02).
       - TEMPORAL_ADDRESS=temporal:7233
-      - DB_HOST=postgres
+      - DB_HOST=pgbouncer
       - DB_USER=${APP_DB_USER:-darex_app}
       - DB_PORT=5432
       - DB_NAME=${DB_NAME:-darex}
@@ -572,6 +661,13 @@ services:
       - LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY:-pk-lf-darex-dev-public}
       - LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY:-sk-lf-darex-dev-secret}
       - JINA_API_KEY=${JINA_API_KEY:-}
+      # WS-04 / M2: embed activity on this worker (not a new broker).
+      # Production fail if EMBEDDING_MODEL unset is this process, not webhooks.
+      - EMBEDDING_MODEL=${EMBEDDING_MODEL:-text-embedding-3-small}
+      - EMBEDDING_DIM=${EMBEDDING_DIM:-1536}
+      - LITELLM_BASE_URL=${LITELLM_BASE_URL:-http://litellm:4000/v1}
+      - LITELLM_API_KEY=${LITELLM_API_KEY:-}
+      - LITELLM_MASTER_KEY=${LITELLM_MASTER_KEY:-}
     env_file:
       - path: ../.env
         required: false
@@ -606,15 +702,21 @@ services:
         condition: service_healthy
       atomic-agent:
         condition: service_healthy
+      redis:
+        condition: service_healthy
+      pgbouncer:
+        condition: service_healthy
     ports:
-      - "3000:3000"
+      - "${DASHBOARD_PORT:-3000}:3000"
     environment:
-      # `environment` wins over env_file.
-      - DB_HOST=postgres
+      # `environment` wins over env_file. Runtime role is darex_app (WS-02).
+      # SSE bus (WS-11 / I3): Nango redis — NEVER langfuse-redis.
+      - DB_HOST=pgbouncer
       - DB_USER=${APP_DB_USER:-darex_app}
       - DB_PORT=5432
       - DB_NAME=${DB_NAME:-darex}
       - DB_PASSWORD=${APP_DB_PASSWORD:-darex_app_dev_secret}
+      - REDIS_URL=redis://redis:6379
       - NANGO_HOST=http://nango-server:3003
       - TEMPORAL_ADDRESS=temporal:7233
       - SUPERTOKENS_CONNECTION_URI=http://supertokens:3567
@@ -627,6 +729,11 @@ services:
       - LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY:-pk-lf-darex-dev-public}
       - LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY:-sk-lf-darex-dev-secret}
       - CHATWOOT_WEBHOOK_SECRET=${CHATWOOT_WEBHOOK_SECRET:-}
+      # WS-04: enqueue may pass model/dim; webhook/request path must not fail
+      # if EMBEDDING_MODEL is unset (worker owns that fail-fast).
+      - EMBEDDING_MODEL=${EMBEDDING_MODEL:-text-embedding-3-small}
+      - EMBEDDING_DIM=${EMBEDDING_DIM:-1536}
+      - LITELLM_BASE_URL=${LITELLM_BASE_URL:-http://litellm:4000/v1}
     env_file:
       - path: ../.env
         required: false

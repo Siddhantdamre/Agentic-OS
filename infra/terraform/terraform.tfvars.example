@@ -1,0 +1,19 @@
+# Copy to terraform.tfvars (gitignored). Placeholders only — never commit secrets.
+
+aws_region        = "ap-south-1"
+vpc_cidr          = "10.20.0.0/16"
+db_instance_class = "db.t3.medium"
+name_prefix       = "darex"
+environment       = "staging"
+
+# Uncomment and set locally. Do not put real passwords in this example.
+# db_master_password = "replace-in-uncommitted-tfvars"
+# app_db_password    = "replace-in-uncommitted-tfvars"
+
+# Set to enable ACM + ALB. Leave empty to skip HTTPS resources.
+domain_name     = ""
+route53_zone_id = ""
+
+# Billing (B2) and SSO (S7) secret *values* are not Terraform variables.
+# After apply, paste DAREX_STRIPE_* / DAREX_RAZORPAY_* and SUPERTOKENS_SAML_*
+# into the darex-billing / darex-sso Secrets Manager shells. See .env.example.

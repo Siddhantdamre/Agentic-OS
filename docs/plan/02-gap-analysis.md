@@ -1,17 +1,18 @@
 # 02 — Gap analysis
 
-Every future-scope capability versus the current-working baseline.
+Every future-scope capability versus **the code** (audit **2026-08-14**).
 Status values: **done**, **partial**, **missing**, **ops-blocked**
-(code ready, credentials or operator step missing).
+(code ready, credentials or operator step missing), **deferred**.
 
 Linked from [README.md](./README.md),
 [00-executive-summary.md](./00-executive-summary.md), and
 [01-current-state-baseline.md](./01-current-state-baseline.md).
 Documentation only. No application data files.
 
-If current-working and future-scope disagree on **what exists**,
-current-working wins. Section 0 lists those contradictions so we do
-not rebuild closed work.
+If docs and code disagree on **what exists**, **code wins**. Section 0
+lists future-scope claims absorbed before this audit; section 0.1
+lists plan items the 14 Aug tree closed. Narrative:
+[README.md](./README.md) audit summary.
 
 ---
 
@@ -40,7 +41,43 @@ column as truth.
 
 [`docs/future-scope/13-phased-roadmap.md`](../future-scope/13-phased-roadmap.md)
 Phase 6 “also hygiene” and Phase 9 bullets must be read through this
-table. The plan’s immediate phase only keeps what is still open.
+table.
+
+---
+
+## 0.1 Plan items closed in code after the 13 Aug snapshot
+
+The 13 Aug plan marked Phase 6–15 as **missing**. The tree now has
+migrations **012–020** and matching workflows/UI. Do not rebuild.
+
+| Plan id | Evidence | Status |
+|---------|----------|--------|
+| M1 | `infra/db/migrations/013_memory_rag.sql` | **done** |
+| M2 | `services/workflows/src/activities/embed.ts`, `EmbedWorkflow` | **done** (never on webhook thread) |
+| M3 / R2 | `memory/retrieve.ts`; Ask AI, `/api/agent/run`, `runAgentTurnActivity` | **done** on those paths |
+| M4 | `MemoryWriteBackWorkflow` + `activities/memory-writeback.ts` | **done** |
+| M5 / U3 | `/brain` page + `/api/brain` | **done** |
+| M6 | `infra/evals/phase6-returning-contact.yaml`; parent `retrieveMemoryActivity` calls `retrieveMemory` | **partial** — eval exists; live eval not green on a migrated DB |
+| O1–O6 | work_items, WorkItemWorkflow wrap, PlanExecute, briefing/stale-chase/nurture, playbook matcher | **done** |
+| O7 | Signals + `condition()` wait on PlanExecute and WorkItem inbound send/pay/sign **tools** (not only the channel reply) | **done** |
+| C3 / C4 / C5 | `014_connector_registry.sql`, `tools/*.ts`, Outlook | **done** |
+| C6 | Salesforce, Zoho CRM, DocuSign, Leegality, Maps, Twilio, QuickBooks | **done** as executors (2026-08-14 leftovers). Live OAuth/BYOK **ops-blocked**. |
+| K1–K4 | Ingest/Sync workflows, `metrics.ts` | **partial** (virus-scan stub) / K4 **done** |
+| I3 / I4 / H7 / S1 | Redis bus, PgBouncer, `darex_app` | **done** |
+| S2 / S3 / S5 / S6 | inbound-confirm, audit_events, boot-guards, DSR | **done** |
+| S7 | `/api/auth/sso/*` + `SUPERTOKENS_SAML_TEST_IDP` | **partial** — env wired; live IdP still human |
+| E2–E6 | router, critic, Research/Finance, @employee org-union, auditor | **done** |
+| U1 / U2 / U4 / U5 | citations, `/plans`, listings/inquiries, pack-recommendations | **done** |
+| P1 / P2 | `packs/core-b2b`, `InstallPackWorkflow` | **done** |
+| P3 | `packs/re-brokerage-in` | **partial** — UI can start ShowingSchedule / RentReminder; fixture evals runnable; pack not `live` until Calendar + migrated-DB verify |
+| A2–A5 / B4 | `infra/evals/`, insight enqueue, cost, promote | **done** as code |
+| B2 / B3 | `/api/billing/*` + `DAREX_STRIPE_*` / `DAREX_RAZORPAY_*` | **partial** — config wired; live PSP keys still human |
+| B5 | `marketplace-preview.md`, `/skills` | **done** as design-only |
+| L4 / L5 | CI deny-list | **done** |
+| H2 | `018_channel_key.sql` | **done** |
+| H3–H5 | gmail/instagram/sms/owner-whatsapp API routes | **partial** |
+| H6 | `/embed/widget.js` + Settings snippet + CORS | **done** |
+| I5 / I6 | `infra/terraform/`, restore-drill, alerting scripts | **partial** |
 
 ---
 
@@ -48,14 +85,14 @@ table. The plan’s immediate phase only keeps what is still open.
 
 From [`00-vision-ai-brain-os.md`](../future-scope/00-vision-ai-brain-os.md).
 
-| Layer | Today | Gap |
-|-------|-------|-----|
-| 1 Perception | WhatsApp + Chatwoot ingest; Gmail as tools not push; Jina web | Instagram, SMS, voice, Gmail push, unified channel object, sync workers, public-data connectors, file ingest pipeline |
-| 2 Memory | pgvector extension on; atomic-agent notes/profile scratch | **No org RAG.** No retrieve prefix, write-back, inspector, entity memory |
-| 3 Reasoning | simple vs complex classify; plan-confirm-execute; 3 Temporal turns | No specialist router, critic, scheduled briefing, event-triggered plans, playbook matcher, eval harness |
-| 4 Action | 62 MCP tools; allowlist; honest notConnected | No connector registry table; executor is one large file; missing P0 CRMs/e-sign/maps; no compensating transactions |
-| 5 Governance | Ask AI confirm; RLS; allowlists; webhook HMAC | Webhook path does not pause on `send`/`pay`/`sign`; no data-class tags; no SSO/SCIM; audit is `channel_logs` only |
-| 6 Learning | Langfuse ingestion fixed | No online eval, prompt registry, cost budgets, playbook promotion |
+| Layer | Today (2026-08-14) | Remaining gap |
+|-------|--------------------|---------------|
+| 1 Perception | WhatsApp + Chatwoot + widget embed + Gmail-push/IG/SMS routes | Provider go-live for Gmail/IG/SMS; voice **deferred** |
+| 2 Memory | RAG tables + hybrid retrieve + write-back + `/brain`; parent `retrieveMemoryActivity` | M6 live eval; AGE **deferred** |
+| 3 Reasoning | classify + plan-confirm-execute + router + critic + playbooks + named Temporal workflows + WorkItem HITL wait | Compensating txns |
+| 4 Action | Modular `tools/*`; registry; MCP includes Zoho/Leegality/QuickBooks | FUB / MLS / Pipedrive |
+| 5 Governance | Ask AI + webhook confirm; RLS; auditor; DSR; SSO routes | SSO IdP proof; residency design; SCIM |
+| 6 Learning | Langfuse ingest; eval YAML; thumbs → promote | ClickHouse flake; no cross-org training (correctly forbidden) |
 
 ---
 
@@ -66,12 +103,14 @@ From [`00-vision-ai-brain-os.md`](../future-scope/00-vision-ai-brain-os.md).
 | Capability | Source | Status |
 |------------|--------|--------|
 | atomic-agent tool loop | current `07` | **done** |
-| LiteLLM classify/plan/revise split | current `03`, BUILD_STATE | **done** |
-| MCP `mcp.darex.*` 62 tools | current `08` | **done** |
-| Skills mounted in image | current `07`/`16`; future `01` stale | **done** in tree; rebuild required |
-| Sandbox Docker context | current `12`/`16` | **partial** (untracked vs commit) |
-| Computer-use / browser-runner | future `08` §11, Phase 17 | **missing** |
-| Semantic `metrics.query` vs raw SQL | future `02` §5, `07` §8 | **missing** |
+| LiteLLM classify/plan/revise split | BUILD_STATE | **done** |
+| MCP `mcp.darex.*` | mcp-bridge (~85 tools) | **done** |
+| Skills mounted in image | Dockerfile COPY | **done** |
+| Sandbox Docker context | `infra/docker/sandbox/` | **done** |
+| `retrieveMemory` in grounded user message | `atomic-agent-client.ts` | **done** (Ask AI / run / child turn) |
+| Risk metadata on gateway | `tools/risk.ts` | **done** |
+| Semantic `metrics.query` | `tools/metrics.ts` | **done** |
+| Computer-use / browser-runner | future `08` §11, Phase 17 | **deferred** |
 
 ### Orchestration
 
@@ -79,31 +118,32 @@ From [`00-vision-ai-brain-os.md`](../future-scope/00-vision-ai-brain-os.md).
 |------------|--------|--------|
 | Ask AI plan-confirm-execute + parallel steps | current `03` | **done** |
 | Temporal `AutonomousAgentWorkflow` (3 turns, idempotency) | current `07` | **done** |
-| WorkItemWorkflow unifying inbound | future `09` | **missing** |
-| OwnerBriefingWorkflow | future `09` | **missing** |
-| StaleChaseWorkflow | future `09` | **missing** |
-| ShowingSchedule / RentReminder | future `05`/`09` | **missing** |
-| InstallPackWorkflow | future `03`/`09` | **missing** |
-| Playbook matcher (skip free-form plan) | future `09` §5 | **missing** |
-| Nurture timers | future `09` §7 | **missing** |
-| HITL as Temporal signal (not only PlanCard HTTP) | future `09` | **missing** |
-| Compensating transactions | future `01` action gaps | **missing** |
+| WorkItemWorkflow unifying inbound | future `09` | **done** (wrap) |
+| OwnerBriefingWorkflow | future `09` | **done** (code) |
+| StaleChaseWorkflow | future `09` | **done** (code) |
+| ShowingSchedule / RentReminder | future `05`/`09` | **partial** — workflows + `/listings` `/inquiries` UI + `/api/showings` `/api/rent-reminders`; Calendar-connected book not live-proven |
+| InstallPackWorkflow | future `03`/`09` | **done** |
+| Playbook matcher (skip free-form plan) | future `09` §5 | **done** |
+| Nurture timers | future `09` §7 | **done** |
+| HITL as Temporal signal (not only PlanCard HTTP) | future `09` | **done** — PlanExecute + WorkItem inbound `condition()` **before send/pay/sign tools** |
+| Compensating transactions | future `01` action gaps | **missing** — log + `needs_attention` |
 
 ### Memory / RAG / knowledge
 
 | Capability | Source | Status |
 |------------|--------|--------|
 | pgvector extension | current `11` | **done** |
-| `org_memory` / `entity_memory` / `conversation_memory` | future `10` | **missing** |
-| embed-worker + `EMBEDDING_MODEL` | future `02`/`10` | **missing** |
-| `retrieveMemory` on Ask AI + webhooks | future `10` §4 | **missing** |
-| MemoryWriteBack activity | future `10` §5 | **missing** |
-| `/brain` inspector | future `10` §6, `11` | **missing** |
-| Hybrid vector + FTS | future `10` §10 | **missing** |
-| Temporal fact columns | future `10` §10.2 | **missing** (Phase 6 optional columns) |
-| File parse → chunk → embed | future `07` | **missing** |
-| Sync cursors / ingest jobs | future `02`/`07` | **missing** |
-| Knowledge graph / AGE | future `02`/`07` | **missing** (after vectors) |
+| `org_memory` / `entity_memory` / `conversation_memory` | future `10` | **done** (`013_memory_rag.sql`) |
+| embed-worker + `EMBEDDING_MODEL` | future `02`/`10` | **done** |
+| `retrieveMemory` on Ask AI + webhook child turn | future `10` §4 | **done** |
+| retrieve on WorkItem parent activity | O2 + M3 | **done** |
+| MemoryWriteBack activity | future `10` §5 | **done** |
+| `/brain` inspector | future `10` §6, `11` | **done** |
+| Hybrid vector + FTS | future `10` §10 | **done** in `retrieve.ts` |
+| Temporal fact columns | future `10` §10.2 | **missing** (optional; do not block) |
+| File parse → chunk → embed | future `07` | **partial** — ingest workflow; virus-scan stub |
+| Sync cursors / ingest jobs | future `02`/`07` | **partial** |
+| Knowledge graph / AGE | future `02`/`07` | **deferred** — `memory_edges` only |
 
 ### Integrations
 
@@ -113,16 +153,18 @@ From [`00-vision-ai-brain-os.md`](../future-scope/00-vision-ai-brain-os.md).
 | Honest notConnected | current `08` | **done** |
 | Core Google workspace executors | current `08` | **done** (if connected) |
 | HubSpot/Slack/Notion/Stripe/Shopify/Zendesk/Intercom executors | current `08` | **ops-blocked** (Nango client IDs) |
-| GBP / Meet / GA4 / GSC / Chat / Cloud executors | current `08` vs future `06` | **done** as HTTP; UI catalog **partial** |
-| Connector registry tables | future `02` §4.3 | **missing** |
-| Split `tool-executor.ts` modules | future `02` §5 | **missing** |
-| Outlook / Teams / OneDrive | future `06` Wave B | **missing** |
-| Salesforce / Zoho CRM / Pipedrive | future `06` | **missing** |
-| DocuSign / Leegality | future `06` | **missing** |
-| Twilio / Exotel / Instagram | future `06` | **missing** |
-| Maps geocoding | future `06` | **missing** |
-| Follow Up Boss / RESO MLS | future `05`/`06` | **missing** |
-| QuickBooks / Zoho Books | future `06` | **missing** |
+| GBP / Meet / GA4 / GSC / Chat / Cloud executors | current `08` vs future `06` | **done** as HTTP |
+| Connector registry tables | future `02` §4.3 | **done** (`014_connector_registry.sql`) |
+| Split `tool-executor.ts` modules | future `02` §5 | **done** (`src/tools/*.ts`) |
+| Outlook / Teams / OneDrive | future `06` Wave B | **partial** — Outlook + MS Calendar |
+| Salesforce | future `06` | **done** as executor |
+| Zoho CRM / Pipedrive | future `06` | Zoho CRM **done** as executor; Pipedrive **missing** |
+| DocuSign | future `06` | **done** as executor |
+| Leegality | future `06` | **done** as executor (BYOK; live token ops) |
+| Twilio / Instagram | future `06` | **partial** — Twilio tool + SMS/IG webhooks |
+| Maps geocoding | future `06` | **done** |
+| Follow Up Boss / RESO MLS | future `05`/`06` | **missing** / **deferred** |
+| QuickBooks / Zoho Books | future `06` | QuickBooks **done** as executor; Zoho Books **missing** |
 
 ### Channels and surfaces
 
@@ -131,13 +173,13 @@ From [`00-vision-ai-brain-os.md`](../future-scope/00-vision-ai-brain-os.md).
 | WhatsApp inbound persist + agent | current `06` | **done** |
 | WhatsApp outbound Graph | current `06`/`14` | **ops-blocked** (expired token) |
 | Chatwoot ingest + agent | current `06` | **done** |
-| SSE inbox toast | current `06` | **partial** (one process) |
-| Redis pub/sub event bus | future `11` §3 | **missing** |
-| Gmail push inbound | future `11` | **missing** |
-| Web widget / Instagram / SMS / voice | future `11` | **missing** |
-| Owner WhatsApp (“text your business”) | future `11` §4 | **missing** |
-| `/brain`, listings, plans inbox | future `11` §2 | **missing** |
-| Mobile / a11y | future `11` §6, Phase 9 | **missing** |
+| SSE inbox + Redis bus | future `11` §3 | **done** (code; two-replica probe) |
+| Gmail push inbound | future `11` | **partial** — route; needs Pub/Sub |
+| Web widget / Instagram / SMS | future `11` | widget embed **done**; IG/SMS APIs **partial** |
+| Owner WhatsApp (“text your business”) | future `11` §4 | **partial** — distinct route; needs number |
+| `/brain`, listings, plans inbox | future `11` §2 | **done** |
+| Mobile / a11y | future `11` §6, Phase 9 | **partial** — `components/a11y/*` |
+| Voice | Phase 17 | **deferred** |
 
 ### Security / tenancy / org
 
@@ -145,15 +187,16 @@ From [`00-vision-ai-brain-os.md`](../future-scope/00-vision-ai-brain-os.md).
 |------------|--------|--------|
 | RLS + WITH CHECK | current `11` | **done** |
 | Session GUC + no body `org_id` | current `04`/`16` | **done** |
-| `darex_app` grants | current `11` | **partial** — app still uses superuser |
+| `darex_app` grants + runtime | current `11` | **done** (compose `DB_USER=darex_app`) |
 | Confirm on Ask AI plans | current `03` | **done** |
-| Confirm classes on webhook path | future `08` §8, `12` | **missing** |
-| Data-class tags | future `12` §6 | **missing** |
-| SSO / SAML / SCIM | future `12` | **missing** |
-| Roles owner/admin/member/auditor | future `12` | **partial** — role exists on user; not a product RBAC |
-| DSR export/delete | future `12` §8 | **missing** |
+| Confirm classes on webhook path | future `08` §8, `12` | **done** (`inbound-confirm.ts`) |
+| Data-class tags | future `12` §6 | **partial** — `audit_events.data_classes` |
+| SSO / SAML / SCIM | future `12` | **partial** — SSO routes; SCIM **missing** |
+| Roles owner/admin/member/auditor | future `12` | **done** (`019_human_roles.sql`) |
+| DSR export/delete | future `12` §8 | **done** |
 | Encrypted BYOK secrets table | future `12` §3 | **partial** — `channels.meta` JSONB |
-| `ALLOW_DEMO_AUTH` prod fail | future `12` | **missing** (flag still dangerous) |
+| `ALLOW_DEMO_AUTH` prod fail | future `12` | **done** (`boot-guards.ts`) |
+| Data residency design | future `13` Phase 15 | **missing** |
 
 ### Employees / packs
 
@@ -161,43 +204,42 @@ From [`00-vision-ai-brain-os.md`](../future-scope/00-vision-ai-brain-os.md).
 |------------|--------|--------|
 | Sarah / Emma / Marcus seed | current `09` | **done** |
 | Allowlist union + connected channels | current `07`/`08` | **done** |
-| Specialist router | future `08` §6 | **missing** |
-| Critic gate | future `08` §7 | **missing** |
-| Research + Finance employees | future `08` §3 | **missing** |
-| Pack YAML + InstallPackWorkflow | future `03` | **missing** |
-| Onboarding → pack install | future `03` §6 | **missing** (wizard stores business type only) |
-| RE / agency / ecom / SaaS packs | future `04`/`05` | **missing** |
+| Specialist router | future `08` §6 | **done** (`route-employee.ts`) |
+| Critic gate | future `08` §7 | **done** (`critic-check.ts`) |
+| Research + Finance employees | future `08` §3 | **done** |
+| Pack YAML + InstallPackWorkflow | future `03` | **done** (Core B2B) |
+| Onboarding → pack install | future `03` §6 | **done** (recommend; Wave 2 ids RFC) |
+| RE / agency / ecom / SaaS packs | future `04`/`05` | RE **partial**; Wave 2 **deferred** (RFC) |
 
 ### Dashboard / analytics / billing / infra
 
 | Capability | Source | Status |
 |------------|--------|--------|
-| Ask AI UI (PlanCard, execute SSE) | current `03`/`09` | **done** |
-| Citations + @employee | future `11` | **missing** |
-| Insight engine + named actions | future `13` Phase 7 | **missing** (templates only) |
-| Analytics SQL page | current `09` | **done** as aggregates; not semantic metrics |
+| Ask AI UI (PlanCard, execute SSE, citations, @employee) | current `03`/`09` | **done** |
+| Insight engine + named actions | future `13` Phase 7 | **done** as code (`/api/insight` POST → Temporal) |
+| Analytics SQL page | current `09` | **done** as aggregates + `metrics.query` |
 | Langfuse traces | current `16` | **partial** |
-| Eval-runner + Promptfoo goldens | future `01`/`08`/`15` | **missing** |
-| Billing / seats / meters | future `13` Phase 9 | **missing** |
-| Redis SSE + two replicas | future `13` Phase 8 | **missing** |
-| Terraform / HTTPS / PgBouncer / alerting | future `13` Phase 8 | **missing** |
-| Warm-up as real provisioning | current `04` | **missing** (UI-only bar) |
+| Eval-runner + Promptfoo goldens | future `01`/`08`/`15` | **done** (`infra/evals/`) |
+| Billing / seats / meters | future `13` Phase 9 | **partial** — APIs; PSP keys |
+| Redis SSE + two replicas | future `13` Phase 8 | **partial** — bus done; replica drill not recorded |
+| Terraform / HTTPS / PgBouncer / alerting | future `13` Phase 8 | **partial** — PgBouncer **done**; TF/alerting scripts |
+| Warm-up as real provisioning | current `04` | **partial** |
 
 ---
 
 ## 3. Sequencing implication
 
-Build order follows future-scope `01` §5 and `13`, minus absorbed
-hygiene:
+Memory is **no longer the empty hole**. Remaining order:
 
-1. Remaining hygiene (section 0 leftovers + operator creds).
-2. Phase 6 memory (largest single hole).
-3. Connector registry + Wave A/B.
-4. Event bus + scheduled workflows.
-5. Real estate pack (India wedge).
-6. Insight engine.
-7. More packs.
-8. Enterprise + billing.
+1. Operator creds (C1, H1, Gmail compose, Jina) — unblocks live demos.
+2. Close wiring gaps: M6 eval on a migrated DB.
+3. RE pack live-verify (P3 quality bar) without inventing inventory.
+4. Wave B leftovers (Zoho CRM / Leegality / QuickBooks) **shipped** as executors; live OAuth/BYOK is ops.
+5. Channel go-live (Gmail Pub/Sub, owner WhatsApp). Widget embed **done**.
+6. Staging SSO + Darex billing keys.
+7. One Wave 2 pack as pull after M6 is green.
+8. Enterprise residency design; Wave 3–4 / voice / computer-use stay pull.
 
 Owned by workstream files in [05-workstream-index.md](./05-workstream-index.md).
 Phase cut in [phases/00-phase-map.md](./phases/00-phase-map.md).
+Full narrative: [README.md](./README.md) audit summary.

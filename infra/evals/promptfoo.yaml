@@ -1,0 +1,18 @@
+# Darex Phase 6 evals (A2, M6, R4). Promptfoo ADOPT.
+# Custom provider is offline/DB/fixtures only — never the Ask AI request path.
+description: Darex Phase 6 evals (fail-closed returning-contact + empty-org)
+prompts:
+  - "{{prompt}}"
+providers:
+  - id: file://providers/darex-eval-provider.js
+    label: darex-eval
+evaluateOptions:
+  maxConcurrency: 4
+tests:
+  - file://empty-org.yaml
+  - file://phase6-returning-contact.yaml
+  - file://disconnected-sheets-mls.yaml
+  - file://honesty-connectors.yaml
+  - file://skill-playbook.yaml
+  - file://re-brokerage.yaml
+outputPath: /tmp/darex-promptfoo-results.json

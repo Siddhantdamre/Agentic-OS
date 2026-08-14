@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "darex.re.inquiry",
+  "title": "re.inquiry",
+  "type": "object",
+  "required": ["org_id"],
+  "properties": {
+    "org_id": { "type": "string", "format": "uuid" },
+    "listing_id": { "type": ["string", "null"], "format": "uuid" },
+    "contact_id": { "type": ["string", "null"] },
+    "channel": { "type": ["string", "null"] },
+    "status": { "type": "string", "enum": ["new", "contacted", "showing", "closed", "lost"] },
+    "bhk": { "type": ["integer", "null"] },
+    "locality": { "type": ["string", "null"] },
+    "budget_max": { "type": ["number", "null"] },
+    "currency": { "type": "string", "default": "INR" }
+  }
+}

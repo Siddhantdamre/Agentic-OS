@@ -41,7 +41,15 @@ export async function GET(request: Request) {
       let paramIndex = 2;
 
       if (channel && channel !== 'all') {
-        query += ` AND ch.channel_type = $${paramIndex}`;
+        query += ` AND (
+          ch.channel_type = $${paramIndex}
+          OR EXISTS (
+            SELECT 1 FROM messages mk
+             WHERE mk.conversation_id = c.id
+               AND mk.org_id = $1
+               AND mk.channel_key = $${paramIndex}
+          )
+        )`;
         params.push(channel);
         paramIndex++;
       }

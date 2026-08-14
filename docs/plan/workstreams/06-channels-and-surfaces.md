@@ -46,9 +46,13 @@ Realtime: Redis `org:{id}`. Public embeds: no admin APIs.
 
 ## 3. Gaps
 
+**Audit 2026-08-14:** Redis bus **done**. H2 **done**. H6 public
+embed JS **done**. H3–H5 **partial** (API routes). H1 **ops-blocked**.
+Voice **deferred**.
+
 WhatsApp inbound **done**; outbound **ops-blocked**. Chatwoot +
-inbox send + settings URLs **done**. Redis bus, new channels,
-owner WhatsApp, widget, mobile **missing**.
+inbox send + settings URLs **done**. Widget embed **done**. H3–H5
+and owner WhatsApp number still **partial**. Mobile **partial**.
 
 ---
 
@@ -89,11 +93,21 @@ owner WhatsApp, widget, mobile **missing**.
 - **DoD:** Owner approve unblocks the same plan id. Customer
   inbound cannot invoke owner commands.
 
-### H6 — Public chat widget (later)
+### H6 — Public chat widget
 
-- **What:** Public token. Allowlist: session + listings.search.
-  No `database_query`, no Drive.
-- **DoD:** Stolen embed token cannot call admin APIs.
+- **What:** Public site key. Allowlist: session + listings.search.
+  No `database_query`, no Drive. Public embed JS + Settings snippet.
+- **DoD:** Stolen embed token cannot call admin APIs. Missing key → 401.
+  Message persist → 200 → fire-and-forget WorkItem. No body `org_id`.
+- **Status (2026-08-14):** **done.**
+
+Snippet (`NEXT_PUBLIC_APP_URL` + site key from Settings):
+
+```html
+<script src="http://localhost:3000/embed/widget.js" data-site-key="YOUR_SITE_KEY" async></script>
+```
+
+Path: `POST /api/widget/session` then `POST /api/widget/message` → persist → 200 → `fireInboundAgent`. Script at `GET /embed/widget.js`. CORS/origin allowlist on `/api/widget/*`. See [h6-widget-embed.md](./h6-widget-embed.md).
 
 ### H7 — Redis SSE (with workstream 11)
 

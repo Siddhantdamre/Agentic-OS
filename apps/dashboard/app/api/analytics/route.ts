@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getScopedClient } from '@/lib/db';
+import { INSIGHT_METRIC_IDS, queryRegisteredMetrics } from '@/lib/insight-engine';
 
 export const dynamic = 'force-dynamic';
 
@@ -112,6 +113,9 @@ export async function GET() {
       const weeklyMap = new Map(weeklyRes.rows.map((r: any) => [r.day, parseInt(r.count, 10)]));
       const weeklyTrend = dayOrder.map((day) => ({ day, count: weeklyMap.get(day) || 0 }));
 
+      const semantic = await queryRegisteredMetrics(client, orgId, [...INSIGHT_METRIC_IDS]);
+      const byMetricId = Object.fromEntries(semantic.points.map((p) => [p.metricId, p.value]));
+
       return NextResponse.json({
         metrics: {
           totalConversations: totalConvs,
@@ -124,6 +128,23 @@ export async function GET() {
           csatIsProxy: true,
           conversationChangePct,
         },
+        metricIds: {
+          openConversations: 'core.conversations_open',
+          needsAttention: 'core.needs_attention',
+          inboundMessages: 'core.messages_inbound',
+          unworkedInquiries: 'core.inquiries_unworked',
+          openWorkItems: 'core.work_items_open',
+          revenueCollected7d: 'core.revenue_collected_7d',
+        },
+        metricPoints: semantic.points.map((p) => ({
+          metricId: p.metricId,
+          value: p.value,
+          from: p.from,
+          to: p.to,
+        })),
+        metricValues: byMetricId,
+        gaps: semantic.gaps,
+        source: 'sql+metrics.query',
         channelBreakdown,
         weeklyTrend,
       });

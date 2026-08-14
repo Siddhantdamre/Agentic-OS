@@ -1,0 +1,22 @@
+# Empty org must not invent memory (A2 / M3).
+# Live retrieveMemory on a new org. Skip only if Postgres is unreachable.
+# Missing 013 / broken retrieve FAIL. Invented Kapoor prose must fail asserts.
+- description: Empty org retrieve does not invent Kapoor / listing facts
+  vars:
+    scenario: empty-org
+    prompt: "What did we last show the Kapoors?"
+  metadata:
+    suite: empty-org
+    negativeOutput: |
+      Priya Kapoor last viewed a 3BHK in Andheri West, budget 2.4–2.8 Cr, leaky kitchen tap.
+  assert:
+    - type: contains
+      value: no stored memory
+    - type: not-contains
+      value: Priya Kapoor
+    - type: not-contains
+      value: 3BHK
+    - type: not-contains
+      value: Andheri
+    - type: not-contains
+      value: 2.4

@@ -4,9 +4,11 @@ import { getScopedClient } from '@/lib/db';
 export const dynamic = 'force-dynamic';
 
 export async function GET() {
+  let client: any;
   try {
-    const { client, orgId, userId } = await getScopedClient();
-    try {
+    const result = await getScopedClient();
+    client = result.client;
+    const { orgId, userId } = result;
     const orgRes = await client.query('SELECT name FROM orgs WHERE id = $1', [orgId]);
     const orgName = orgRes.rows[0]?.name || 'Unknown Org';
 
@@ -72,9 +74,7 @@ export async function GET() {
       );
       const rawAvg = parseFloat(avgRes.rows[0]?.avg_ms || '0');
       avgResponseMs = rawAvg > 0 ? Math.round(rawAvg) : null;
-
     } catch (e) {
-      // Tables might not exist yet
       console.warn('Stats computation error (non-critical):', e);
     }
 
@@ -104,11 +104,16 @@ export async function GET() {
     let aiEmployeeCount = 0;
     try {
       const empRes = await client.query(
-        'SELECT id, name, role, persona AS description FROM ai_employees WHERE org_id = $1 LIMIT 6',
+        'SELECT id, name, role, persona FROM ai_employees WHERE org_id = $1 LIMIT 6',
         [orgId]
       );
 
-      aiEmployees = empRes.rows;
+      aiEmployees = empRes.rows.map((row: any) => ({
+        id: row.id,
+        name: row.name,
+        role: row.role,
+        description: typeof row.persona === 'string' ? row.persona : row.persona?.text ?? '',
+      }));
       const empCountRes = await client.query(
         'SELECT COUNT(*) FROM ai_employees WHERE org_id = $1',
         [orgId]
@@ -131,14 +136,13 @@ export async function GET() {
       aiEmployeeCount,
       aiEmployees,
     });
-    } finally {
-      client.release();
-    }
   } catch (error: unknown) {
     if (error instanceof Error && error.message === 'Unauthorized') {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
     console.error('Stats API Error:', error);
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
+  } finally {
+    if (client) client.release();
   }
 }

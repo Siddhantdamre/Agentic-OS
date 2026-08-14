@@ -1,6 +1,49 @@
 import { NextResponse } from 'next/server';
 import { getScopedClient } from '@/lib/db';
 import { applySessionCookies } from '@/lib/session-cookie';
+import { recommendationPayload } from '@/app/(onboarding)/pack-recommendations';
+
+const PACK_INSTALL_PATHS = ['/api/packs/install', '/api/packs'];
+
+async function tryInstallRecommendedPacks(
+  request: Request,
+  packIds: string[]
+): Promise<{ attempted: boolean; installed: string[]; failed: string[] }> {
+  const installed: string[] = [];
+  const failed: string[] = [];
+  let attempted = false;
+  const cookie = request.headers.get('cookie') || '';
+  const origin = new URL(request.url).origin;
+
+  for (const packId of packIds) {
+    let handled = false;
+    for (const path of PACK_INSTALL_PATHS) {
+      try {
+        const res = await fetch(`${origin}${path}`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            cookie,
+          },
+          body: JSON.stringify({ packId }),
+        });
+        if (res.status === 404) continue;
+        attempted = true;
+        handled = true;
+        if (res.ok) installed.push(packId);
+        else failed.push(packId);
+        break;
+      } catch {
+        // try the next known pack-install path
+      }
+    }
+    if (!handled) {
+      // Packs API is not on this branch yet — recommend only, never fake install.
+    }
+  }
+
+  return { attempted, installed, failed };
+}
 
 /**
  * POST /api/org/create
@@ -81,6 +124,12 @@ export async function POST(request: Request) {
       [orgId, businessName, teamSize, businessType, channels]
     );
 
+    const recommendation = recommendationPayload(businessType);
+    client.release();
+    scoped = null;
+
+    const packInstall = await tryInstallRecommendedPacks(request, recommendation.recommendedPacks);
+
     const res = NextResponse.json({
       status: 'OK',
       orgId,
@@ -88,6 +137,10 @@ export async function POST(request: Request) {
       teamSize,
       businessType,
       channelsSeeded: channels.length,
+      channelsStatus: 'pending',
+      connectorsMarkedConnected: false,
+      packInstall,
+      ...recommendation,
     });
     await applySessionCookies(res, { userId, orgId, onboardingComplete: true });
     return res;
@@ -98,7 +151,7 @@ export async function POST(request: Request) {
       { status: 500 }
     );
   } finally {
-    client.release();
+    if (scoped) scoped.client.release();
   }
 }
 

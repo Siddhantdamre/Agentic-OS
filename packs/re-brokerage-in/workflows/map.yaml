@@ -1,0 +1,4 @@
+- temporalWorkflowName: ShowingScheduleWorkflow
+  triggers: [inquiry.book_showing, calendar.conflict]
+- temporalWorkflowName: RentReminderWorkflow
+  triggers: [pm.charge.due]

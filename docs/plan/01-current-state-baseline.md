@@ -26,7 +26,7 @@ before running multi-step plans**.
 
 Runtime is **not** LangGraph or Hermes. The live loop is:
 
-**atomic-agent (v0.1.73)** → **MCP bridge** (`mcp.darex.*`) →
+**atomic-agent (v0.1.72)** → **MCP bridge** (`mcp.darex.*`) →
 **`tool-executor.ts`** → real provider APIs / Postgres / Jina /
 sandbox.
 
@@ -94,7 +94,7 @@ From `13-what-works.md` and `00-status-at-a-glance.md`.
 
 ### Agent runtime
 
-- atomic-agent v0.1.73 SSE `/v1/chat/completions`.
+- atomic-agent v0.1.72 SSE `/v1/chat/completions`.
 - MCP bridge 62 tools, server name `darex`, `GET /health`.
 - Temporal `AutonomousAgentWorkflow` uses `isDone`, `priorToolResults`,
   and `idempotency_keys` (max 3 durable turns).
@@ -186,26 +186,25 @@ From `14-what-does-not-work.md` and `00-status-at-a-glance.md`.
 
 ### Code / product holes
 
+Audit **2026-08-14**. Many 13 Aug rows below are **closed** — see
+[02-gap-analysis.md](./02-gap-analysis.md) §0.1. Remaining:
+
 | Item | Detail |
 |------|--------|
-| Insight page | Rule templates, not an insight engine |
-| Realtime scale | In-process EventEmitter; one Next.js process |
-| DB user | Still `darex` superuser by default; `darex_app` granted in 011 |
+| WorkItem `retrieveMemoryActivity` | Calls `retrieveMemory` (org-scoped; empty if none) |
+| WorkItem HITL wait | Inbound send/pay/sign `condition()`-waits **before tools**; conversation `needs_attention` while waiting; greetings/read-only skip |
+| Virus-scan | Ingest scanner stub always-clean |
+| Public widget embed | **done** — `/embed/widget.js` + Settings snippet; API ignores body `org_id` |
+| Zoho CRM / Leegality / QuickBooks | Executors shipped 2026-08-14 (honest notConnected). Live OAuth/BYOK ops. FUB / MLS still not built. |
+| Wave 2–4 packs | RFC only |
 | Langfuse persistence | Ingestion OK; ClickHouse can still be flaky |
-| Integrations catalog hints | Google Chat/Meet/Analytics/GSC/Business/Cloud still `catalog_only` in UI |
-| Google Cloud connect | `service_account` only — no OAuth popup |
-| `packages/shared-types` | Placeholder README |
-| `apps/inbox` README | Claims Chatwoot fork; code is an HMAC Express proxy |
-| Migrations 009–011 | In the working tree; operator must `pnpm db:migrate` |
-| Sandbox / custom skills vs git | Present in working tree; sandbox dir still untracked vs `99b5f04` |
-| pgvector RAG | Extension enabled; **no embeddings pipeline** |
-| Billing | Not started (Phase 9) |
-| Terraform / HTTPS / multi-instance | Not started (Phase 8) |
-| Mobile / a11y | Not started (Phase 9) |
+| Terraform / alerting | Scripts exist; not applied to staging |
+| Insight / billing / Redis / darex_app / RAG / sandbox | **Shipped in code** — do not rebuild (see gap §0.1) |
 
 ### Security leftovers
 
-- `ALLOW_DEMO_AUTH` auto-provisions OAuth users — keep off in prod.
+- `ALLOW_DEMO_AUTH` is refused at boot when `NODE_ENV=production`
+  (`boot-guards.ts`). Keep it off in staging too.
 - Pre-004 users have NULL `password_hash` (Postgres login path).
 - SuperTokens works only if `SUPERTOKENS_API_KEY` matches compose
   `API_KEYS`.
@@ -222,11 +221,14 @@ From `14-what-does-not-work.md` and `00-status-at-a-glance.md`.
 | 2 Connector layer | Done | Nango + test proxy |
 | 3 Inbox ingestion | Done | Webhooks + conversations |
 | 4 / 4.5 / 4.6 Agent + security + live E2E | Done | atomic-agent, not Hermes |
-| 5 Realtime SSE | Done | Single-process hub |
-| 6 Memory & RAG | **Not started** | |
-| 7 Insight & analytics engine | **Not started** | Pages exist with simpler SQL / templates |
-| 8 Scale / Terraform / alerting | **Not started** | Dedicated Langfuse Redis already added |
-| 9 Polish, mobile, a11y, billing | **Not started** | Onboarding wizard already exists |
+| 5 Realtime SSE | **Done** | Hub + Redis bus |
+| 6 Memory & RAG | **Partial** | Tables + retrieve + /brain + parent activity; M6 live eval |
+| 7 Insight & analytics engine | **Partial** | Named-workflow enqueue exists |
+| 8 Scale / Terraform / alerting | **Partial** | Redis + PgBouncer + darex_app; TF/alerting scripts |
+| 9 Polish, mobile, a11y, billing | **Partial** | Packs + billing APIs; PSP keys / 375px pass |
+| 10 Connector registry + Wave A/B | **Partial** | Registry + Outlook/SF/DocuSign/Maps/Twilio |
+| 11 RE brokerage IN | **Partial** | Pack + UI + goldens; quality bar not live-verified |
+| 12–18 | **Deferred** | RFC / pull |
 
 ---
 
@@ -250,11 +252,12 @@ From `01-system-overview.md` and `AGENTS.md`:
 
 - Not a Chatwoot fork. `apps/inbox` is a thin Express proxy.
 - Not Hermes / LangGraph. Those files were deleted.
-- Not a full RAG product. `pgvector` is enabled; no embeddings
-  pipeline yet.
-- Not multi-instance. Realtime hub is in-memory in one Next.js
-  process.
-- Not production-ready SaaS. It is a working local/compose stack
-  with real executors and honest failure modes.
+- Not a full Brain OS yet. Memory exists; inbound parent retrieve
+  is still a no-op; Wave 2 packs are RFC; WhatsApp outbound is
+  ops-blocked.
+- Not multi-cloud production. Compose + Terraform starter; staging
+  apply not recorded.
+- `packages/shared-types` is no longer a placeholder README — it
+  exports memory, work-item, pack, and billing types.
 
 Next: [02-gap-analysis.md](./02-gap-analysis.md).

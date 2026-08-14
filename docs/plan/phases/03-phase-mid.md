@@ -2,7 +2,13 @@
 
 Billing, pack onboarding, the first deep vertical (real estate),
 event-bus maturity, and Wave 2 packs. **Blocked on Phase 6 exit
-(M6).** Do not start P3 if returning-contact eval is red.
+(M6 live eval).** Do not claim P3 if returning-contact eval is red.
+
+**Audit 2026-08-14: SCAFFOLDING IN CODE.** P1/P2 exist. P3 pack YAML
++ listings/inquiries UI (showing + rent schedule) + goldens exist;
+`pack.yaml` is `live: false`. `03` §11 still needs a Calendar-connected
+showing and live listing evals `[PASS]` on a migrated DB (not skip). P5
+is RFC. Billing APIs exist; Darex PSP keys are ops.
 
 Linked from [00-phase-map.md](./00-phase-map.md).
 Documentation only.

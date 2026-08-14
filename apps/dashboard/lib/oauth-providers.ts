@@ -15,6 +15,10 @@ export function parseOAuthProvider(raw: string): OAuthProvider | null {
   }
 }
 
+/**
+ * Demo OAuth auto-provision. Production always returns false; boot-guards
+ * refuse process start if ALLOW_DEMO_AUTH=true under NODE_ENV=production.
+ */
 export function demoAuthAllowed(): boolean {
   if (process.env.NODE_ENV === 'production') return false;
   return process.env.ALLOW_DEMO_AUTH === 'true';

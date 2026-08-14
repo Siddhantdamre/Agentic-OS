@@ -1,0 +1,30 @@
+# M6 returning-contact eval (future-scope 10 §7 / RE golden #7).
+# Fail-closed: seed + retrieveMemory must return name + last issue.
+# Skip only if Postgres is unreachable. Missing 013 / broken retrieve FAIL.
+# Inventing a different prior fact must fail these asserts (harness integrity).
+- description: Returning WhatsApp contact retrieves name and last issue
+  vars:
+    scenario: returning-contact
+    prompt: "What did we last show the Kapoors?"
+    whatsapp: "+14155550100"
+    entityType: contact
+    entityId: "wa:+14155550100"
+  metadata:
+    suite: returning-contact
+    negativeOutput: |
+      I do not have stored memory, but Priya Kapoor probably wanted a 4BHK in Bandra for 9 Cr.
+  assert:
+    - type: contains
+      value: Priya Kapoor
+    - type: contains
+      value: 3BHK
+    - type: contains
+      value: Andheri
+    - type: icontains
+      value: tap
+    - type: not-contains
+      value: 4BHK
+    - type: not-contains
+      value: Bandra
+    - type: not-contains
+      value: "9 Cr"

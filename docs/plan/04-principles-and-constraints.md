@@ -72,7 +72,7 @@ deviation.
 
 **Clone / self-host:** Nango, Temporal, LiteLLM, Langfuse,
 SuperTokens, pgvector, Chatwoot-as-thin-gateway, atomic-agent pin
-v0.1.73, Jina, Docker sandbox, Redis, Next.js.
+v0.1.72, Jina, Docker sandbox, Redis, Next.js.
 
 **Build:** kernel glue, dashboard, insight, packs, TypeScript
 executors, memory tables, eval-runner, sync/embed workers.

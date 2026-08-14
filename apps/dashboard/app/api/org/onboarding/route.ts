@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getScopedClient } from '@/lib/db';
+import { recommendationPayload } from '@/app/(onboarding)/pack-recommendations';
 
 export async function GET() {
   try {
@@ -12,14 +13,16 @@ export async function GET() {
         [orgId]
       );
       const row = res.rows[0];
+      const businessType = row?.business_type || '';
       return NextResponse.json({
         orgId,
         wizardStep: row?.wizard_step || 'name',
         businessName: row?.business_name || '',
         teamSize: row?.team_size ?? 5,
-        businessType: row?.business_type || '',
+        businessType,
         selectedChannels: row?.channels_selected || ['whatsapp', 'email'],
         onboardingComplete: row?.provisioning_completed_at != null,
+        ...recommendationPayload(businessType),
       });
     } finally {
       client.release();
@@ -71,7 +74,11 @@ export async function PATCH(request: Request) {
           body.selectedChannels ?? null,
         ]
       );
-      return NextResponse.json({ status: 'OK', orgId });
+      return NextResponse.json({
+        status: 'OK',
+        orgId,
+        ...recommendationPayload(body.businessType),
+      });
     } finally {
       client.release();
     }

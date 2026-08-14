@@ -1,10 +1,15 @@
 import { NextResponse } from 'next/server';
 import { getScopedClient } from '@/lib/db';
+import { denyWebhookIfLimited, isRateLimitError, responseFromRateLimit } from '@/lib/rate-limit';
 
 export async function POST(request: Request) {
   try {
     const { client, orgId } = await getScopedClient();
     try {
+      const limited = denyWebhookIfLimited(orgId);
+      if (limited) {
+        return limited;
+      }
       const payload = await request.json().catch(() => ({}));
 
       const provider = payload.provider || payload.type || 'nango';
@@ -22,6 +27,9 @@ export async function POST(request: Request) {
       client.release();
     }
   } catch (err: any) {
+    if (isRateLimitError(err)) {
+      return responseFromRateLimit(err);
+    }
     if (err.message === 'Unauthorized') {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }

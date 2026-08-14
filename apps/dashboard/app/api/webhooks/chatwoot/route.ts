@@ -8,6 +8,12 @@ import {
   parseToolAllowlist,
 } from '@/lib/inbound-agent';
 import { replyTargetFromChannelMeta } from '@/lib/channel-outbound';
+import { denyWebhookIfLimited, isRateLimitError, responseFromRateLimit } from '@/lib/rate-limit';
+import {
+  normalizeChannelKey,
+  resolveOrgByChatwootInbox,
+  upsertChatwootInboxMap,
+} from '@/lib/channel-normalize';
 
 type ChatwootEvent =
   | 'message_created'
@@ -124,34 +130,34 @@ function normalizeInbound(payload: Record<string, unknown>): NormalizedInbound {
   };
 }
 
-async function resolveOrgFromRequest(request: Request, payload: Record<string, unknown>): Promise<string | null> {
+async function resolveOrgFromRequest(
+  request: Request,
+  payload: Record<string, unknown>
+): Promise<{ orgId: string | null; via: 'inbox_map' | 'secret' | 'header' | 'single_org' | 'query' | null }> {
   void payload.org_id;
   void payload.orgId;
 
-  const url = new URL(request.url);
-  const orgIdParam = url.searchParams.get('org_id');
-  if (orgIdParam) {
-    try {
-      const res = await pool.query(`SELECT resolve_active_org($1::uuid) AS id`, [orgIdParam]);
-      if (res.rows[0]?.id) return res.rows[0].id as string;
-    } catch {
-      const res = await pool.query('SELECT id FROM orgs WHERE id = $1 AND status = $2', [orgIdParam, 'active']);
-      if (res.rows[0]?.id) return res.rows[0].id as string;
-    }
-  }
+  const conversation = (payload.conversation as Record<string, unknown> | undefined) || {};
+  const inbox = (payload.inbox as Record<string, unknown> | undefined) || {};
+  const account = (payload.account as Record<string, unknown> | undefined) || {};
+  const inboxId = parseChatwootConvId(payload.inbox_id ?? inbox.id ?? conversation.inbox_id);
+  const accountId = coerceAccountId(account.id) ?? coerceAccountId(inbox.account_id);
+
+  const mapped = await resolveOrgByChatwootInbox(accountId, inboxId);
+  if (mapped) return { orgId: mapped, via: 'inbox_map' };
 
   const authHeader = request.headers.get('Authorization') || '';
   const token = authHeader.replace(/^Bearer\s+/i, '').trim();
   if (token) {
     try {
       const res = await pool.query(`SELECT resolve_org_by_webhook_secret($1) AS id`, [token]);
-      if (res.rows[0]?.id) return res.rows[0].id as string;
+      if (res.rows[0]?.id) return { orgId: res.rows[0].id as string, via: 'secret' };
     } catch {
       const res = await pool.query(
         `SELECT id FROM orgs WHERE meta->>'webhook_secret' = $1 AND status = 'active' LIMIT 1`,
         [token]
       );
-      if (res.rows[0]?.id) return res.rows[0].id as string;
+      if (res.rows[0]?.id) return { orgId: res.rows[0].id as string, via: 'secret' };
     }
   }
 
@@ -159,25 +165,37 @@ async function resolveOrgFromRequest(request: Request, payload: Record<string, u
   if (orgHeader) {
     try {
       const res = await pool.query(`SELECT resolve_active_org($1::uuid) AS id`, [orgHeader]);
-      if (res.rows[0]?.id) return res.rows[0].id as string;
+      if (res.rows[0]?.id) return { orgId: res.rows[0].id as string, via: 'header' };
     } catch {
       const res = await pool.query('SELECT id FROM orgs WHERE id = $1 AND status = $2', [orgHeader, 'active']);
-      if (res.rows[0]?.id) return res.rows[0].id as string;
+      if (res.rows[0]?.id) return { orgId: res.rows[0].id as string, via: 'header' };
     }
   }
 
   try {
     const res = await pool.query(`SELECT single_active_org_id() AS id`);
-    if (res.rows[0]?.id) return res.rows[0].id as string;
+    if (res.rows[0]?.id) return { orgId: res.rows[0].id as string, via: 'single_org' };
   } catch {
     const orgCount = await pool.query('SELECT COUNT(*) as count FROM orgs WHERE status = $1', ['active']);
     if (parseInt(orgCount.rows[0].count, 10) === 1) {
       const orgRes = await pool.query("SELECT id FROM orgs WHERE status = 'active' LIMIT 1");
-      return orgRes.rows[0]?.id ?? null;
+      if (orgRes.rows[0]?.id) return { orgId: orgRes.rows[0].id as string, via: 'single_org' };
     }
   }
 
-  return null;
+  const url = new URL(request.url);
+  const orgIdParam = url.searchParams.get('org_id');
+  if (orgIdParam) {
+    try {
+      const res = await pool.query(`SELECT resolve_active_org($1::uuid) AS id`, [orgIdParam]);
+      if (res.rows[0]?.id) return { orgId: res.rows[0].id as string, via: 'query' };
+    } catch {
+      const res = await pool.query('SELECT id FROM orgs WHERE id = $1 AND status = $2', [orgIdParam, 'active']);
+      if (res.rows[0]?.id) return { orgId: res.rows[0].id as string, via: 'query' };
+    }
+  }
+
+  return { orgId: null, via: null };
 }
 
 export async function POST(request: Request) {
@@ -220,13 +238,19 @@ export async function POST(request: Request) {
     );
   }
 
-  const orgId = await resolveOrgFromRequest(request, payload);
+  const resolved = await resolveOrgFromRequest(request, payload);
+  const orgId = resolved.orgId;
   if (!orgId) {
-    console.error('[Chatwoot Webhook] Cannot resolve org_id — webhook must include org_id param or auth token');
+    console.error('[Chatwoot Webhook] Cannot resolve org_id — webhook must include inbox map, auth token, or org_id param');
     return NextResponse.json(
-      { error: 'Cannot resolve organization. Include org_id in webhook URL or Authorization header.' },
+      { error: 'Cannot resolve organization. Map the Chatwoot inbox to an org, or include Authorization header.' },
       { status: 400 }
     );
+  }
+
+  const webhookLimited = denyWebhookIfLimited(orgId);
+  if (webhookLimited) {
+    return webhookLimited;
   }
 
   const { client } = await getOrgScopedClient(orgId);
@@ -237,8 +261,20 @@ export async function POST(request: Request) {
   let connectedChannels: string[] = [];
   let chanMeta: Record<string, unknown> = {};
   let shouldFireAgent = !inbound.skipAgent;
+  const channelKey = normalizeChannelKey(inbound.channelType);
 
   try {
+    if (resolved.via && resolved.via !== 'query' && resolved.via !== 'inbox_map') {
+      const conversation = (payload.conversation as Record<string, unknown> | undefined) || {};
+      const inbox = (payload.inbox as Record<string, unknown> | undefined) || {};
+      const inboxId = parseChatwootConvId(payload.inbox_id ?? inbox.id ?? conversation.inbox_id);
+      try {
+        await upsertChatwootInboxMap(client, orgId, inbound.chatwootAccountId, inboxId);
+      } catch (mapErr: unknown) {
+        const message = mapErr instanceof Error ? mapErr.message : String(mapErr);
+        console.warn('[Chatwoot Webhook] inbox map upsert skipped:', message);
+      }
+    }
     const channelRes = await client.query(
       `SELECT id, meta FROM channels WHERE org_id = $1 AND channel_type = $2 LIMIT 1`,
       [orgId, inbound.channelType]
@@ -330,10 +366,10 @@ export async function POST(request: Request) {
 
     if (!messageId) {
       const msgRes = await client.query(
-        `INSERT INTO messages (org_id, conversation_id, role, content, chatwoot_msg_id, created_at)
-         VALUES ($1, $2, 'user', $3, $4, NOW())
+        `INSERT INTO messages (org_id, conversation_id, role, content, chatwoot_msg_id, channel_key, created_at)
+         VALUES ($1, $2, 'user', $3, $4, $5, NOW())
          RETURNING id, created_at`,
-        [orgId, conversationId, inbound.content, inbound.chatwootMsgId]
+        [orgId, conversationId, inbound.content, inbound.chatwootMsgId, channelKey]
       );
       messageId = msgRes.rows[0].id;
     }
@@ -357,6 +393,9 @@ export async function POST(request: Request) {
       channelType: inbound.channelType,
     });
   } catch (err: unknown) {
+    if (isRateLimitError(err)) {
+      return responseFromRateLimit(err);
+    }
     const message = err instanceof Error ? err.message : String(err);
     console.error('Chatwoot Webhook Ingestion Error:', message);
     return NextResponse.json({ success: false, error: message }, { status: 500 });
@@ -376,6 +415,8 @@ export async function POST(request: Request) {
       toolAllowlist: parseToolAllowlist(employee?.tool_allowlist),
       connectedChannels,
       userMessage: inbound.content,
+      inboundEventId: inbound.chatwootMsgId || undefined,
+      channelKey,
       replyTarget: replyTargetFromChannelMeta(
         inbound.viaChatwootApi ? 'chatwoot' : inbound.channelType,
         inbound.contactId,

@@ -1,8 +1,8 @@
 # 00 — Executive summary
 
 This plan takes Darex from a **working AI-employee SaaS** (Phases 0–5
-in code, snapshot 2026-08-13) to the **AI Brain Operating System**
-described in [`docs/future-scope/`](../future-scope/). It does not
+in code, snapshot 2026-08-13; **status audit 2026-08-14**) to the
+**AI Brain Operating System** described in [`docs/future-scope/`](../future-scope/). It does not
 propose a rewrite. The kernel stays: Next.js dashboard, Temporal,
 atomic-agent, MCP bridge `mcp.darex.*`, Nango, LiteLLM, Postgres +
 RLS + pgvector, SuperTokens, Langfuse.
@@ -88,7 +88,7 @@ From [`docs/future-scope/15-open-source-research-landscape.md`](../future-scope/
 | Postgres + RLS + pgvector | Tenant SoR and memory in one database |
 | Nango | OAuth / token plane. Never Composio. |
 | Temporal | Durable workflows, HITL signals, timers |
-| atomic-agent v0.1.73 | The only employee loop |
+| atomic-agent v0.1.72 | The only employee loop |
 | MCP bridge `mcp.darex.*` | One action bus. No second server per vertical. |
 | LiteLLM | JSON classify / plan / revise / embed. Not the tool loop. |
 | Langfuse | Traces. Fix ops; do not swap for LangSmith. |
@@ -130,34 +130,25 @@ every P3 row in the integrations catalog.
 
 ---
 
-## 5. Recommended first five build items
+## 5. Recommended next five build items
 
-These are the first five **code or operator** items from today.
-Detail and definition of done live in
-[phases/01-phase-immediate.md](./phases/01-phase-immediate.md) and
-[execution/03-build-order.md](./execution/03-build-order.md).
+The original “first five” (migrate 009–011, land sandbox/skills,
+Phase 6 schema, retrieveMemory prefix, eval stub) are **in the
+tree**. Do not rebuild them. Remaining first five:
 
-1. **Operator hygiene that unblocks live tools** — `pnpm db:migrate`
-   (009–011), paste real OAuth client IDs in Nango UI `:3003`, rotate
-   `META_ACCESS_TOKEN`, re-connect Gmail for `gmail.compose`, set
-   `JINA_API_KEY`. No product code; without this, executors stay
-   honest-but-dark.
-2. **Land the working-tree runtime on the default branch** — sandbox
-   Docker context, custom-skills COPY, migrations 009–011, Chatwoot
-   `fireInboundAgent`, catalog-hint fixes. Current-working `16` says
-   this work exists uncommitted vs `99b5f04`.
-3. **Phase 6 schema + embed-worker** — `org_memory` /
-   `entity_memory` / `conversation_memory` / `knowledge_sources` /
-   `ingestion_jobs` with RLS + WITH CHECK; LiteLLM embeddings;
-   never embed on the webhook thread
-   (`services/workflows` + `infra/db/migrations`).
-4. **`retrieveMemory` prefix on every agent path** — extend
-   `buildGroundedUserMessage` in `atomic-agent-client.ts`; call the
-   same function from Ask AI simple, Ask AI complex, and
-   WhatsApp/Chatwoot Temporal turns.
-5. **Two-org RLS vector test + returning-contact eval stub** —
-   Promptfoo (or equivalent YAML) so Phase 6 has a fail-closed bar
-   before we claim “brain.”
+1. **Operator hygiene** — real OAuth client IDs in Nango UI `:3003`,
+   rotate `META_ACCESS_TOKEN`, re-connect Gmail for `gmail.compose`,
+   set `JINA_API_KEY`. No product code.
+2. **Wire inbound memory** — **done**: `retrieveMemoryActivity` calls `retrieveMemory`.
+   Remaining: run `check-phase6-memory.js` + returning-contact eval on a migrated DB.
+3. **WorkItem HITL wait** — **done**: `condition()` on approve/reject **before**
+   webhook `send`/`pay`/`sign` tools (PlanExecute already waits). Conversation
+   flips to `needs_attention` while waiting. M6 live eval on a migrated DB is
+   still a leftover.
+4. **RE pack live-verify** — `packs/re-brokerage-in` goldens; showing
+   books on Calendar when connected; never invent inventory.
+5. **One go-live surface** — Gmail Pub/Sub **or** public widget
+   embed JS **or** Darex Stripe/Razorpay keys — pick one, don’t spray.
 
 ---
 

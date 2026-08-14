@@ -36,8 +36,8 @@ apps/dashboard        Next.js app server (API routes in app/api, lib/, component
                       realtime-hub.ts, langfuse-trace.ts
 services/workflows    Temporal worker + shared agent runtime (imported by dashboard via dist/)
   src/atomic-agent-client.ts   OpenAI-compatible SSE client → atomic-agent :8787
-  src/tool-executor.ts         49 real connector+DB+web tool executors (+ per-org allowlist)
-  src/mcp-bridge.ts            SSE MCP server :8790 exposing mcp.darex.* tools to atomic-agent
+  src/tool-executor.ts         62 real connector+DB+web tool executors (+ per-org allowlist)
+  src/mcp-bridge.ts            SSE MCP server :8790 exposing 62 mcp.darex.* tools to atomic-agent
   src/workflows/               AutonomousAgentWorkflow + CrewWorkflow (child spawns, cap 3)
 services/connectors   Nango-based connector SDK (mostly used by /integrations/test diagnostic)
 packages/shared-types Shared TS types
@@ -67,7 +67,7 @@ WhatsApp inbound → persist message + conversation (fast) → return 200 immedi
 
 ## 4. Status (2026-08)
 - Phases 0–4.6 and Phase 5 (real-time delivery) complete; Ask AI plan-confirm-execute live.
-- Agent runtime = **atomic-agent** (external, v0.1.73) via MCP bridge — NOT LangGraph/Hermes anymore.
+- Agent runtime = **atomic-agent** (external, v0.1.72) via MCP bridge — NOT LangGraph/Hermes anymore.
 - Known manual items: real OAuth client IDs for some providers in Nango UI; Meta token rotation. Runtime defaults to `DB_USER=darex_app`; migrations still run as superuser `darex`.
 
 ## 5. Inspect / Debug

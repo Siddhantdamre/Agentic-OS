@@ -68,37 +68,29 @@ next**, future-scope wins (memory first, never skip Phase 6).
 
 ### Q1 — WorkItemWorkflow wrap vs replace
 
-Future-scope `09` / `13` name `WorkItemWorkflow`. Today inbound
-uses `AutonomousAgentWorkflow`. This plan allows O2 to **wrap**
-the existing workflow first. Replacing it is optional. Record
-the choice in current-working when O2 ships.
+**Decided (code):** O2 wraps `AutonomousAgentWorkflow` as a child
+(`WorkItemWorkflow.ts`). Do not replace the child.
 
 ### Q2 — E5 @employee mention-lock vs org-union allowlist
 
-If the owner @-mentions Sarah, does the tool set become Sarah’s
-allowlist only, or stay the org union? E1 says do not regress
-the union until this is decided. Do not ship E5 without a
-written choice.
+**Decided:** keep the org-union allowlist
+(`docs/current-working/18-q2-mention-allowlist.md`).
 
 ### Q3 — `EMBEDDING_MODEL` not chosen
 
-Future-scope requires the env and fail-fast. It does not name
-the model. Choose a LiteLLM-routed embedding model in env;
-document it. Do not hardcode a vendor in app code.
+**Partial:** compose defaults `EMBEDDING_MODEL` to
+`text-embedding-3-small`. App code still fail-fasts if unset in
+prod worker. Do not hardcode a vendor in app source.
 
 ### Q4 — embed-worker queue: pg-boss vs Graphile vs Temporal
 
-Source docs say “embed-worker” and “never on the webhook
-thread.” They do not pick a queue. Prefer Temporal or an
-existing Redis/Postgres job if one is already in compose.
-Do not add a new broker without L5.
+**Decided (code):** Temporal `EmbedWorkflow`. Do not add pg-boss
+or Graphile.
 
 ### Q5 — Chatwoot org resolution
 
-Current pattern uses `?org_id=` on the webhook URL. AGENTS.md
-says never trust body `org_id`. Query param is still
-attacker-settable if the URL leaks. Prefer a server-side
-inbox → org map before calling this “complete.”
+**Partial:** migration `018_channel_key.sql` adds
+`chatwoot_inbox_map`. Prefer that map over leaked `?org_id=`.
 
 ### Q6 — Sandbox/skills vs commit `99b5f04`
 

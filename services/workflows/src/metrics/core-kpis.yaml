@@ -1,0 +1,109 @@
+# Core B2B semantic metrics (K4). Pack KPIs live under packs/ (WS-21).
+# SQL is the source of truth — metrics.query runs these under RLS.
+# Placeholders: $from $to (timestamptz). Never interpolate org_id from the
+# request; session GUC app.current_org_id scopes every row.
+
+metrics:
+  - id: core.inquiries_unworked
+    aliases: [re.inquiries_unworked, unworked_inquiries, "unworked inquiries"]
+    description: Inquiries with no outbound reply within 2 hours
+    valueKind: count
+    packId: core-b2b
+    insightCopy: Unworked inquiries are waiting more than 2 hours for an outbound reply.
+    recommendedAction: Open Conversations and chase threads with no assistant reply.
+    sql: |
+      SELECT COUNT(*)::float8 AS value
+      FROM conversations c
+      WHERE c.org_id = current_setting('app.current_org_id', true)::uuid
+        AND c.status IN ('open', 'needs_attention')
+        AND c.started_at >= $from::timestamptz
+        AND c.started_at < $to::timestamptz
+        AND EXISTS (
+          SELECT 1 FROM messages inbound
+          WHERE inbound.org_id = c.org_id
+            AND inbound.conversation_id = c.id
+            AND inbound.role IN ('user', 'customer')
+        )
+        AND NOT EXISTS (
+          SELECT 1 FROM messages outbound
+          WHERE outbound.org_id = c.org_id
+            AND outbound.conversation_id = c.id
+            AND outbound.role IN ('assistant', 'agent')
+            AND outbound.created_at <= (
+              SELECT MIN(inbound.created_at) + INTERVAL '2 hours'
+              FROM messages inbound
+              WHERE inbound.org_id = c.org_id
+                AND inbound.conversation_id = c.id
+                AND inbound.role IN ('user', 'customer')
+            )
+        )
+
+  - id: core.conversations_open
+    aliases: [open_conversations, "open conversations"]
+    description: Conversations currently open or needing attention
+    valueKind: count
+    packId: core-b2b
+    insightCopy: Open conversation count from SQL, not a forecast.
+    sql: |
+      SELECT COUNT(*)::float8 AS value
+      FROM conversations c
+      WHERE c.org_id = current_setting('app.current_org_id', true)::uuid
+        AND c.status IN ('open', 'needs_attention')
+        AND c.started_at >= $from::timestamptz
+        AND c.started_at < $to::timestamptz
+
+  - id: core.needs_attention
+    aliases: [needs_attention, "needs attention"]
+    description: Conversations marked needs_attention
+    valueKind: count
+    packId: core-b2b
+    insightCopy: These threads are marked needs_attention in SQL.
+    recommendedAction: Open Conversations and take the flagged threads.
+    sql: |
+      SELECT COUNT(*)::float8 AS value
+      FROM conversations c
+      WHERE c.org_id = current_setting('app.current_org_id', true)::uuid
+        AND c.status = 'needs_attention'
+        AND c.updated_at >= $from::timestamptz
+        AND c.updated_at < $to::timestamptz
+
+  - id: core.work_items_open
+    aliases: [open_work_items, "open work items"]
+    description: Work items not yet done or cancelled
+    valueKind: count
+    packId: core-b2b
+    sql: |
+      SELECT COUNT(*)::float8 AS value
+      FROM work_items w
+      WHERE w.org_id = current_setting('app.current_org_id', true)::uuid
+        AND w.status IN ('open', 'in_progress', 'waiting_approval', 'needs_attention')
+        AND w.created_at >= $from::timestamptz
+        AND w.created_at < $to::timestamptz
+
+  - id: core.messages_inbound
+    aliases: [inbound_messages, "inbound messages"]
+    description: Inbound user/customer messages in the window
+    valueKind: count
+    packId: core-b2b
+    sql: |
+      SELECT COUNT(*)::float8 AS value
+      FROM messages m
+      WHERE m.org_id = current_setting('app.current_org_id', true)::uuid
+        AND m.role IN ('user', 'customer')
+        AND m.created_at >= $from::timestamptz
+        AND m.created_at < $to::timestamptz
+
+  - id: core.revenue_collected_7d
+    aliases: [revenue_collected, "revenue collected"]
+    description: Revenue collected in the window (Stripe projection from channel_logs)
+    valueKind: currency
+    source: stripe
+    packId: core-b2b
+    insightCopy: Sum of stripe.payment_succeeded amounts when those logs exist; otherwise zero.
+    sql: |
+      SELECT COALESCE(SUM((payload->>'amount')::numeric), 0)::float8 AS value
+      FROM channel_logs
+      WHERE org_id = current_setting('app.current_org_id', true)::uuid
+        AND event_type IN ('stripe.payment_succeeded', 'STRIPE_PAYMENT_SUCCEEDED')
+        AND created_at >= $from::timestamptz
+        AND created_at < $to::timestamptz

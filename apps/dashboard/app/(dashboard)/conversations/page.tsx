@@ -7,19 +7,18 @@ import {
   Search,
   CheckCircle2,
   Clock,
-  UserCheck,
   Send,
   RefreshCw,
   Sparkles,
   ShieldAlert,
-  ChevronRight,
   Bot,
   Filter,
   Plus,
   X,
-  User,
   Zap,
+  ArrowLeft,
 } from 'lucide-react';
+import { LiveRegion, StatusBadge } from '@/components/a11y';
 
 interface Conversation {
   id: string;
@@ -76,6 +75,11 @@ export default function ConversationsPage() {
   const [selectedChannel, setSelectedChannel] = useState<string>('all');
   const [selectedStatus, setSelectedStatus] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState<string>('');
+  const [workType, setWorkType] = useState<string>('all');
+  const [workPriority, setWorkPriority] = useState<string>('all');
+  const [assigneeId, setAssigneeId] = useState<string>('all');
+  const [workItemConvIds, setWorkItemConvIds] = useState<Set<string> | null>(null);
+  const [mobilePane, setMobilePane] = useState<'list' | 'thread'>('list');
 
   // Stats
   const [stats, setStats] = useState({
@@ -161,13 +165,47 @@ export default function ConversationsPage() {
     }
   };
 
-  // Fetch employees for modal
+  // Fetch employees for modal + assignee filter
   useEffect(() => {
     fetch('/api/employees')
       .then((res) => res.json())
       .then((data) => setEmployees(data.employees || []))
       .catch(console.error);
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    const params = new URLSearchParams();
+    if (workType !== 'all') params.set('type', workType);
+    if (workPriority !== 'all') params.set('priority', workPriority);
+    if (assigneeId !== 'all') params.set('assignee', assigneeId);
+    fetch(`/api/work-items?${params.toString()}`)
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (cancelled) return;
+        const items = Array.isArray(data?.workItems)
+          ? data.workItems
+          : Array.isArray(data?.items)
+            ? data.items
+            : null;
+        if (!items) {
+          setWorkItemConvIds(null);
+          return;
+        }
+        const ids = new Set<string>();
+        for (const item of items) {
+          const cid = item?.conversationId || item?.conversation_id;
+          if (typeof cid === 'string') ids.add(cid);
+        }
+        setWorkItemConvIds(ids);
+      })
+      .catch(() => {
+        if (!cancelled) setWorkItemConvIds(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [workType, workPriority, assigneeId]);
 
   // Fetch thread messages for selected conversation
   const fetchMessages = async (convId: string, silent = false) => {
@@ -289,7 +327,16 @@ export default function ConversationsPage() {
     }
   };
 
-  const activeConv = conversations.find((c) => c.id === selectedConvId);
+  const visibleConversations = conversations.filter((conv) => {
+    if (assigneeId !== 'all' && conv.employee_id !== assigneeId) return false;
+    if (workItemConvIds && (workType !== 'all' || workPriority !== 'all')) {
+      return workItemConvIds.has(conv.id);
+    }
+    if (workType === 'inquiry' && workItemConvIds === null) return false;
+    return true;
+  });
+
+  const activeConv = visibleConversations.find((c) => c.id === selectedConvId) || conversations.find((c) => c.id === selectedConvId);
 
   const getChannelIcon = (type: string) => {
     const kind = (type || '').toLowerCase();
@@ -307,8 +354,8 @@ export default function ConversationsPage() {
   };
 
   return (
-    <div className="flex h-[calc(100vh-4rem)] bg-[#121917] text-[#FAF9F0] overflow-hidden">
-      {/* Real-time needs_attention toast */}
+    <div className="flex h-[calc(100vh-8rem)] md:h-[calc(100vh-4rem)] bg-[#121917] text-[#FAF9F0] overflow-hidden">
+      <LiveRegion message={notifVisible && notif ? `Needs attention: ${notif}` : ''} politeness="assertive" />
       {notifVisible && notif && (
         <div className="fixed top-4 right-4 z-50 bg-amber-950/95 border border-amber-600/40 text-amber-100 rounded-xl px-4 py-3 shadow-2xl max-w-sm flex items-start gap-3">
           <ShieldAlert className="w-5 h-5 text-amber-400 shrink-0 mt-0.5" />
@@ -326,7 +373,7 @@ export default function ConversationsPage() {
       {/* ───────────────────────────────────────────────────────────── */}
       {/* PANE 1: FILTER & CHANNEL SIDEBAR */}
       {/* ───────────────────────────────────────────────────────────── */}
-      <div className="w-64 border-r border-emerald-950/60 bg-[#16201D] flex flex-col">
+      <div className={`${mobilePane === 'thread' ? 'hidden md:flex' : 'flex'} w-full md:w-64 border-r border-emerald-950/60 bg-[#16201D] flex-col shrink-0`}>
         <div className="p-4 border-b border-emerald-950/60 flex items-center justify-between">
           <div className="flex items-center gap-2">
             <Bot className="w-5 h-5 text-[#F0C05A]" />
@@ -381,6 +428,48 @@ export default function ConversationsPage() {
             </div>
           </div>
 
+          <div>
+            <div className="px-2 mb-2 text-xs font-semibold text-emerald-500 uppercase tracking-wider">
+              Work items
+            </div>
+            <label className="block px-2 mb-1 text-[10px] text-emerald-500">Type</label>
+            <select
+              value={workType}
+              onChange={(e) => setWorkType(e.target.value)}
+              className="w-full mb-2 bg-[#1A2623] border border-emerald-900/60 rounded-lg px-2 py-1.5 text-xs text-emerald-100 focus:outline-none focus:border-[#F0C05A]/60"
+            >
+              <option value="all">All types</option>
+              <option value="conversation">Conversation</option>
+              <option value="re.inquiry">Inquiry</option>
+              <option value="task">Task</option>
+            </select>
+            <label className="block px-2 mb-1 text-[10px] text-emerald-500">Priority</label>
+            <select
+              value={workPriority}
+              onChange={(e) => setWorkPriority(e.target.value)}
+              className="w-full mb-2 bg-[#1A2623] border border-emerald-900/60 rounded-lg px-2 py-1.5 text-xs text-emerald-100 focus:outline-none focus:border-[#F0C05A]/60"
+            >
+              <option value="all">All priorities</option>
+              <option value="urgent">Urgent</option>
+              <option value="high">High</option>
+              <option value="normal">Normal</option>
+              <option value="low">Low</option>
+            </select>
+            <label className="block px-2 mb-1 text-[10px] text-emerald-500">Assignee</label>
+            <select
+              value={assigneeId}
+              onChange={(e) => setAssigneeId(e.target.value)}
+              className="w-full bg-[#1A2623] border border-emerald-900/60 rounded-lg px-2 py-1.5 text-xs text-emerald-100 focus:outline-none focus:border-[#F0C05A]/60"
+            >
+              <option value="all">All employees</option>
+              {employees.map((emp) => (
+                <option key={emp.id} value={emp.id}>
+                  {emp.name}
+                </option>
+              ))}
+            </select>
+          </div>
+
           {/* Channel Filters */}
           <div>
             <div className="px-2 mb-2 text-xs font-semibold text-emerald-500 uppercase tracking-wider">
@@ -392,6 +481,9 @@ export default function ConversationsPage() {
                 { id: 'whatsapp', label: 'WhatsApp', icon: MessageSquare },
                 { id: 'chatwoot', label: 'Chatwoot', icon: MessageSquare },
                 { id: 'gmail', label: 'Email / Gmail', icon: Mail },
+                { id: 'instagram', label: 'Instagram', icon: MessageSquare },
+                { id: 'sms', label: 'SMS', icon: MessageSquare },
+                { id: 'widget', label: 'Widget', icon: MessageSquare },
               ].map((item) => (
                 <button
                   key={item.id}
@@ -421,7 +513,7 @@ export default function ConversationsPage() {
       {/* ───────────────────────────────────────────────────────────── */}
       {/* PANE 2: CONVERSATION LIST FEED */}
       {/* ───────────────────────────────────────────────────────────── */}
-      <div className="w-80 border-r border-emerald-950/60 bg-[#141E1B] flex flex-col">
+      <div className={`${mobilePane === 'thread' ? 'hidden md:flex' : 'flex'} w-full md:w-80 border-r border-emerald-950/60 bg-[#141E1B] flex-col shrink-0`}>
         <div className="p-3 border-b border-emerald-950/60 space-y-2">
           <button
             onClick={() => setIsNewChatOpen(true)}
@@ -449,7 +541,7 @@ export default function ConversationsPage() {
               <RefreshCw className="w-5 h-5 animate-spin" />
               <span>Loading conversations...</span>
             </div>
-          ) : conversations.length === 0 ? (
+          ) : visibleConversations.length === 0 ? (
             <div className="p-8 text-center text-xs text-emerald-500 space-y-3">
               <p>No conversations found.</p>
               <button
@@ -460,10 +552,13 @@ export default function ConversationsPage() {
               </button>
             </div>
           ) : (
-            conversations.map((conv) => (
+            visibleConversations.map((conv) => (
               <div
                 key={conv.id}
-                onClick={() => setSelectedConvId(conv.id)}
+                onClick={() => {
+                  setSelectedConvId(conv.id);
+                  setMobilePane('thread');
+                }}
                 className={`p-3 cursor-pointer transition flex flex-col gap-1.5 ${
                   selectedConvId === conv.id
                     ? 'bg-[#1E2C28] border-l-4 border-l-[#F0C05A]'
@@ -490,17 +585,16 @@ export default function ConversationsPage() {
                   <span className="text-[10px] bg-emerald-950 px-2 py-0.5 rounded text-emerald-400 font-medium">
                     {conv.employee_name || 'Sarah'}
                   </span>
-                  <span
-                    className={`text-[9px] px-1.5 py-0.5 rounded font-bold uppercase ${
+                  <StatusBadge
+                    label={conv.status.replace(/_/g, ' ')}
+                    tone={
                       conv.status === 'open'
-                        ? 'bg-emerald-900/60 text-emerald-300'
+                        ? 'success'
                         : conv.status === 'needs_attention'
-                        ? 'bg-amber-950 text-amber-300'
-                        : 'bg-zinc-800 text-zinc-400'
-                    }`}
-                  >
-                    {conv.status}
-                  </span>
+                          ? 'warning'
+                          : 'neutral'
+                    }
+                  />
                 </div>
               </div>
             ))
@@ -512,12 +606,20 @@ export default function ConversationsPage() {
       {/* PANE 3: CHAT CANVAS & CONTEXT DRAWER */}
       {/* ───────────────────────────────────────────────────────────── */}
       {activeConv ? (
-        <div className="flex-1 flex overflow-hidden">
+        <div className={`${mobilePane === 'list' ? 'hidden md:flex' : 'flex'} flex-1 overflow-hidden`}>
           {/* Main Chat Canvas */}
-          <div className="flex-1 flex flex-col bg-[#121917]">
+          <div className="flex-1 flex flex-col bg-[#121917] min-w-0">
             {/* Conversation Header */}
-            <div className="p-4 border-b border-emerald-950/60 bg-[#16201D] flex items-center justify-between">
-              <div className="flex items-center gap-3">
+            <div className="p-4 border-b border-emerald-950/60 bg-[#16201D] flex items-center justify-between gap-2">
+              <div className="flex items-center gap-3 min-w-0">
+                <button
+                  type="button"
+                  className="md:hidden p-1.5 rounded-lg border border-emerald-800/40 text-emerald-300"
+                  onClick={() => setMobilePane('list')}
+                  aria-label="Back to inbox list"
+                >
+                  <ArrowLeft className="w-4 h-4" />
+                </button>
                 <div className="w-9 h-9 rounded-full bg-emerald-900/60 flex items-center justify-center border border-emerald-700/40">
                   {getChannelIcon(activeConv.channel_type)}
                 </div>
@@ -642,7 +744,7 @@ export default function ConversationsPage() {
           </div>
 
           {/* Context Drawer */}
-          <div className="w-72 border-l border-emerald-950/60 bg-[#16201D] p-4 space-y-6 overflow-y-auto">
+          <div className="hidden lg:block w-72 border-l border-emerald-950/60 bg-[#16201D] p-4 space-y-6 overflow-y-auto">
             <div>
               <h4 className="text-xs font-bold text-emerald-400 uppercase tracking-wider mb-3">
                 Customer Context

@@ -1,6 +1,6 @@
 # Workstream 01 — Runtime and agent loop
 
-The employee loop stays **atomic-agent v0.1.73 → MCP bridge
+The employee loop stays **atomic-agent v0.1.72 → MCP bridge
 `mcp.darex.*` → `executeAutonomousToolAction`**. LiteLLM stays the
 JSON brain for classify/plan/revise/embed. Do not merge those paths.
 
@@ -60,6 +60,9 @@ Sources: `docs/future-scope/00` layer 3–4, `02` §5–7, `08` §5 and
 ---
 
 ## 3. Gaps
+
+**Audit 2026-08-14:** R1/R2/R3/R4/R5/R6 **done**. Inbound parent
+`retrieveMemoryActivity` calls `retrieveMemory`. Browser-runner **deferred**.
 
 | Item | Status |
 |------|--------|

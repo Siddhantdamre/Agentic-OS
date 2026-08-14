@@ -36,6 +36,9 @@ receive `needs_attention`.
 
 ## 3. Gaps
 
+**Audit 2026-08-14:** I2/I3/I4/S1 **done**. I5/I6 **partial**
+(scripts). I7 **deferred**.
+
 Compose + probes **done**. Langfuse Redis **done**. Sandbox/skills
 **partial** (git). Redis bus, Terraform, PgBouncer, HTTPS,
 alerting, `darex_app` switch **missing**.

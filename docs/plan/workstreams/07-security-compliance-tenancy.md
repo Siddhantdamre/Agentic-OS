@@ -46,6 +46,13 @@ Sources: `docs/future-scope/12-security-compliance-tenancy.md`,
 
 ## 3. Gaps
 
+**Audit 2026-08-14 + S7 wiring 2026-08-14:** S1–S6 **done**. S7
+**partial** — SuperTokens SAML/OIDC via env; `SUPERTOKENS_SAML_TEST_IDP=true`
+enables localhost Boxy defaults in non-prod only; password login
+stays on when SSO is unset; prod forbids the test-IdP flag.
+Live login still needs a human to run Jackson + mocksaml (or paste
+real Boxy client id/secret). SCIM and residency **missing**.
+
 RLS + no body org_id **done**. `darex_app` **partial**. Webhook
 confirm, data classes, SSO, DSR, audit role, demo-flag prod fail
 **missing**.
