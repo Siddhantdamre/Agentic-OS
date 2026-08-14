@@ -135,6 +135,7 @@ export default function ConversationsPage() {
       // EventSource auto-reconnects; nothing to do.
     };
     return () => es.close();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Fetch conversation list
@@ -233,6 +234,7 @@ export default function ConversationsPage() {
 
   useEffect(() => {
     fetchConversations();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedChannel, selectedStatus, searchQuery]);
 
   useEffect(() => {

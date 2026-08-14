@@ -330,6 +330,7 @@ Always available: \`database_query\`, \`web_search\`, \`web_extract\`, \`file_op
     return () => {
       cancelled = true;
     };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
