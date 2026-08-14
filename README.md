@@ -133,3 +133,14 @@ dare-xai/
 - [documentation/00-README.md](./documentation/00-README.md) — doc index
 - [documentation/03-docker-infrastructure.md](./documentation/03-docker-infrastructure.md) — infra
 - [documentation/07-agent-engine.md](./documentation/07-agent-engine.md) — agent runtime
+
+---
+
+## Recent Updates
+
+### Stats Endpoint Fix (v2.1)
+Fixed critical syntax errors in `/api/dashboard/stats` that prevented dashboard compilation:
+- Resolved improperly nested try-catch blocks in query handlers
+- Fixed database client scope in error handling (finally block)
+- Endpoint now compiles and responds correctly with proper error handling
+- All query failures gracefully degrade to default values instead of crashing
