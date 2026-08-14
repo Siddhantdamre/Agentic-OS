@@ -1,6 +1,6 @@
 # Workstream 01 — Runtime and agent loop
 
-The employee loop stays **atomic-agent v0.1.73 → MCP bridge
+The employee loop stays **atomic-agent v0.1.72 → MCP bridge
 `mcp.darex.*` → `executeAutonomousToolAction`**. LiteLLM stays the
 JSON brain for classify/plan/revise/embed. Do not merge those paths.
 

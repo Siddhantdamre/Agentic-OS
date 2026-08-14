@@ -44,7 +44,7 @@ if [ -d "$SNIPPET_DIR" ]; then
   shopt -u nullglob
 fi
 
-FILES+=("${OVERLAYS[@]}")
+FILES+=("${OVERLAYS[@]+"${OVERLAYS[@]}"}")
 
 ENV_FILE=()
 if [ -f "$ROOT/.env" ]; then
@@ -52,6 +52,6 @@ if [ -f "$ROOT/.env" ]; then
 fi
 
 if docker compose version >/dev/null 2>&1; then
-  exec docker compose "${ENV_FILE[@]}" "${FILES[@]}" "$@"
+  exec docker compose "${ENV_FILE[@]+"${ENV_FILE[@]}"}" "${FILES[@]+"${FILES[@]}"}" "$@"
 fi
-exec docker-compose "${ENV_FILE[@]}" "${FILES[@]}" "$@"
+exec docker-compose "${ENV_FILE[@]+"${ENV_FILE[@]}"}" "${FILES[@]+"${FILES[@]}"}" "$@"

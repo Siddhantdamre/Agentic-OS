@@ -18,7 +18,7 @@ These are the load-bearing walls. Future scope **extends** them.
 | Multi-tenant RLS | Every table `org_id`; `getScopedClient()` session GUC; WITH CHECK in migration 008 | Without this there is no OS, only a demo |
 | SuperTokens + org provisioning | Register/login, onboarding wizard, per-user org | Identity plane |
 | Classify → simple stream **or** plan-confirm-execute | Ask AI NDJSON; `agent_plans`; PATCH approve; SSE execute; parallel independent steps | Prefrontal + motor cortex |
-| atomic-agent + MCP bridge | v0.1.73, `:8787` / `:8790`, `mcp.darex.*` | Tool-using employee |
+| atomic-agent + MCP bridge | v0.1.72, `:8787` / `:8790`, `mcp.darex.*` | Tool-using employee |
 | Tool allowlist | Union of active employees + core tools + **connected** channels | Least privilege |
 | Honest connectors | Disconnected → `status:error`, `connected:false`, `/connectors` | Never fabricate (Rule 4) |
 | Nango OAuth plane | Source of truth for connections | Nervous system auth |

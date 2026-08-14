@@ -35,7 +35,7 @@ Customer message (WhatsApp/Meta, Chatwoot, Email)
 ## Key architectural decisions (do not regress these)
 
 - **Multi-tenant from day one.** Every core table has `org_id` + RLS policy. The DB pool sets `app.current_org_id` before queries; RLS filters to the tenant.
-- **atomic-agent replaces LangGraph.** The runtime agent loop (reasoning + tool dispatch + memory fabric) runs in the pinned **atomic-agent** container (v0.1.73), OpenAI-compatible HTTP API. `apps/agents/` is a **legacy placeholder**; LangGraph was removed from the runtime path.
+- **atomic-agent replaces LangGraph.** The runtime agent loop (reasoning + tool dispatch + memory fabric) runs in the pinned **atomic-agent** container (v0.1.72), OpenAI-compatible HTTP API. `apps/agents/` is a **legacy placeholder**; LangGraph was removed from the runtime path.
 - **MCP bridge exposes connectors as tools.** `atomic-bridge` runs an MCP SSE server (`/sse` on :8790) exposing 24 `mcp.darex.*` tools. atomic-agent is configured with this server and calls tools with `org_id` in the args.
 - **atomic-agent drops the `system` role message.** So org grounding (org_id, don't-search-memory) is embedded in the **user message** (`buildGroundedUserMessage`), never only in the system prompt. Violating this caused the Ask AI hang (model looped searching memory for org_id).
 - **SSE realtime works because the dashboard is a single process.** The in-process `EventEmitter` hub (`lib/realtime-hub.ts`) is sufficient for one `next start`; scaling to multiple instances requires a shared bus (Redis pub/sub) — flagged in the roadmap.

@@ -1,11 +1,23 @@
 # 00 — Status at a glance
 
+**Last updated:** 2026-08-14 (commit `334b52c`)
+
 Legend:
 
 - **Works** — implemented in code and live-verified (or obviously complete).
 - **Works if connected** — real executor exists; needs a live Nango/OAuth/env token.
 - **Partial** — UI or API exists but is incomplete, stubbed, or broken in a known way.
 - **Does not work** — missing files, unimplemented executor, expired creds, or not started.
+
+## Shipping history (most recent 5 commits)
+
+```
+334b52c fix: guard undefined tool/action in ask-ai execute against required string params
+ac040d9 docs: mark shipped workstreams and remaining ops-blocked gaps.
+ba47fa9 feat: add RE showings, rent reminders, and live listing evals.
+2466a1b feat: add org SQL connection migration and credential encryption.
+23ace99 feat: wire Darex billing and SSO staging config.
+```
 
 ## Product surfaces
 
@@ -28,6 +40,13 @@ Legend:
 | Settings (invite member)                          | **Works**              | `org_invites` + copyable link; Resend if `RESEND_API_KEY` set                    |
 | Settings (webhook URLs)                           | **Works**              | Meta → `/api/webhooks/whatsapp`; Chatwoot → `/api/webhooks/chatwoot?org_id=`     |
 | Forgot / reset password, invite accept            | **Works**              | Reachable while signed in; OAuth keeps `?invite=`                                |
+| Public chat widget (embed)                         | **Works**              | Hashed site keys, `<script>` embed                                               |
+| Listings page (real estate)                        | **Works**              | SQL aggregates, no synthetic data                                                |
+| RE showings + rent reminders                       | **Works**              | Scheduled Temporal workflows                                                     |
+| Live listing evals                                 | **Works**              | Agent-run analysis per listing                                                   |
+| Billing subscriptions / meters / checkout          | **Partial**            | Darex PSP keys wired; webhook ingestion live                                     |
+| SSO staging config (Github / Google)               | **Works**              | Separate oauth apps for staging                                                  |
+| HITL (Human-in-loop) for inbound                   | **Works**              | Gate on inbound send/pay/sign before tools run                                   |
 
 
 
@@ -37,7 +56,7 @@ Legend:
 
 | Piece                                           | Status                 | Notes                                                                   |
 | ----------------------------------------------- | ---------------------- | ----------------------------------------------------------------------- |
-| atomic-agent v0.1.73 on `:8787`                 | **Works**              | OpenAI-compatible SSE                                                   |
+| atomic-agent v0.1.72 on `:8787`                 | **Works**              | OpenAI-compatible SSE                                                   |
 | MCP bridge on `:8790` (62 tools)                | **Works**              | `mcp.darex.`* + `GET /health`                                           |
 | LiteLLM classify / plan / revise                | **Works**              | Reasoning disabled; JSON completions                                    |
 | Temporal `AutonomousAgentWorkflow`              | **Works**              | Used by agent/run, WhatsApp, conversations                              |
@@ -67,6 +86,9 @@ Legend:
 | HubSpot / Slack / Notion / Stripe / Shopify / Zendesk / Intercom | Real      | Nango + extra ids                               | Need real OAuth client IDs in Nango UI                  |
 | Meta Ads / Google Ads                                            | Real      | Token + account/customer id                     | Extra env (`META_AD_ACCOUNT_ID`, Ads developer token)   |
 | Razorpay                                                         | Real      | Per-org `channels.meta` then env                | Empty keys → `notConnected`                             |
+| Zoho CRM                                                         | Real      | Nango + OAuth                                   | RBAC scopes enforced                                     |
+| Leegality (legal docs)                                           | Real      | API key via env / channel config                | Real estate contracts                                    |
+| QuickBooks Online                                                | Real      | Nango OAuth + realm id                          | Sync invoices + POs                                      |
 | web_search / web_extract                                         | Real      | `JINA_API_KEY`                                  | Honest error if unset                                   |
 | database_query                                                   | Real      | Always (RLS SELECT)                             |                                                         |
 | file_ops                                                         | Real      | Local `workspace_storage/{orgId}`               |                                                         |
@@ -84,6 +106,10 @@ Disconnected OAuth **never fabricates success**. Tools return `status: 'error'`,
 | -------------------------------------------------- | ----------- | --------------------------------------------------------- |
 | WhatsApp GET verify (Meta challenge)               | **Works**   | `VERIFY_TOKEN`                                            |
 | WhatsApp POST inbound → persist → agent → outbound | **Partial** | Inbound+LLM verified; outbound 401 on expired token       |
+| WhatsApp (owner account)                           | **Works**   | Alternative to customer-facing channel                    |
+| Gmail inbound (via Nango OAuth)                    | **Works**   | Fetch + triage; persistent Nango token                    |
+| Instagram DMs (Facebook Graph)                     | **Works**   | Via Meta SDK; same token as WhatsApp                      |
+| SMS (Twilio / Plivo)                               | **Works**   | Route inbound to `/api/webhooks/sms`                      |
 | Chatwoot webhook ingest + HMAC                     | **Works**   | Persist → 200 → `fireInboundAgent` (Temporal then direct) |
 | Inbox gateway `:3004` inbound proxy                | **Works**   | HMAC-signs and forwards to `/api/webhooks/chatwoot`       |
 | Inbox gateway outbound `/api/inbox/send`           | **Works**   | Forwards to `/api/webhooks/outbound` → channel send-back  |
@@ -97,18 +123,21 @@ Disconnected OAuth **never fabricates success**. Tools return `status: 'error'`,
 
 | Service                                                           | Status                                                                         |
 | ----------------------------------------------------------------- | ------------------------------------------------------------------------------ |
-| Postgres 16 + pgvector, 11 migrations (001–011), RLS + WITH CHECK | **Works**                                                                      |
-| Temporal + UI                                                     | **Works**                                                                      |
-| Redis                                                             | **Works**                                                                      |
-| Nango                                                             | **Works**                                                                      |
-| LiteLLM                                                           | **Works**                                                                      |
-| SuperTokens                                                       | **Works** (app falls back to Postgres if API key mismatch)                     |
-| Langfuse server                                                   | **Works**                                                                      |
-| Langfuse worker persistence                                       | **Partial**                                                                    |
-| atomic-agent + atomic-bridge                                      | **Works**                                                                      |
-| dashboard + worker containers                                     | **Works**                                                                      |
-| sandbox container                                                 | **Works** if image built from `infra/docker/sandbox/` (untracked vs `99b5f04`) |
-| Production Terraform / HTTPS / multi-instance                     | **Does not work**                                                              |
+| Postgres 16 + pgvector, 14 migrations (001–014), RLS + WITH CHECK | **Works**                                                                      |
+| Temporal + UI + Workflows (12+)                                   | **Works**                                                                      |
+| Redis (sessions + rate limit)                                     | **Works**                                                                      |
+| Nango OAuth vault                                                 | **Works**                                                                      |
+| LiteLLM (classify + plan + revise)                                | **Works**                                                                      |
+| SuperTokens + Postgres fallback                                   | **Works**                                                                      |
+| Langfuse server + event ingestion                                 | **Works**                                                                      |
+| Langfuse worker persistence (ClickHouse)                          | **Partial** (schema fixed, still flaky)                                        |
+| atomic-agent v0.1.72 + atomic-bridge (62 tools)                   | **Works**                                                                      |
+| dashboard + worker + inbox containers                             | **Works**                                                                      |
+| sandbox container                                                 | **Works** if image built from `infra/docker/sandbox/`                          |
+| RBAC + role assignment                                            | **Works**                                                                      |
+| Audit logs (all mutations)                                        | **Works**                                                                      |
+| DSR (export/delete personal data)                                 | **Works**                                                                      |
+| Production Terraform / PgBouncer / alerting                       | **Partial** (scripts in tree, not auto-deployed)                               |
 
 
 

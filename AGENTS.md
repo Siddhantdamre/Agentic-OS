@@ -67,7 +67,7 @@ WhatsApp inbound → persist message + conversation (fast) → return 200 immedi
 
 ## 4. Status (2026-08)
 - Phases 0–4.6 and Phase 5 (real-time delivery) complete; Ask AI plan-confirm-execute live.
-- Agent runtime = **atomic-agent** (external, v0.1.73) via MCP bridge — NOT LangGraph/Hermes anymore.
+- Agent runtime = **atomic-agent** (external, v0.1.72) via MCP bridge — NOT LangGraph/Hermes anymore.
 - Known manual items: real OAuth client IDs for some providers in Nango UI; Meta token rotation. Runtime defaults to `DB_USER=darex_app`; migrations still run as superuser `darex`.
 
 ## 5. Inspect / Debug

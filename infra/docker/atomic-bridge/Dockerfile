@@ -5,6 +5,7 @@ RUN corepack enable pnpm
 
 COPY . .
 RUN pnpm install --frozen-lockfile
+RUN pnpm --filter @darex/shared-types build
 RUN pnpm --filter @darex/workflows build
 
 FROM node:20-slim AS runner

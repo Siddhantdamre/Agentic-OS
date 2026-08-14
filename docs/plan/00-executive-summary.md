@@ -88,7 +88,7 @@ From [`docs/future-scope/15-open-source-research-landscape.md`](../future-scope/
 | Postgres + RLS + pgvector | Tenant SoR and memory in one database |
 | Nango | OAuth / token plane. Never Composio. |
 | Temporal | Durable workflows, HITL signals, timers |
-| atomic-agent v0.1.73 | The only employee loop |
+| atomic-agent v0.1.72 | The only employee loop |
 | MCP bridge `mcp.darex.*` | One action bus. No second server per vertical. |
 | LiteLLM | JSON classify / plan / revise / embed. Not the tool loop. |
 | Langfuse | Traces. Fix ops; do not swap for LangSmith. |

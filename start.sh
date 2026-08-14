@@ -99,7 +99,7 @@ run_checks() {
   if [ -f "$ROOT/infra/scripts/check-auth-nango.js" ]; then
     node "$ROOT/infra/scripts/check-auth-nango.js" || true
   fi
-  if curl -sf "http://localhost:3000/api/health" >/dev/null; then
+  if curl -sf "http://localhost:${DASHBOARD_PORT:-3000}/api/health" >/dev/null; then
     echo "  [PASS] dashboard /api/health"
   else
     echo "  [WAIT] dashboard /api/health not up yet (first image build can take several minutes)"
@@ -112,7 +112,7 @@ print_urls() {
 ----------------------------------------------------------
 Darex is up (local). Open:
 
-  Dashboard     http://localhost:3000
+  Dashboard     http://localhost:${DASHBOARD_PORT:-3000}
   Nango OAuth   http://localhost:3003   paste real client IDs here
   Langfuse      http://localhost:3002
   Temporal UI   http://localhost:8233
@@ -195,7 +195,7 @@ fi
 if [ "$DO_DEV" -eq 0 ]; then
   log "Waiting for dashboard /api/health (compose image may still be compiling)"
   i=0
-  until curl -sf "http://localhost:3000/api/health" >/dev/null; do
+  until curl -sf "http://localhost:${DASHBOARD_PORT:-3000}/api/health" >/dev/null; do
     i=$((i + 1))
     if [ "$i" -ge 90 ]; then
       echo "Dashboard health not ready yet — it may still be building. Check: docker logs darex-dashboard"

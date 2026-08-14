@@ -45,7 +45,7 @@ rediscover them every quarter.
 | **pgvector** | Vectors in the same DB | Memory without a second cluster in Phase 6 |
 | **Nango** | Self-hosted OAuth / token plane | Nervous system auth; we do not rebuild Composio |
 | **Temporal** | Durable workflows + HITL signals | Webhooks, plan execute, nurture timers |
-| **atomic-agent v0.1.73** | Tool-using employee loop (`:8787`) | MCP grammar; skills; pinned image |
+| **atomic-agent v0.1.72** | Tool-using employee loop (`:8787`) | MCP grammar; skills; pinned image |
 | **MCP bridge** `:8790` | `mcp.darex.*` tools | One action bus; allowlist |
 | **LiteLLM** | JSON classify / plan / revise / embed | Fast structured thought; not the tool loop |
 | **Langfuse** | Traces + later evals | Learning layer |
@@ -86,7 +86,7 @@ runtime (which we will not become).
 
 | Project | License | Notes |
 |---------|---------|-------|
-| **atomic-agent** ([AtomicBot-ai/atomic-agent](https://github.com/AtomicBot-ai/atomic-agent)) | OSS, pinned `v0.1.73` | OpenAI-compatible SSE; drops `system` (ground in user message); skills via `SKILL.md`; MCP client. **KEEP.** Mount custom skills in the image — that is the next work, not a new runtime. |
+| **atomic-agent** ([AtomicBot-ai/atomic-agent](https://github.com/AtomicBot-ai/atomic-agent)) | OSS, pinned `v0.1.72` | OpenAI-compatible SSE; drops `system` (ground in user message); skills via `SKILL.md`; MCP client. **KEEP.** Mount custom skills in the image — that is the next work, not a new runtime. |
 
 ### 3.2 Graph / crew / actor frameworks (STUDY, REJECT as kernel)
 
@@ -591,7 +591,7 @@ re-sold as an alternative in `11`.
 
 | Repo | Role |
 |------|------|
-| [AtomicBot-ai/atomic-agent](https://github.com/AtomicBot-ai/atomic-agent) | Employee loop v0.1.73 |
+| [AtomicBot-ai/atomic-agent](https://github.com/AtomicBot-ai/atomic-agent) | Employee loop v0.1.72 |
 | [BerriAI/litellm](https://github.com/BerriAI/litellm) | JSON classify / plan / embed |
 | [NangoHQ/nango](https://github.com/NangoHQ/nango) | OAuth / token plane |
 | [temporalio/temporal](https://github.com/temporalio/temporal) | Durable HITL |

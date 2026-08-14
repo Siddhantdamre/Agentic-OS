@@ -26,7 +26,7 @@ before running multi-step plans**.
 
 Runtime is **not** LangGraph or Hermes. The live loop is:
 
-**atomic-agent (v0.1.73)** → **MCP bridge** (`mcp.darex.*`) →
+**atomic-agent (v0.1.72)** → **MCP bridge** (`mcp.darex.*`) →
 **`tool-executor.ts`** → real provider APIs / Postgres / Jina /
 sandbox.
 
@@ -94,7 +94,7 @@ From `13-what-works.md` and `00-status-at-a-glance.md`.
 
 ### Agent runtime
 
-- atomic-agent v0.1.73 SSE `/v1/chat/completions`.
+- atomic-agent v0.1.72 SSE `/v1/chat/completions`.
 - MCP bridge 62 tools, server name `darex`, `GET /health`.
 - Temporal `AutonomousAgentWorkflow` uses `isDone`, `priorToolResults`,
   and `idempotency_keys` (max 3 durable turns).

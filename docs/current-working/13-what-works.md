@@ -1,6 +1,19 @@
-# 13 — What works (verified from code + BUILD_STATE)
+# 13 — What works (verified from code + commits)
 
-This is the honest “green” list. Live dates are from `BUILD_STATE.md`.
+This is the honest “green” list. **Last sync:** 2026-08-14 (commit `334b52c`).
+
+Recent additions (past 20 commits):
+- Zoho CRM, Leegality, QuickBooks executors
+- Real estate features (listings, showings, rent reminders, live eval)
+- Public chat widget with hashed site keys
+- Multiple inbound channels (Gmail, Instagram, SMS, owner WhatsApp)
+- RBAC + role assignment
+- Audit logs for all mutations
+- DSR (export/delete personal data)
+- Billing subscriptions, meters, checkout, webhook
+- SSO staging config for GitHub / Google
+- HITL (Human-in-Loop) gate on inbound send/pay/sign
+- Memory RAG workflows (ingest, embed, retrieve, write-back)
 
 ## Platform
 
@@ -36,7 +49,7 @@ This is the honest “green” list. Live dates are from `BUILD_STATE.md`.
 
 ## Agent runtime
 
-- atomic-agent v0.1.73 SSE `/v1/chat/completions`.
+- atomic-agent v0.1.72 SSE `/v1/chat/completions`.
 - MCP bridge 62 tools, server name `darex`, `GET /health`.
 - Temporal `AutonomousAgentWorkflow` uses `isDone`, `priorToolResults`, and
   `idempotency_keys` (max 3 durable turns).

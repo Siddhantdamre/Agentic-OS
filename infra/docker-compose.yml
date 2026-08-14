@@ -529,7 +529,7 @@ services:
   # ─────────────────────────────────────────────────────────────────────────
   # Atomic Agent — Local-first AI agent (OpenAI-compatible HTTP serve)
   # Replaces the legacy Hermes agent. Full agent loop + memory fabric +
-  # MCP tool bridge lives here. Pinned release v0.1.73 (Node >= 25.7).
+  # MCP tool bridge lives here. Pinned release v0.1.72 (Node >= 25.7).
   # ─────────────────────────────────────────────────────────────────────────
   atomic-agent:
     build:
@@ -707,7 +707,7 @@ services:
       pgbouncer:
         condition: service_healthy
     ports:
-      - "3000:3000"
+      - "${DASHBOARD_PORT:-3000}:3000"
     environment:
       # `environment` wins over env_file. Runtime role is darex_app (WS-02).
       # SSE bus (WS-11 / I3): Nango redis — NEVER langfuse-redis.

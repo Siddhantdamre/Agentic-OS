@@ -70,7 +70,7 @@ Env: `ATOMIC_AGENT_URL` (default `http://localhost:8787`),
 - Parses SSE: `tool_progress`, `session_id`, `error`, content deltas.
 - `sanitizeAgentReply` unwraps JSON envelopes.
 
-Image: `infra/docker/atomic-agent` from AtomicBot-ai/atomic-agent **v0.1.73**.
+Image: `infra/docker/atomic-agent` from AtomicBot-ai/atomic-agent **v0.1.72**.
 Active provider in compose: `darex-litellm` → LiteLLM → OpenRouter.
 
 Memory fabric (profile / notes / recall) is **on** inside atomic-agent.
