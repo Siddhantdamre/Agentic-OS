@@ -7,6 +7,69 @@ same instance: `langfuse`, `nango`, `litellm`, `temporal_visibility`,
 Migrations: `infra/db/migrations/*.sql` via `pnpm db:migrate` (`infra/db/migrate.js`,
 table `_migrations`).
 
+## Database instance architecture
+
+```mermaid
+graph TB
+  subgraph Instance["Postgres Instance :5432"]
+    DarexDB["Database: darex<br/>(product DB)"]
+    LangfuseDB["Database: langfuse<br/>(traces)"]
+    NangoDB["Database: nango<br/>(OAuth vault)"]
+    LiteLLMDB["Database: litellm<br/>(LLM logs)"]
+    TemporalDB["Database: temporal_visibility<br/>(workflow events)"]
+    STokensDB["Database: supertokens<br/>(sessions)"]
+  end
+
+  subgraph DarexSchema["darex schema (with RLS)"]
+    OrgTable["orgs<br/>(no RLS)"]
+    UserTable["users<br/>(FORCE RLS)"]
+    ChannelTable["channels<br/>(FORCE RLS)"]
+    ConvTable["conversations<br/>(FORCE RLS)"]
+    MsgTable["messages<br/>(FORCE RLS)"]
+    EmpTable["ai_employees<br/>(FORCE RLS)"]
+    AgentPlansTable["agent_plans<br/>(FORCE RLS)"]
+    ChannelLogsTable["channel_logs<br/>(FORCE RLS)"]
+    OrgMembers["org_members<br/>(FORCE RLS)"]
+    OrgInvites["org_invites<br/>(FORCE RLS)"]
+    OrgMemory["org_memory<br/>(pgvector)"]
+    AuditLogs["audit_logs<br/>(FORCE RLS)"]
+    BillingTables["billing tables<br/>(subscriptions, meters)"]
+  end
+
+  subgraph RoleAuth["Role & Auth"]
+    SuperuserRole["darex (superuser)<br/>for migrations"]
+    AppRole["darex_app<br/>(app queries)<br/>session-level SET"]
+  end
+
+  DarexDB --> DarexSchema
+  DarexDB --> RoleAuth
+  RoleAuth --> DarexSchema
+```
+
+## RLS enforcement pattern
+
+```mermaid
+flowchart TD
+  Request["HTTP Request<br/>with session cookie"]
+  GetClient["getScopedClient(userId)"]
+  LookupOrg["SELECT org_id FROM users WHERE id=$1"]
+  SetSession["BEGIN<br/>SET app.current_org_id = $org_id<br/>(session-level)"]
+  Query["Query (e.g., SELECT * FROM conversations)"]
+  RLSCheck["RLS FORCE + USING<br/>org_id = current_setting('app.current_org_id')"]
+  Result["Result filtered to org"]
+  Release["Release client<br/>ROLLBACK<br/>(resets app.current_org_id)"]
+
+  Request --> GetClient
+  GetClient --> LookupOrg
+  LookupOrg --> SetSession
+  SetSession --> Query
+  Query --> RLSCheck
+  RLSCheck -->|org_id matches| Result
+  RLSCheck -->|org_id mismatch| Empty["Empty result set"]
+  Result --> Release
+  Empty --> Release
+```
+
 ## Tables
 
 | Table | RLS | Purpose |
