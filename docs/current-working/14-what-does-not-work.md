@@ -4,6 +4,8 @@ Gaps in the **current tree**, not the original wish-list.
 
 ## Blocked by credentials / ops (code is ready)
 
+
+
 | Item | Why |
 |------|-----|
 | WhatsApp **outbound** | `META_ACCESS_TOKEN` expired 2026-06-12 (Graph 401) |
