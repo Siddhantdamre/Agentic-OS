@@ -16,6 +16,7 @@ export const AutonomousActionConsole: React.FC = () => {
   const [selectedTool, setSelectedTool] = useState('gmail');
   const [actionInput, setActionInput] = useState('');
   const [executing, setExecuting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const [logs, setLogs] = useState<ToolActionResult[]>([]);
 
   const handleRunAction = async (toolName?: string, customInput?: string) => {
