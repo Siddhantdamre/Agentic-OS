@@ -10,6 +10,10 @@ interface FormattedMarkdownResponseProps {
 export const FormattedMarkdownResponse: React.FC<FormattedMarkdownResponseProps> = ({ content }) => {
   const [copiedBlockIndex, setCopiedBlockIndex] = useState<number | null>(null);
 
+  if (!content) {
+    return <div className="text-xs text-slate-500">No content</div>;
+  }
+
   const handleCopyCode = (codeText: string, index: number) => {
     navigator.clipboard.writeText(codeText);
     setCopiedBlockIndex(index);

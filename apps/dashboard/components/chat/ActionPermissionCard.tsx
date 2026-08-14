@@ -74,7 +74,6 @@ export const ActionPermissionCard: React.FC<ActionPermissionCardProps> = ({
         setStatus('pending');
       }
     } catch (err) {
-      console.error('Action approval execution failed:', err);
       setStatus('pending');
     }
   };
