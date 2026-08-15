@@ -521,7 +521,11 @@ async function embedBatchWithRetry(
           'Content-Type': 'application/json',
           Authorization: `Bearer ${apiKey}`,
         },
-        body: JSON.stringify({ model, input }),
+        // `dimensions` truncates the vendor's native output to the app's
+        // schema width (vector(1536), see SCHEMA_EMBEDDING_DIM above) — the
+        // OpenAI-compatible param LiteLLM forwards to providers that support
+        // Matryoshka truncation (OpenAI text-embedding-3-*, Gemini).
+        body: JSON.stringify({ model, input, dimensions: SCHEMA_EMBEDDING_DIM }),
         signal: controller.signal,
       });
 

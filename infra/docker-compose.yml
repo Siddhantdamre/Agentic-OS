@@ -461,6 +461,8 @@ services:
       - DATABASE_URL=postgresql://darex:${DB_PASSWORD:-darex_dev_secret}@postgres:5432/litellm
       # OpenRouter key used by the model fallback chain in config.yaml
       - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
+      # Gemini key used by the text-embedding-3-small route (see config.yaml)
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
       - LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY:-pk-lf-darex-dev-public}
       - LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY:-sk-lf-darex-dev-secret}
       - LANGFUSE_HOST=http://darex-langfuse-server:3000
@@ -668,6 +670,9 @@ services:
       - LITELLM_BASE_URL=${LITELLM_BASE_URL:-http://litellm:4000/v1}
       - LITELLM_API_KEY=${LITELLM_API_KEY:-}
       - LITELLM_MASTER_KEY=${LITELLM_MASTER_KEY:-}
+      # memory-writeback's extractWithLiteLLM requires this (no vendor
+      # default in app code) — must name a model_name from litellm config.yaml.
+      - LITELLM_MODEL=${LITELLM_MODEL:-atomic-agent}
     env_file:
       - path: ../.env
         required: false

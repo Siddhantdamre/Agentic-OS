@@ -27,6 +27,17 @@ model_list:
     model_info:
       mode: chat
 
+  # EMBEDDING_MODEL (worker/embed activity) must name a model_name defined
+  # here — the docker-compose default of "text-embedding-3-small" has no
+  # OpenAI key in this deployment, so route it to Gemini's embedding model
+  # instead via the same name the workers already expect.
+  - model_name: text-embedding-3-small
+    litellm_params:
+      model: gemini/gemini-embedding-001
+      api_key: os.environ/GEMINI_API_KEY
+    model_info:
+      mode: embedding
+
 litellm_settings:
   default_team_id: darex-default
   success_callback: ["langfuse"]
