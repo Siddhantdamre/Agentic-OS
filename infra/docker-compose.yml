@@ -330,7 +330,7 @@ services:
       REDIS_PORT: "6379"
       REDIS_URL: redis://langfuse-redis:6379
       REDIS_CONNECTION_STRING: redis://langfuse-redis:6379
-      REDIS_SOCKET_TIMEOUT_MS: "30000"
+      REDIS_SOCKET_TIMEOUT_MS: "120000"
       LANGFUSE_INGESTION_QUEUE_DELAY_MS: "5000"
       NEXTAUTH_URL: http://localhost:3002
       NEXTAUTH_SECRET: darex-langfuse-nextauth-secret-dev
@@ -391,7 +391,7 @@ services:
       REDIS_PORT: "6379"
       REDIS_URL: redis://langfuse-redis:6379
       REDIS_CONNECTION_STRING: redis://langfuse-redis:6379
-      REDIS_SOCKET_TIMEOUT_MS: "30000"
+      REDIS_SOCKET_TIMEOUT_MS: "120000"
       LANGFUSE_INGESTION_QUEUE_DELAY_MS: "5000"
       LANGFUSE_INGESTION_CLICKHOUSE_WRITE_INTERVAL_MS: "1000"
       LANGFUSE_INGESTION_CLICKHOUSE_WRITE_BATCH_SIZE: "1000"
