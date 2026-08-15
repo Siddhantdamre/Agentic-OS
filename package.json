@@ -24,11 +24,13 @@
     "db:migrate": "node infra/db/migrate.js",
     "deploy": "bash ./deploy/deploy.sh",
     "db:seed": "node infra/db/seed.js",
-    "worker:start": "pnpm --filter @darex/workflows run build && pnpm --filter @darex/workflows run start"
+    "worker:start": "pnpm --filter @darex/workflows run build && pnpm --filter @darex/workflows run start",
+    "prepare": "husky"
   },
   "devDependencies": {
-    "turbo": "^2.0.0",
+    "husky": "^9.1.7",
     "prettier": "^3.0.0",
+    "turbo": "^2.0.0",
     "typescript": "^5.4.0"
   },
   "engines": {
