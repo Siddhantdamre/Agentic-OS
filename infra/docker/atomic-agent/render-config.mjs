@@ -54,7 +54,7 @@ if (process.env.LITELLM_BASE_URL) {
     id: 'darex-litellm',
     kind: 'openai-compatible',
     baseUrl: process.env.LITELLM_BASE_URL,
-    apiKey: process.env.LITELLM_API_KEY || 'sk-darex-litellm-dev-key',
+    apiKey: process.env.LITELLM_API_KEY || process.env.LITELLM_MASTER_KEY || 'sk-darex-litellm-dev-key',
     defaultChatModel: process.env.LITELLM_MODEL || 'atomic-agent',
     supportsTools: true,
     supportsVision: true,

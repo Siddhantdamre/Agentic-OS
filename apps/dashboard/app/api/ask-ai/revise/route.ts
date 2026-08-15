@@ -58,7 +58,10 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Draft revision produced empty output' }, { status: 502 });
     }
 
-    const newStatus = ['completed', 'completed_with_errors', 'failed'].includes(plan.status) ? 'approved' : plan.status;
+    // A revised draft is new content — always route back through explicit approval,
+    // never straight to 'approved' (which would make it immediately re-executable
+    // without a human looking at the revision first).
+    const newStatus = ['completed', 'completed_with_errors', 'failed'].includes(plan.status) ? 'pending' : plan.status;
 
     await client.query(
       `UPDATE agent_plans SET draft = $3, feedback = $4, status = $5, updated_at = NOW() WHERE id = $1 AND org_id = $2`,

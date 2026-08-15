@@ -29,6 +29,34 @@ interface AIEmployee {
   created_at: string;
 }
 
+// Persona is stored as either plain text or a JSON-encoded pack descriptor
+// (`{"text": "...", "packId": "...", "rosterKey": "..."}`). Show the human
+// text, never the raw JSON.
+function describePersona(persona: unknown): string {
+  const fallback = 'Specialized AI employee for processing inquiries and handling user interactions.';
+  if (!persona) return fallback;
+
+  if (typeof persona === 'object') {
+    const text = (persona as { text?: unknown }).text;
+    return typeof text === 'string' && text ? text : fallback;
+  }
+
+  if (typeof persona !== 'string') return fallback;
+
+  const trimmed = persona.trim();
+  if (trimmed.startsWith('{')) {
+    try {
+      const parsed = JSON.parse(trimmed);
+      if (typeof parsed?.text === 'string' && parsed.text) {
+        return parsed.text;
+      }
+    } catch {
+      // not JSON — fall through to raw text
+    }
+  }
+  return persona;
+}
+
 const AVAILABLE_TOOLS = [
   { id: 'gmail', label: 'Gmail' },
   { id: 'whatsapp', label: 'WhatsApp' },
@@ -295,11 +323,7 @@ export default function EmployeesPage() {
 
                   {/* Persona description */}
                   <p className="text-xs text-slate-600 leading-relaxed line-clamp-3">
-                    {typeof employee.persona === 'string'
-                      ? employee.persona
-                      : employee.persona
-                        ? JSON.stringify(employee.persona)
-                        : 'Specialized AI employee for processing inquiries and handling user interactions.'}
+                    {describePersona(employee.persona)}
                   </p>
 
                   {/* Tools allowlist badges */}

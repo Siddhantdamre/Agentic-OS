@@ -55,7 +55,7 @@ if exist "%ROOT%\.env" (
 if "%DO_DOWN%"=="1" (
   echo.
   echo === Stopping compose (volumes kept)...
-  call bash "%ROOT%\infra\scripts\compose-cmd.sh" down
+  call bash infra/scripts/compose-cmd.sh down
   exit /b 0
 )
 
@@ -87,15 +87,15 @@ echo.
 echo === Starting compose stack...
 if "%DO_BUILD%"=="1" (
   if "%DO_DEV%"=="1" (
-    call bash "%ROOT%\infra\scripts\compose-cmd.sh" up -d --build --scale dashboard=0
+    call bash infra/scripts/compose-cmd.sh up -d --build --scale dashboard=0
   ) else (
-    call bash "%ROOT%\infra\scripts\compose-cmd.sh" up -d --build
+    call bash infra/scripts/compose-cmd.sh up -d --build
   )
 ) else (
   if "%DO_DEV%"=="1" (
-    call bash "%ROOT%\infra\scripts\compose-cmd.sh" up -d --scale dashboard=0
+    call bash infra/scripts/compose-cmd.sh up -d --scale dashboard=0
   ) else (
-    call bash "%ROOT%\infra\scripts\compose-cmd.sh" up -d
+    call bash infra/scripts/compose-cmd.sh up -d
   )
 )
 if errorlevel 1 exit /b 1

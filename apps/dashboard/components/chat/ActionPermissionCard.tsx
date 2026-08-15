@@ -16,7 +16,8 @@ import {
   Zap,
   ChevronRight,
   ShieldCheck,
-  TerminalSquare
+  TerminalSquare,
+  AlertCircle,
 } from 'lucide-react';
 
 export interface ProposedActionData {
@@ -38,6 +39,7 @@ export const ActionPermissionCard: React.FC<ActionPermissionCardProps> = ({
   const [status, setStatus] = useState<'pending' | 'executing' | 'approved' | 'cancelled'>('pending');
   const [executionResult, setExecutionResult] = useState<any>(null);
   const [resultStatus, setResultStatus] = useState<'executed' | 'simulated' | 'error' | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
   const getToolIcon = (tool: string) => {
     switch (tool.toLowerCase()) {
@@ -54,6 +56,7 @@ export const ActionPermissionCard: React.FC<ActionPermissionCardProps> = ({
   const handleApprove = async () => {
     try {
       setStatus('executing');
+      setError(null);
       const res = await fetch('/api/agent/tools', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -72,14 +75,17 @@ export const ActionPermissionCard: React.FC<ActionPermissionCardProps> = ({
         if (onExecutionComplete) onExecutionComplete(data.result);
       } else {
         setStatus('pending');
+        setError(data.error || 'Failed to execute action');
       }
-    } catch (err) {
+    } catch (err: any) {
       setStatus('pending');
+      setError(err?.message || 'Failed to execute action');
     }
   };
 
   const handleCancel = () => {
     setStatus('cancelled');
+    setError(null);
   };
 
   const emailsList = executionResult?.data?.emails;
@@ -136,6 +142,12 @@ export const ActionPermissionCard: React.FC<ActionPermissionCardProps> = ({
       {/* Action Parameters (Pending) */}
       {status === 'pending' && (
         <div className="p-5 bg-white">
+          {error && (
+            <div className="mb-3 p-3 bg-red-50 border border-red-200 rounded-xl text-xs text-red-700 flex items-start space-x-2">
+              <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+              <span>{error}</span>
+            </div>
+          )}
           <div className="mb-3 flex items-center space-x-2 text-xs font-medium text-slate-700">
             <Zap className="w-4 h-4 text-slate-400" />
             <span>Action Details</span>

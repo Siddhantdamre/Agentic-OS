@@ -182,7 +182,7 @@ export async function GET(
 
   const cookieStore = await cookies();
   const savedState = cookieStore.get(`oauth_state_${rawProvider}`)?.value;
-  if (savedState && state && savedState !== state) {
+  if (!savedState || !state || savedState !== state) {
     loginUrl.searchParams.set('error', 'Invalid OAuth state. Please try again.');
     return NextResponse.redirect(loginUrl);
   }

@@ -183,16 +183,19 @@ async function resolveOrgFromRequest(
     }
   }
 
+  // `?org_id=` is only trusted alongside a per-org secret (`?token=` matched against
+  // that org's own webhook_secret) — the global CHATWOOT_WEBHOOK_SECRET already
+  // verified in POST() is shared across all orgs, so org_id alone would let anyone
+  // holding it target any org by guessing/enumerating ids.
   const url = new URL(request.url);
   const orgIdParam = url.searchParams.get('org_id');
-  if (orgIdParam) {
-    try {
-      const res = await pool.query(`SELECT resolve_active_org($1::uuid) AS id`, [orgIdParam]);
-      if (res.rows[0]?.id) return { orgId: res.rows[0].id as string, via: 'query' };
-    } catch {
-      const res = await pool.query('SELECT id FROM orgs WHERE id = $1 AND status = $2', [orgIdParam, 'active']);
-      if (res.rows[0]?.id) return { orgId: res.rows[0].id as string, via: 'query' };
-    }
+  const queryToken = url.searchParams.get('token');
+  if (orgIdParam && queryToken) {
+    const res = await pool.query(
+      `SELECT id FROM orgs WHERE id = $1 AND status = 'active' AND meta->>'webhook_secret' = $2 LIMIT 1`,
+      [orgIdParam, queryToken]
+    );
+    if (res.rows[0]?.id) return { orgId: res.rows[0].id as string, via: 'query' };
   }
 
   return { orgId: null, via: null };
@@ -365,13 +368,27 @@ export async function POST(request: Request) {
     }
 
     if (!messageId) {
-      const msgRes = await client.query(
-        `INSERT INTO messages (org_id, conversation_id, role, content, chatwoot_msg_id, channel_key, created_at)
-         VALUES ($1, $2, 'user', $3, $4, $5, NOW())
-         RETURNING id, created_at`,
-        [orgId, conversationId, inbound.content, inbound.chatwootMsgId, channelKey]
-      );
-      messageId = msgRes.rows[0].id;
+      try {
+        const msgRes = await client.query(
+          `INSERT INTO messages (org_id, conversation_id, role, content, chatwoot_msg_id, channel_key, created_at)
+           VALUES ($1, $2, 'user', $3, $4, $5, NOW())
+           RETURNING id, created_at`,
+          [orgId, conversationId, inbound.content, inbound.chatwootMsgId, channelKey]
+        );
+        messageId = msgRes.rows[0].id;
+      } catch (insertErr: unknown) {
+        const msg = insertErr instanceof Error ? insertErr.message : String(insertErr);
+        if (inbound.chatwootMsgId && (msg.includes('idx_messages_org_chatwoot_msg_id') || msg.includes('unique'))) {
+          const raced = await client.query(
+            `SELECT id FROM messages WHERE org_id = $1 AND chatwoot_msg_id = $2 LIMIT 1`,
+            [orgId, inbound.chatwootMsgId]
+          );
+          messageId = raced.rows[0]?.id || '';
+          shouldFireAgent = false;
+        } else {
+          throw insertErr;
+        }
+      }
     }
 
     await client.query(

@@ -62,3 +62,20 @@ test('hash is computed on redacted text so PAN changes do not create a new memor
   const second = redactForEmbed('Lead ABCDE1234F wants 3BHK');
   assert.equal(hashEmbedContent(first.text), hashEmbedContent(second.text));
 });
+
+test('strips a full 16-digit card number, not just the first 12 digits', () => {
+  const raw = 'Card 4111-1111-1111-1111 was charged for the deposit';
+  const result = redactForEmbed(raw);
+  assert.equal(result.skipped, false);
+  assert.doesNotMatch(result.text, /\d{4}/);
+  assert.doesNotMatch(result.text, /1111/);
+  assert.ok(result.stripped.includes('card_pan'));
+});
+
+test('still strips a bare 12-digit aadhaar number', () => {
+  const raw = 'Aadhaar 1234 5678 9012 on file';
+  const result = redactForEmbed(raw);
+  assert.equal(result.skipped, false);
+  assert.doesNotMatch(result.text, /1234/);
+  assert.ok(result.stripped.includes('aadhaar'));
+});

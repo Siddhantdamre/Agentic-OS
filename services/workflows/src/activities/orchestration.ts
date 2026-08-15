@@ -72,6 +72,39 @@ async function writeIdempotent(orgId: string, key: string | undefined, result: u
   });
 }
 
+/**
+ * Atomically claim a key before an irreversible side effect (send/pay/sign) runs,
+ * closing the crash window that a read-then-act-then-write idempotency check leaves
+ * open: if the process dies after the external call succeeds but before writeIdempotent,
+ * a Temporal retry must not re-run the side effect. `result IS NULL` marks an in-flight
+ * claim; a real completed result always has a status field.
+ */
+async function claimIdempotent<T>(
+  orgId: string,
+  key: string | undefined
+): Promise<{ claimed: boolean; cached: T | null }> {
+  if (!key) return { claimed: true, cached: null };
+  return withOrgClient(orgId, async (client) => {
+    const inserted = await client.query(
+      `INSERT INTO idempotency_keys (key, org_id, result, expires_at)
+       VALUES ($1, $2, NULL, NOW() + INTERVAL '24 hours')
+       ON CONFLICT (key) DO NOTHING
+       RETURNING key`,
+      [key, orgId]
+    );
+    if (inserted.rows.length > 0) return { claimed: true, cached: null };
+
+    const existing = await client.query(
+      `SELECT result FROM idempotency_keys WHERE key = $1 AND org_id = $2 AND expires_at > NOW()`,
+      [key, orgId]
+    );
+    if (existing.rows.length === 0 || existing.rows[0].result === null) {
+      return { claimed: false, cached: null };
+    }
+    return { claimed: false, cached: existing.rows[0].result as T };
+  });
+}
+
 function sideEffectKey(orgId: string, activityName: string, businessKey: string): string {
   return `${orgId}:${activityName}:${businessKey}`;
 }
@@ -245,8 +278,15 @@ export async function executePlanStepActivity(params: {
 }): Promise<{ status: string; message: string; data: unknown }> {
   const orgId = requireOrgId(params.orgId);
   const key = sideEffectKey(orgId, 'executePlanStep', params.businessKey);
-  const cached = await readIdempotent<{ status: string; message: string; data: unknown }>(orgId, key);
-  if (cached?.status) return cached;
+  const claim = await claimIdempotent<{ status: string; message: string; data: unknown }>(orgId, key);
+  if (claim.cached?.status) return claim.cached;
+  if (!claim.claimed) {
+    return {
+      status: 'error',
+      message: 'Duplicate execution blocked: a previous attempt for this step is unresolved. Manual review required before retrying.',
+      data: null,
+    };
+  }
 
   try {
     const payload = wireDependencies(params.step, params.previousResults);
@@ -708,8 +748,15 @@ export async function sendNurtureMessageActivity(params: {
 }): Promise<{ sent: boolean; status: string; message: string }> {
   const orgId = requireOrgId(params.orgId);
   const key = sideEffectKey(orgId, 'sendNurtureMessage', params.businessKey);
-  const cached = await readIdempotent<{ sent: boolean; status: string; message: string }>(orgId, key);
-  if (cached && typeof cached.sent === 'boolean') return cached;
+  const claim = await claimIdempotent<{ sent: boolean; status: string; message: string }>(orgId, key);
+  if (claim.cached && typeof claim.cached.sent === 'boolean') return claim.cached;
+  if (!claim.claimed) {
+    return {
+      sent: false,
+      status: 'error',
+      message: 'Duplicate execution blocked: a previous attempt for this message is unresolved.',
+    };
+  }
 
   const body =
     params.template ||

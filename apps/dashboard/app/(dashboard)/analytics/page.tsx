@@ -32,12 +32,19 @@ interface AnalyticsData {
 export default function AnalyticsPage() {
   const [data, setData] = useState<AnalyticsData | null>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     fetch('/api/analytics')
-      .then((res) => res.json())
+      .then((res) => {
+        if (!res.ok) throw new Error(`Failed to load analytics (${res.status})`);
+        return res.json();
+      })
       .then((d) => setData(d))
-      .catch(console.error)
+      .catch((err) => {
+        console.error(err);
+        setError(err?.message || 'Failed to load analytics');
+      })
       .finally(() => setLoading(false));
   }, []);
 
@@ -57,6 +64,12 @@ export default function AnalyticsPage() {
           Deep-dive into customer interaction volume, automation performance, and channel ROI.
         </p>
       </div>
+
+      {error && (
+        <div className="rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-800">
+          {error}
+        </div>
+      )}
 
       {/* Primary 4 Stat Cards */}
       <div className="grid grid-cols-4 gap-4">

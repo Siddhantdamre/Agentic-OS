@@ -62,7 +62,7 @@ export async function GET(
   const cookieStore = await cookies();
   const savedState = cookieStore.get(SSO_STATE_COOKIE(provider))?.value;
   const state = url.searchParams.get('state') || '';
-  if (savedState && state && savedState !== state) {
+  if (!savedState || !state || savedState !== state) {
     return redirectLogin(url.origin, 'Invalid SSO state. Please try again.');
   }
 

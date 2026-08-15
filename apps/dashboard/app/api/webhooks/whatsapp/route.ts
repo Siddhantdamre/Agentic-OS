@@ -136,6 +136,7 @@ export async function POST(req: Request) {
   const agentJobs: Array<Parameters<typeof fireInboundAgent>[0]> = [];
 
   for (const entry of entries) {
+    const entryWabaId = typeof (entry as { id?: unknown })?.id === 'string' ? (entry as { id: string }).id : null;
     const changes = ((entry as { changes?: unknown[] })?.changes) || [];
     for (const change of changes) {
       const value = ((change as { value?: Record<string, unknown> })?.value) || {};
@@ -154,7 +155,7 @@ export async function POST(req: Request) {
             process.env.WHATSAPP_PHONE_NUMBER_ID ||
             null;
           const wabaId =
-            (typeof metadata.display_phone_number === 'string' && metadata.display_phone_number) ||
+            entryWabaId ||
             process.env.WHATSAPP_BUSINESS_ACCOUNT_ID ||
             null;
 

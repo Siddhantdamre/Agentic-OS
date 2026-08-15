@@ -88,6 +88,13 @@ ensure_env() {
   # shellcheck disable=SC1091
   . "$ROOT/.env"
   set +a
+  # Next.js only auto-loads env files from the app's own directory, never
+  # the repo root — without this, apps/dashboard boots with DB_PASSWORD
+  # unset and every DB call fails.
+  if [ ! -e "$ROOT/apps/dashboard/.env.local" ]; then
+    ln -s ../../.env "$ROOT/apps/dashboard/.env.local"
+    log "Linked apps/dashboard/.env.local -> ../../.env"
+  fi
 }
 
 migrate() {

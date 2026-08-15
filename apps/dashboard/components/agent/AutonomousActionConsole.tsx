@@ -25,6 +25,7 @@ export const AutonomousActionConsole: React.FC = () => {
 
     try {
       setExecuting(true);
+      setError(null);
       const res = await fetch('/api/agent/tools', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -39,6 +40,8 @@ export const AutonomousActionConsole: React.FC = () => {
       if (data.success && data.result) {
         setLogs((prev) => [data.result, ...prev]);
         setActionInput('');
+      } else {
+        setError(data.error || 'Failed to run autonomous action');
       }
     } catch (err: any) {
       setError(err?.message || 'Failed to run autonomous action');

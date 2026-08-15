@@ -39,6 +39,10 @@ RUN pnpm --filter @darex/workflows build
 
 ENV NEXT_TELEMETRY_DISABLED=1
 COPY apps/dashboard apps/dashboard
+# .dockerignore excludes .env.local (never leak dev secrets into the image),
+# but `next build` stats it unconditionally and ENOENTs instead of treating
+# a missing file as "no local overrides". An empty placeholder satisfies it.
+RUN touch apps/dashboard/.env.local
 RUN pnpm --filter @darex/dashboard build
 
 # ── runner: production `next start` with workspace dist available ──────────

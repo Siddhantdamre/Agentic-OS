@@ -125,7 +125,7 @@ export async function POST(request: Request) {
       input: { userMessage, employeeName, employeeRole },
       output: result.replyMessage,
       metadata: { usedTools: result.usedTools, steps: result.executedSteps.length, engine: usedTemporal ? 'temporal' : 'direct' },
-    });
+    }).catch((err) => console.warn('[Agent Run] Langfuse trace failed:', err?.message));
 
     return NextResponse.json({
       success: result.success !== false,

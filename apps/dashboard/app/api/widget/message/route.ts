@@ -92,6 +92,13 @@ export async function GET(request: Request) {
       NextResponse.json({ messages: res.rows }),
       auth.allowedOrigins
     );
+  } catch (err: unknown) {
+    console.error('GET /api/widget/message Error:', err);
+    return withWidgetCors(
+      request,
+      NextResponse.json({ error: 'Internal Server Error' }, { status: 500 }),
+      auth.allowedOrigins
+    );
   } finally {
     client.release();
   }
@@ -130,7 +137,7 @@ export async function POST(request: Request) {
     (typeof body.conversationId === 'string' && body.conversationId) ||
     '';
   const content = typeof body.content === 'string' ? body.content.trim() : '';
-  if (!sessionId || !content) {
+  if (!sessionId || !UUID_RE.test(sessionId) || !content) {
     return withWidgetCors(
       request,
       NextResponse.json({ error: 'sessionId and content are required' }, { status: 400 }),
@@ -138,64 +145,73 @@ export async function POST(request: Request) {
     );
   }
 
-  const { client } = await getOrgScopedClient(auth.orgId);
-  let contactId = `widget:${sessionId}`;
   try {
-    const conv = await client.query(
-      `SELECT id, contact_id FROM conversations
-        WHERE org_id = $1 AND id = $2
-          AND (
-            contact_id LIKE 'widget:%'
-            OR COALESCE(metadata->>'channel', '') = 'widget'
-            OR COALESCE(metadata->>'surface', '') = 'widget'
-          )
-        LIMIT 1`,
-      [auth.orgId, sessionId]
-    );
-    if (conv.rows.length === 0) {
-      return withWidgetCors(
-        request,
-        NextResponse.json({ error: 'Session not found' }, { status: 404 }),
-        auth.allowedOrigins
+    const { client } = await getOrgScopedClient(auth.orgId);
+    let contactId = `widget:${sessionId}`;
+    try {
+      const conv = await client.query(
+        `SELECT id, contact_id FROM conversations
+          WHERE org_id = $1 AND id = $2
+            AND (
+              contact_id LIKE 'widget:%'
+              OR COALESCE(metadata->>'channel', '') = 'widget'
+              OR COALESCE(metadata->>'surface', '') = 'widget'
+            )
+          LIMIT 1`,
+        [auth.orgId, sessionId]
       );
+      if (conv.rows.length === 0) {
+        return withWidgetCors(
+          request,
+          NextResponse.json({ error: 'Session not found' }, { status: 404 }),
+          auth.allowedOrigins
+        );
+      }
+      contactId = conv.rows[0].contact_id || contactId;
+    } finally {
+      client.release();
     }
-    contactId = conv.rows[0].contact_id || contactId;
-  } finally {
-    client.release();
-  }
 
-  const persisted = await persistInboundMessage({
-    orgId: auth.orgId,
-    channelKey: 'widget',
-    channelType: 'widget',
-    contactId,
-    content,
-    extraMeta: { surface: 'widget', sessionId },
-  });
+    const persisted = await persistInboundMessage({
+      orgId: auth.orgId,
+      channelKey: 'widget',
+      channelType: 'widget',
+      contactId,
+      content,
+      extraMeta: { surface: 'widget', sessionId },
+    });
 
-  if (persisted.shouldFireAgent) {
-    const job = inboundJobFromPersist(
-      auth.orgId,
-      {
-        orgId: auth.orgId,
-        channelKey: 'widget',
-        channelType: 'widget',
-        contactId,
-        content,
-      },
-      persisted
+    if (persisted.shouldFireAgent) {
+      const job = inboundJobFromPersist(
+        auth.orgId,
+        {
+          orgId: auth.orgId,
+          channelKey: 'widget',
+          channelType: 'widget',
+          contactId,
+          content,
+        },
+        persisted
+      );
+      job.toolAllowlist = parseToolAllowlist(['listings.search'], ['listings.search']);
+      fireInboundAgent(job);
+    }
+
+    return withWidgetCors(
+      request,
+      NextResponse.json({
+        ok: true,
+        conversationId: persisted.conversationId,
+        messageId: persisted.messageId,
+      }),
+      auth.allowedOrigins
     );
-    job.toolAllowlist = parseToolAllowlist(['listings.search'], ['listings.search']);
-    fireInboundAgent(job);
+  } catch (err: unknown) {
+    console.error('POST /api/widget/message Error:', err);
+    return withWidgetCors(
+      request,
+      NextResponse.json({ error: 'Internal Server Error' }, { status: 500 }),
+      auth.allowedOrigins
+    );
   }
-
-  return withWidgetCors(
-    request,
-    NextResponse.json({
-      ok: true,
-      conversationId: persisted.conversationId,
-      messageId: persisted.messageId,
-    }),
-    auth.allowedOrigins
-  );
 }

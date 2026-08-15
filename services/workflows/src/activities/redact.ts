@@ -40,9 +40,12 @@ const STRIP_PATTERNS: ReadonlyArray<{ name: RedactPatternName; regex: RegExp }> 
   { name: 'github_token', regex: /\b(?:ghp_[A-Za-z0-9]{36}|github_pat_[A-Za-z0-9_]{20,})\b/g },
   { name: 'slack_token', regex: /\bxox[baprs]-[A-Za-z0-9-]{10,}\b/g },
   { name: 'pan', regex: /\b[A-Z]{5}[0-9]{4}[A-Z]\b/g },
+  // card_pan (16 digits) must run before aadhaar (12 digits): the aadhaar
+  // regex otherwise greedily matches the first 12 digits of a 16-digit card
+  // number and leaves the last 4 digits (plus a separator) unredacted.
+  { name: 'card_pan', regex: /\b(?:\d{4}[-\s]?){3}\d{4}\b/g },
   { name: 'aadhaar', regex: /\b\d{4}[\s-]?\d{4}[\s-]?\d{4}\b/g },
   { name: 'ssn', regex: /\b\d{3}-\d{2}-\d{4}\b/g },
-  { name: 'card_pan', regex: /\b(?:\d{4}[-\s]?){3}\d{4}\b/g },
 ];
 
 function parseDataClass(value: string | null | undefined): DataClass | undefined {

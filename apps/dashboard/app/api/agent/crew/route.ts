@@ -159,7 +159,7 @@ export async function POST(request: Request) {
         engine: usedTemporal ? 'temporal-crew' : 'direct-crew',
         reason: plan.reason,
       },
-    });
+    }).catch((err) => console.warn('[Agent Crew] Langfuse trace failed:', err?.message));
 
     return NextResponse.json({
       success: result.success !== false,

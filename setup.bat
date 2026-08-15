@@ -70,6 +70,14 @@ if not exist "%ROOT%\.env" (
   )
 )
 
+REM Next.js only auto-loads env files from the app's own directory, never the
+REM repo root -- without this, apps/dashboard boots with DB_PASSWORD unset and
+REM every DB call (including the WhatsApp webhook) fails.
+if not exist "%ROOT%\apps\dashboard\.env.local" (
+  copy "%ROOT%\.env" "%ROOT%\apps\dashboard\.env.local"
+  echo Copied .env -^> apps\dashboard\.env.local
+)
+
 REM =========================================================================
 REM DEPENDENCIES
 REM =========================================================================
@@ -91,7 +99,7 @@ REM =========================================================================
 
 echo.
 echo === Building Docker images...
-call bash "%ROOT%\infra\scripts\compose-cmd.sh" build --progress=plain
+call bash infra/scripts/compose-cmd.sh build --progress=plain
 if errorlevel 1 exit /b 1
 
 REM =========================================================================
@@ -100,7 +108,7 @@ REM =========================================================================
 
 echo.
 echo === Starting database container...
-call bash "%ROOT%\infra\scripts\compose-cmd.sh" up -d postgres
+call bash infra/scripts/compose-cmd.sh up -d postgres
 if errorlevel 1 exit /b 1
 
 echo.

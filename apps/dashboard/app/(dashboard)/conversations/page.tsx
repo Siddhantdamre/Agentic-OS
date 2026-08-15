@@ -214,13 +214,16 @@ export default function ConversationsPage() {
       if (!silent) setMessagesLoading(true);
       const res = await fetch(`/api/conversations/${convId}/messages`);
       const data = await res.json();
-      if (data.messages) {
+      // Guard against races: only apply the result if this conversation is
+      // still the one selected (an older fetch can resolve after a newer one
+      // if the user switches conversations quickly).
+      if (data.messages && selectedConvIdRef.current === convId) {
         setMessages(data.messages);
       }
     } catch (err) {
       console.error('Failed to fetch messages:', err);
     } finally {
-      if (!silent) setMessagesLoading(false);
+      if (!silent && selectedConvIdRef.current === convId) setMessagesLoading(false);
     }
   };
 

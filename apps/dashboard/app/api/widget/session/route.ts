@@ -44,23 +44,32 @@ export async function POST(request: Request) {
     // empty body is fine
   }
 
-  const persisted = await persistInboundMessage({
-    orgId: auth.orgId,
-    channelKey: 'widget',
-    channelType: 'widget',
-    contactId: `widget:${contactHint}`,
-    content: '[widget session started]',
-    skipAgent: true,
-    extraMeta: { surface: 'widget' },
-  });
+  try {
+    const persisted = await persistInboundMessage({
+      orgId: auth.orgId,
+      channelKey: 'widget',
+      channelType: 'widget',
+      contactId: `widget:${contactHint}`,
+      content: '[widget session started]',
+      skipAgent: true,
+      extraMeta: { surface: 'widget' },
+    });
 
-  return withWidgetCors(
-    request,
-    NextResponse.json({
-      sessionId: persisted.conversationId,
-      conversationId: persisted.conversationId,
-      allowlist: ['listings.search'],
-    }),
-    auth.allowedOrigins
-  );
+    return withWidgetCors(
+      request,
+      NextResponse.json({
+        sessionId: persisted.conversationId,
+        conversationId: persisted.conversationId,
+        allowlist: ['listings.search'],
+      }),
+      auth.allowedOrigins
+    );
+  } catch (err: unknown) {
+    console.error('POST /api/widget/session Error:', err);
+    return withWidgetCors(
+      request,
+      NextResponse.json({ error: 'Internal Server Error' }, { status: 500 }),
+      auth.allowedOrigins
+    );
+  }
 }
