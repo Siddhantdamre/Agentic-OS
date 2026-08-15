@@ -1,5 +1,8 @@
 const http = require('http');
 
+const PORT = process.env.DASHBOARD_PORT || 3000;
+const BASE = `http://localhost:${PORT}`;
+
 console.log('\n=== Testing SuperTokens Auth & Nango OAuth Integration ===\n');
 
 function makeRequest(url, method = 'GET', body = null, cookie = null) {
@@ -47,7 +50,7 @@ async function testAuthAndNango() {
 
     // 1. Test Registration
     console.log('1. Testing User Registration (/api/auth/register)...');
-    const regRes = await makeRequest('http://localhost:3000/api/auth/register', 'POST', {
+    const regRes = await makeRequest(`${BASE}/api/auth/register`, 'POST', {
       email: testEmail,
       password: testPassword,
     });
@@ -62,7 +65,7 @@ async function testAuthAndNango() {
 
     // 2. Test Login
     console.log('\n2. Testing User Login (/api/auth/login)...');
-    const loginRes = await makeRequest('http://localhost:3000/api/auth/login', 'POST', {
+    const loginRes = await makeRequest(`${BASE}/api/auth/login`, 'POST', {
       email: testEmail,
       password: testPassword,
     });
@@ -79,7 +82,7 @@ async function testAuthAndNango() {
 
     // 3. Test Integrations Page (authenticated)
     console.log('\n3. Testing Integrations Nango OAuth API (/api/integrations)...');
-    const intRes = await makeRequest('http://localhost:3000/api/integrations', 'GET', null, cookie);
+    const intRes = await makeRequest(`${BASE}/api/integrations`, 'GET', null, cookie);
     if (intRes.statusCode === 200 && intRes.body.integrations) {
       console.log(`   [PASS] Integrations API working. Total apps: ${intRes.body.integrations.length}`);
       pass++;
