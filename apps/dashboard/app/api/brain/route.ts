@@ -122,9 +122,12 @@ const DISABLED_SOURCE_SQL = `
 `;
 
 function searchSql(hasQuery: boolean): string {
+  // $2 is always bound (loadBrain passes ' ' when there's no query text), so
+  // it must appear in the SQL text unconditionally — otherwise Postgres
+  // can't infer its type ("could not determine data type of parameter $2").
   const match = hasQuery
     ? `AND t.body_tsv @@ plainto_tsquery('english', $2)`
-    : '';
+    : `AND $2::text IS NOT NULL`;
   return `
 SELECT * FROM (
   SELECT
@@ -139,7 +142,8 @@ SELECT * FROM (
     NULL::text AS entity_type,
     NULL::text AS entity_id,
     NULL::uuid AS conversation_id,
-    om.org_id
+    om.org_id,
+    om.body_tsv
   FROM org_memory om
   WHERE om.org_id = $1::uuid
   UNION ALL
@@ -148,7 +152,8 @@ SELECT * FROM (
     left(trim(both FROM concat_ws(' — ', NULLIF(em.title, ''), em.body)), ${SNIPPET_CHARS}),
     em.source, em.source_ref, em.updated_at,
     (em.updated_at < NOW() - ($3::int * INTERVAL '1 day')),
-    NULL, NULL, NULL, em.org_id
+    NULL, NULL, NULL, em.org_id,
+    em.body_tsv
   FROM employee_memory em
   WHERE em.org_id = $1::uuid
   UNION ALL
@@ -157,7 +162,8 @@ SELECT * FROM (
     left(trim(both FROM concat_ws(' — ', NULLIF(en.title, ''), en.body)), ${SNIPPET_CHARS}),
     en.source, en.source_ref, en.updated_at,
     (en.updated_at < NOW() - ($3::int * INTERVAL '1 day')),
-    en.entity_type, en.entity_id, NULL, en.org_id
+    en.entity_type, en.entity_id, NULL, en.org_id,
+    en.body_tsv
   FROM entity_memory en
   WHERE en.org_id = $1::uuid
   UNION ALL
@@ -166,7 +172,8 @@ SELECT * FROM (
     left(trim(both FROM concat_ws(' — ', NULLIF(cm.title, ''), NULLIF(cm.summary, ''), cm.body)), ${SNIPPET_CHARS}),
     cm.source, cm.source_ref, cm.updated_at,
     (cm.updated_at < NOW() - ($3::int * INTERVAL '1 day')),
-    NULL, NULL, cm.conversation_id, cm.org_id
+    NULL, NULL, cm.conversation_id, cm.org_id,
+    cm.body_tsv
   FROM conversation_memory cm
   WHERE cm.org_id = $1::uuid
 ) t

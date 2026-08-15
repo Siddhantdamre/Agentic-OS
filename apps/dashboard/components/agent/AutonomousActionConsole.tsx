@@ -19,6 +19,37 @@ export const AutonomousActionConsole: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [logs, setLogs] = useState<ToolActionResult[]>([]);
 
+  // Each connector validates its own required fields before checking OAuth
+  // connection, so the demo payload must satisfy them or every quick-trigger
+  // fails with a field-validation error instead of a "not connected" result.
+  const demoPayload = (tool: string, input: string): Record<string, any> => {
+    switch (tool) {
+      case 'gmail':
+        return {
+          query: input,
+          to: 'lead@company.com',
+          recipient: 'lead@company.com',
+          subject: 'Following up on our conversation',
+          body: input,
+        };
+      case 'google-calendar':
+        return {
+          query: input,
+          summary: 'Sales Strategy Demo Call',
+          startTime: new Date(Date.now() + 24 * 3600000).toISOString(),
+        };
+      case 'hubspot':
+        return {
+          query: input,
+          email: 'lead@company.com',
+          firstname: 'Demo',
+          lastname: 'Lead',
+        };
+      default:
+        return { query: input, recipient: 'lead@company.com', summary: 'Sales Strategy Demo Call' };
+    }
+  };
+
   const handleRunAction = async (toolName?: string, customInput?: string) => {
     const targetTool = toolName || selectedTool;
     const input = customInput || actionInput;
@@ -32,7 +63,7 @@ export const AutonomousActionConsole: React.FC = () => {
         body: JSON.stringify({
           tool: targetTool,
           action: 'autonomous_execute',
-          payload: { query: input, recipient: 'lead@company.com', summary: 'Sales Strategy Demo Call' },
+          payload: demoPayload(targetTool, input),
         }),
       });
 

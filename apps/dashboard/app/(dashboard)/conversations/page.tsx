@@ -19,6 +19,7 @@ import {
   ArrowLeft,
 } from 'lucide-react';
 import { LiveRegion, StatusBadge } from '@/components/a11y';
+import { FormattedMarkdownResponse } from '@/components/chat/FormattedMarkdownResponse';
 
 interface Conversation {
   id: string;
@@ -684,7 +685,7 @@ export default function ConversationsPage() {
                             : 'bg-[#F0C05A] text-[#16201D] font-medium rounded-tr-none shadow-lg'
                         }`}
                       >
-                        {msg.content}
+                        {isUser ? msg.content : <FormattedMarkdownResponse content={msg.content} />}
                       </div>
                     </div>
                   );

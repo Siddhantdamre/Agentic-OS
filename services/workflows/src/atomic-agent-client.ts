@@ -34,6 +34,11 @@ const AGENT_MAX_RETRIES = parseInt(process.env.ATOMIC_AGENT_MAX_RETRIES || '2', 
 
 const RETRYABLE_HTTP = new Set([408, 429, 500, 502, 503, 504]);
 
+// Atomic-agent's tool-calling protocol includes these as callable "tools",
+// but they're the agent's terminal actions (their arguments are the raw
+// final-answer envelope) — not real work a user should see as a tool badge.
+const TERMINAL_ACTION_NAMES = new Set(['reply', 'finish']);
+
 function sleepMs(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -186,8 +191,13 @@ async function readSseStream(body: ReadableStream<Uint8Array>, sessionId: string
           if (eventType === 'tool_progress' || eventType === 'tool_call' || eventType === 'tool') {
             const toolStr = typeof json.tool === 'string' ? json.tool : (typeof json.name === 'string' ? json.name : 'unknown');
             const labelStr = typeof json.label === 'string' ? json.label : (typeof json.arguments === 'string' ? json.arguments : '');
-            state.tools.push({ tool: toolStr, argsLabel: labelStr });
-            opts?.onToolProgress?.(toolStr, labelStr);
+            // `reply` / `finish` are the agent's terminal actions, not real tool
+            // calls — their "arguments" are the raw answer envelope. Surfacing
+            // them as a tool-used chip leaks unparsed JSON to the user.
+            if (!TERMINAL_ACTION_NAMES.has(toolStr)) {
+              state.tools.push({ tool: toolStr, argsLabel: labelStr });
+              opts?.onToolProgress?.(toolStr, labelStr);
+            }
           } else if (eventType === 'session_id') {
             const sid = json.session_id ?? json.sessionId;
             if (typeof sid === 'string' && sid.length > 0) state.sessionId = sid;
@@ -202,10 +212,12 @@ async function readSseStream(body: ReadableStream<Uint8Array>, sessionId: string
             const toolCalls = json.choices?.[0]?.delta?.tool_calls;
             if (Array.isArray(toolCalls)) {
               for (const tc of toolCalls) {
-                const toolStr = tc?.function?.name || tc?.name || 'unknown';
-                const labelStr = tc?.function?.arguments || '';
-                state.tools.push({ tool: String(toolStr), argsLabel: String(labelStr) });
-                opts?.onToolProgress?.(String(toolStr), String(labelStr));
+                const toolStr = String(tc?.function?.name || tc?.name || 'unknown');
+                const labelStr = String(tc?.function?.arguments || '');
+                if (!TERMINAL_ACTION_NAMES.has(toolStr)) {
+                  state.tools.push({ tool: toolStr, argsLabel: labelStr });
+                  opts?.onToolProgress?.(toolStr, labelStr);
+                }
               }
             }
             if (typeof json.model === 'string') state.model = json.model;
@@ -355,32 +367,85 @@ export function mapTurnToResult(turn: AgentTurnResult): AgentTaskResult {
  * human-readable text; returns the original string when there's nothing to
  * unwrap.
  */
+function pickEnvelopeText(obj: any): string | null {
+  if (obj && typeof obj === 'object') {
+    for (const key of ['text', 'content', 'message', 'reply']) {
+      if (typeof obj[key] === 'string' && obj[key].trim()) return obj[key].trim();
+    }
+  }
+  return null;
+}
+
+function tryUnwrapEnvelope(jsonStr: string): string | null {
+  try {
+    const parsed = JSON.parse(jsonStr);
+    if (Array.isArray(parsed) && typeof parsed[0] === 'string') {
+      return pickEnvelopeText(parsed[1]);
+    }
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      return pickEnvelopeText(parsed);
+    }
+  } catch {
+    // not valid JSON
+  }
+  return null;
+}
+
+// Scans forward from a `{` for its matching `}`, respecting quoted strings and
+// escapes, so envelopes embedded mid-string can be extracted without a regex
+// mis-matching on braces inside the JSON's own text content.
+function extractLeadingJsonObject(s: string, start: number): { json: string; end: number } | null {
+  if (s[start] !== '{') return null;
+  let depth = 0;
+  let inString = false;
+  let escape = false;
+  for (let i = start; i < s.length; i++) {
+    const ch = s[i];
+    if (inString) {
+      if (escape) escape = false;
+      else if (ch === '\\') escape = true;
+      else if (ch === '"') inString = false;
+      continue;
+    }
+    if (ch === '"') {
+      inString = true;
+      continue;
+    }
+    if (ch === '{') depth++;
+    else if (ch === '}') {
+      depth--;
+      if (depth === 0) return { json: s.slice(start, i + 1), end: i + 1 };
+    }
+  }
+  return null;
+}
+
 export function sanitizeAgentReply(content: string): string {
   if (!content) return content;
   const trimmed = content.trim();
-  if (!trimmed.startsWith('[') && !trimmed.startsWith('{')) return content;
 
-  const pickText = (obj: any): string | null => {
-    if (obj && typeof obj === 'object') {
-      for (const key of ['text', 'content', 'message', 'reply']) {
-        if (typeof obj[key] === 'string' && obj[key].trim()) return obj[key].trim();
-      }
-    }
-    return null;
-  };
-
-  try {
-    const parsed = JSON.parse(trimmed);
-    if (Array.isArray(parsed) && typeof parsed[0] === 'string') {
-      const unwrapped = pickText(parsed[1]);
-      if (unwrapped) return unwrapped;
-    } else if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-      const unwrapped = pickText(parsed);
-      if (unwrapped) return unwrapped;
-    }
-  } catch {
-    // not JSON — leave the content untouched
+  // Whole-content envelope: `["reply",{"text":"..."}]` or `{"text":"..."}`.
+  if (trimmed.startsWith('[') || trimmed.startsWith('{')) {
+    const unwrapped = tryUnwrapEnvelope(trimmed);
+    if (unwrapped) return unwrapped;
+    return content;
   }
+
+  // Bare-tag envelope some models emit instead: `reply — {"text":"..."}`,
+  // sometimes followed by a plain-text duplicate of the same answer. Strip
+  // the leading JSON envelope; prefer a plain-text continuation (it's already
+  // clean markdown) and fall back to the unwrapped JSON text otherwise.
+  const prefixMatch = trimmed.match(/^[a-zA-Z_]+\s*[—-]\s*/);
+  if (prefixMatch && trimmed[prefixMatch[0].length] === '{') {
+    const extracted = extractLeadingJsonObject(trimmed, prefixMatch[0].length);
+    if (extracted) {
+      const rest = trimmed.slice(extracted.end).trim();
+      if (rest) return rest;
+      const unwrapped = tryUnwrapEnvelope(extracted.json);
+      if (unwrapped) return unwrapped;
+    }
+  }
+
   return content;
 }
 
