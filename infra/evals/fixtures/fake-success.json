@@ -1,0 +1,11 @@
+{
+  "success": true,
+  "connected": true,
+  "listings": [
+    {
+      "id": "INV-FAKE-001",
+      "title": "2BHK Koramangala",
+      "price": "1.1 Cr"
+    }
+  ]
+}

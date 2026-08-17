@@ -1,0 +1,1373 @@
+# ============================================================
+# Company Brain - Nango Integration Registry
+# services/connectors/nango.yaml
+#
+# Scope of this file:
+#   Only connectors visible in the DarexAI connector dashboard
+#   (WhatsApp, Gmail, Google Calendar, Google Ads, Meta Ads,
+#   HubSpot, Stripe, Notion, Slack, Shopify, Zendesk, Intercom,
+#   GitHub, Razorpay, Google Drive/Docs/Sheets) PLUS the full
+#   Google Workspace / Google Cloud app family, since Google is
+#   the deepest ecosystem in use.
+#
+# Permission strategy:
+#   - Request maximum useful scopes/capabilities supported by
+#     each provider (broadest read+write, not least-privilege)
+#   - Every integration gets sync + webhook + MCP exposure
+#   - Support OAuth2, API_KEY, GITHUB_APP, CONNECTION_STRING
+#
+# IMPORTANT:
+#   Provider scopes may require app verification, admin consent,
+#   business verification, or additional approval before granted
+#   in production (this applies especially to Google, Meta, and
+#   Microsoft broad scopes).
+# ============================================================
+
+version: "2"
+
+defaults:
+  enabled: true
+  sync_enabled: true
+  webhook_enabled: true
+  mcp_enabled: true
+  retry_enabled: true
+  retry_max_attempts: 5
+  retry_backoff: exponential
+  pagination_enabled: true
+  token_refresh_enabled: true
+  audit_logging: true
+
+integrations:
+
+  # ============================================================
+  # GOOGLE ECOSYSTEM (full suite)
+  # ============================================================
+
+  google:
+    display_name: "Google (umbrella / SSO)"
+    auth_mode: OAUTH2
+    categories: [google, productivity, cloud]
+    authorization_url: https://accounts.google.com/o/oauth2/v2/auth
+    token_url: https://oauth2.googleapis.com/token
+    access_type: offline
+    prompt: consent
+    include_granted_scopes: true
+    scopes:
+      # Identity
+      - openid
+      - email
+      - profile
+      # Gmail - maximum broad mailbox access
+      - https://mail.google.com/
+      - https://www.googleapis.com/auth/gmail.modify
+      - https://www.googleapis.com/auth/gmail.labels
+      - https://www.googleapis.com/auth/gmail.settings.basic
+      - https://www.googleapis.com/auth/gmail.settings.sharing
+      # Calendar
+      - https://www.googleapis.com/auth/calendar
+      - https://www.googleapis.com/auth/calendar.acls
+      - https://www.googleapis.com/auth/calendar.calendarlist
+      - https://www.googleapis.com/auth/calendar.calendars
+      - https://www.googleapis.com/auth/calendar.events
+      - https://www.googleapis.com/auth/calendar.settings.readonly
+      # Drive
+      - https://www.googleapis.com/auth/drive
+      - https://www.googleapis.com/auth/drive.metadata
+      - https://www.googleapis.com/auth/drive.activity
+      - https://www.googleapis.com/auth/drive.apps.readonly
+      - https://www.googleapis.com/auth/drive.meet.readonly
+      - https://www.googleapis.com/auth/drive.photos.readonly
+      - https://www.googleapis.com/auth/drive.scripts
+      # Docs / Sheets / Slides / Forms
+      - https://www.googleapis.com/auth/documents
+      - https://www.googleapis.com/auth/spreadsheets
+      - https://www.googleapis.com/auth/presentations
+      - https://www.googleapis.com/auth/forms.body
+      - https://www.googleapis.com/auth/forms.responses.readonly
+      # Tasks
+      - https://www.googleapis.com/auth/tasks
+      # Contacts / People / Directory
+      - https://www.googleapis.com/auth/contacts
+      - https://www.googleapis.com/auth/contacts.other.readonly
+      - https://www.googleapis.com/auth/directory.readonly
+      # Meet / Chat
+      - https://www.googleapis.com/auth/meetings.space.created
+      - https://www.googleapis.com/auth/meetings.space.readonly
+      - https://www.googleapis.com/auth/chat.messages
+      - https://www.googleapis.com/auth/chat.messages.readonly
+      - https://www.googleapis.com/auth/chat.spaces
+      - https://www.googleapis.com/auth/chat.spaces.readonly
+      # Ads / Analytics / Search Console / Business
+      - https://www.googleapis.com/auth/adwords
+      - https://www.googleapis.com/auth/analytics
+      - https://www.googleapis.com/auth/analytics.readonly
+      - https://www.googleapis.com/auth/webmasters
+      - https://www.googleapis.com/auth/webmasters.readonly
+      - https://www.googleapis.com/auth/business.manage
+      # Cloud
+      - https://www.googleapis.com/auth/cloud-platform
+    capabilities:
+      - profile.read
+      - directory.read
+    sync:
+      mode: incremental
+      entities: [users, contacts, calendar_events, emails, files]
+
+  gmail:
+    display_name: "Gmail / Email"
+    dashboard_status_ref: "Gmail / Email — EMAIL"
+    auth_mode: OAUTH2
+    categories: [google, email]
+    authorization_url: https://accounts.google.com/o/oauth2/v2/auth
+    token_url: https://oauth2.googleapis.com/token
+    access_type: offline
+    prompt: consent
+    scopes:
+      - openid
+      - email
+      - profile
+      - https://mail.google.com/
+      - https://www.googleapis.com/auth/gmail.modify
+      - https://www.googleapis.com/auth/gmail.compose
+      - https://www.googleapis.com/auth/gmail.send
+      - https://www.googleapis.com/auth/gmail.labels
+      - https://www.googleapis.com/auth/gmail.settings.basic
+      - https://www.googleapis.com/auth/gmail.settings.sharing
+      - https://www.googleapis.com/auth/gmail.addons.current.action.compose
+    capabilities:
+      - messages.read
+      - messages.send
+      - messages.modify
+      - messages.delete
+      - threads.read
+      - threads.modify
+      - drafts.read
+      - drafts.write
+      - labels.read
+      - labels.write
+      - attachments.read
+      - filters.read
+      - filters.write
+      - vacation_responder.read
+      - vacation_responder.write
+    sync:
+      mode: incremental
+      entities: [emails, threads, labels, attachments]
+      webhook_events: [message_received, message_sent, label_added]
+
+  google-calendar:
+    display_name: "Google Calendar"
+    dashboard_status_ref: "Google Calendar — CALENDAR"
+    auth_mode: OAUTH2
+    categories: [google, calendar]
+    authorization_url: https://accounts.google.com/o/oauth2/v2/auth
+    token_url: https://oauth2.googleapis.com/token
+    access_type: offline
+    scopes:
+      - https://www.googleapis.com/auth/calendar
+      - https://www.googleapis.com/auth/calendar.acls
+      - https://www.googleapis.com/auth/calendar.calendarlist
+      - https://www.googleapis.com/auth/calendar.calendars
+      - https://www.googleapis.com/auth/calendar.events
+      - https://www.googleapis.com/auth/calendar.events.freebusy
+      - https://www.googleapis.com/auth/calendar.settings.readonly
+    capabilities:
+      - calendars.read
+      - calendars.write
+      - events.read
+      - events.write
+      - events.delete
+      - freebusy.read
+      - acls.read
+      - acls.write
+      - webhooks
+    sync:
+      mode: webhook
+      entities: [calendar_events, calendars]
+      webhook_events: [calendar_event_created, calendar_event_updated, calendar_event_deleted]
+
+  google-drive:
+    display_name: "Google Drive"
+    dashboard_status_ref: "Google Drive — PRODUCTIVITY"
+    auth_mode: OAUTH2
+    categories: [google, storage, documents]
+    authorization_url: https://accounts.google.com/o/oauth2/v2/auth
+    token_url: https://oauth2.googleapis.com/token
+    access_type: offline
+    scopes:
+      - https://www.googleapis.com/auth/drive
+      - https://www.googleapis.com/auth/drive.metadata
+      - https://www.googleapis.com/auth/drive.activity
+      - https://www.googleapis.com/auth/drive.apps.readonly
+      - https://www.googleapis.com/auth/drive.meet.readonly
+      - https://www.googleapis.com/auth/drive.photos.readonly
+      - https://www.googleapis.com/auth/drive.scripts
+    capabilities:
+      - files.read
+      - files.write
+      - files.delete
+      - files.upload
+      - files.download
+      - folders.read
+      - folders.write
+      - permissions.read
+      - permissions.write
+      - sharing.read
+      - sharing.write
+      - revisions.read
+      - comments.read
+      - comments.write
+      - search
+      - activity.read
+    sync:
+      mode: incremental
+      entities: [files, folders, permissions]
+
+  google-docs:
+    display_name: "Google Docs"
+    dashboard_status_ref: "Google Docs — PRODUCTIVITY"
+    auth_mode: OAUTH2
+    categories: [google, documents]
+    scopes:
+      - https://www.googleapis.com/auth/documents
+      - https://www.googleapis.com/auth/drive
+    capabilities:
+      - documents.read
+      - documents.write
+      - documents.create
+      - documents.append
+      - comments.read
+      - comments.write
+      - suggestions.read
+      - suggestions.write
+    sync:
+      mode: incremental
+      entities: [documents]
+
+  google-sheets:
+    display_name: "Google Sheets"
+    dashboard_status_ref: "Google Sheets — PRODUCTIVITY"
+    auth_mode: OAUTH2
+    categories: [google, spreadsheets]
+    scopes:
+      - https://www.googleapis.com/auth/spreadsheets
+      - https://www.googleapis.com/auth/drive
+    capabilities:
+      - spreadsheets.read
+      - spreadsheets.write
+      - spreadsheets.create
+      - rows.read
+      - rows.append
+      - rows.update
+      - rows.delete
+      - sheets.add
+      - sheets.delete
+      - formatting.write
+      - charts.write
+    sync:
+      mode: incremental
+      entities: [spreadsheets, rows]
+
+  google-slides:
+    display_name: "Google Slides"
+    auth_mode: OAUTH2
+    categories: [google, presentations]
+    scopes:
+      - https://www.googleapis.com/auth/presentations
+      - https://www.googleapis.com/auth/drive
+    capabilities:
+      - presentations.read
+      - presentations.write
+      - presentations.create
+      - slides.read
+      - slides.write
+    sync:
+      mode: incremental
+      entities: [presentations]
+
+  google-forms:
+    display_name: "Google Forms"
+    auth_mode: OAUTH2
+    categories: [google, forms]
+    scopes:
+      - https://www.googleapis.com/auth/forms.body
+      - https://www.googleapis.com/auth/forms.responses.readonly
+      - https://www.googleapis.com/auth/drive
+    capabilities:
+      - forms.read
+      - forms.write
+      - responses.read
+    sync:
+      mode: incremental
+      entities: [forms, responses]
+
+  google-chat:
+    display_name: "Google Chat"
+    auth_mode: OAUTH2
+    categories: [google, messaging]
+    scopes:
+      - https://www.googleapis.com/auth/chat.messages
+      - https://www.googleapis.com/auth/chat.messages.readonly
+      - https://www.googleapis.com/auth/chat.spaces
+      - https://www.googleapis.com/auth/chat.spaces.readonly
+      - https://www.googleapis.com/auth/chat.memberships
+    capabilities:
+      - messages.read
+      - messages.write
+      - spaces.read
+      - spaces.write
+      - memberships.read
+      - memberships.write
+    sync:
+      mode: webhook
+      entities: [messages, spaces]
+
+  google-meet:
+    display_name: "Google Meet"
+    auth_mode: OAUTH2
+    categories: [google, meetings]
+    scopes:
+      - https://www.googleapis.com/auth/meetings.space.created
+      - https://www.googleapis.com/auth/meetings.space.readonly
+    capabilities:
+      - meetings.read
+      - meetings.create
+      - recordings.read
+      - transcripts.read
+      - participants.read
+    sync:
+      mode: incremental
+      entities: [meetings, recordings]
+
+  google-contacts:
+    display_name: "Google Contacts"
+    auth_mode: OAUTH2
+    categories: [google, contacts]
+    scopes:
+      - https://www.googleapis.com/auth/contacts
+      - https://www.googleapis.com/auth/contacts.readonly
+      - https://www.googleapis.com/auth/contacts.other.readonly
+      - https://www.googleapis.com/auth/directory.readonly
+    capabilities:
+      - contacts.read
+      - contacts.write
+      - contacts.delete
+      - groups.read
+      - groups.write
+    sync:
+      mode: incremental
+      entities: [contacts, groups]
+
+  google-tasks:
+    display_name: "Google Tasks"
+    auth_mode: OAUTH2
+    categories: [google, productivity]
+    scopes:
+      - https://www.googleapis.com/auth/tasks
+    capabilities:
+      - tasklists.read
+      - tasklists.write
+      - tasks.read
+      - tasks.write
+      - tasks.delete
+    sync:
+      mode: incremental
+      entities: [tasks, tasklists]
+
+  google-ads:
+    display_name: "Google Ads"
+    dashboard_status_ref: "Google Ads — ADVERTISING"
+    auth_mode: OAUTH2
+    categories: [google, ads, marketing]
+    authorization_url: https://accounts.google.com/o/oauth2/v2/auth
+    token_url: https://oauth2.googleapis.com/token
+    access_type: offline
+    scopes:
+      - https://www.googleapis.com/auth/adwords
+    capabilities:
+      - accounts.read
+      - campaigns.read
+      - campaigns.write
+      - ad_groups.read
+      - ad_groups.write
+      - ads.read
+      - ads.write
+      - keywords.read
+      - keywords.write
+      - audiences.read
+      - audiences.write
+      - conversions.read
+      - conversions.write
+      - budgets.read
+      - budgets.write
+      - bidding_strategies.read
+      - bidding_strategies.write
+      - reports.read
+    sync:
+      mode: incremental
+      entities: [campaigns, ad_groups, ads, keywords, reports]
+
+  google-analytics:
+    display_name: "Google Analytics"
+    auth_mode: OAUTH2
+    categories: [google, analytics]
+    scopes:
+      - https://www.googleapis.com/auth/analytics
+      - https://www.googleapis.com/auth/analytics.readonly
+      - https://www.googleapis.com/auth/analytics.edit
+      - https://www.googleapis.com/auth/analytics.manage.users
+    capabilities:
+      - properties.read
+      - reports.read
+      - realtime.read
+      - audiences.read
+      - audiences.write
+      - conversions.read
+      - conversions.write
+    sync:
+      mode: full
+      entities: [reports, audiences]
+
+  google-search-console:
+    display_name: "Google Search Console"
+    auth_mode: OAUTH2
+    categories: [google, seo]
+    scopes:
+      - https://www.googleapis.com/auth/webmasters
+      - https://www.googleapis.com/auth/webmasters.readonly
+    capabilities:
+      - sites.read
+      - search_analytics.read
+      - sitemaps.read
+      - sitemaps.write
+      - url_inspection.read
+    sync:
+      mode: full
+      entities: [search_analytics, sitemaps]
+
+  google-business-profile:
+    display_name: "Google Business Profile"
+    auth_mode: OAUTH2
+    categories: [google, marketing, local_business]
+    scopes:
+      - https://www.googleapis.com/auth/business.manage
+    capabilities:
+      - locations.read
+      - locations.write
+      - reviews.read
+      - reviews.write
+      - posts.read
+      - posts.write
+      - insights.read
+    sync:
+      mode: incremental
+      entities: [locations, reviews, posts]
+
+  google-cloud:
+    display_name: "Google Cloud Platform"
+    auth_mode: OAUTH2
+    categories: [google, cloud, infrastructure]
+    authorization_url: https://accounts.google.com/o/oauth2/v2/auth
+    token_url: https://oauth2.googleapis.com/token
+    access_type: offline
+    prompt: consent
+    scopes:
+      - https://www.googleapis.com/auth/cloud-platform
+    capabilities:
+      - storage
+      - compute
+      - functions
+      - pubsub
+      - bigquery
+      - logging
+      - monitoring
+      - iam
+      - secretmanager
+    sync:
+      mode: full
+      entities: [resources, logs]
+
+
+  # ============================================================
+  # WHATSAPP BUSINESS (Meta Cloud API)
+  # ============================================================
+
+  whatsapp-business:
+    display_name: "WhatsApp Business"
+    dashboard_status_ref: "WhatsApp Business — MESSAGING"
+    auth_mode: OAUTH2
+    categories: [messaging, whatsapp, meta]
+    authorization_url: https://www.facebook.com/v24.0/dialog/oauth
+    token_url: https://graph.facebook.com/v24.0/oauth/access_token
+    scopes:
+      - business_management
+      - whatsapp_business_management
+      - whatsapp_business_messaging
+      - public_profile
+    capabilities:
+      - read_business_accounts
+      - manage_business_accounts
+      - read_phone_numbers
+      - manage_phone_numbers
+      - send_messages
+      - receive_messages
+      - templates.read
+      - templates.write
+      - templates.submit
+      - media.read
+      - media.upload
+      - contacts.read
+      - message_status.read
+      - interactive_messages
+      - webhooks
+    sync:
+      mode: webhook
+      entities: [messages, contacts, templates]
+      webhook_events: [message_received, message_status, template_status]
+
+
+  # ============================================================
+  # META (Facebook Pages / Instagram / Meta Ads)
+  # ============================================================
+
+  meta-ads:
+    display_name: "Meta Ads"
+    dashboard_status_ref: "Meta Ads — ADVERTISING"
+    auth_mode: OAUTH2
+    categories: [meta, ads, social]
+    authorization_url: https://www.facebook.com/v24.0/dialog/oauth
+    token_url: https://graph.facebook.com/v24.0/oauth/access_token
+    scopes:
+      - public_profile
+      - email
+      - business_management
+      - ads_read
+      - ads_management
+      - pages_show_list
+      - pages_read_engagement
+      - instagram_basic
+      - instagram_manage_insights
+    capabilities:
+      - ad_accounts.read
+      - campaigns.read
+      - campaigns.write
+      - ad_sets.read
+      - ad_sets.write
+      - ads.read
+      - ads.write
+      - creatives.read
+      - creatives.write
+      - audiences.read
+      - audiences.write
+      - insights.read
+      - conversions.read
+      - budgets.read
+      - budgets.write
+      - pixels.read
+      - webhooks
+    sync:
+      mode: incremental
+      entities: [campaigns, ad_sets, ads, insights, audiences]
+
+
+  # ============================================================
+  # HUBSPOT CRM
+  # ============================================================
+
+  hubspot:
+    display_name: "HubSpot CRM"
+    dashboard_status_ref: "HubSpot CRM — CRM"
+    auth_mode: OAUTH2
+    categories: [crm, sales, marketing]
+    scopes:
+      - crm.objects.contacts.read
+      - crm.objects.contacts.write
+      - crm.objects.companies.read
+      - crm.objects.companies.write
+      - crm.objects.deals.read
+      - crm.objects.deals.write
+      - crm.objects.tickets.read
+      - crm.objects.tickets.write
+      - crm.objects.products.read
+      - crm.objects.products.write
+      - crm.objects.quotes.read
+      - crm.objects.quotes.write
+      - crm.objects.line_items.read
+      - crm.objects.line_items.write
+      - crm.objects.custom.read
+      - crm.objects.custom.write
+      - crm.schemas.contacts.read
+      - crm.schemas.companies.read
+      - crm.schemas.deals.read
+      - crm.schemas.custom.read
+      - crm.objects.contacts.sensitive.read
+      - crm.objects.companies.sensitive.read
+      - crm.objects.deals.sensitive.read
+      - marketing.campaigns.read
+      - marketing.campaigns.write
+      - automation
+      - files
+      - conversations.read
+      - conversations.write
+    capabilities:
+      - contacts.read
+      - contacts.write
+      - contacts.delete
+      - companies.read
+      - companies.write
+      - deals.read
+      - deals.write
+      - deals.stage_update
+      - tickets.read
+      - tickets.write
+      - pipelines.read
+      - pipelines.write
+      - workflows.trigger
+      - lists.read
+      - lists.write
+      - notes.read
+      - notes.write
+      - tasks.read
+      - tasks.write
+      - webhooks
+    sync:
+      mode: incremental
+      entities: [contacts, companies, deals, tickets, pipelines]
+      webhook_events: [lead_created, deal_created]
+
+
+  # ============================================================
+  # STRIPE PAYMENTS
+  # ============================================================
+
+  stripe:
+    display_name: "Stripe Payments"
+    dashboard_status_ref: "Stripe Payments — PAYMENTS"
+    auth_mode: OAUTH2
+    categories: [payments, finance]
+    capabilities:
+      - customers.read
+      - customers.write
+      - payments.read
+      - payments.write
+      - payment_intents.read
+      - payment_intents.write
+      - refunds.read
+      - refunds.write
+      - subscriptions.read
+      - subscriptions.write
+      - products.read
+      - products.write
+      - prices.read
+      - prices.write
+      - invoices.read
+      - invoices.write
+      - payment_links.read
+      - payment_links.write
+      - balance.read
+      - payouts.read
+      - disputes.read
+      - disputes.write
+      - checkout_sessions.read
+      - checkout_sessions.write
+      - webhooks
+    sync:
+      mode: webhook
+      entities: [payments, invoices, subscriptions, customers]
+      webhook_events: [payment_received]
+
+
+  # ============================================================
+  # NOTION WORKSPACE
+  # ============================================================
+
+  notion:
+    display_name: "Notion Workspace"
+    dashboard_status_ref: "Notion Workspace — KNOWLEDGE"
+    auth_mode: OAUTH2
+    categories: [knowledge_base, documents]
+    capabilities:
+      - pages.read
+      - pages.write
+      - pages.delete
+      - databases.read
+      - databases.write
+      - database_items.read
+      - database_items.write
+      - blocks.read
+      - blocks.write
+      - blocks.delete
+      - comments.read
+      - comments.write
+      - users.read
+      - search
+      - webhooks
+    sync:
+      mode: incremental
+      entities: [pages, databases, blocks, comments]
+
+
+  # ============================================================
+  # SLACK
+  # ============================================================
+
+  slack:
+    display_name: "Slack Notifications"
+    dashboard_status_ref: "Slack Notifications — MESSAGING"
+    auth_mode: OAUTH2
+    categories: [messaging, collaboration]
+    scopes:
+      - channels:read
+      - channels:history
+      - channels:manage
+      - channels:join
+      - groups:read
+      - groups:history
+      - groups:write
+      - im:read
+      - im:history
+      - im:write
+      - mpim:read
+      - mpim:history
+      - chat:write
+      - chat:write.customize
+      - chat:write.public
+      - files:read
+      - files:write
+      - users:read
+      - users:read.email
+      - team:read
+      - reactions:read
+      - reactions:write
+      - pins:read
+      - pins:write
+      - search:read
+      - usergroups:read
+      - usergroups:write
+    capabilities:
+      - messages.send
+      - messages.read
+      - channels.read
+      - channels.manage
+      - files.upload
+      - files.read
+      - reactions.add
+      - users.lookup
+      - human_handoff_trigger
+      - webhooks
+    sync:
+      mode: webhook
+      entities: [messages, channels, users]
+
+
+  # ============================================================
+  # SHOPIFY STORE
+  # ============================================================
+
+  shopify:
+    display_name: "Shopify Store"
+    dashboard_status_ref: "Shopify Store — E-COMMERCE"
+    auth_mode: OAUTH2
+    categories: [ecommerce]
+    scopes:
+      - read_products
+      - write_products
+      - read_orders
+      - write_orders
+      - read_customers
+      - write_customers
+      - read_inventory
+      - write_inventory
+      - read_fulfillments
+      - write_fulfillments
+      - read_discounts
+      - write_discounts
+      - read_price_rules
+      - write_price_rules
+      - read_shipping
+      - read_analytics
+      - read_reports
+    capabilities:
+      - products.read
+      - products.write
+      - orders.read
+      - orders.write
+      - customers.read
+      - customers.write
+      - inventory.read
+      - inventory.write
+      - discounts.read
+      - discounts.write
+      - fulfillment.read
+      - fulfillment.write
+      - collections.read
+      - collections.write
+      - webhooks
+    sync:
+      mode: webhook
+      entities: [products, orders, customers, inventory, fulfillments]
+
+
+  # ============================================================
+  # ZENDESK SUPPORT
+  # ============================================================
+
+  zendesk:
+    display_name: "Zendesk Support"
+    dashboard_status_ref: "Zendesk Support — SUPPORT"
+    auth_mode: OAUTH2
+    categories: [support, ticketing]
+    scopes:
+      - read
+      - write
+    capabilities:
+      - tickets.read
+      - tickets.write
+      - tickets.delete
+      - users.read
+      - users.write
+      - organizations.read
+      - organizations.write
+      - comments.read
+      - comments.write
+      - attachments.read
+      - attachments.write
+      - macros.read
+      - views.read
+      - triggers.read
+      - satisfaction_ratings.read
+      - webhooks
+    sync:
+      mode: webhook
+      entities: [tickets, users, organizations]
+
+
+  # ============================================================
+  # INTERCOM INBOX
+  # ============================================================
+
+  intercom:
+    display_name: "Intercom Inbox"
+    dashboard_status_ref: "Intercom Inbox — SUPPORT"
+    auth_mode: OAUTH2
+    categories: [support, messaging]
+    capabilities:
+      - contacts.read
+      - contacts.write
+      - conversations.read
+      - conversations.write
+      - conversations.assign
+      - companies.read
+      - companies.write
+      - tags.read
+      - tags.write
+      - articles.read
+      - notes.read
+      - notes.write
+      - admins.read
+      - webhooks
+    sync:
+      mode: webhook
+      entities: [conversations, contacts, companies]
+
+
+  # ============================================================
+  # GITHUB CODE
+  # ============================================================
+
+  github:
+    display_name: "GitHub Code"
+    dashboard_status_ref: "GitHub Code — DEVELOPMENT"
+    auth_mode: GITHUB_APP
+    categories: [developer_tools, git, project_management, mcp]
+    capabilities:
+      repositories:
+        - metadata:read
+        - contents:read
+        - contents:write
+        - issues:read
+        - issues:write
+        - pull_requests:read
+        - pull_requests:write
+        - deployments:read
+        - deployments:write
+        - actions:read
+        - actions:write
+        - checks:read
+        - checks:write
+        - discussions:read
+        - discussions:write
+        - workflows:read
+        - workflows:write
+        - releases:read
+        - releases:write
+        - environments:read
+        - environments:write
+        - webhooks:read
+        - webhooks:write
+        - security_events:read
+        - statuses:read
+        - statuses:write
+      organization:
+        - members:read
+        - members:write
+        - administration:read
+        - administration:write
+        - organization_projects:read
+        - organization_projects:write
+      account:
+        - profile:read
+        - email:read
+    sync:
+      mode: webhook
+      entities: [repositories, issues, pull_requests, commits, releases]
+      webhook_events: [pull_request_created, issue_created]
+
+
+  # ============================================================
+  # RAZORPAY INVOICES
+  # ============================================================
+
+  razorpay:
+    display_name: "Razorpay Invoices"
+    dashboard_status_ref: "Razorpay Invoices — PAYMENTS"
+    auth_mode: API_KEY
+    categories: [payments, finance, india]
+    credentials:
+      - key_id
+      - key_secret
+    capabilities:
+      - payments.read
+      - payments.create
+      - payments.capture
+      - payments.refund
+      - payments.update
+      - orders.read
+      - orders.create
+      - invoices.read
+      - invoices.create
+      - invoices.update
+      - invoices.cancel
+      - payment_links.read
+      - payment_links.create
+      - customers.read
+      - customers.create
+      - customers.update
+      - subscriptions.read
+      - subscriptions.create
+      - subscriptions.update
+      - subscriptions.cancel
+      - plans.read
+      - plans.create
+      - settlements.read
+      - disputes.read
+      - qr_codes.read
+      - qr_codes.create
+      - webhooks
+    sync:
+      mode: webhook
+      entities: [payments, invoices, orders, settlements]
+      webhook_events: [payment_received]
+
+
+  # ============================================================
+  # WAVE A/B — Microsoft, Salesforce, DocuSign, Twilio, Maps
+  # Additive only. Do not mark connected without a Nango row.
+  # ============================================================
+
+  microsoft-outlook:
+    display_name: "Microsoft Outlook"
+    dashboard_status_ref: "Microsoft Outlook — EMAIL"
+    auth_mode: OAUTH2
+    categories: [microsoft, email, communication]
+    authorization_url: https://login.microsoftonline.com/common/oauth2/v2.0/authorize
+    token_url: https://login.microsoftonline.com/common/oauth2/v2.0/token
+    scopes:
+      - offline_access
+      - openid
+      - email
+      - profile
+      - User.Read
+      - Mail.Read
+      - Mail.ReadWrite
+      - Mail.Send
+    capabilities:
+      - messages.read
+      - messages.send
+      - drafts.write
+    sync:
+      mode: incremental
+      entities: [emails, threads]
+
+  microsoft-calendar:
+    display_name: "Microsoft Calendar"
+    dashboard_status_ref: "Microsoft Calendar — CALENDAR"
+    auth_mode: OAUTH2
+    categories: [microsoft, calendar]
+    authorization_url: https://login.microsoftonline.com/common/oauth2/v2.0/authorize
+    token_url: https://login.microsoftonline.com/common/oauth2/v2.0/token
+    scopes:
+      - offline_access
+      - openid
+      - email
+      - profile
+      - User.Read
+      - Calendars.Read
+      - Calendars.ReadWrite
+    capabilities:
+      - calendar_events.read
+      - calendar_events.write
+    sync:
+      mode: incremental
+      entities: [calendar_events, calendars]
+
+  salesforce:
+    display_name: "Salesforce CRM"
+    dashboard_status_ref: "Salesforce CRM — CRM"
+    auth_mode: OAUTH2
+    categories: [crm, sales]
+    authorization_url: https://login.salesforce.com/services/oauth2/authorize
+    token_url: https://login.salesforce.com/services/oauth2/token
+    scopes:
+      - api
+      - refresh_token
+      - id
+    capabilities:
+      - contacts.read
+      - contacts.write
+      - leads.read
+      - leads.write
+    sync:
+      mode: incremental
+      entities: [contacts, leads, companies]
+
+  docusign:
+    display_name: "DocuSign"
+    dashboard_status_ref: "DocuSign — E-SIGN"
+    auth_mode: OAUTH2
+    categories: [documents, esign]
+    authorization_url: https://account.docusign.com/oauth/auth
+    token_url: https://account.docusign.com/oauth/token
+    scopes:
+      - signature
+      - extended
+      - openid
+    capabilities:
+      - envelopes.read
+      - envelopes.write
+      - envelopes.send
+    sync:
+      mode: webhook
+      entities: [envelopes]
+      webhook_events: [document_created]
+
+  twilio:
+    display_name: "Twilio SMS"
+    dashboard_status_ref: "Twilio SMS — MESSAGING"
+    auth_mode: API_KEY
+    categories: [messaging, sms]
+    credentials:
+      - account_sid
+      - auth_token
+    capabilities:
+      - messages.send
+      - messages.read
+    sync:
+      mode: webhook
+      entities: [messages]
+      webhook_events: [message_sent, message_status]
+
+  google-maps:
+    display_name: "Google Maps Geocoding"
+    dashboard_status_ref: "Google Maps — MAPS"
+    auth_mode: API_KEY
+    categories: [maps, public]
+    credentials:
+      - api_key
+    capabilities:
+      - geocode
+      - reverse_geocode
+    sync:
+      mode: none
+      entities: []
+
+  zoho-crm:
+    display_name: "Zoho CRM"
+    dashboard_status_ref: "Zoho CRM — CRM"
+    auth_mode: OAUTH2
+    categories: [crm, sales, india]
+    scopes:
+      - ZohoCRM.modules.contacts.ALL
+      - ZohoCRM.modules.leads.ALL
+      - ZohoCRM.users.READ
+    capabilities:
+      - contacts.read
+      - contacts.write
+      - leads.read
+      - leads.write
+    sync:
+      mode: incremental
+      entities: [contacts, leads]
+
+  leegality:
+    display_name: "Leegality"
+    dashboard_status_ref: "Leegality — E-SIGN"
+    auth_mode: API_KEY
+    categories: [documents, esign, india]
+    credentials:
+      - auth_token
+      - profile_id
+    capabilities:
+      - documents.read
+      - documents.write
+      - envelopes.send
+    sync:
+      mode: webhook
+      entities: [documents]
+      webhook_events: [document_created]
+
+  quickbooks:
+    display_name: "QuickBooks"
+    dashboard_status_ref: "QuickBooks — FINANCE"
+    auth_mode: OAUTH2
+    categories: [finance, accounting]
+    scopes:
+      - com.intuit.quickbooks.accounting
+    capabilities:
+      - customers.read
+      - customers.write
+      - invoices.read
+    sync:
+      mode: incremental
+      entities: [customers, invoices]
+
+
+# ==============================================================
+# GLOBAL CAPABILITY MATRIX
+# ==============================================================
+
+capabilities:
+
+  standard:
+    - read
+    - create
+    - update
+    - delete
+    - search
+    - list
+    - export
+    - import
+
+  communication:
+    - send
+    - receive
+    - reply
+    - react
+    - upload_media
+    - download_media
+    - webhook
+
+  crm:
+    - contacts
+    - companies
+    - leads
+    - deals
+    - pipelines
+    - activities
+    - notes
+    - tasks
+    - associations
+    - tickets
+
+  marketing:
+    - campaigns
+    - audiences
+    - ads
+    - ad_sets
+    - creatives
+    - analytics
+    - attribution
+    - reports
+    - conversions
+
+  documents:
+    - create
+    - read
+    - update
+    - delete
+    - share
+    - download
+    - upload
+    - search
+    - comment
+
+  developer:
+    - repositories
+    - branches
+    - commits
+    - pull_requests
+    - issues
+    - releases
+    - actions
+    - workflows
+    - deployments
+    - environments
+    - webhooks
+
+  finance:
+    - customers
+    - invoices
+    - payments
+    - refunds
+    - subscriptions
+    - payouts
+    - settlements
+    - reports
+    - disputes
+
+  ecommerce:
+    - products
+    - orders
+    - customers
+    - inventory
+    - fulfillment
+    - discounts
+
+  support:
+    - tickets
+    - conversations
+    - contacts
+    - macros
+    - satisfaction_ratings
+
+
+# ==============================================================
+# MCP EXPOSURE
+# ==============================================================
+
+mcp:
+  enabled: true
+  expose_integrations: true
+  default_tools:
+    - search
+    - read
+    - create
+    - update
+    - delete
+  categories:
+    - communication
+    - email
+    - calendar
+    - crm
+    - documents
+    - storage
+    - finance
+    - marketing
+    - developer_tools
+    - project_management
+    - ecommerce
+    - support
+    - google
+
+
+# ==============================================================
+# WEBHOOKS
+# ==============================================================
+
+webhooks:
+  enabled: true
+  events:
+    - created
+    - updated
+    - deleted
+    - message_received
+    - message_sent
+    - message_status
+    - payment_received
+    - lead_created
+    - deal_created
+    - issue_created
+    - pull_request_created
+    - document_created
+    - calendar_event_created
+    - calendar_event_updated
+    - calendar_event_deleted
+    - template_status
+    - order_created
+    - ticket_created
+
+
+# ==============================================================
+# SYNC
+# ==============================================================
+
+sync:
+  enabled: true
+  default_mode: incremental
+  supported_modes:
+    - full
+    - incremental
+    - webhook
+  entities:
+    - users
+    - contacts
+    - companies
+    - leads
+    - deals
+    - tickets
+    - messages
+    - emails
+    - threads
+    - labels
+    - calendar_events
+    - calendars
+    - documents
+    - spreadsheets
+    - presentations
+    - forms
+    - responses
+    - files
+    - folders
+    - repositories
+    - issues
+    - pull_requests
+    - commits
+    - releases
+    - payments
+    - invoices
+    - orders
+    - subscriptions
+    - settlements
+    - campaigns
+    - ad_groups
+    - ads
+    - audiences
+    - insights
+    - products
+    - inventory
+    - fulfillments
+    - conversations
+    - reviews
+    - locations
+    - pages
+    - databases
+    - blocks
+    - comments
+    - tasks
+    - tasklists
+
+
+# ==============================================================
+# SECURITY
+# ==============================================================
+
+security:
+  encrypt_tokens: true
+  encrypt_credentials: true
+  rotate_tokens: true
+  audit_logs: true
+  per_tenant_credentials: true
+  per_user_connections: true
+  least_privilege_runtime: true
+  revoke_on_disconnect: true
+  scope_review_required_for: [google, meta-ads, whatsapp-business]

@@ -1,0 +1,31 @@
+{
+  "name": "@darex/workflows",
+  "version": "0.1.0",
+  "private": true,
+  "main": "dist/worker.js",
+  "scripts": {
+    "build": "tsc && node -e \"const fs=require('fs');fs.mkdirSync('dist/metrics',{recursive:true});fs.copyFileSync('src/metrics/core-kpis.yaml','dist/metrics/core-kpis.yaml')\"",
+    "dev": "tsc -w",
+    "start": "node dist/worker.js",
+    "start:bridge": "node dist/mcp-bridge.js",
+    "test": "node --test dist/activities/redact.test.js dist/activities/memory-writeback.test.js dist/activities/critic-check.test.js dist/activities/critic-revise.test.js dist/route-employee.test.js dist/inbound-hitl.test.js dist/turn-budget.test.js dist/crew-planner.test.js dist/grounding.test.js dist/reply-gate.test.js dist/world-model.test.js dist/market-research.test.js dist/memory/retrieve.test.js dist/outcomes/attribution.test.js dist/tools/realestate/match.test.js dist/tools/realestate/charges.test.js dist/tools/realestate/compliance.test.js dist/tools/wave-b-c6-honesty.test.js"
+  },
+  "dependencies": {
+    "@darex/shared-types": "workspace:*",
+    "@agent-infra/sandbox": "^1.0.17",
+    "@modelcontextprotocol/sdk": "1.29.0",
+    "zod": "^3.23.8",
+    "@temporalio/activity": "^1.10.0",
+    "@temporalio/client": "^1.10.0",
+    "@temporalio/worker": "^1.10.0",
+    "@temporalio/workflow": "^1.10.0",
+    "dotenv": "^16.4.5",
+    "pg": "^8.11.0",
+    "pdf-parse": "^1.1.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/pg": "^8.11.0",
+    "typescript": "^5.4.0"
+  }
+}

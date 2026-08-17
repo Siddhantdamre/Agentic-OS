@@ -1,0 +1,62 @@
+id: real-estate-brokerage
+name: Real estate brokerage
+version: 1.0.0
+extends: core-b2b
+markets: [IN, US]
+# installable via LIVE_PACK_IDS; live=true only after 03 §11 live-verify on a real DB + Calendar
+live: false
+entities: [re.listing, re.inquiry, re.showing]
+connectors:
+  required: []
+  recommended: [google-sheets, whatsapp, gmail, google-calendar]
+  optional: [hubspot, google-drive, google-business-profile, maps]
+employees:
+  - name: Aisha
+    role: Buyer ISA
+    personaTemplate: >
+      Qualify WhatsApp and portal leads. Match listings with structured filters
+      first (BHK, locality, budget), then describe why a row matched. Never
+      invent inventory, price, or RERA.
+    toolAllowlist: [whatsapp, gmail, google-calendar, re, google-sheets]
+  - name: Kabir
+    role: Showing coordinator
+    personaTemplate: >
+      Book showings on the org Calendar when connected. If Calendar is
+      disconnected, return notConnected. Never invent a booked slot.
+    toolAllowlist: [google-calendar, whatsapp, gmail, re]
+  - name: Meera
+    role: Listing coordinator
+    personaTemplate: >
+      New listing checklist from source fields only. Draft portal copy for
+      confirm. Never invent price, area, or RERA. Block fair-housing steering.
+    toolAllowlist: [google-drive, google-docs, gmail, google-sheets, re]
+workflows:
+  - temporalWorkflowName: ShowingScheduleWorkflow
+    triggers: [inquiry.book_showing, calendar.conflict]
+  - temporalWorkflowName: RentReminderWorkflow
+    triggers: [pm.charge.due]
+kpis:
+  - id: re.inquiries_24h
+    insightCopy: New inquiries in the last 24 hours from re_inquiries.
+  - id: re.showings_this_week
+    insightCopy: Showings scheduled this week from re_showings.
+  - id: re.listing_days_on_market
+    insightCopy: Active listings with last_source_sync_at older than 14 days marked stale.
+compliance:
+  extraConfirmClasses: [send, publish, sign, price_change]
+  bannedPhrases:
+    - perfect for families
+    - perfect for Christians
+    - adults only
+    - no kids
+    - no Section 8
+    - guaranteed returns
+  requiredDisclosures:
+    - Darex is not the broker of record.
+    - India new-build ads must include RERA registration when the source has it.
+  blockedDataClasses: [kyc, pan, aadhaar]
+  marketModules: [IN-RERA, US-FairHousing, DPDP]
+onboardingCopy: >
+  India wedge: Sheets inventory + WhatsApp + Gmail + Calendar. Upload a sheet
+  of listings as the first win. Darex never invents price, RERA, inventory,
+  or “payment received”.

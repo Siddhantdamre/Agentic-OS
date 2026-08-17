@@ -1,0 +1,209 @@
+name: CI
+
+on:
+  push:
+    branches: [main, develop, feat/atomic-agent-integration, future-scope]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: "22"
+  DB_HOST: 127.0.0.1
+  DB_PORT: "5432"
+  DB_USER: darex
+  DB_PASSWORD: darex_dev_secret
+  DB_NAME: darex
+
+# check-phase0/2/3 stay operator probes (need the live compose stack).
+# Do not add skip/stub jobs for them here — that would weaken the suite.
+
+jobs:
+  deny-list:
+    name: REJECT kernel deny-list
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          package-manager-cache: false
+
+      - name: Fail if REJECT frameworks are added to package.json or lockfiles
+        run: |
+          node <<'NODE'
+          const fs = require('fs');
+          const path = require('path');
+
+          const REJECT = ['langgraph', 'mem0ai', 'crewai', 'letta', 'mastra', 'composio'];
+          const MANIFESTS = new Set(['package.json', 'pnpm-lock.yaml', 'package-lock.json', 'yarn.lock']);
+          const SKIP_DIRS = new Set(['node_modules', '.git', 'dist', '.next', 'coverage']);
+          const DEP_FIELDS = [
+            'dependencies',
+            'devDependencies',
+            'peerDependencies',
+            'optionalDependencies',
+          ];
+
+          function rejectedToken(name) {
+            const n = String(name).toLowerCase().replace(/^\/+/, '');
+            const parsed = n.match(/^(@([^/]+)\/)?([^@/]+)(?:@.+)?$/);
+            const scope = parsed ? parsed[2] || '' : '';
+            const bare = parsed ? parsed[3] : n;
+            for (const token of REJECT) {
+              if (
+                bare === token ||
+                bare.startsWith(`${token}-`) ||
+                scope === token ||
+                scope.startsWith(`${token}-`)
+              ) {
+                return token;
+              }
+            }
+            return null;
+          }
+
+          function walk(dir, acc = []) {
+            for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+              if (SKIP_DIRS.has(entry.name)) continue;
+              const full = path.join(dir, entry.name);
+              if (entry.isDirectory()) walk(full, acc);
+              else if (MANIFESTS.has(entry.name)) acc.push(full);
+            }
+            return acc;
+          }
+
+          const hits = [];
+          for (const file of walk('.')) {
+            const rel = file.replace(/^\.\//, '');
+            const raw = fs.readFileSync(file, 'utf8');
+            if (path.basename(file) === 'package.json') {
+              let json;
+              try {
+                json = JSON.parse(raw);
+              } catch (err) {
+                console.error(`Could not parse ${rel}: ${err.message}`);
+                process.exit(1);
+              }
+              for (const field of DEP_FIELDS) {
+                for (const name of Object.keys(json[field] || {})) {
+                  const token = rejectedToken(name);
+                  if (token) hits.push(`${rel} ${field} → ${name} (${token})`);
+                }
+              }
+              continue;
+            }
+
+            for (const line of raw.split('\n')) {
+              const key = line.match(/^\s*['"]?(@?[^'"\s:]+)['"]?:/);
+              if (!key) continue;
+              const token = rejectedToken(key[1]);
+              if (token) hits.push(`${rel}: ${line.trim()} (${token})`);
+            }
+          }
+
+          if (hits.length > 0) {
+            console.error('REJECT kernel packages are not allowed as dependencies:');
+            for (const hit of hits) console.error(`  - ${hit}`);
+            console.error(
+              'Closed: langgraph, mem0ai, crewai, letta, mastra, composio. Steal patterns into our tables/YAML; do not add them to the kernel.',
+            );
+            process.exit(1);
+          }
+
+          console.log('OK: no REJECT kernel packages in package.json / lockfiles');
+          NODE
+
+  test:
+    name: Typecheck, lint & build
+    runs-on: ubuntu-latest
+    env:
+      DB_USER: darex_app
+    steps:
+      - uses: actions/checkout@v5
+
+      # pnpm version comes from package.json "packageManager" — do not also set `version` here.
+      - uses: pnpm/action-setup@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: "pnpm"
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck (shared-types, connectors, workflows)
+        run: |
+          pnpm --filter @darex/shared-types exec tsc --noEmit
+          pnpm --filter @darex/shared-types build
+          pnpm --filter @darex/connectors exec tsc --noEmit
+          pnpm --filter @darex/workflows exec tsc --noEmit
+          # Dashboard imports @darex/workflows/dist/*; dist/ is gitignored.
+          pnpm --filter @darex/workflows build
+
+      - name: Typecheck (dashboard)
+        run: pnpm --filter @darex/dashboard exec tsc --noEmit
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Build all workspaces
+        run: pnpm build
+
+  isolation:
+    name: Multi-tenant RLS isolation suite
+    runs-on: ubuntu-latest
+    env:
+      DB_USER: darex
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: darex
+          POSTGRES_PASSWORD: darex_dev_secret
+          POSTGRES_DB: darex
+        ports:
+          - "5432:5432"
+        options: >-
+          --health-cmd "pg_isready -U darex"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    steps:
+      - uses: actions/checkout@v5
+
+      # pnpm version comes from package.json "packageManager" — do not also set `version` here.
+      - uses: pnpm/action-setup@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: "pnpm"
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Wait for Postgres
+        run: |
+          for i in $(seq 1 30); do
+            PGPASSWORD="$DB_PASSWORD" pg_isready -h 127.0.0.1 -U darex -d darex && break
+            sleep 2
+          done
+
+      - name: Bootstrap extensions + app role (init scripts)
+        run: |
+          PGPASSWORD="$DB_PASSWORD" psql -h 127.0.0.1 -U darex -d darex -v ON_ERROR_STOP=1 \
+            -c 'CREATE EXTENSION IF NOT EXISTS "uuid-ossp";' \
+            -c 'CREATE EXTENSION IF NOT EXISTS "pgcrypto";' \
+            -c 'CREATE EXTENSION IF NOT EXISTS "vector";' \
+            -c "DO \$\$ BEGIN IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname='darex_app') THEN CREATE ROLE darex_app LOGIN PASSWORD 'darex_app_dev_secret'; END IF; END \$\$;"
+
+      - name: Apply migrations
+        run: node infra/db/migrate.js
+
+      - name: Run multi-tenant isolation tests
+        run: node tests/e2e-tenant-isolation.test.js

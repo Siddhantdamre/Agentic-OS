@@ -1,0 +1,767 @@
+##############################################################################
+# Darex — Local Development Infrastructure (compose KERNEL)
+# Phase 0: Postgres (pgvector) + Temporal + Nango + Langfuse
+#
+# Kernel: 20 services (19 + pgbouncer). Do not add a second compose kernel.
+#   postgres, pgbouncer, temporal, temporal-ui, redis, langfuse-redis, nango-server,
+#   langfuse-clickhouse, langfuse-minio, langfuse-minio-createbuckets,
+#   langfuse-server, langfuse-worker, supertokens, litellm, atomic-bridge,
+#   atomic-agent, sandbox, inbox, worker, dashboard
+#
+# Other workstreams add overlays at infra/compose-snippets/WS-XX.yml.
+# WS-23 merges those into this file. infra/scripts/compose-cmd.sh also
+# passes any unmerged snippets as extra -f files (kernel first).
+# Merged this pass: WS-02 (darex_app on dashboard/worker/atomic-bridge),
+# WS-12 (Langfuse Redis keepalive / ClickHouse ulimits / ingest batch),
+# WS-11 (dashboard REDIS_URL → Nango redis:6379 for SSE; never langfuse-redis),
+# WS-04 (worker embed env via LiteLLM; no new broker; webhook path must not fail-fast).
+# langfuse-redis is Langfuse-only — never the SSE bus (use `redis` / I3).
+# Wave 3: pgbouncer (session pool, darex_app only). Migrations still hit postgres:5432.
+#
+# Usage:
+#   pnpm infra:up                 # compose-cmd.sh (kernel + snippets)
+#   docker compose -f infra/docker-compose.yml up -d
+#   docker compose logs -f
+#   docker compose down           # stop (preserve data volumes)
+#   docker compose down -v        # stop + wipe all data volumes (reset)
+##############################################################################
+
+networks:
+  darex-net:
+    driver: bridge
+
+volumes:
+  postgres-data:
+  temporal-data:
+  langfuse-clickhouse-data:
+  langfuse-minio-data:
+  nango-data:
+  atomic-agent-data:
+  atomic-agent-work:
+
+##############################################################################
+# Services
+##############################################################################
+services:
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # Postgres 16 + pgvector
+  # Single DB instance; every service gets its own schema/database.
+  # RLS is enabled at the cluster level from the first migration.
+  # ─────────────────────────────────────────────────────────────────────────
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: darex-postgres
+    restart: unless-stopped
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-darex}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-darex_dev_secret}
+      POSTGRES_DB: ${POSTGRES_DB:-darex}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      # Init scripts run in alphabetical order on first boot
+      - ./db/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U darex -d darex"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - darex-net
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # PgBouncer (I4) — session pooling in front of the darex DB only.
+  # pool_mode=session so SET app.current_org_id (RLS) still holds.
+  # Dashboard/worker/bridge pool max remains 10 in app code.
+  # Temporal / Nango / Langfuse / SuperTokens / LiteLLM stay on postgres:5432.
+  # Migrations still connect to postgres:5432 as superuser darex.
+  # ─────────────────────────────────────────────────────────────────────────
+  pgbouncer:
+    image: edoburu/pgbouncer:v1.23.1-p1
+    container_name: darex-pgbouncer
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "6432:5432"
+    environment:
+      DATABASE_URL: postgres://darex_app:${APP_DB_PASSWORD:-darex_app_dev_secret}@postgres:5432/darex
+      AUTH_TYPE: scram-sha-256
+      POOL_MODE: session
+      MAX_CLIENT_CONN: "200"
+      DEFAULT_POOL_SIZE: "25"
+      LISTEN_PORT: "5432"
+      ADMIN_USERS: darex_app
+    networks:
+      - darex-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -p 5432 -U darex_app -d darex"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # Temporal (auto-setup image bundles server + frontend + Cassandra-free)
+  # Uses PostgreSQL as its persistence store (same Postgres instance).
+  # ─────────────────────────────────────────────────────────────────────────
+  temporal:
+    image: temporalio/auto-setup:1.24.2
+    container_name: darex-temporal
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "7233:7233"   # gRPC frontend
+    environment:
+      - DB=postgres12
+      - DB_PORT=5432
+      - POSTGRES_USER=darex
+      - POSTGRES_PWD=${DB_PASSWORD:-darex_dev_secret}
+      - POSTGRES_SEEDS=postgres
+      - DYNAMIC_CONFIG_FILE_PATH=config/dynamicconfig/development-sql.yaml
+      - ENABLE_ES=false
+      - TEMPORAL_CLI_ADDRESS=temporal:7233
+    volumes:
+      - ./temporal/dynamicconfig:/etc/temporal/config/dynamicconfig:ro
+    networks:
+      - darex-net
+    healthcheck:
+      test: ["CMD", "temporal", "workflow", "list", "--namespace", "default", "--address", "temporal:7233"]
+      interval: 10s
+      timeout: 10s
+      retries: 20
+      start_period: 30s
+
+  # Temporal Web UI
+  temporal-ui:
+    image: temporalio/ui:2.26.2
+    container_name: darex-temporal-ui
+    restart: unless-stopped
+    depends_on:
+      - temporal
+    ports:
+      - "8233:8080"
+    environment:
+      - TEMPORAL_ADDRESS=temporal:7233
+      - TEMPORAL_CORS_ORIGINS=http://localhost:3000
+    networks:
+      - darex-net
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # Redis — Nango job queues. Future SSE / needs_attention bus (I3 / WS-11)
+  # must use THIS instance (or a dedicated bus Redis). Never langfuse-redis.
+  # ─────────────────────────────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: darex-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    networks:
+      - darex-net
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # Dedicated Langfuse BullMQ Redis (WS-12 / A1). Isolated from Nango and
+  # from the dashboard SSE bus — do not point REDIS_URL / realtime-hub here.
+  langfuse-redis:
+    image: redis:7-alpine
+    container_name: darex-langfuse-redis
+    restart: unless-stopped
+    command:
+      - redis-server
+      - --appendonly
+      - "no"
+      - --save
+      - ""
+      - --maxmemory
+      - 256mb
+      - --maxmemory-policy
+      - noeviction
+      - --tcp-keepalive
+      - "60"
+      - --timeout
+      - "0"
+      - --tcp-backlog
+      - "511"
+    networks:
+      - darex-net
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # Nango — self-hosted OAuth / connector platform
+  # Uses the same Postgres instance (nango schema) + Redis for queues.
+  # ─────────────────────────────────────────────────────────────────────────
+  nango-server:
+    image: nangohq/nango-server:latest
+    container_name: darex-nango
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    ports:
+      - "3003:3003"   # Nango API + Dashboard
+    environment:
+      - NANGO_DB_USER=darex
+      - NANGO_DB_PASSWORD=${DB_PASSWORD:-darex_dev_secret}
+      - NANGO_DB_HOST=postgres
+      - NANGO_DB_PORT=5432
+      - NANGO_DB_NAME=nango
+      - NANGO_DB_SSL=false
+      - NANGO_REDIS_URL=redis://redis:6379
+      - SERVER_RUN_MODE=PROD
+      - NANGO_SECRET_KEY=${NANGO_SECRET_KEY:-0c2eb30a-0ecd-42ea-8918-0c73eda41a47}
+      - NANGO_SERVER_URL=http://localhost:3003
+      - WEBHOOK_TRACER_URL=http://localhost:3003
+      - LOG_LEVEL=info
+    volumes:
+      - nango-data:/nango
+    networks:
+      - darex-net
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"require('http').get('http://localhost:3003/health', r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))\""]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # Langfuse — LLM tracing & observability
+  # Uses ClickHouse for trace storage + Postgres for metadata.
+  # ─────────────────────────────────────────────────────────────────────────
+  langfuse-clickhouse:
+    image: clickhouse/clickhouse-server:24.3
+    container_name: darex-langfuse-clickhouse
+    restart: unless-stopped
+    ports:
+      - "8123:8123"   # HTTP
+      - "9000:9000"   # Native
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
+    volumes:
+      - langfuse-clickhouse-data:/var/lib/clickhouse
+    environment:
+      - CLICKHOUSE_DB=langfuse
+      - CLICKHOUSE_USER=langfuse
+      - CLICKHOUSE_PASSWORD=langfuse_dev_secret
+      - CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT=1
+    healthcheck:
+      test: ["CMD-SHELL", "clickhouse-client --user langfuse --password langfuse_dev_secret --query 'SELECT 1'"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+      - darex-net
+
+  langfuse-minio:
+    image: minio/minio:RELEASE.2024-06-13T22-53-53Z
+    container_name: darex-langfuse-minio
+    restart: unless-stopped
+    ports:
+      - "9090:9000"   # S3 API
+      - "9091:9001"   # Console
+    volumes:
+      - langfuse-minio-data:/data
+    environment:
+      - MINIO_ROOT_USER=langfuse
+      - MINIO_ROOT_PASSWORD=langfuse_dev_secret
+      - MINIO_ACCESS_KEY=langfuse
+      - MINIO_SECRET_KEY=langfuse_dev_secret
+    command: server /data --console-address ":9001"
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - darex-net
+
+  langfuse-minio-createbuckets:
+    image: minio/mc
+    container_name: darex-langfuse-minio-init
+    depends_on:
+      - langfuse-minio
+    entrypoint: >
+      /bin/sh -c "
+      until (/usr/bin/mc alias set myminio http://darex-langfuse-minio:9000 langfuse langfuse_dev_secret); do echo 'Waiting for MinIO...'; sleep 1; done;
+      /usr/bin/mc mb --ignore-existing myminio/langfuse-events;
+      /usr/bin/mc mb --ignore-existing myminio/langfuse-media;
+      /usr/bin/mc anonymous set public myminio/langfuse-events;
+      /usr/bin/mc anonymous set public myminio/langfuse-media;
+      exit 0;
+      "
+    networks:
+      - darex-net
+
+  langfuse-server:
+    image: langfuse/langfuse:3
+    container_name: darex-langfuse-server
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      langfuse-clickhouse:
+        condition: service_healthy
+      langfuse-redis:
+        condition: service_healthy
+      langfuse-minio-createbuckets:
+        condition: service_completed_successfully
+    ports:
+      - "3002:3000"   # Langfuse UI + API
+    environment:
+      DATABASE_URL: postgresql://darex:${DB_PASSWORD:-darex_dev_secret}@postgres:5432/langfuse
+      REDIS_HOST: langfuse-redis
+      REDIS_PORT: "6379"
+      REDIS_URL: redis://langfuse-redis:6379
+      REDIS_CONNECTION_STRING: redis://langfuse-redis:6379
+      REDIS_SOCKET_TIMEOUT_MS: "120000"
+      LANGFUSE_INGESTION_QUEUE_DELAY_MS: "5000"
+      NEXTAUTH_URL: http://localhost:3002
+      NEXTAUTH_SECRET: darex-langfuse-nextauth-secret-dev
+      SALT: darex-langfuse-salt-dev-change-in-prod
+      LANGFUSE_DEFAULT_PROJECT_ID: darex-default
+      LANGFUSE_DEFAULT_PROJECT_ROLE: MEMBER
+      LANGFUSE_DEFAULT_ORG_ID: darex-org
+      LANGFUSE_DEFAULT_ORG_NAME: Darex
+      LANGFUSE_INIT_ORG_ID: darex-org
+      LANGFUSE_INIT_ORG_NAME: Darex
+      LANGFUSE_INIT_PROJECT_ID: darex-default
+      LANGFUSE_INIT_PROJECT_NAME: Darex Default
+      LANGFUSE_INIT_PROJECT_PUBLIC_KEY: pk-lf-darex-dev-public
+      LANGFUSE_INIT_PROJECT_SECRET_KEY: sk-lf-darex-dev-secret
+      LANGFUSE_INIT_USER_EMAIL: admin@darex.dev
+      LANGFUSE_INIT_USER_NAME: Darex Admin
+      LANGFUSE_INIT_USER_PASSWORD: darex_admin_dev
+      CLICKHOUSE_URL: http://darex-langfuse-clickhouse:8123
+      CLICKHOUSE_MIGRATION_URL: clickhouse://langfuse:langfuse_dev_secret@darex-langfuse-clickhouse:9000/langfuse
+      CLICKHOUSE_CLUSTER_ENABLED: "false"
+      CLICKHOUSE_USER: langfuse
+      CLICKHOUSE_PASSWORD: langfuse_dev_secret
+      LANGFUSE_S3_EVENT_UPLOAD_BUCKET: langfuse-events
+      LANGFUSE_S3_EVENT_UPLOAD_REGION: us-east-1
+      LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT: http://darex-langfuse-minio:9000
+      LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID: langfuse
+      LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY: langfuse_dev_secret
+      LANGFUSE_S3_EVENT_UPLOAD_FORCE_PATH_STYLE: "true"
+      LANGFUSE_S3_MEDIA_UPLOAD_BUCKET: langfuse-media
+      LANGFUSE_S3_MEDIA_UPLOAD_REGION: us-east-1
+      LANGFUSE_S3_MEDIA_UPLOAD_ENDPOINT: http://darex-langfuse-minio:9000
+      LANGFUSE_S3_MEDIA_UPLOAD_ACCESS_KEY_ID: langfuse
+      LANGFUSE_S3_MEDIA_UPLOAD_SECRET_ACCESS_KEY: langfuse_dev_secret
+      LANGFUSE_S3_MEDIA_UPLOAD_FORCE_PATH_STYLE: "true"
+    networks:
+      - darex-net
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://darex-langfuse-server:3000/api/public/health', r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))"]
+      interval: 15s
+      timeout: 10s
+      retries: 20
+      start_period: 45s
+
+  langfuse-worker:
+    image: langfuse/langfuse-worker:3
+    container_name: darex-langfuse-worker
+    restart: unless-stopped
+    depends_on:
+      langfuse-server:
+        condition: service_healthy
+      langfuse-redis:
+        condition: service_healthy
+      langfuse-minio-createbuckets:
+        condition: service_completed_successfully
+    environment:
+      DATABASE_URL: postgresql://darex:${DB_PASSWORD:-darex_dev_secret}@postgres:5432/langfuse
+      REDIS_HOST: langfuse-redis
+      REDIS_PORT: "6379"
+      REDIS_URL: redis://langfuse-redis:6379
+      REDIS_CONNECTION_STRING: redis://langfuse-redis:6379
+      REDIS_SOCKET_TIMEOUT_MS: "120000"
+      LANGFUSE_INGESTION_QUEUE_DELAY_MS: "5000"
+      LANGFUSE_INGESTION_CLICKHOUSE_WRITE_INTERVAL_MS: "1000"
+      LANGFUSE_INGESTION_CLICKHOUSE_WRITE_BATCH_SIZE: "1000"
+      SALT: darex-langfuse-salt-dev-change-in-prod
+      CLICKHOUSE_URL: http://darex-langfuse-clickhouse:8123
+      CLICKHOUSE_MIGRATION_URL: clickhouse://langfuse:langfuse_dev_secret@darex-langfuse-clickhouse:9000/langfuse
+      CLICKHOUSE_CLUSTER_ENABLED: "false"
+      CLICKHOUSE_USER: langfuse
+      CLICKHOUSE_PASSWORD: langfuse_dev_secret
+      LANGFUSE_S3_EVENT_UPLOAD_BUCKET: langfuse-events
+      LANGFUSE_S3_EVENT_UPLOAD_REGION: us-east-1
+      LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT: http://darex-langfuse-minio:9000
+      LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID: langfuse
+      LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY: langfuse_dev_secret
+      LANGFUSE_S3_EVENT_UPLOAD_FORCE_PATH_STYLE: "true"
+      LANGFUSE_S3_MEDIA_UPLOAD_BUCKET: langfuse-media
+      LANGFUSE_S3_MEDIA_UPLOAD_REGION: us-east-1
+      LANGFUSE_S3_MEDIA_UPLOAD_ENDPOINT: http://darex-langfuse-minio:9000
+      LANGFUSE_S3_MEDIA_UPLOAD_ACCESS_KEY_ID: langfuse
+      LANGFUSE_S3_MEDIA_UPLOAD_SECRET_ACCESS_KEY: langfuse_dev_secret
+      LANGFUSE_S3_MEDIA_UPLOAD_FORCE_PATH_STYLE: "true"
+    networks:
+      - darex-net
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # SuperTokens — Authentication & Multi-tenant Identity Core
+  # ─────────────────────────────────────────────────────────────────────────
+  supertokens:
+    image: registry.supertokens.io/supertokens/supertokens-postgresql:9.2.1
+    container_name: darex-supertokens
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "3567:3567"   # SuperTokens API
+    environment:
+      POSTGRESQL_USER: darex
+      POSTGRESQL_PASSWORD: ${DB_PASSWORD:-darex_dev_secret}
+      POSTGRESQL_HOST: postgres
+      POSTGRESQL_PORT: 5432
+      POSTGRESQL_DATABASE_NAME: supertokens
+      API_KEYS: ${SUPERTOKENS_API_KEY:-darex-supertokens-api-key-dev}
+    networks:
+      - darex-net
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c '</dev/tcp/127.0.0.1/3567' || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # LiteLLM — Unified LLM gateway (placeholder; wired fully in Phase 4)
+  # ─────────────────────────────────────────────────────────────────────────
+  litellm:
+    image: litellm/litellm:main-latest
+    container_name: darex-litellm
+    restart: unless-stopped
+    ports:
+      - "4000:4000"
+    volumes:
+      - ./litellm/config.yaml:/app/config.yaml:ro
+    command: ["--config", "/app/config.yaml", "--host", "0.0.0.0", "--port", "4000", "--num_workers", "1"]
+    environment:
+      - LITELLM_MASTER_KEY=${LITELLM_MASTER_KEY:-sk-darex-litellm-dev-key}
+      - DATABASE_URL=postgresql://darex:${DB_PASSWORD:-darex_dev_secret}@postgres:5432/litellm
+      # OpenRouter key used by the model fallback chain in config.yaml
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
+      # Gemini key used by the text-embedding-3-small route (see config.yaml)
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY:-pk-lf-darex-dev-public}
+      - LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY:-sk-lf-darex-dev-secret}
+      - LANGFUSE_HOST=http://darex-langfuse-server:3000
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - darex-net
+    healthcheck:
+      test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:4000/health/readiness')\""]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 20s
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # Atomic Bridge — MCP SSE connector bridge for the Atomic Agent.
+  # Exposes the DareX business connectors (WhatsApp, Gmail, Calendar, HubSpot,
+  # Meta/Google Ads, Slack, Notion, Stripe, Shopify, Zendesk, Intercom,
+  # Razorpay, web, DB) as MCP tools (mcp.darex-connectors.*). Built from the
+  # @darex/workflows workspace so it can reuse executeAutonomousToolAction.
+  # ─────────────────────────────────────────────────────────────────────────
+  atomic-bridge:
+    build:
+      context: ../
+      dockerfile: infra/docker/atomic-bridge/Dockerfile
+    container_name: darex-atomic-bridge
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      nango-server:
+        condition: service_healthy
+      pgbouncer:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:8790:8790"   # MCP SSE endpoint (localhost only)
+    environment:
+      # Inside Docker the DB and Nango are reachable by service name.
+      # `environment` wins over env_file. Runtime role is darex_app (WS-02);
+      # migrations still use superuser darex on postgres:5432.
+      # App traffic goes through pgbouncer (session pool, I4).
+      - DB_HOST=pgbouncer
+      - DB_PORT=5432
+      - DB_USER=${APP_DB_USER:-darex_app}
+      - DB_PASSWORD=${APP_DB_PASSWORD:-darex_app_dev_secret}
+      - NANGO_HOST=http://nango-server:3003
+    env_file:
+      - path: ../.env
+        required: false
+      - path: ../apps/dashboard/.env.local
+        required: false
+      - path: ./.env
+        required: false
+      - path: ../services/connectors/.env
+        required: false
+    networks:
+      - darex-net
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"require('net').connect(8790,'localhost').on('connect',()=>process.exit(0)).on('error',()=>process.exit(1))\""]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 20s
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # Atomic Agent — Local-first AI agent (OpenAI-compatible HTTP serve)
+  # Replaces the legacy Hermes agent. Full agent loop + memory fabric +
+  # MCP tool bridge lives here. Pinned release v0.1.72 (Node >= 25.7).
+  # ─────────────────────────────────────────────────────────────────────────
+  atomic-agent:
+    build:
+      context: ./docker/atomic-agent
+      dockerfile: Dockerfile
+    container_name: darex-atomic-agent
+    restart: unless-stopped
+    depends_on:
+      atomic-bridge:
+        condition: service_healthy
+      sandbox:
+        condition: service_started
+    ports:
+      - "127.0.0.1:8787:8787"   # OpenAI-compatible HTTP API (localhost only)
+    environment:
+      - ATOMIC_AGENT_STATE_DIR=/data
+      - ATOMIC_AGENT_API_KEY=${ATOMIC_AGENT_API_KEY:-darex-atomic-agent-dev-key}
+      - OPENROUTER_MODEL=${ATOMIC_AGENT_OPENROUTER_MODEL:-deepseek/deepseek-v4-flash-0731}
+      - LITELLM_BASE_URL=http://litellm:4000/v1
+      - LITELLM_MODEL=atomic-agent
+      - ATOMIC_AGENT_ACTIVE_PROVIDER=${ATOMIC_AGENT_ACTIVE_PROVIDER:-darex-litellm}
+    env_file:
+      - path: ../.env
+        required: false
+      - path: ../apps/dashboard/.env.local
+        required: false
+      - path: ./.env
+        required: false
+    volumes:
+      - atomic-agent-data:/data
+      - atomic-agent-work:/work
+    networks:
+      - darex-net
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c '</dev/tcp/127.0.0.1/8787' || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # Code Sandbox — self-hosted, network-isolated code execution for the
+  # `code_execution` / `sandbox` / `execute_code` agent tools. Runs untrusted
+  # code as an unprivileged user with a hard timeout, fully isolated from the
+  # rest of the stack (no DB, no other services, no host).
+  # ─────────────────────────────────────────────────────────────────────────
+  sandbox:
+    build:
+      context: ./docker/sandbox
+      dockerfile: Dockerfile
+    container_name: darex-sandbox
+    restart: unless-stopped
+    environment:
+      - SANDBOX_PORT=8080
+      - SANDBOX_MAX_CONCURRENT=2
+      - SANDBOX_DEFAULT_TIMEOUT_MS=10000
+    networks:
+      - darex-net
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"fetch('http://localhost:8080/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 10s
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # Inbox — Chatwoot Fork / Multi-Channel Inbox Gateway (Phase 3)
+  # Runs in separate container on port 3004
+  # ─────────────────────────────────────────────────────────────────────────
+  inbox:
+    build:
+      context: ../apps/inbox
+      dockerfile: Dockerfile
+    container_name: darex-inbox
+    restart: unless-stopped
+    ports:
+      - "3004:3004"
+    environment:
+      - PORT=3004
+      - DASHBOARD_URL=http://dashboard:3000
+      # `environment` overrides env_file, so an empty default here CLOBBERS the
+      # real value in apps/dashboard/.env.local and every webhook 401s.
+      # Keep a working dev default; production supplies it via --env-file.
+      - CHATWOOT_WEBHOOK_SECRET=${CHATWOOT_WEBHOOK_SECRET:-darex-chatwoot-webhook-secret-dev}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - darex-net
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"require('http').get('http://localhost:3004/health', r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))\""]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # Worker — Temporal Autonomous Agent Worker (runs on the same tasks)
+  # Executes runAgentTurnActivity -> atomic-agent + persist activities.
+  # Replaces the host-launched `node infra/scripts/worker-launcher.js`.
+  # ─────────────────────────────────────────────────────────────────────────
+  worker:
+    build:
+      context: ../
+      dockerfile: infra/docker/worker/Dockerfile
+    container_name: darex-worker
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      temporal:
+        condition: service_healthy
+      atomic-agent:
+        condition: service_healthy
+      pgbouncer:
+        condition: service_healthy
+    environment:
+      # `environment` wins over env_file. Runtime role is darex_app (WS-02).
+      - TEMPORAL_ADDRESS=temporal:7233
+      - DB_HOST=pgbouncer
+      - DB_USER=${APP_DB_USER:-darex_app}
+      - DB_PORT=5432
+      - DB_NAME=${DB_NAME:-darex}
+      - DB_PASSWORD=${APP_DB_PASSWORD:-darex_app_dev_secret}
+      - NANGO_HOST=http://nango-server:3003
+      - ATOMIC_AGENT_URL=http://atomic-agent:8787
+      - ATOMIC_AGENT_API_KEY=${ATOMIC_AGENT_API_KEY:-darex-atomic-agent-dev-key}
+      - ATOMIC_AGENT_ACTIVE_PROVIDER=${ATOMIC_AGENT_ACTIVE_PROVIDER:-darex-litellm}
+      - ATOMIC_AGENT_TIMEOUT_MS=${ATOMIC_AGENT_TIMEOUT_MS:-300000}
+      - SANDBOX_API_URL=http://sandbox:8080
+      - LANGFUSE_HOST=http://langfuse-server:3000
+      - LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY:-pk-lf-darex-dev-public}
+      - LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY:-sk-lf-darex-dev-secret}
+      - JINA_API_KEY=${JINA_API_KEY:-}
+      # WS-04 / M2: embed activity on this worker (not a new broker).
+      # Production fail if EMBEDDING_MODEL unset is this process, not webhooks.
+      - EMBEDDING_MODEL=${EMBEDDING_MODEL-text-embedding-3-small}
+      - EMBEDDING_DIM=${EMBEDDING_DIM:-1536}
+      - LITELLM_BASE_URL=${LITELLM_BASE_URL:-http://litellm:4000/v1}
+      # Must match the litellm service's own master key. An empty default here
+      # silently breaks EVERY agent run with ConfigurationError while litellm
+      # itself looks healthy — `environment` overrides env_file, so the empty
+      # string wins over anything set in apps/dashboard/.env.local.
+      - LITELLM_API_KEY=${LITELLM_API_KEY:-sk-darex-litellm-dev-key}
+      - LITELLM_MASTER_KEY=${LITELLM_MASTER_KEY:-sk-darex-litellm-dev-key}
+      # memory-writeback's extractWithLiteLLM requires this (no vendor
+      # default in app code) — must name a model_name from litellm config.yaml.
+      - LITELLM_MODEL=${LITELLM_MODEL:-atomic-agent}
+    env_file:
+      - path: ../.env
+        required: false
+      - path: ../apps/dashboard/.env.local
+        required: false
+      - path: ./.env
+        required: false
+    networks:
+      - darex-net
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"process.exit(0)\""]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # Dashboard — Next.js app (port 3000), supertokens auth, atomic-agent direct
+  # ─────────────────────────────────────────────────────────────────────────
+  dashboard:
+    build:
+      context: ../
+      dockerfile: infra/docker/dashboard/Dockerfile
+    container_name: darex-dashboard
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      supertokens:
+        condition: service_healthy
+      temporal:
+        condition: service_healthy
+      atomic-agent:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      pgbouncer:
+        condition: service_healthy
+    ports:
+      - "${DASHBOARD_PORT:-3000}:3000"
+    environment:
+      # `environment` wins over env_file. Runtime role is darex_app (WS-02).
+      # SSE bus (WS-11 / I3): Nango redis — NEVER langfuse-redis.
+      - DB_HOST=pgbouncer
+      - DB_USER=${APP_DB_USER:-darex_app}
+      - DB_PORT=5432
+      - DB_NAME=${DB_NAME:-darex}
+      - DB_PASSWORD=${APP_DB_PASSWORD:-darex_app_dev_secret}
+      - REDIS_URL=redis://redis:6379
+      - NANGO_HOST=http://nango-server:3003
+      - TEMPORAL_ADDRESS=temporal:7233
+      - SUPERTOKENS_CONNECTION_URI=http://supertokens:3567
+      - ATOMIC_AGENT_URL=http://atomic-agent:8787
+      - ATOMIC_AGENT_API_KEY=${ATOMIC_AGENT_API_KEY:-darex-atomic-agent-dev-key}
+      - JINA_API_KEY=${JINA_API_KEY:-}
+      - ATOMIC_AGENT_TIMEOUT_MS=${ATOMIC_AGENT_TIMEOUT_MS:-300000}
+      - SANDBOX_API_URL=http://sandbox:8080
+      - LANGFUSE_HOST=http://langfuse-server:3000
+      - LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY:-pk-lf-darex-dev-public}
+      - LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY:-sk-lf-darex-dev-secret}
+      # `environment` overrides env_file, so an empty default here CLOBBERS the
+      # real value in apps/dashboard/.env.local and every webhook 401s.
+      # Keep a working dev default; production supplies it via --env-file.
+      - CHATWOOT_WEBHOOK_SECRET=${CHATWOOT_WEBHOOK_SECRET:-darex-chatwoot-webhook-secret-dev}
+      # WS-04: enqueue may pass model/dim; webhook/request path must not fail
+      # if EMBEDDING_MODEL is unset (worker owns that fail-fast).
+      - EMBEDDING_MODEL=${EMBEDDING_MODEL-text-embedding-3-small}
+      - EMBEDDING_DIM=${EMBEDDING_DIM:-1536}
+      - LITELLM_BASE_URL=${LITELLM_BASE_URL:-http://litellm:4000/v1}
+    env_file:
+      - path: ../.env
+        required: false
+      - path: ../apps/dashboard/.env.local
+        required: false
+      - path: ./.env
+        required: false
+    networks:
+      - darex-net
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"require('http').get('http://localhost:3000/api/health', r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))\""]
+      interval: 15s
+      timeout: 10s
+      retries: 20
+      start_period: 45s
+

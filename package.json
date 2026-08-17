@@ -1,0 +1,41 @@
+{
+  "name": "darex",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Darex — Multi-tenant AI Employee SaaS Platform",
+  "workspaces": [
+    "apps/*",
+    "services/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "pnpm --filter @darex/dashboard dev",
+    "dev:all": "turbo run dev",
+    "build": "turbo run build",
+    "test": "turbo run test",
+    "lint": "turbo run lint",
+    "format": "prettier --write .",
+    "start:stack": "bash ./start.sh",
+    "start:stack:dev": "bash ./start.sh --dev",
+    "infra:up": "bash infra/scripts/compose-cmd.sh up -d",
+    "infra:down": "bash infra/scripts/compose-cmd.sh down",
+    "infra:logs": "docker-compose -f infra/docker-compose.yml logs -f",
+    "infra:reset": "docker-compose -f infra/docker-compose.yml down -v",
+    "db:migrate": "node infra/db/migrate.js",
+    "deploy": "bash ./deploy/deploy.sh",
+    "db:seed": "node infra/db/seed.js",
+    "worker:start": "pnpm --filter @darex/workflows run build && pnpm --filter @darex/workflows run start",
+    "prepare": "husky"
+  },
+  "devDependencies": {
+    "husky": "^9.1.7",
+    "prettier": "^3.0.0",
+    "turbo": "^2.0.0",
+    "typescript": "^5.4.0"
+  },
+  "engines": {
+    "node": ">=20.0.0",
+    "pnpm": ">=9.0.0"
+  },
+  "packageManager": "pnpm@9.0.0"
+}

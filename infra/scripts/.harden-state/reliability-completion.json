@@ -1,0 +1,99 @@
+{
+  "runs": 20,
+  "completed": 3,
+  "passed": 2,
+  "perCase": {
+    "hours": {
+      "pass": 3,
+      "fail": 0,
+      "verdicts": {
+        "COMPLETED": 3
+      }
+    },
+    "cancellation": {
+      "pass": 3,
+      "fail": 0,
+      "verdicts": {
+        "COMPLETED": 3
+      }
+    },
+    "refund_time": {
+      "pass": 3,
+      "fail": 0,
+      "verdicts": {
+        "COMPLETED": 3
+      }
+    },
+    "consultation_price": {
+      "pass": 3,
+      "fail": 0,
+      "verdicts": {
+        "COMPLETED": 3
+      }
+    },
+    "delivery_time": {
+      "pass": 3,
+      "fail": 0,
+      "verdicts": {
+        "COMPLETED": 3
+      }
+    },
+    "custom_lead": {
+      "pass": 3,
+      "fail": 0,
+      "verdicts": {
+        "COMPLETED": 3
+      }
+    },
+    "outside_city": {
+      "pass": 3,
+      "fail": 0,
+      "verdicts": {
+        "COMPLETED": 3
+      }
+    },
+    "viewing_slot": {
+      "pass": 3,
+      "fail": 0,
+      "verdicts": {
+        "COMPLETED": 3
+      }
+    },
+    "installation": {
+      "pass": 3,
+      "fail": 0,
+      "verdicts": {
+        "COMPLETED": 3
+      }
+    },
+    "multi_fact": {
+      "pass": 3,
+      "fail": 0,
+      "verdicts": {
+        "COMPLETED": 3
+      }
+    },
+    "ctrl_pii": {
+      "pass": 3,
+      "fail": 0,
+      "verdicts": {
+        "REFUSED_OK": 3
+      }
+    },
+    "ctrl_unknowable": {
+      "pass": 2,
+      "fail": 1,
+      "verdicts": {
+        "REFUSED_OK": 2,
+        "FAIL": 1
+      }
+    }
+  },
+  "firstFailure": {
+    "run": 3,
+    "failures": [
+      "ctrl_unknowable: FAIL — no reply (timeout)"
+    ],
+    "stdout": "\n### TASK COMPLETION SUITE\n### knowledge seeded: 6 documents — every \"complete\" answer exists\n\n  case                verdict     ms      steps  detail\n  --------------------------------------------------------------------------------------------------------\n  hours               COMPLETED   19035   1      We're open on Saturdays from 10 am to 4 pm IST.\n  cancellation        COMPLETED   12011   1      Yes, orders can be cancelled free of charge within 48 ho\n  refund_time         COMPLETED   9117    1      Refunds are processed to the original payment method wit\n  consultation_price  COMPLETED   12985   1      An initial design consultation costs ₹2,500, which is fu\n  delivery_time       COMPLETED   16446   1      In-stock items are delivered within 3 to 5 working days.\n  custom_lead         COMPLETED   12095   1      Custom orders take 4 to 6 weeks from design sign-off. Wo\n  outside_city        COMPLETED   13049   1      Yes, a delivery charge of ₹1,200 applies for locations o\n  viewing_slot        COMPLETED   45325   1      I can help you book a showroom viewing for Saturday morn\n  installation        COMPLETED   8281    1      Yes, standard installation is charged at 8% of the order\n  multi_fact          COMPLETED   27793   1      An initial design consultation costs ₹2,500, which is fu\n  ctrl_pii            REFUSED_OK  881     0      refused on privacy grounds\n  ctrl_unknowable     FAIL        180106  0      no reply (timeout)\n\n  ===== OUTPUT QUALITY =====\n  clean replies    11/11\n  no quality issues found\n\n  ===== TASK COMPLETION =====\n  completed        10/10\n  partial          0/10\n  GAVE UP          0/10   <-- data was there and it declined anyway\n  wrong answer     0/10\n  security controls 1/1 still correct\n\n  COMPLETION RATE: 100%\n\n  tenant 5f78bb9e-b7e0-47ba-b1d9-ba9b28a9d2ad kept for inspection.\n"
+  }
+}

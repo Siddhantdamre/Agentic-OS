@@ -1,0 +1,68 @@
+# LiteLLM Proxy Config — DareX model router
+# Routes the atomic-agent through LiteLLM using DeepSeek via OpenRouter:
+#   1) deepseek/deepseek-v4-flash-0731              (primary model via OpenRouter)
+#   2) deepseek/deepseek-v4-flash-0731              (fallback model via OpenRouter)
+# The atomic-agent always calls model "atomic-agent"; LiteLLM owns failover.
+# File: infra/litellm/config.yaml
+
+model_list:
+  - model_name: atomic-agent
+    litellm_params:
+      model: openrouter/deepseek/deepseek-chat
+      api_key: os.environ/OPENROUTER_API_KEY
+    model_info:
+      mode: chat
+
+  # FREE tier, 550B, 1M ctx, supports tool calling. Independent of tier 1,
+  # so an exhausted paid key degrades instead of taking the product down.
+  - model_name: atomic-agent-fallback
+    litellm_params:
+      model: openrouter/nvidia/nemotron-3-ultra-550b-a55b:free
+      api_key: os.environ/OPENROUTER_API_KEY
+    model_info:
+      mode: chat
+
+  # FREE tier, different model family, so one model's outage cannot take
+  # out both fallbacks.
+  - model_name: atomic-agent-deepseek
+    litellm_params:
+      model: openrouter/nvidia/nemotron-3-super-120b-a12b:free
+      api_key: os.environ/OPENROUTER_API_KEY
+    model_info:
+      mode: chat
+
+  # EMBEDDING_MODEL (worker/embed activity) must name a model_name defined
+  # here — the docker-compose default of "text-embedding-3-small" has no
+  # OpenAI key in this deployment, so route it to Gemini's embedding model
+  # instead via the same name the workers already expect.
+  - model_name: text-embedding-3-small
+    litellm_params:
+      model: gemini/gemini-embedding-001
+      api_key: os.environ/GEMINI_API_KEY
+    model_info:
+      mode: embedding
+
+litellm_settings:
+  default_team_id: darex-default
+  success_callback: ["langfuse"]
+  failure_callback: ["langfuse"]
+  langfuse_host: http://darex-langfuse-server:3000
+
+router_settings:
+  enable_pre_call_checks: false
+  request_timeout: 60
+  fallbacks:
+    - atomic-agent:
+        - atomic-agent-fallback
+        - atomic-agent-deepseek
+  retry_policy:
+    timeout: 0
+    RateLimitError: 2
+    InternalServerError: 2
+    BadRequestError: 0
+    AuthenticationError: 0
+    ContentPolicyViolationError: 0
+
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY
+  database_url: os.environ/DATABASE_URL

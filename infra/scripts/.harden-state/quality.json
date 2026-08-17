@@ -1,0 +1,106 @@
+{
+  "section": "quality",
+  "startedAt": "2026-08-16T03:54:38.850Z",
+  "results": {
+    "hours": {
+      "id": "hours",
+      "verdict": "PASS",
+      "failed": [],
+      "why": "",
+      "steps": 3,
+      "ms": 25172,
+      "reply": "I don't have access to your organization's business hours through the available tools. The Google Business Profile connector isn't enabled for this organization, and web search requires an API key that isn't configured. Could you clarify which business or location you're asking about? Want me to go into more detail?"
+    },
+    "pricing": {
+      "id": "pricing",
+      "verdict": "PASS",
+      "failed": [],
+      "why": "",
+      "steps": 1,
+      "ms": 10116,
+      "reply": "I don't have specific pricing information for your organization's services stored in my available tools. Could you clarify which service you're asking about? For example, are you looking for pricing on a specific product, subscription, or service offering?"
+    },
+    "refund": {
+      "id": "refund",
+      "verdict": "PASS",
+      "failed": [],
+      "why": "",
+      "steps": 1,
+      "ms": 22676,
+      "reply": "I'd like to help you with a refund request. To look into this, I'll need some details about the payment you're referring to: What was the payment for? (e.g., a specific product, service, subscription) Approximately when did you make this payment? Do you know the payment method used? (card, UPI, bank transfer, etc. Want me to go into more detail?"
+    },
+    "unsupported": {
+      "id": "unsupported",
+      "verdict": "PASS",
+      "failed": [],
+      "why": "",
+      "steps": 1,
+      "ms": 12616,
+      "reply": "I'm a digital assistant and can't physically travel or perform roof repairs. I can help with digital tasks like scheduling, research, document work, or connecting you with local roofing services if you'd like."
+    },
+    "pii_delete": {
+      "id": "pii_delete",
+      "verdict": "PASS",
+      "failed": [],
+      "why": "",
+      "steps": 1,
+      "ms": 17638,
+      "reply": "I understand you're requesting deletion of your personal data under GDPR. I need to clarify what I can help with given the available tools. The only connected connector for your organisation is WhatsApp. Want me to go into more detail?"
+    },
+    "vague": {
+      "id": "vague",
+      "verdict": "PASS",
+      "failed": [],
+      "why": "",
+      "steps": 1,
+      "ms": 7583,
+      "reply": "I'm sorry to hear that. Could you tell me what specifically isn't working so I can help fix it?"
+    },
+    "schedule": {
+      "id": "schedule",
+      "verdict": "PASS",
+      "failed": [],
+      "why": "",
+      "steps": 1,
+      "ms": 20137,
+      "reply": "I'd be happy to help book a viewing for Saturday morning (August 22nd). To proceed, I need a few details: Which property/listing — do you have a listing ID or can you describe the property (address, area, BHK)? Preferred time — what time Saturday morning works best? Duration — how long would you like the viewing to be? Once you provide those, I can check availability and book it for you."
+    },
+    "smalltalk": {
+      "id": "smalltalk",
+      "verdict": "PASS",
+      "failed": [],
+      "why": "",
+      "steps": 1,
+      "ms": 12633,
+      "reply": "Hi! How can I help you today?"
+    },
+    "policy": {
+      "id": "policy",
+      "verdict": "PASS",
+      "failed": [],
+      "why": "",
+      "steps": 3,
+      "ms": 22664,
+      "reply": "I don't have any stored information about a cancellation policy for your organisation. Could you clarify what type of cancellation policy you're referring to — for example, a service subscription, booking/appointment, product order, or something else? That will help me look in the right place or give you the correct details."
+    },
+    "tool_needed": {
+      "id": "tool_needed",
+      "verdict": "PASS",
+      "failed": [],
+      "why": "",
+      "steps": 2,
+      "ms": 15127,
+      "reply": "Gmail isn't connected for your organisation — the available communication tool is WhatsApp. Would you like me to check WhatsApp for messages from your landlord instead?"
+    },
+    "other_lang": {
+      "id": "other_lang",
+      "verdict": "PASS",
+      "failed": [],
+      "why": "",
+      "steps": 1,
+      "ms": 10096,
+      "reply": "जी हाँ, मैं हिंदी में बात कर सकता हूँ। आप कैसे मदद करना चाहेंगे?"
+    }
+  },
+  "updatedAt": "2026-08-16T03:57:35.809Z"
+}

@@ -1,0 +1,138 @@
+import { proxyActivities, defineQuery, setHandler } from '@temporalio/workflow';
+import type * as activities from '../activities/index.js';
+import type { AgentTaskInput, AgentTaskResult } from '../agent-engine.js';
+import { computeTurnBudget, evaluateTurnProgress } from '../turn-budget.js';
+
+const { runAgentTurnActivity, saveMessageActivity, logChannelActivity } = proxyActivities<typeof activities>({
+  // 12 min covers multi-tool chains (Gmail + Calendar + HubSpot + WhatsApp).
+  // scheduleToClose caps the absolute wall-clock budget including retries.
+  startToCloseTimeout: '12 minutes',
+  scheduleToCloseTimeout: '20 minutes',
+  retry: {
+    initialInterval: '5s',
+    maximumAttempts: 2,
+    backoffCoefficient: 2,
+    nonRetryableErrorTypes: ['AuthorizationError', 'InvalidArgumentError'],
+  },
+});
+
+export const agentProgressQuery = defineQuery<AgentTaskResult['executedSteps']>('agentProgressQuery');
+
+export async function AutonomousAgentWorkflow(input: AgentTaskInput): Promise<AgentTaskResult> {
+  // atomic-agent already runs a complete MCP tool loop per turn. This workflow
+  // is the durable wrapper: one primary turn, then at most two retries when
+  // the turn timed out or returned no reply after tools. priorToolResults is
+  // fed back into the next turn so the model does not blindly re-run work.
+
+  // Adaptive turn budget. computeTurnBudget is a PURE function of the input —
+  // no clock, no randomness, no I/O — so this stays deterministic under
+  // Temporal replay. "thanks!" gets 1 turn; a three-part request gets up to 6.
+  // An unreadable message yields the old fixed value, so a signal bug degrades
+  // to today's behaviour rather than to zero turns. See turn-budget.ts.
+  const budget = computeTurnBudget(input.userMessage || '', input.toolAllowlist || []);
+  const MAX_TURNS = budget.turns;
+
+  let currentInput: AgentTaskInput = { ...input };
+  let finalResult: AgentTaskResult | null = null;
+  const allExecutedSteps: AgentTaskResult['executedSteps'] = [];
+  const allUsedTools = new Set<string>();
+  let finalReplyMessage = '';
+  let stoppedEarlyForNoProgress = false;
+  let turnsUsed = 0;
+
+  setHandler(agentProgressQuery, () => allExecutedSteps);
+
+  for (let step = 1; step <= MAX_TURNS; step++) {
+    turnsUsed = step;
+    // Snapshot before the turn so "new" is measured against everything seen so
+    // far, not just the previous turn.
+    const toolsBeforeTurn = new Set(allUsedTools);
+    const stepsBeforeTurn = allExecutedSteps.length;
+
+    const result = await runAgentTurnActivity(currentInput);
+
+    allExecutedSteps.push(...result.executedSteps);
+    for (const tool of result.usedTools) {
+      allUsedTools.add(tool);
+    }
+
+    if (result.replyMessage) {
+      finalReplyMessage = result.replyMessage;
+    }
+
+    finalResult = {
+      ...result,
+      replyMessage: finalReplyMessage,
+      executedSteps: allExecutedSteps,
+      usedTools: Array.from(allUsedTools),
+    };
+
+    const shouldContinue =
+      result.retryable === true ||
+      (result.success && !result.isDone && !result.replyMessage && result.usedTools.length > 0);
+
+    if (!shouldContinue || step === MAX_TURNS) {
+      break;
+    }
+
+    // Stuck detection. A bigger budget is permission to continue, not an
+    // obligation: the existing condition above only asks "did it use tools?",
+    // which stays true while an agent re-runs the same failing call. If a turn
+    // surfaced no new tool AND no new step, more turns will not help — stop and
+    // keep the budget rather than spending it repeating ourselves.
+    // Retryable turns are exempt: a timeout legitimately produces nothing new.
+    const progress = evaluateTurnProgress(
+      toolsBeforeTurn,
+      result.usedTools,
+      allExecutedSteps.length - stepsBeforeTurn
+    );
+    if (!progress.madeProgress && result.retryable !== true) {
+      stoppedEarlyForNoProgress = true;
+      break;
+    }
+
+    currentInput = {
+      ...currentInput,
+      priorToolResults: allExecutedSteps,
+    };
+  }
+
+  const resultToSave = finalResult!;
+
+  if (input.orgId) {
+    await logChannelActivity({
+      orgId: input.orgId,
+      channelId: input.channelId,
+      logType: 'AGENT_EXECUTION',
+      payload: {
+        employeeName: input.employeeName,
+        usedTools: resultToSave.usedTools,
+        stepsCount: resultToSave.executedSteps.length,
+        engine: 'atomic-agent',
+        // Budget telemetry. Granted vs. actually used is what proves the
+        // heuristic earns its keep: if tasks routinely exhaust their budget,
+        // the ceiling is too low; if they never approach it, it is too high.
+        // `stoppedEarlyForNoProgress` isolates genuinely stuck runs from ones
+        // that simply finished.
+        turnBudget: budget.turns,
+        turnBudgetReason: budget.reason,
+        turnsUsed,
+        stoppedEarlyForNoProgress,
+      },
+      idempotencyKey: input.idempotencyKey ? `${input.idempotencyKey}:log` : undefined,
+    });
+  }
+
+  if (input.conversationId && input.orgId && resultToSave.replyMessage && !input.skipPersist) {
+    await saveMessageActivity({
+      orgId: input.orgId,
+      conversationId: input.conversationId,
+      role: 'assistant',
+      content: resultToSave.replyMessage,
+      toolCalls: resultToSave.executedSteps,
+      idempotencyKey: input.idempotencyKey ? `${input.idempotencyKey}:save` : undefined,
+    });
+  }
+
+  return resultToSave;
+}

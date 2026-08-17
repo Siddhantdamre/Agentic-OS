@@ -1,0 +1,1 @@
+pnpm --filter @darex/dashboard exec tsc --noEmit

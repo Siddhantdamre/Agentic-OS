@@ -1,0 +1,94 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+.yarn/install-state.gz
+
+# Build outputs
+.next/
+dist/
+build/
+out/
+.turbo/
+*.tsbuildinfo
+
+# Environment files
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+*.env
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+*.egg-info/
+
+# Docker
+docker-compose.override.yml
+
+# Database
+*.sql.bak
+pgdata/
+
+# Secrets / credentials (root folder only — keep terraform module tracked)
+*.pem
+*.key
+*.cert
+/secrets/
+!infra/terraform/modules/secrets/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Testing
+coverage/
+.nyc_output/
+
+# Temporal
+temporal-data/
+
+# Langfuse / Clickhouse data
+langfuse-data/
+clickhouse-data/
+
+# Nango
+nango-data/
+
+# Graphify
+graphify-out/
+
+# Windows
+nul
+
+# Runtime working dirs (root sandbox/ only — keep infra/docker/sandbox tracked)
+workspace_storage/
+/sandbox/
+
+# Terraform (state and secret tfvars must never be committed)
+**/.terraform/
+**/*.tfstate
+**/*.tfstate.*
+**/.terraform.lock.hcl
+crash.log
+crash.*.log
+*.tfvars
+!*.tfvars.example
+infra/terraform/backend.hcl
+.setup-done

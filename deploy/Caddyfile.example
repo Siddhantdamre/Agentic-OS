@@ -1,0 +1,20 @@
+# Example reverse proxy for a single VM. Callers: operators installing Caddy
+# on the host. Dashboard compose binds 127.0.0.1:3000 in docker-compose.prod.yml.
+#
+#   sudo cp deploy/Caddyfile.example /etc/caddy/Caddyfile
+#   # edit the hostname, then: sudo systemctl reload caddy
+#
+# WhatsApp / Chatwoot webhooks must hit this public origin
+# (/api/webhooks/whatsapp and /api/webhooks/chatwoot).
+#
+# I7: split ingest so webhooks do not share Next.js LLM latency.
+# Documented in infra/scripts/split-ingest.md. Do not enable until a
+# dedicated ingest process exists (persist + 200 + Temporal only):
+# ingest.example.com {
+# 	reverse_proxy 127.0.0.1:3000
+# }
+
+app.example.com {
+	encode gzip
+	reverse_proxy 127.0.0.1:3000
+}

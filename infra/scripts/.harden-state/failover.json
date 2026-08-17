@@ -1,0 +1,27 @@
+{
+  "section": "failover",
+  "startedAt": "2026-08-16T09:51:00.666Z",
+  "results": {
+    "primary": {
+      "status": 200,
+      "ms": 3403,
+      "body": "{\"id\":\"gen-1786873863-hudrBzxyOOmBAjtvn40G\",\"created\":1786873863,\"model\":\"atomic-agent\",\"object\":\"chat.completion\",\"choices\":[{\"finish_reason\":\"length\",\"index\":0,\"message\":{\"content\":\"LIVE! 🎤✨\\n\\nWha"
+    },
+    "atomic-agent-fallback": {
+      "status": 200,
+      "ms": 1025,
+      "body": "{\"id\":\"gen-1786873865-A5J9Vw98oHXwe6Vz2hQ7\",\"created\":1786873865,\"model\":\"atomic-agent-fallback\",\"object\":\"chat.completion\",\"choices\":[{\"finish_reason\":\"stop\",\"index\":0,\"message\":{\"content\":\"LIVE\",\"ro"
+    },
+    "atomic-agent-deepseek": {
+      "status": 200,
+      "ms": 424,
+      "body": "{\"id\":\"gen-1786873866-GjlVuChWuWmw0yZXi3BJ\",\"created\":1786873866,\"model\":\"atomic-agent-deepseek\",\"object\":\"chat.completion\",\"choices\":[{\"finish_reason\":\"length\",\"index\":0,\"message\":{\"content\":\"Okay, t"
+    },
+    "badKey": {
+      "status": 401,
+      "ms": 45,
+      "body": "{\"error\":{\"message\":\"Authentication Error, Invalid proxy server token passed. Received API Key = sk-...alid, Key Hash (Token) =644f165a8ec6e983c026f2ff12ca4d48a7827d4943b9e08859cd8e3fc3510fb0. Unable "
+    }
+  },
+  "updatedAt": "2026-08-16T09:51:05.580Z"
+}

@@ -1,0 +1,108 @@
+# Production overlay for infra/docker-compose.yml.
+# Callers: deploy/deploy.sh (via infra/scripts/compose-cmd.sh --overlay).
+# Bind admin/data ports to loopback so they are not on the public internet.
+# Put Caddy/nginx in front of 127.0.0.1:3000.
+#
+#   bash infra/scripts/compose-cmd.sh --overlay deploy/docker-compose.prod.yml up -d
+#
+# File order: kernel → compose-snippets → this overlay (later wins).
+# PgBouncer is in the kernel (darex-pgbouncer, host 127.0.0.1:6432).
+# Single-host compose + Caddy remains the supported production path.
+
+services:
+  postgres:
+    ports:
+      - "127.0.0.1:5432:5432"
+    restart: always
+
+  pgbouncer:
+    ports:
+      - "127.0.0.1:6432:5432"
+    restart: always
+
+  temporal:
+    ports:
+      - "127.0.0.1:7233:7233"
+    restart: always
+
+  temporal-ui:
+    ports:
+      - "127.0.0.1:8233:8080"
+    restart: always
+
+  redis:
+    ports:
+      - "127.0.0.1:6379:6379"
+    restart: always
+
+  nango-server:
+    ports:
+      - "127.0.0.1:3003:3003"
+    restart: always
+
+  langfuse-clickhouse:
+    ports:
+      - "127.0.0.1:8123:8123"
+      - "127.0.0.1:9000:9000"
+    restart: always
+
+  langfuse-minio:
+    ports:
+      - "127.0.0.1:9090:9000"
+      - "127.0.0.1:9091:9001"
+    restart: always
+
+  langfuse-server:
+    ports:
+      - "127.0.0.1:3002:3000"
+    restart: always
+
+  langfuse-worker:
+    restart: always
+
+  langfuse-redis:
+    restart: always
+
+  supertokens:
+    ports:
+      - "127.0.0.1:3567:3567"
+    restart: always
+
+  litellm:
+    ports:
+      - "127.0.0.1:4000:4000"
+    restart: always
+
+  atomic-bridge:
+    restart: always
+    environment:
+      - DAREX_PROD_FAILFAST=true
+      - DB_USER=darex_app
+
+  atomic-agent:
+    restart: always
+
+  sandbox:
+    restart: always
+
+  inbox:
+    ports:
+      - "127.0.0.1:3004:3004"
+    restart: always
+
+  worker:
+    restart: always
+    environment:
+      - DAREX_PROD_FAILFAST=true
+      - DB_USER=darex_app
+      - ALLOW_DEMO_AUTH=false
+
+  dashboard:
+    ports:
+      - "127.0.0.1:3000:3000"
+    restart: always
+    environment:
+      - NEXT_PUBLIC_APP_URL=${NEXT_PUBLIC_APP_URL}
+      - ALLOW_DEMO_AUTH=false
+      - DB_USER=darex_app
+      - DAREX_PROD_FAILFAST=true
