@@ -35,6 +35,17 @@ export interface AgentTaskResult {
   partialReply?: string;
   retryable?: boolean;
   isDone?: boolean;
+  /**
+   * Facts the agent was GIVEN rather than retrieved — today's date and the
+   * resolved relative dates injected into its prompt.
+   *
+   * These are evidence. The grounding gate blocked a correct reply for stating
+   * "22 Aug" because that date appeared in no tool result and no memory row —
+   * but the system had computed it and put it in the prompt, so the agent was
+   * repeating a supplied fact, not inventing one. Anything the platform tells
+   * the agent is as grounded as anything the agent looks up.
+   */
+  groundingContext?: string[];
 }
 
 export interface ToolExecutionParams {

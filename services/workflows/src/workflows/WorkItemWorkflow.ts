@@ -671,7 +671,12 @@ export async function WorkItemWorkflow(input: WorkItemWorkflowInput): Promise<Wo
     // `facts` holds the snippet TEXT; `citations` holds row ids. Only the text
     // can ground a claim — passing ids would have fed the gate a list of UUIDs
     // and silently grounded nothing.
-    (memory?.facts || []).filter(Boolean),
+    //
+    // groundingContext carries what the PLATFORM told the agent — today's date
+    // and the resolved relative dates. Those are supplied facts, as grounded as
+    // anything retrieved, and omitting them blocked a correct reply for saying
+    // "22 Aug".
+    [...(memory?.facts || []), ...(childResult.groundingContext || [])].filter(Boolean),
   );
 
   const critic = await criticCheckWithRevision({

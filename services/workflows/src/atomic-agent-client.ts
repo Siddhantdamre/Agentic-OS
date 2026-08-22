@@ -71,26 +71,19 @@ function buildSystemPrompt(input: AgentTaskInput): string {
 }
 
 /**
- * Ground the agent turn with facts atomic-agent must not forget. atomic-agent's
- * OpenAI-compatible HTTP handler drops the `system` role message entirely, so
- * org-scoped facts are embedded in the user message — the only part of the
- * request guaranteed to reach the LLM prompt.
+ * Today's date plus every relative date the agent might be asked to resolve.
  *
- * Retrieved memory is cited as `[M-n]` (R2 / M3). Empty index → "no stored
- * memory"; never invent contacts, listings, or prior conversations.
+ * Exported because these strings serve two purposes and MUST be identical in
+ * both: they go into the prompt as authoritative context, and they go into the
+ * grounding evidence. The grounding gate blocked a correct reply for stating
+ * "22 Aug" — a date that appeared in no tool result and no memory row, because
+ * the platform had supplied it. A fact the system tells the agent is exactly as
+ * grounded as a fact the agent looks up.
+ *
+ * Called from activity code only: `new Date()` inside a workflow breaks
+ * determinism on replay.
  */
-export function buildGroundedUserMessage(
-  input: AgentTaskInput,
-  memory?: RetrieveMemoryResult,
-): string {
-  // The agent had NO idea what day it was, and it showed: asked about "Saturday
-  // morning" it shipped "[current date — please confirm]" and "[date — please
-  // confirm]" to a customer, verbatim square brackets and all. It was trying to
-  // resolve the date, had nothing to resolve it from, and emitted a template.
-  //
-  // Built here, inside an activity, so `new Date()` is safe — this must never
-  // move into workflow code, where reading the clock breaks determinism on
-  // replay.
+export function buildDateContext(): { today: string; lines: string[] } {
   const now = new Date();
   const fmt = (d: Date) => d.toLocaleDateString('en-IN', {
     weekday: 'long', day: 'numeric', month: 'long', year: 'numeric', timeZone: 'Asia/Kolkata',
@@ -127,6 +120,32 @@ export function buildGroundedUserMessage(
     `- Use these EXACTLY. Never calculate a date yourself, and never state a`
       + ` past date that falls after today or a future date that falls before it.`,
   ];
+
+  return { today, lines: dateLines };
+}
+
+/**
+ * Ground the agent turn with facts atomic-agent must not forget. atomic-agent's
+ * OpenAI-compatible HTTP handler drops the `system` role message entirely, so
+ * org-scoped facts are embedded in the user message — the only part of the
+ * request guaranteed to reach the LLM prompt.
+ *
+ * Retrieved memory is cited as `[M-n]` (R2 / M3). Empty index → "no stored
+ * memory"; never invent contacts, listings, or prior conversations.
+ */
+export function buildGroundedUserMessage(
+  input: AgentTaskInput,
+  memory?: RetrieveMemoryResult,
+): string {
+  // The agent had NO idea what day it was, and it showed: asked about "Saturday
+  // morning" it shipped "[current date — please confirm]" and "[date — please
+  // confirm]" to a customer, verbatim square brackets and all. It was trying to
+  // resolve the date, had nothing to resolve it from, and emitted a template.
+  //
+  // Built here, inside an activity, so `new Date()` is safe — this must never
+  // move into workflow code, where reading the clock breaks determinism on
+  // replay.
+  const { today, lines: dateLines } = buildDateContext();
 
   const facts = [
     `SYSTEM CONTEXT (authoritative, do not question):`,
@@ -606,7 +625,14 @@ export async function runAutonomousAgentDirect(
   try {
     const turn = await runAgentTurn(input, opts);
     turn.reply = sanitizeAgentReply(turn.reply);
-    return mapTurnToResult(turn);
+    const mapped = mapTurnToResult(turn);
+    // Carry the dates the platform SUPPLIED so the grounding gate counts them
+    // as evidence. Without this a correct "Saturday 22 Aug" reads as an
+    // invented figure, because that date exists in no tool result and no
+    // memory row - the system put it there.
+    const { today, lines } = buildDateContext();
+    mapped.groundingContext = [`Today is ${today}.`, ...lines];
+    return mapped;
   } catch (err: any) {
     console.error('[atomic-agent] Direct execution failed:', err?.message);
     const aborted = err?.name === 'AbortError' || /abort|timed out|timeout/i.test(String(err?.message || ''));
