@@ -13,20 +13,28 @@ model_list:
     model_info:
       mode: chat
 
-  # FREE tier, 550B, 1M ctx, supports tool calling. Independent of tier 1,
-  # so an exhausted paid key degrades instead of taking the product down.
+  # Tier 2 — PAID, a different vendor from tier 1.
+  #
+  # Both fallbacks were :free models until reliability run 17, which failed on
+  # "Rate limit exceeded: free-models-per-day-high-balance". OpenRouter caps
+  # free models per DAY regardless of account balance, so under sustained load
+  # the failover chain was the first thing to break — the exact opposite of
+  # what a failover chain is for. A fallback that runs out is not a fallback.
+  #
+  # ~$0.15 per 1M prompt tokens: fractions of a cent per agent turn, and it
+  # only runs at all once tier 1 has already failed.
   - model_name: atomic-agent-fallback
     litellm_params:
-      model: openrouter/nvidia/nemotron-3-ultra-550b-a55b:free
+      model: openrouter/openai/gpt-4o-mini
       api_key: os.environ/OPENROUTER_API_KEY
     model_info:
       mode: chat
 
-  # FREE tier, different model family, so one model's outage cannot take
-  # out both fallbacks.
+  # Tier 3 — PAID, a third vendor again, so no single provider outage can take
+  # out more than one tier. Cheapest of the three at ~$0.10 per 1M.
   - model_name: atomic-agent-deepseek
     litellm_params:
-      model: openrouter/nvidia/nemotron-3-super-120b-a12b:free
+      model: openrouter/meta-llama/llama-3.3-70b-instruct
       api_key: os.environ/OPENROUTER_API_KEY
     model_info:
       mode: chat
