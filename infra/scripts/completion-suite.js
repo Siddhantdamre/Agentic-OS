@@ -148,7 +148,9 @@ const CASES = [
     id: 'refund_time',
     text: 'How long does a refund take to come through?',
     expect: 'complete',
-    must: [/7\s*(?:working\s*)?days?/i],
+    // Spelled-out numbers are as correct as digits — the assertion is about the
+    // fact, not the notation. Every pattern below accepts both.
+    must: [/\b(?:7|seven)\s*(?:working\s*)?days?/i],
     fact: '7 working days',
   },
   {
@@ -162,14 +164,14 @@ const CASES = [
     id: 'delivery_time',
     text: 'How quickly can you deliver something that is in stock?',
     expect: 'complete',
-    must: [/3\s*(?:to|-|–)\s*5/i, /\b5\s*working days?/i],
+    must: [/\b(?:3|three)\s*(?:to|-|–)\s*(?:5|five)\b/i, /\b(?:5|five)\s*working days?/i],
     fact: '3-5 working days',
   },
   {
     id: 'custom_lead',
     text: 'We want a custom wardrobe. How long will it take?',
     expect: 'complete',
-    must: [/4\s*(?:to|-|–)\s*6\s*weeks?/i, /\b6\s*weeks?/i],
+    must: [/\b(?:4|four)\s*(?:to|-|–)\s*(?:6|six)\s*weeks?/i, /\b(?:6|six)\s*weeks?/i],
     fact: '4-6 weeks',
   },
   {
@@ -183,14 +185,24 @@ const CASES = [
     id: 'viewing_slot',
     text: 'Can we book a showroom viewing for Saturday morning?',
     expect: 'complete',
-    must: [/45\s*min/i, /\b10\s*am\b/i, /\b11\s*am\b/i, /two days|2 days/i],
+    // Format-tolerant on purpose. The literal forms failed a CORRECT reply —
+    // "We have 45-minute slots available at 10:00 AM, 11:00 AM and 12:00 PM" —
+    // because /45\s*min/ does not match "45-minute" (hyphen) and /\b10\s*am\b/
+    // does not match "10:00 AM" (the :00). The agent is free to phrase a time
+    // however it likes; the assertion is about the FACT, not the formatting.
+    must: [
+      /45[\s-]*min/i,
+      /\b10[:.]?(?:00)?\s*a\.?m\.?/i,
+      /\b11[:.]?(?:00)?\s*a\.?m\.?/i,
+      /\btwo days|\b2 days/i,
+    ],
     fact: '45-min slots, Sat 10/11/12, book 2 days ahead',
   },
   {
     id: 'installation',
     text: 'Do you charge extra for installation?',
     expect: 'complete',
-    must: [/8\s*%/],
+    must: [/\b8\s*(?:%|per\s?cent|percent)/i],
     fact: '8% of order value',
   },
   {
