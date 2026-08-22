@@ -593,3 +593,19 @@ export function stripPlaceholders(reply: string): { text: string; removed: strin
   const text = kept.join(' ').replace(/\s{2,}/g, ' ').trim();
   return { text, removed };
 }
+
+/**
+ * Sent when the agent is taking longer than a customer will sit in silence.
+ *
+ * The bounded retry budget capped the WORST case at ~2 minutes, but it cannot
+ * make a slow answer fast: the slowest correct reply measured was 93.1s, so
+ * timeouts cannot be tightened further without cutting off work that was going
+ * to succeed. Silence, not slowness, is what makes a customer assume they have
+ * been ignored — so the fix is to say something while the work continues.
+ *
+ * This is an interim message, NOT a fallback. The real answer still follows
+ * when it lands. It therefore promises nothing except that the agent is still
+ * working, and asserts no fact, because at this point nothing has been checked.
+ */
+export const INTERIM_ACK_REPLY =
+  "Just checking that for you — I will have an answer shortly.";

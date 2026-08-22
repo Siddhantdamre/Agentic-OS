@@ -19,6 +19,7 @@ import assert from 'node:assert';
 import {
   DISCLOSURE_SAFE_REPLY,
   HUMAN_REVIEW_REPLY,
+  INTERIM_ACK_REPLY,
   PRIVACY_REFUSAL,
   SERVICE_FALLBACK_REPLY,
   formatForChannel,
@@ -33,6 +34,9 @@ const CANNED: Array<[string, string]> = [
   ['SERVICE_FALLBACK_REPLY', SERVICE_FALLBACK_REPLY],
   ['PRIVACY_REFUSAL', PRIVACY_REFUSAL],
   ['DISCLOSURE_SAFE_REPLY', DISCLOSURE_SAFE_REPLY],
+  // Interim, not a fallback — the real answer still follows. Held to the same
+  // bar because it is customer-facing text no model reviews.
+  ['INTERIM_ACK_REPLY', INTERIM_ACK_REPLY],
 ];
 
 test('no canned reply opens with a preamble', () => {

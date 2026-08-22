@@ -7,6 +7,7 @@ import {
   setHandler,
   workflowInfo,
   condition,
+  sleep,
 } from '@temporalio/workflow';
 import type * as activities from '../activities/index.js';
 import type { AgentTaskInput, AgentTaskResult } from '../agent-engine.js';
@@ -19,6 +20,7 @@ import {
   stripMechanismTalk,
   stripPreamble,
   stripPlaceholders,
+  INTERIM_ACK_REPLY,
   HUMAN_REVIEW_REPLY,
   SERVICE_FALLBACK_REPLY,
   PRIVACY_REFUSAL,
@@ -125,6 +127,17 @@ const {
  * non-deterministic across replay.
  */
 const HITL_WAIT_TIMEOUT = '2 minutes';
+
+/**
+ * How long a customer waits in silence before the agent says it is working.
+ *
+ * 30s, from measurement: p50 for a good reply is ~21s, so most answers arrive
+ * before this fires and the interim message stays rare. It only appears on the
+ * genuinely slow turns — which are exactly the ones where silence reads as
+ * being ignored. A workflow constant, never process.env: reading env inside a
+ * workflow is non-deterministic across replay.
+ */
+const INTERIM_ACK_DELAY = '30 seconds';
 
 function sessionKeyForWorkItem(workItemId: string): string {
   return workItemId;
@@ -486,11 +499,44 @@ export async function WorkItemWorkflow(input: WorkItemWorkflowInput): Promise<Wo
 
   let childResult: AgentTaskResult;
   try {
-    childResult = await executeChild(AutonomousAgentWorkflow, {
+    const childRun = executeChild(AutonomousAgentWorkflow, {
       workflowId: `${parentId}-turn`,
       args: [childInput],
       workflowExecutionTimeout: '20 minutes',
     });
+
+    // Say something before the customer starts wondering.
+    //
+    // Bounding the retry budget capped the WORST case at ~2 minutes, but it
+    // cannot make a slow answer fast: the slowest CORRECT reply measured was
+    // 93.1s, so tightening timeouts further would cut off work that was going
+    // to succeed. Silence is the thing that makes a customer feel ignored, not
+    // slowness — so the agent keeps working and simply says so.
+    //
+    // A durable Temporal timer, raced against the child. Deterministic across
+    // replay, and the child is never cancelled: the real answer still follows.
+    const stillWorking = Symbol('still-working');
+    const raced = await Promise.race([
+      childRun,
+      sleep(INTERIM_ACK_DELAY).then(() => stillWorking),
+    ]);
+
+    if (raced === stillWorking) {
+      // Interim only, never a substitute for the answer. It asserts nothing,
+      // because at this point nothing has been checked.
+      if (input.conversationId) {
+        await saveMessageActivity({
+          orgId: input.orgId,
+          conversationId: input.conversationId,
+          role: 'assistant',
+          content: formatForChannel(INTERIM_ACK_REPLY, input.channel),
+          idempotencyKey: `${businessKey}:save-interim-ack`,
+        });
+      }
+      childResult = await childRun;
+    } else {
+      childResult = raced as AgentTaskResult;
+    }
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
     // Compensation: log + needs_attention. Never silent-resend the channel reply.
