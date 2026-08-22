@@ -471,7 +471,7 @@ export const HUMAN_REVIEW_REPLY =
 // of Stripe would break real answers.
 
 const MECHANISM_RE =
-  /\b(?:quer(?:y|ying|ied)(?:\s+\w+)?\s*databases?|quer(?:y|ying|ied)\s+the\s+\w+|the\s+database|our\s+database|channel\s+data|payment\s+connectors?|other\s+connectors?|connected\s+services|available\s+tools|via\s+the\s+\w+\s+tools?|connector\s+(?:is|isn'?t|for)|integration\s+(?:is|isn'?t|only\s+supports)|\w+\s+table\b|API\b|endpoint|webhook|sync(?:ed|ing)?\s+from|logged\s+in\s+your\b|in\s+your\s+(?:records|system\s+records)\b|tool\s+call|internal\s+system)/i;
+  /\b(?:quer(?:y|ying|ied)(?:\s+\w+)?\s*databases?|quer(?:y|ying|ied)\s+the\s+\w+|the\s+database|our\s+database|channel\s+data|\bconnectors?\b|is\s+connected\s+for|only\s+\w+\s+is\s+connected|connected\s+services|available\s+tools|via\s+the\s+\w+\s+tools?|integration\s+(?:is|isn'?t|only\s+supports)|\w+\s+table\b|API\b|endpoint|webhook|sync(?:ed|ing)?\s+from|logged\s+in\s+your\b|in\s+your\s+(?:records|system\s+records)\b|tool\s+call|internal\s+system)/i;
 
 /**
  * Drop sentences that describe how the answer was obtained.

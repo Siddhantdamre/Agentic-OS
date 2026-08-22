@@ -111,3 +111,30 @@ test('a reply that is ONLY mechanism collapses to nothing usable', () => {
   assert.ok(out.removed.length > 0);
   assert.ok(out.text.length < 20, `expected an unusable remainder, got: ${out.text}`);
 });
+
+test("connector STATE is mechanism, however it is phrased", () => {
+  // From reliability run 1: the agent told a customer which connectors were
+  // wired up. The quality rule caught it; the stripper did not, because its
+  // pattern only matched "connector is/isn't/for" and the reply said
+  // "a financial connector". A gap between the detector and the control is
+  // the worst arrangement: the failure is visible but not prevented.
+  const leak =
+    "I don't have access to your financial data — only WhatsApp is connected "
+    + "for this org. You would need to connect a financial connector.";
+  const out = stripMechanismTalk(leak);
+  assert.ok(out.removed.length > 0, "connector state survived");
+  assert.ok(!/connector/i.test(out.text), out.text);
+  assert.ok(!/is connected for/i.test(out.text), out.text);
+});
+
+test("naming a payment brand as an ANSWER still survives", () => {
+  // The line to hold: "we accept Stripe" answers a real question. Only
+  // connector plumbing is mechanism.
+  for (const good of [
+    "You can pay by card through Stripe.",
+    "Your invoice was raised in QuickBooks and emailed to you.",
+    "We accept Razorpay, UPI or bank transfer.",
+  ]) {
+    assert.deepEqual(stripMechanismTalk(good).removed, [], `wrongly edited: ${good}`);
+  }
+});
