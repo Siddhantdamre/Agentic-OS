@@ -21,12 +21,28 @@ catch { Client = require(path.join(__dirname, '../../apps/dashboard/node_modules
 const gate = require(path.join(__dirname, '../../services/workflows/dist/reply-gate.js'));
 const { scoreQuality } = require('./quality-rules.js');
 
+
+/**
+ * The interim acknowledgement is NOT an answer.
+ *
+ * WorkItemWorkflow now sends "still working" at 30s and the real reply when
+ * it lands, so the FIRST new assistant message is no longer necessarily the
+ * answer. Polling for "any new message" scored the acknowledgement as the
+ * reply and reported two false product failures on the first run after it
+ * shipped. Keep waiting past it; every other canned reply IS terminal.
+ */
+const INTERIM_ACK = require(path.join(__dirname, "../../services/workflows/dist/reply-gate.js")).INTERIM_ACK_REPLY;
+const isInterim = (t) => String(t || "").trim() === String(INTERIM_ACK || "").trim();
+
 const BASE = process.env.DASHBOARD_URL || 'http://127.0.0.1:3000';
 const SECRET = process.env.CHATWOOT_WEBHOOK_SECRET || 'darex-chatwoot-webhook-secret-dev';
 const REPLY_TIMEOUT_MS = parseInt(process.env.REPLY_TIMEOUT_MS || '200000', 10);
 const SECTION = process.argv[2] || 'all';
 const STATE = path.join(__dirname, '.harden-state');
 fs.mkdirSync(STATE, { recursive: true });
+
+let __convSeq = Date.now() % 1000000;
+const nextConvId = () => (__convSeq += 7) % 2000000000;
 
 const sign = (b) => `sha256=${crypto.createHmac('sha256', SECRET).update(b).digest('hex')}`;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -135,7 +151,7 @@ async function say(tenant, convId, text) {
        ORDER BY created_at DESC LIMIT 1`, [tenant.orgId]);
     const n = await db.query(
       `SELECT COUNT(*)::int AS n FROM messages WHERE org_id=$1 AND role='assistant'`, [tenant.orgId]);
-    if (r.rows.length && n.rows[0].n > before.rows[0].n) {
+    if (r.rows.length && n.rows[0].n > before.rows[0].n && !isInterim(r.rows[0].content)) {
       return { reply: r.rows[0].content || '', ms: Date.now() - t0 };
     }
     await sleep(400);

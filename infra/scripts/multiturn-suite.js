@@ -34,6 +34,19 @@ catch { Client = require(path.join(__dirname, '../../apps/dashboard/node_modules
 
 const { scoreQuality } = require('./quality-rules.js');
 
+
+/**
+ * The interim acknowledgement is NOT an answer.
+ *
+ * WorkItemWorkflow now sends "still working" at 30s and the real reply when
+ * it lands, so the FIRST new assistant message is no longer necessarily the
+ * answer. Polling for "any new message" scored the acknowledgement as the
+ * reply and reported two false product failures on the first run after it
+ * shipped. Keep waiting past it; every other canned reply IS terminal.
+ */
+const INTERIM_ACK = require(path.join(__dirname, "../../services/workflows/dist/reply-gate.js")).INTERIM_ACK_REPLY;
+const isInterim = (t) => String(t || "").trim() === String(INTERIM_ACK || "").trim();
+
 const BASE = process.env.DASHBOARD_URL || 'http://127.0.0.1:3000';
 const SECRET = process.env.CHATWOOT_WEBHOOK_SECRET || 'darex-chatwoot-webhook-secret-dev';
 const REPLY_TIMEOUT_MS = parseInt(process.env.REPLY_TIMEOUT_MS || '180000', 10);
@@ -195,7 +208,7 @@ async function say(tenant, chatwootConvId, text) {
        ORDER BY m.created_at DESC LIMIT 1`, [tenant.orgId]);
     const n = await db.query(
       `SELECT COUNT(*)::int AS n FROM messages WHERE org_id=$1 AND role='assistant'`, [tenant.orgId]);
-    if (c.rows.length && n.rows[0].n > before) {
+    if (c.rows.length && n.rows[0].n > before && !isInterim(c.rows[0].content)) {
       return { ok: true, reply: c.rows[0].content || '', ms: Date.now() - t0 };
     }
     await sleep(400);

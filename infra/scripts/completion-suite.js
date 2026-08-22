@@ -42,6 +42,19 @@ try {
   Client = require(path.join(__dirname, '../../apps/dashboard/node_modules/pg')).Client;
 }
 
+
+/**
+ * The interim acknowledgement is NOT an answer.
+ *
+ * WorkItemWorkflow now sends "still working" at 30s and the real reply when
+ * it lands, so the FIRST new assistant message is no longer necessarily the
+ * answer. Polling for "any new message" scored the acknowledgement as the
+ * reply and reported two false product failures on the first run after it
+ * shipped. Keep waiting past it; every other canned reply IS terminal.
+ */
+const INTERIM_ACK = require(path.join(__dirname, "../../services/workflows/dist/reply-gate.js")).INTERIM_ACK_REPLY;
+const isInterim = (t) => String(t || "").trim() === String(INTERIM_ACK || "").trim();
+
 const BASE = process.env.DASHBOARD_URL || 'http://127.0.0.1:3000';
 const SECRET = process.env.CHATWOOT_WEBHOOK_SECRET || 'darex-chatwoot-webhook-secret-dev';
 const REPLY_TIMEOUT_MS = parseInt(process.env.REPLY_TIMEOUT_MS || '180000', 10);
@@ -55,6 +68,9 @@ const db = new Client({
   password: process.env.DB_RESOLVER_PASSWORD || 'darex_dev_secret',
   database: process.env.DB_NAME || 'darex',
 });
+
+let __convSeq = Date.now() % 1000000;
+const nextConvId = () => (__convSeq += 7) % 2000000000;
 
 const sign = (b) => `sha256=${crypto.createHmac('sha256', SECRET).update(b).digest('hex')}`;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -251,7 +267,7 @@ async function ask(tenant, text) {
   const payload = JSON.stringify({
     event: 'message_created', message_type: 'incoming', content: text,
     id: Date.now() + Math.floor(Math.random() * 1000),
-    conversation: { id: Math.floor(Math.random() * 100000), inbox_id: tenant.inboxId },
+    conversation: { id: nextConvId(), inbox_id: tenant.inboxId },
     sender: { phone_number: `+9197${String(Date.now()).slice(-8)}`, name: 'Customer' },
     account: { id: tenant.accountId },
   });
@@ -273,22 +289,39 @@ async function ask(tenant, text) {
   // A harness that misattributes answers cannot measure anything, and it wastes
   // real debugging time chasing defects the product does not have. Everything
   // below is scoped to the conversation this message created.
+  // Scoping to the conversation was still not enough. Chatwoot conversation ids
+  // were drawn from Math.random()*100000, two cases collided, and the second
+  // question landed in the FIRST question's conversation — where an answer
+  // already existed. The suite returned it in 0.0s and reported the opening-
+  // hours reply as a wrong answer to a pricing question.
+  //
+  // So the message's own timestamp is the anchor, not the conversation: an
+  // assistant reply only counts if it was written AFTER the question that is
+  // being asked. That holds even if a conversation is reused, which makes the
+  // harness correct rather than merely lucky. (Ids are also made unique now —
+  // belt and braces, since a collision is a bug either way.)
   let conversationId = null;
+  let askedAt = null;
   while (Date.now() - t0 < REPLY_TIMEOUT_MS) {
     if (!conversationId) {
       // The webhook creates the conversation row; find it by our own message.
       const conv = await db.query(
-        `SELECT conversation_id FROM messages
+        `SELECT conversation_id, created_at FROM messages
          WHERE org_id=$1 AND role='user' AND content=$2
          ORDER BY created_at DESC LIMIT 1`, [tenant.orgId, text]);
       conversationId = conv.rows[0]?.conversation_id || null;
+      askedAt = conv.rows[0]?.created_at || null;
     }
-    if (conversationId) {
+    if (conversationId && askedAt) {
       const r = await db.query(
         `SELECT content, tool_calls FROM messages
          WHERE org_id=$1 AND conversation_id=$2 AND role='assistant'
-         ORDER BY created_at DESC LIMIT 1`, [tenant.orgId, conversationId]);
-      if (r.rows.length) {
+           AND created_at > $3
+         ORDER BY created_at DESC LIMIT 1`, [tenant.orgId, conversationId, askedAt]);
+      // Skip the interim acknowledgement — it is not the answer, and the real
+      // reply is still coming. Without this the suite scored "still working"
+      // as the reply and reported two false product failures.
+      if (r.rows.length && !isInterim(r.rows[0].content)) {
         let steps = 0;
         try {
           const tc = r.rows[0].tool_calls;
