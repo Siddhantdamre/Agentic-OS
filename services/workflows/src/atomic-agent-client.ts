@@ -29,7 +29,19 @@ function requireAtomicAgentKey(): string {
   }
   return 'darex-atomic-agent-dev-key';
 }
-const AGENT_TURN_TIMEOUT_MS = parseInt(process.env.ATOMIC_AGENT_TIMEOUT_MS || '180000', 10);
+// Per-attempt ceiling. 110s, chosen from measurement rather than taste: the
+// slowest CORRECT answer observed across reliability and demo runs was 93.1s,
+// so anything below ~100s would start cutting off work that was going to
+// succeed. Was 180s, which was simply longer than any real answer ever needs.
+const AGENT_TURN_TIMEOUT_MS = parseInt(process.env.ATOMIC_AGENT_TIMEOUT_MS || '110000', 10);
+
+// TOTAL wall-clock across every attempt. This — not the per-attempt value — is
+// what a customer actually experiences on a bad day, because the never-silent
+// fallback cannot fire until this returns. Worst case drops from ~9 minutes to
+// ~2. A provider that fails fast (502 in ~2s) still surfaces in seconds; only a
+// genuinely hung request uses the full budget.
+const AGENT_TOTAL_BUDGET_MS = parseInt(process.env.ATOMIC_AGENT_BUDGET_MS || '120000', 10);
+
 const AGENT_MAX_RETRIES = parseInt(process.env.ATOMIC_AGENT_MAX_RETRIES || '2', 10);
 
 const RETRYABLE_HTTP = new Set([408, 429, 500, 502, 503, 504]);
@@ -386,10 +398,30 @@ export async function runAgentTurn(input: AgentTaskInput, opts?: RunAgentOptions
   const memory = await loadRetrievedMemory(input, opts?.retrievedMemory);
   const groundedUser = buildGroundedUserMessage(input, memory);
 
+  // TOTAL budget across all attempts, not just per attempt.
+  //
+  // The per-attempt timeout used to be the only bound, so a hung request cost
+  // its full timeout and THEN retried: worst case ~9 minutes with the customer
+  // hearing nothing. Measured in a live demo — the provider returned 502, the
+  // first attempt hung to its abort, a second began, and no reply existed after
+  // 200 seconds.
+  //
+  // The fallback in WorkItemWorkflow can only fire once this returns, so this
+  // deadline is what actually determines how long a customer waits on a bad
+  // day. Each attempt gets the smaller of its own timeout and whatever remains,
+  // so the total is bounded no matter how the attempts fall.
+  const deadline = Date.now() + AGENT_TOTAL_BUDGET_MS;
+  const remaining = () => deadline - Date.now();
+
   let lastErr: Error | null = null;
   for (let attempt = 0; attempt <= AGENT_MAX_RETRIES; attempt++) {
+    // Out of budget: stop rather than start an attempt that cannot finish.
+    if (remaining() <= 0) {
+      throw lastErr ?? new Error(`atomic-agent gave up after ${AGENT_TOTAL_BUDGET_MS}ms`);
+    }
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), timeoutMs);
+    const attemptMs = Math.min(timeoutMs, remaining());
+    const timeout = setTimeout(() => controller.abort(), attemptMs);
     try {
       const res = await fetch(`${ATOMIC_AGENT_URL}/v1/chat/completions`, {
         method: 'POST',
@@ -431,11 +463,13 @@ export async function runAgentTurn(input: AgentTaskInput, opts?: RunAgentOptions
     } catch (err: any) {
       controller.abort();
       if (err?.name === 'AbortError') {
-        throw new Error(`atomic-agent request timed out after ${timeoutMs}ms`);
+        throw new Error(`atomic-agent request timed out after ${attemptMs}ms`);
       }
       lastErr = err;
       clearTimeout(timeout);
       if (attempt >= AGENT_MAX_RETRIES) throw lastErr;
+      // No point sleeping past the deadline just to be told to stop.
+      if (remaining() <= 0) throw lastErr;
       await sleepMs(250 * Math.pow(2, attempt) + Math.floor(Math.random() * 250));
     } finally {
       clearTimeout(timeout);
