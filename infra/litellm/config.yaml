@@ -30,11 +30,26 @@ model_list:
     model_info:
       mode: chat
 
-  # Tier 3 — PAID, a third vendor again, so no single provider outage can take
-  # out more than one tier. Cheapest of the three at ~$0.10 per 1M.
+  # Tier 3 — FREE, deliberately. The zero-cost floor.
+  #
+  # Making all three tiers paid was a mistake and the logs showed it within one
+  # run: the balance hit zero and EVERY tier returned 402 at once, so 11 of 12
+  # cases got no reply. Free models have a daily cap (which is what broke run
+  # 17 before), but a capped tier still answers when the balance is empty, and
+  # an empty balance is the more likely failure — it arrives without warning
+  # and takes the paid tiers down together.
+  #
+  # So the chain now degrades along two independent axes:
+  #   tiers 1-2  paid, different vendors  → survive a provider outage
+  #   tier 3     free                     → survives an empty wallet
+  # Nothing here can be exhausted by the same event.
   - model_name: atomic-agent-deepseek
     litellm_params:
-      model: openrouter/meta-llama/llama-3.3-70b-instruct
+      # Verified present in the live OpenRouter catalogue and listed as
+      # supporting tool calling, which the agent loop requires. The obvious
+      # guess — llama-3.3-70b-instruct:free — does not exist; a model id that
+      # is merely plausible fails silently at the moment failover is needed.
+      model: openrouter/nvidia/nemotron-3-ultra-550b-a55b:free
       api_key: os.environ/OPENROUTER_API_KEY
     model_info:
       mode: chat
