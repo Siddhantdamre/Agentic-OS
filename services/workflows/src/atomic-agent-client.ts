@@ -80,9 +80,41 @@ export function buildGroundedUserMessage(
   // move into workflow code, where reading the clock breaks determinism on
   // replay.
   const now = new Date();
-  const today = now.toLocaleDateString('en-IN', {
+  const fmt = (d: Date) => d.toLocaleDateString('en-IN', {
     weekday: 'long', day: 'numeric', month: 'long', year: 'numeric', timeZone: 'Asia/Kolkata',
   });
+  const shift = (days: number) => {
+    const d = new Date(now);
+    d.setDate(d.getDate() + days);
+    return d;
+  };
+  const today = fmt(now);
+
+  // Precomputed relative dates, because the model gets the arithmetic wrong.
+  // With only "today" in the prompt it answered "you placed the order last
+  // Monday (18 August)" when today was 17 August — 18 August is TOMORROW, so it
+  // cannot be last Monday. The correct answer, 11 August, is trivial to compute
+  // here and evidently not trivial for a language model to compute reliably.
+  //
+  // Date errors are uniquely damaging in this product: a wrong date inside a
+  // cancellation-window or delivery answer is a factual error the customer will
+  // act on, and it looks authoritative because everything around it is right.
+  // Anything derivable in code should never be left to the model.
+  const dow = Number(now.toLocaleDateString('en-US', { weekday: 'long', timeZone: 'Asia/Kolkata' })
+    .replace(/Sunday/, '0').replace(/Monday/, '1').replace(/Tuesday/, '2')
+    .replace(/Wednesday/, '3').replace(/Thursday/, '4').replace(/Friday/, '5')
+    .replace(/Saturday/, '6'));
+  // Most recent weekday strictly BEFORE today, and the next one strictly after.
+  const lastOf = (target: number) => shift(-(((dow - target + 7) % 7) || 7));
+  const nextOf = (target: number) => shift(((target - dow + 7) % 7) || 7);
+  const dateLines = [
+    `- Yesterday was ${fmt(shift(-1))}. Tomorrow is ${fmt(shift(1))}.`,
+    `- Last Monday was ${fmt(lastOf(1))}. Next Monday is ${fmt(nextOf(1))}.`,
+    `- Last Saturday was ${fmt(lastOf(6))}. Next Saturday is ${fmt(nextOf(6))}.`,
+    `- One week ago was ${fmt(shift(-7))}. In one week it will be ${fmt(shift(7))}.`,
+    `- Use these EXACTLY. Never calculate a date yourself, and never state a`
+      + ` past date that falls after today or a future date that falls before it.`,
+  ];
 
   const facts = [
     `SYSTEM CONTEXT (authoritative, do not question):`,
@@ -91,6 +123,7 @@ export function buildGroundedUserMessage(
     `- Today is ${today} (Asia/Kolkata). Use this to resolve any relative date`
       + ` the customer mentions — "today", "tomorrow", "this Saturday", "next`
       + ` week". State the resolved date plainly.`,
+    ...dateLines,
     // The failure mode this replaces.
     `- NEVER write a placeholder such as [current date], [date — please confirm],`
       + ` [name] or [X] in a reply. If you genuinely cannot determine something,`

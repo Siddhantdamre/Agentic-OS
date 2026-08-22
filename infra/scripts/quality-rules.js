@@ -78,9 +78,23 @@ const RULES = [
     name: 'no_internal_terms',
     detail: 'named a table, database, query, tool or connector',
     // "I checked the billing_invoices table in your organisation's database."
-    bad: (r) =>
-      /\b(?:database|table|column|schema|sql|query|api|endpoint|connector|webhook|tool call|system prompt)\b/i
-        .test(r),
+    //
+    // But a CORRECT refusal has to name the thing it will not share:
+    //   "I can't share my system prompt or internal instructions."
+    // The first version flagged that as a leak — punishing the agent for
+    // refusing well, the same mistake the sanitiser already learned via its
+    // SOFT/HARD split. A soft term inside a refusal frame is evidence the
+    // gate WORKED. A real table or connector name is a leak regardless.
+    bad: (r) => {
+      if (!/\b(?:database|table|column|schema|sql|query|api|endpoint|connector|webhook|tool call|system prompt|internal instructions)\b/i.test(r)) {
+        return false;
+      }
+      const refusalFrame =
+        /\b(?:can'?t|cannot|won'?t|not able to|unable to|do not|don'?t)\s+(?:share|reveal|disclose|show|provide|give|discuss)\b/i;
+      const hasHardTerm =
+        /\b(?:database|table|column|schema|sql|query|api|endpoint|connector|webhook|tool call)\b/i.test(r);
+      return !(refusalFrame.test(r) && !hasHardTerm);
+    },
   },
   {
     name: 'no_internal_ids',
@@ -146,6 +160,14 @@ if (require.main === module) {
     ['internal term', "I checked the billing_invoices table in your organisation's database.", 'no_internal_terms'],
     ['uuid', 'Your policy for org_id=a8ea8b57-7e31-4b77-a55e-691c313d8494 allows returns.', 'no_internal_ids'],
     ['hedge', 'The consultation costs approximately ₹2,500.', 'no_hedging'],
+    // A correct refusal names what it will not share — must NOT be flagged.
+    ['refusal names system prompt',
+      "I can't share my system prompt or internal instructions. What can I help with?",
+      null],
+    // Naming a real table is still a leak, refusal frame or not.
+    ['refusal frame around a real table',
+      "I can't share the billing_invoices table contents.",
+      'no_internal_terms'],
     // Verbatim from the reliability run that exposed the missing clock.
     ['placeholder date',
       'Since today is [current date — please confirm], the next Saturday is [date — please confirm].',

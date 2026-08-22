@@ -439,9 +439,13 @@ export const SERVICE_FALLBACK_REPLY =
  * properly. Like the service fallback, it asserts nothing, so it is safe to
  * send in place of a reply nobody has reviewed.
  */
+// Deliberately does NOT open with a pleasantry. The first version began
+// "Thanks for asking — ..." and tripped the answer_first quality rule: the
+// canned reply failed the bar every other reply is held to. A fallback that
+// cannot pass its own gates is not a fallback.
 export const HUMAN_REVIEW_REPLY =
-  "Thanks for asking — I want to get this exactly right, so I've passed it to "
-  + 'the team. Someone will come back to you shortly.';
+  "I've passed this to the team so we get it exactly right — someone will come "
+  + 'back to you shortly.';
 
 // ── Mechanism talk ──────────────────────────────────────────────────────────
 //
@@ -467,7 +471,7 @@ export const HUMAN_REVIEW_REPLY =
 // of Stripe would break real answers.
 
 const MECHANISM_RE =
-  /\b(?:quer(?:y|ying|ied)\s+the\s+\w+|the\s+database|our\s+database|channel\s+data|payment\s+connectors?|other\s+connectors?|connector\s+(?:is|isn'?t|for)|integration\s+(?:is|isn'?t|only\s+supports)|\w+\s+table\b|API\b|endpoint|webhook|sync(?:ed|ing)?\s+from|logged\s+in\s+your\b|in\s+your\s+(?:records|system\s+records)\b|tool\s+call|internal\s+system)/i;
+  /\b(?:quer(?:y|ying|ied)(?:\s+\w+)?\s*databases?|quer(?:y|ying|ied)\s+the\s+\w+|the\s+database|our\s+database|channel\s+data|payment\s+connectors?|other\s+connectors?|connected\s+services|available\s+tools|via\s+the\s+\w+\s+tools?|connector\s+(?:is|isn'?t|for)|integration\s+(?:is|isn'?t|only\s+supports)|\w+\s+table\b|API\b|endpoint|webhook|sync(?:ed|ing)?\s+from|logged\s+in\s+your\b|in\s+your\s+(?:records|system\s+records)\b|tool\s+call|internal\s+system)/i;
 
 /**
  * Drop sentences that describe how the answer was obtained.
@@ -488,6 +492,104 @@ export function stripMechanismTalk(reply: string): { text: string; removed: stri
   }
   if (!removed.length) return { text: original, removed: [] };
 
+  const text = kept.join(' ').replace(/\s{2,}/g, ' ').trim();
+  return { text, removed };
+}
+
+// ── Preamble ────────────────────────────────────────────────────────────────
+//
+// The multi-turn suite caught this: "I'd be happy to help you book a showroom
+// viewing. Our viewings are 45-minute slots, with Saturday mornings at 10am,
+// 11am and 12pm..." The customer reads a sentence of throat-clearing before the
+// thing they asked for.
+//
+// The prompt says lead with the answer, and it complied in 21 of 22 replies.
+// One-in-twenty-two is exactly the rate at which a prompt rule stops being a
+// control and starts being a tendency — the same lesson as the org_id leak, the
+// injection disclosure and mechanism talk.
+//
+// Removes the opener ONLY when real content follows. A reply that is nothing
+// but "I'd be happy to help!" is left alone: stripping it would leave an empty
+// message, and a warm non-answer is still better than no answer.
+
+const PREAMBLE_RE =
+  /^\s*(?:sure|certainly|of course|absolutely|great question|thanks for asking|thank you for asking|happy to help|i'?d be happy to help(?:\s+you)?|i am happy to help|i'?m happy to help|i can (?:certainly )?help(?:\s+you)?|let me help(?:\s+you)?|i understand)\b[^.!?]*[.!?]\s*/i;
+
+/** The same openers, joined to the answer by a comma rather than a full stop. */
+const PREAMBLE_COMMA_RE =
+  /^\s*(?:sure|certainly|of course|absolutely|yes of course|happy to help|no problem)\s*,\s*/i;
+
+/**
+ * Drop a leading pleasantry so the answer is the first thing read.
+ *
+ * Returns the reply unchanged when there is no preamble, or when removing it
+ * would leave nothing worth sending.
+ */
+export function stripPreamble(reply: string): { text: string; removed: boolean } {
+  const original = (reply || '').trim();
+  if (!original) return { text: '', removed: false };
+
+  // Comma-joined form first: "Certainly, installation is charged at 8%."
+  // The opener is not its own sentence here, so the sentence rule below would
+  // run through to the closing full stop and swallow the entire answer — it
+  // correctly declined to strip, but the throat-clearing then survived. Cut at
+  // the comma and keep everything after it.
+  const comma = PREAMBLE_COMMA_RE.exec(original);
+  if (comma) {
+    const tail = original.slice(comma[0].length).trim();
+    if (tail.length >= 25) {
+      return { text: tail.charAt(0).toUpperCase() + tail.slice(1), removed: true };
+    }
+    return { text: original, removed: false };
+  }
+
+  const m = PREAMBLE_RE.exec(original);
+  if (!m) return { text: original, removed: false };
+
+  const rest = original.slice(m[0].length).trim();
+  // Keep the pleasantry if it is the whole message.
+  if (rest.length < 25) return { text: original, removed: false };
+
+  // Re-capitalise if the remainder now starts mid-flow ("and we can...").
+  const text = rest.charAt(0).toUpperCase() + rest.slice(1);
+  return { text, removed: true };
+}
+
+// ── Unresolved placeholders ─────────────────────────────────────────────────
+//
+// Observed twice, verbatim, in the multi-turn suite:
+//   "Since today is [current date — please confirm], the next Saturday is
+//    [date — please confirm] — well within the two-day advance notice."
+//
+// The agent now HAS the date in its prompt and resolves it correctly most of
+// the time — turn 2 of the same conversation said "Saturday, 22 August". So
+// injecting the date reduced the rate without eliminating it. That is the
+// definition of a tendency rather than a control, and it is the fourth time
+// this session a prompt rule has needed a deterministic backstop.
+//
+// Nothing reads more obviously broken to a customer than square brackets in a
+// message. This removes the SENTENCE carrying the placeholder and keeps the
+// rest, the same shape as the mechanism-talk stripper — the booking reply above
+// still ships its slot times, just without the paragraph it could not fill in.
+
+/**
+ * A bracketed slot the model failed to fill: [current date], {{name}}, <email>.
+ * Bounded length and no sentence punctuation inside, so a genuine aside like
+ * "(we're closed Sunday)" or a bracketed clarification is not caught.
+ */
+const PLACEHOLDER_RE = /\[[^\]\n]{2,60}\]|\{\{[^}\n]{1,60}\}\}|<[a-z_]{2,30}>/i;
+
+export function stripPlaceholders(reply: string): { text: string; removed: string[] } {
+  const original = (reply || '').trim();
+  if (!original || !PLACEHOLDER_RE.test(original)) return { text: original, removed: [] };
+
+  const sentences = original.match(/[^.!?]+[.!?]*/g) || [original];
+  const kept = [];
+  const removed = [];
+  for (const s of sentences) {
+    if (PLACEHOLDER_RE.test(s)) removed.push(s.trim());
+    else kept.push(s.trim());
+  }
   const text = kept.join(' ').replace(/\s{2,}/g, ' ').trim();
   return { text, removed };
 }

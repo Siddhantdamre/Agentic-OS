@@ -17,6 +17,8 @@ import {
   formatForChannel,
   isKnowledgeGap,
   stripMechanismTalk,
+  stripPreamble,
+  stripPlaceholders,
   HUMAN_REVIEW_REPLY,
   SERVICE_FALLBACK_REPLY,
   PRIVACY_REFUSAL,
@@ -653,16 +655,28 @@ export async function WorkItemWorkflow(input: WorkItemWorkflowInput): Promise<Wo
   //
   // Sentence-level, so the answer survives the edit. If nothing usable is left,
   // fall back to the neutral acknowledgement rather than shipping a fragment.
-  const mechanism = stripMechanismTalk(sanitised.text);
+  // Placeholders first: an unresolved [current date] is the most visibly broken
+  // thing a reply can contain, and removing its sentence may leave the rest
+  // needing the same mechanism/preamble treatment as any other draft.
+  const placeholders = stripPlaceholders(sanitised.text);
+  const afterPlaceholders = placeholders.removed.length
+    ? (placeholders.text.length >= 20 ? placeholders.text : HUMAN_REVIEW_REPLY)
+    : sanitised.text;
+
+  const mechanism = stripMechanismTalk(afterPlaceholders);
   const cleanedReply = mechanism.removed.length
     ? (mechanism.text.length >= 20 ? mechanism.text : HUMAN_REVIEW_REPLY)
-    : sanitised.text;
+    : afterPlaceholders;
 
   // Channel formatting last, so it shapes exactly what ships. On WhatsApp and
   // the shared inbox a reply is a chat message, not a document: markdown
   // headers and bullet lists render as literal `**` and `-`, and 900 characters
   // is a wall of text. Strips formatting and trims on sentence boundaries.
-  const finalReply = formatForChannel(cleanedReply, input.channel);
+  // Lead with the answer. Caught by the multi-turn suite: a booking reply
+  // opened "I’d be happy to help you book a showroom viewing." before any of
+  // the detail asked for. Deterministic, because the prompt rule held in 21 of
+  // 22 replies — close enough to be a tendency, not a control.
+  const finalReply = formatForChannel(stripPreamble(cleanedReply).text, input.channel);
 
   // Learn from the miss. If the agent could not answer, that question goes on
   // the org's knowledge-gap list so a human can answer it ONCE and the agent
