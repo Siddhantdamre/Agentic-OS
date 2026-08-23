@@ -137,8 +137,14 @@ export async function resolveChannelByMeta(
 
 export async function resolveSingleOrgChannel(channelType: string): Promise<ChannelRow | null> {
   try {
-    const orgCount = await pool.query(`SELECT COUNT(*) as count FROM orgs WHERE status = 'active'`);
-    if (parseInt(orgCount.rows[0].count, 10) !== 1) return null;
+    // Was a direct COUNT(*) on `orgs`, which is behind RLS as of migration
+    // 028 and now returns 0 on an unscoped connection — indistinguishable
+    // from "not a single-org deployment", so every inbound message would have
+    // been silently refused. single_active_org_id() answers the same question
+    // through the supported resolver and returns NULL once a second org
+    // exists, so it can never quietly pick a tenant.
+    const sole = await pool.query(`SELECT single_active_org_id() AS id`);
+    if (!sole.rows[0]?.id) return null;
     const res = await pool.query(
       `SELECT id, org_id, meta FROM channels
         WHERE channel_type = $1 AND status IN ('active', 'connected')

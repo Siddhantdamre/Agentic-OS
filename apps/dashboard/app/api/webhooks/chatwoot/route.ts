@@ -161,17 +161,12 @@ async function resolveOrgFromRequest(
   const authHeader = request.headers.get('Authorization') || '';
   const token = authHeader.replace(/^Bearer\s+/i, '').trim();
   if (token) {
-    let secretOrg: string | null = null;
-    try {
-      const res = await pool.query(`SELECT resolve_org_by_webhook_secret($1) AS id`, [token]);
-      secretOrg = (res.rows[0]?.id as string) || null;
-    } catch {
-      const res = await pool.query(
-        `SELECT id FROM orgs WHERE meta->>'webhook_secret' = $1 AND status = 'active' LIMIT 1`,
-        [token]
-      );
-      secretOrg = (res.rows[0]?.id as string) || null;
-    }
+    // No raw-SQL fallback behind this. `orgs` is behind RLS (migration 028)
+    // and the catch block used to do exactly the unscoped read the SECURITY
+    // DEFINER resolver exists to prevent — a hole that opened whenever the
+    // function call failed for any reason at all.
+    const res = await pool.query(`SELECT resolve_org_by_webhook_secret($1) AS id`, [token]);
+    const secretOrg = (res.rows[0]?.id as string) || null;
     if (secretOrg) {
       warnOnOrgConflict(mapped, secretOrg, 'secret', accountId, inboxId);
       return { orgId: secretOrg, via: 'secret' };
@@ -187,7 +182,7 @@ async function resolveOrgFromRequest(
   const queryToken = url.searchParams.get('token');
   if (orgIdParam && queryToken) {
     const res = await pool.query(
-      `SELECT id FROM orgs WHERE id = $1 AND status = 'active' AND meta->>'webhook_secret' = $2 LIMIT 1`,
+      `SELECT org_resolve_by_id_and_secret($1::uuid, $2::text) AS id`,
       [orgIdParam, queryToken]
     );
     if (res.rows[0]?.id) {
@@ -228,25 +223,15 @@ async function resolveOrgFromRequest(
   // anyone holding the shared global signing secret can set it to any org id.
   const orgHeader = request.headers.get('X-Darex-Org-Id');
   if (orgHeader) {
-    try {
-      const res = await pool.query(`SELECT resolve_active_org($1::uuid) AS id`, [orgHeader]);
-      if (res.rows[0]?.id) return { orgId: res.rows[0].id as string, via: 'header' };
-    } catch {
-      const res = await pool.query('SELECT id FROM orgs WHERE id = $1 AND status = $2', [orgHeader, 'active']);
-      if (res.rows[0]?.id) return { orgId: res.rows[0].id as string, via: 'header' };
-    }
+    const res = await pool.query(`SELECT resolve_active_org($1::uuid) AS id`, [orgHeader]);
+    if (res.rows[0]?.id) return { orgId: res.rows[0].id as string, via: 'header' };
   }
 
-  try {
-    const res = await pool.query(`SELECT single_active_org_id() AS id`);
-    if (res.rows[0]?.id) return { orgId: res.rows[0].id as string, via: 'single_org' };
-  } catch {
-    const orgCount = await pool.query('SELECT COUNT(*) as count FROM orgs WHERE status = $1', ['active']);
-    if (parseInt(orgCount.rows[0].count, 10) === 1) {
-      const orgRes = await pool.query("SELECT id FROM orgs WHERE status = 'active' LIMIT 1");
-      if (orgRes.rows[0]?.id) return { orgId: orgRes.rows[0].id as string, via: 'single_org' };
-    }
-  }
+  // Exactly one active org on the deployment: a development convenience, and
+  // single_active_org_id() returns NULL the moment a second org exists, so it
+  // can never silently pick a tenant on a real deployment.
+  const sole = await pool.query(`SELECT single_active_org_id() AS id`);
+  if (sole.rows[0]?.id) return { orgId: sole.rows[0].id as string, via: 'single_org' };
 
   return { orgId: null, via: null };
 }

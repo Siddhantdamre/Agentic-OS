@@ -86,8 +86,13 @@ async function lookupSingleOrgWhatsApp(): Promise<ChannelRow | null> {
     const res = await pool.query(`SELECT id, org_id, meta FROM resolve_single_org_whatsapp_channel()`);
     return (res.rows[0] as ChannelRow) ?? null;
   } catch {
-    const orgCount = await pool.query(`SELECT COUNT(*) as count FROM orgs WHERE status = 'active'`);
-    if (parseInt(orgCount.rows[0].count, 10) !== 1) return null;
+    // The fallback used to COUNT(*) FROM orgs directly. `orgs` is behind RLS
+    // now (migration 028), so that read returns 0 for an unscoped connection
+    // and this path would refuse every message while looking exactly like
+    // "not a single-org deployment". single_active_org_id() is the supported
+    // way to ask the same question, and returns NULL once a second org exists.
+    const sole = await pool.query(`SELECT single_active_org_id() AS id`);
+    if (!sole.rows[0]?.id) return null;
     const res = await pool.query(
       `SELECT id, org_id, meta FROM channels
        WHERE channel_type = 'whatsapp' AND status IN ('active', 'connected')

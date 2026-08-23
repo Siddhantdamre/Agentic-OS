@@ -103,13 +103,18 @@ export async function createOrgForEmail(client: PoolClient, email: string): Prom
   const name = `${(email || 'user').split('@')[0]}'s Organization`;
   const slug = `org-${(email || 'user').replace(/[^a-z0-9]+/gi, '-').slice(0, 24)}-${Date.now()}`;
   const res = await client.query(
-    // 'active', not 'provisioning'. This org is usable the moment it exists.
-    // Nothing in the codebase ever completes a "provisioning" step: only
-    // /api/org/create sets 'active', and normal registration never goes
-    // through it. Webhook org resolution requires status='active', so every
-    // tenant created by ordinary signup silently could not receive inbound
-    // messages — Chatwoot deliveries returned HTTP 400 forever.
-    `INSERT INTO orgs (name, slug, plan, status) VALUES ($1, $2, 'free', 'active') RETURNING id`,
+    // Goes through org_provision (migration 028) rather than a direct INSERT:
+    // `orgs` is behind RLS now, and this runs BEFORE any org context exists —
+    // the row being written is what establishes it, so the policy's WITH CHECK
+    // would reject the insert.
+    //
+    // The function creates the row 'active', not 'provisioning'. Nothing in
+    // the codebase ever completes a "provisioning" step: only /api/org/create
+    // sets 'active', and normal registration never goes through it. Webhook
+    // org resolution requires status='active', so every tenant created by
+    // ordinary signup silently could not receive inbound messages — Chatwoot
+    // deliveries returned HTTP 400 forever.
+    `SELECT org_provision($1::text, $2::text) AS id`,
     [name, slug]
   );
   return res.rows[0].id;
