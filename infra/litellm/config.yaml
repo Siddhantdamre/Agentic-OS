@@ -54,6 +54,38 @@ model_list:
     model_info:
       mode: chat
 
+  # ── SECOND PAYMENT RAIL ───────────────────────────────────────────────────
+  #
+  # Tiers 1-3 above all bill the same OpenRouter account. When that balance hit
+  # zero, all three returned 402 within the same second and 11 of 12 test cases
+  # got no reply. Three models on one exhausted account is one point of
+  # failure wearing a disguise.
+  #
+  # These two tiers use DIRECT provider keys with their own separate balances,
+  # so an empty OpenRouter wallet cannot touch them. Both are OPTIONAL: if the
+  # key is absent the call fails immediately and the router moves to the next
+  # tier, which is exactly what a fallback chain is for. Nothing breaks by
+  # leaving them unset — you simply have one rail instead of two.
+  #
+  # To enable, add either (or both) to infra/.env:
+  #   DEEPSEEK_API_KEY=...   from platform.deepseek.com
+  #   GROQ_API_KEY=...       from console.groq.com  (has a real free tier)
+  - model_name: atomic-agent-direct
+    litellm_params:
+      model: deepseek/deepseek-chat
+      api_key: os.environ/DEEPSEEK_API_KEY
+    model_info:
+      mode: chat
+
+  # Groq is last because its free tier is generous enough to keep a demo alive
+  # with no payment method configured at all — the floor beneath the floor.
+  - model_name: atomic-agent-groq
+    litellm_params:
+      model: groq/llama-3.3-70b-versatile
+      api_key: os.environ/GROQ_API_KEY
+    model_info:
+      mode: chat
+
   # EMBEDDING_MODEL (worker/embed activity) must name a model_name defined
   # here — the docker-compose default of "text-embedding-3-small" has no
   # OpenAI key in this deployment, so route it to Gemini's embedding model
@@ -74,10 +106,19 @@ litellm_settings:
 router_settings:
   enable_pre_call_checks: false
   request_timeout: 60
+  # Ordered so that consecutive tiers never share a failure mode:
+  #   1 openrouter paid   — normal traffic
+  #   2 openrouter paid   — different vendor, survives a provider outage
+  #   3 openrouter free   — survives an empty OpenRouter balance (daily cap)
+  #   4 deepseek direct   — SEPARATE account, survives OpenRouter entirely
+  #   5 groq direct       — separate again, real free tier, survives no-payment
+  # Tiers 4 and 5 are skipped instantly when their keys are unset.
   fallbacks:
     - atomic-agent:
         - atomic-agent-fallback
         - atomic-agent-deepseek
+        - atomic-agent-direct
+        - atomic-agent-groq
   retry_policy:
     timeout: 0
     RateLimitError: 2
