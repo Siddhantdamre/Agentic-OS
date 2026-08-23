@@ -57,6 +57,8 @@ interface CandidateRow {
   vec_sim: number;
   entity_lock: number;
   same_thread: number;
+  /** 0 = ingested document, 100 = human correction. See migration 026. */
+  priority: number;
 }
 
 function isUuid(value: string | undefined): value is string {
@@ -196,6 +198,7 @@ function hybridSql(hasEmployee: boolean): string {
     em.source_ref,
     em.updated_at,
     (em.updated_at < NOW() - ($8::int * INTERVAL '1 day')) AS stale,
+    0 AS priority,
     ts_rank_cd(em.body_tsv, (SELECT tsq FROM q))::float8 AS fts_rank,
     CASE
       WHEN $3::vector IS NULL OR em.embedding IS NULL THEN 0::float8
@@ -263,6 +266,7 @@ SELECT * FROM (
     om.source_ref,
     om.updated_at,
     (om.updated_at < NOW() - ($8::int * INTERVAL '1 day')) AS stale,
+    om.priority,
     ts_rank_cd(om.body_tsv, (SELECT tsq FROM q))::float8 AS fts_rank,
     CASE
       WHEN $3::vector IS NULL OR om.embedding IS NULL THEN 0::float8
@@ -294,6 +298,7 @@ SELECT * FROM (
     en.source_ref,
     en.updated_at,
     (en.updated_at < NOW() - ($8::int * INTERVAL '1 day')) AS stale,
+    0 AS priority,
     ts_rank_cd(en.body_tsv, (SELECT tsq FROM q))::float8 AS fts_rank,
     CASE
       WHEN $3::vector IS NULL OR en.embedding IS NULL THEN 0::float8
@@ -329,6 +334,7 @@ SELECT * FROM (
     cm.source_ref,
     cm.updated_at,
     (cm.updated_at < NOW() - ($8::int * INTERVAL '1 day')) AS stale,
+    0 AS priority,
     ts_rank_cd(cm.body_tsv, (SELECT tsq FROM q))::float8 AS fts_rank,
     CASE
       WHEN $3::vector IS NULL OR cm.embedding IS NULL THEN 0::float8
@@ -352,7 +358,17 @@ SELECT * FROM (
       OR ($3::vector IS NOT NULL AND cm.embedding IS NOT NULL AND (cm.embedding <=> $3::vector) < 0.45)
     )
 ) ranked
-ORDER BY entity_lock DESC, same_thread DESC, (0.4 * fts_rank + 0.6 * vec_sim) DESC, updated_at DESC
+-- priority ahead of relevance, deliberately.
+--
+-- A priority-100 row is a human correction: an operator saw the agent answer
+-- and rewrote it. When a correction and an ingested document both match the
+-- same question, the human is right and the PDF is stale. Ranking by relevance
+-- alone would let the document the operator was correcting outrank the
+-- correction itself, which makes the whole learning loop pointless.
+--
+-- Everything ingested is priority 0, so this changes nothing until a human
+-- actually corrects something.
+ORDER BY entity_lock DESC, same_thread DESC, priority DESC, (0.4 * fts_rank + 0.6 * vec_sim) DESC, updated_at DESC
 LIMIT $9
 `;
 }
