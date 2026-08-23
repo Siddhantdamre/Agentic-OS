@@ -24,3 +24,4 @@ and the throwaway instance is torn down.
 | Date (UTC) | Mode | Result | Operator |
 |------------|------|--------|----------|
 | 2026-08-13 | script landed | not yet run against this machine | WS-23 |
+| 2026-08-23 | `--execute` | pass — 190,356-byte schema restored into `darex_restore_drill`, `darex_app` connected, throwaway dropped. Covers migrations 001–029, so the new `orgs` policy and the 43 rewritten policies restore intact. | local |

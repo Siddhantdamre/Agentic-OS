@@ -132,6 +132,29 @@ pnpm build        # production build all workspaces
 - `DB_USER=darex_app` — set to the least-privilege role (RLS is enforced for that
   role; migration `008` adds the matching `WITH CHECK` policies + grants).
 
+### Check that it actually works
+
+```bash
+node infra/scripts/verify.js
+```
+
+One command, one verdict, no LLM tokens spent. It runs nine suites — unit
+tests, tenant isolation, memory retrieval, the operator learning loop, the
+inbound webhook path end to end, and the infrastructure alarms — and names the
+four things it cannot check without live model calls rather than passing over
+them silently.
+
+Before showing the product to anyone:
+
+```bash
+node infra/scripts/preflight.js
+```
+
+Read-only, seconds, exits non-zero on a blocker. It answers one question:
+would a customer message get a good answer in the next five minutes?
+
+See [OPERATIONS.md](./OPERATIONS.md) for what each result means.
+
 ---
 
 ## Monorepo Structure
@@ -203,6 +226,10 @@ dare-xai/
 
 ## Key Docs
 
+- [OPERATIONS.md](./OPERATIONS.md) — running it day to day: what to check,
+  what breaks, what each alarm means, how to recover
+- [DEPLOY.md](./DEPLOY.md) — deploying to a server
+- [SETUP.md](./SETUP.md) — first-time setup on Windows / Mac / Linux
 - [AGENTS.md](./AGENTS.md) — the repo map / agent context (read first)
 - [BUILD_STATE.md](./BUILD_STATE.md) — live phase status & gotchas
 - [documentation/00-README.md](./documentation/00-README.md) — doc index
