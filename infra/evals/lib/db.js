@@ -59,8 +59,14 @@ async function tableColumns(client, table) {
 }
 
 async function vectorDims(client, table, column = 'embedding') {
+  // pgvector stores the dimension in atttypmod DIRECTLY. The `- 4` here was
+  // the varchar/numeric convention, where typmod carries a 4-byte header, and
+  // it made this report 1532 for a vector(1536) column — so every synthetic
+  // embedding came out four components short and the insert was rejected with
+  // "expected 1536 dimensions, not 1532". Read the declared type instead of
+  // doing typmod arithmetic, so the answer stays right whatever the type is.
   const res = await client.query(
-    `SELECT CASE WHEN a.atttypmod > 0 THEN a.atttypmod - 4 ELSE NULL END AS dims
+    `SELECT format_type(a.atttypid, a.atttypmod) AS declared
        FROM pg_attribute a
        JOIN pg_class c ON c.oid = a.attrelid
        JOIN pg_namespace n ON n.oid = c.relnamespace
@@ -70,8 +76,9 @@ async function vectorDims(client, table, column = 'embedding') {
         AND NOT a.attisdropped`,
     [table, column],
   );
-  const dims = res.rows[0] && res.rows[0].dims;
-  return dims != null ? Number(dims) : null;
+  const declared = res.rows[0] && res.rows[0].declared;
+  const m = /^vector\((\d+)\)$/.exec(String(declared || ''));
+  return m ? Number(m[1]) : null;
 }
 
 function zeroVectorLiteral(dims) {

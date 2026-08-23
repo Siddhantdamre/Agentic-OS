@@ -255,7 +255,20 @@ WITH q AS (
       -- error, so fall back to a token that matches nothing.
       'zzzznomatchzzz'
     )
-  ) AS tsq
+  ) AS tsq,
+  -- $4 is the routed employee id, and it is referenced ONLY inside the
+  -- employee-memory tier — which is omitted whenever no employee is routed.
+  -- The parameter was bound either way, so the statement carried a $4 that
+  -- appeared nowhere in its text and Postgres refused to plan it:
+  --
+  --   could not determine data type of parameter $4
+  --
+  -- retrieveMemory catches every error and fails closed-empty by design, so
+  -- this surfaced as ZERO memories behind one warn line: the agent saying
+  -- "I don't have that stored" with a full knowledge base behind it, on every
+  -- turn where no employee happened to be assigned. Binding it here keeps it
+  -- typed no matter which tiers are present.
+  $4::uuid AS routed_employee_id
 )
 SELECT * FROM (
   SELECT
