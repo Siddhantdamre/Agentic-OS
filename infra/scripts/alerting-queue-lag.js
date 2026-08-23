@@ -35,8 +35,14 @@ try {
 
 let running = null;
 try {
+  // SINGLE quotes around Running. Temporal's list filter is SQL-like, so
+  // "Running" parses as an IDENTIFIER and the server rejected the whole query:
+  //   invalid query: operation is not supported: expression of type *sqlparser.SQLVal
+  // Every run of this probe failed on its own query syntax, so the queue-lag
+  // alarm sat permanently red and told nobody anything about the queue.
   const out = run(
-    'docker exec darex-temporal temporal workflow count --address temporal:7233 --query \'ExecutionStatus="Running"\'',
+    'docker exec darex-temporal temporal workflow count --address temporal:7233 '
+      + '--query "ExecutionStatus = \'Running\'"',
   );
   const m = out.match(/(\d+)/);
   if (!m) {

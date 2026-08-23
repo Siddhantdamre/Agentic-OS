@@ -76,8 +76,16 @@ try {
     console.log(`  [FAIL] darex-langfuse-clickhouse state=${st}`);
     fail = 1;
   } else {
+    // DOUBLE quotes around the query. execSync shells out through cmd.exe on
+    // Windows, which does not strip single quotes, so ClickHouse received the
+    // quote characters as part of the SQL and answered:
+    //   Syntax error: failed at position 1 (''SELECT'): Single quoted string
+    //   is not closed
+    // The probe read that as "ClickHouse not reachable" and reported the
+    // Langfuse ingest path down on every run.
     const q = execSync(
-      "docker exec darex-langfuse-clickhouse clickhouse-client --user langfuse --password langfuse_dev_secret --query 'SELECT 1'",
+      'docker exec darex-langfuse-clickhouse clickhouse-client --user langfuse '
+        + '--password langfuse_dev_secret --query "SELECT 1"',
       { encoding: 'utf8' },
     ).trim();
     if (q === '1') {

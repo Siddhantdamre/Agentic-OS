@@ -1,0 +1,190 @@
+#!/usr/bin/env node
+'use strict';
+/**
+ * VERIFY — everything that can be proven without spending a cent.
+ *
+ * One command, one verdict, no LLM tokens. Written because the OpenRouter
+ * balance reached zero and the honest answer to "is the system sound?" became
+ * "I can't check" — when in fact almost all of it can be checked: tenant
+ * isolation, retrieval, the reply gates, the learning loop, the webhook path,
+ * the infrastructure probes. Only the parts that literally require a model to
+ * answer need credit, and those are named at the end rather than skipped in
+ * silence.
+ *
+ * This is also the script to hand a company that wants to validate the
+ * deployment themselves. It reads its own results out loud and returns
+ * non-zero if anything is wrong.
+ *
+ * Usage:
+ *   node infra/scripts/verify.js            everything below
+ *   node infra/scripts/verify.js --fast     skip the suites that need Docker
+ *
+ * Exit: 0 = everything checked passed, 1 = something failed.
+ */
+const { spawnSync } = require('child_process');
+const path = require('path');
+
+// Deliberately does NOT load infra/.env. This is a runner, and every suite
+// below already resolves its own environment exactly as it does when run by
+// hand. Injecting credentials here changed what the children saw and broke two
+// suites that pass on their own: the connector-honesty unit tests assert
+// "never configured" and started seeing real keys, and check-retrieve-memory
+// connects as `darex` but inherited the app role's DB_PASSWORD. A verifier
+// that alters the thing it verifies is worse than no verifier.
+
+const ROOT = path.join(__dirname, '..', '..');
+const FAST = process.argv.includes('--fast');
+
+/**
+ * needsDocker: the suite talks to Postgres/Temporal/LiteLLM containers.
+ * A pure-logic suite runs anywhere, which is what --fast keeps.
+ */
+const SUITES = [
+  {
+    name: 'workflow unit tests',
+    what: 'reply gates, grounding, claim extraction, tenant helpers',
+    cmd: ['npm', ['test', '--silent'], { cwd: path.join(ROOT, 'services', 'workflows') }],
+    needsDocker: false,
+  },
+  {
+    name: 'env loader',
+    what: 'duplicate and empty-placeholder credentials resolve like compose',
+    cmd: [process.execPath, [path.join(__dirname, 'lib', 'env.js'), '--self-test']],
+    needsDocker: false,
+  },
+  {
+    name: 'spend guard maths',
+    what: 'burn rate refuses to extrapolate from too little history',
+    cmd: [process.execPath, [path.join(__dirname, 'spend-guard.js'), '--self-test']],
+    needsDocker: false,
+  },
+  {
+    name: 'quality rules',
+    what: 'the reply scorer agrees with hand-labelled examples',
+    cmd: [process.execPath, [path.join(__dirname, 'quality-rules.js'), '--self-test']],
+    needsDocker: false,
+  },
+  {
+    name: 'tenant registry isolation',
+    what: 'one tenant cannot see, name or write another — and signup still works',
+    cmd: [process.execPath, [path.join(__dirname, 'check-orgs-rls.js')]],
+    needsDocker: true,
+  },
+  {
+    name: 'memory retrieval',
+    what: 'two orgs retrieve their own facts and nothing of each other\'s',
+    cmd: [process.execPath, [path.join(__dirname, 'check-retrieve-memory.js')]],
+    needsDocker: true,
+  },
+  {
+    name: 'operator edit learning',
+    what: 'a correction outranks the document it corrects; a refusal is never learned',
+    cmd: [process.execPath, [path.join(__dirname, 'check-edit-learning.js')]],
+    needsDocker: true,
+  },
+  {
+    name: 'inbound end-to-end',
+    what: 'signed webhook to stored conversation, and unsigned is rejected',
+    cmd: [process.execPath, [path.join(__dirname, 'check-e2e-inbound.js')]],
+    needsDocker: true,
+  },
+  {
+    name: 'infrastructure alarms',
+    what: 'queue lag, connector auth, RLS job, Langfuse ingest, LLM budget',
+    cmd: [process.execPath, [path.join(__dirname, 'alerting-run.js')]],
+    needsDocker: true,
+    // The budget probe fails on an empty wallet, which is a true alert about
+    // the account rather than a defect in the build. Reported, not counted.
+    advisory: true,
+  },
+];
+
+const results = [];
+console.log('\n╔══════════════════════════════════════════════════════════════╗');
+console.log('║  DAREX VERIFY — what can be proven without spending money    ║');
+console.log('╚══════════════════════════════════════════════════════════════╝\n');
+
+for (const suite of SUITES) {
+  if (FAST && suite.needsDocker) {
+    console.log(`  [ skip ]  ${suite.name}  — needs the containers (--fast)`);
+    results.push({ ...suite, skipped: true });
+    continue;
+  }
+  process.stdout.write(`  running   ${suite.name} ...`);
+  const [bin, args, opts] = suite.cmd;
+  const r = spawnSync(bin, args, {
+    encoding: 'utf8',
+    shell: process.platform === 'win32',
+    env: process.env,
+    ...(opts || {}),
+  });
+  const out = `${r.stdout || ''}${r.stderr || ''}`;
+  const passed = r.status === 0;
+
+  // Pull the suite's own count out of its output rather than inventing one, so
+  // the summary can never claim more than a suite actually ran. Each pattern
+  // is anchored to one script's real output format — a loose regex here
+  // reported "7 passed, 7 failed" for a suite that passed 7 of 7.
+  const detail = (() => {
+    let m = /passed (\d+) \/ (\d+)/.exec(out);              // check-*.js, self-tests
+    if (m) return `${m[1]}/${m[2]}`;
+    m = /ALL CHECKS PASSED \((\d+)\/(\d+)\)/.exec(out);      // e2e scripts, all green
+    if (m) return `${m[1]}/${m[2]}`;
+    m = /(\d+)\/(\d+) CHECKS FAILED/.exec(out);              // e2e scripts, some red
+    if (m) return `${Number(m[2]) - Number(m[1])}/${m[2]}`;
+    m = /self-test: (\d+) passed, (\d+) failed/.exec(out);   // quality-rules
+    if (m) return `${m[1]}/${Number(m[1]) + Number(m[2])}`;
+    const p = /^\D*pass (\d+)$/m.exec(out);                  // node:test summary
+    const f = /^\D*fail (\d+)$/m.exec(out);
+    if (p && f) return `${p[1]}/${Number(p[1]) + Number(f[1])}`;
+    return '';
+  })();
+
+  console.log(`\r  [${passed ? ' PASS ' : ' FAIL '}]  ${suite.name}${detail ? `  — ${detail}` : ''}      `);
+  console.log(`            ${suite.what}`);
+  results.push({ ...suite, passed, out });
+}
+
+// ── Verdict ────────────────────────────────────────────────────────────────
+const ran = results.filter((r) => !r.skipped);
+const hardFailures = ran.filter((r) => !r.passed && !r.advisory);
+const advisoryFailures = ran.filter((r) => !r.passed && r.advisory);
+
+console.log('\n' + '─'.repeat(64));
+
+if (advisoryFailures.length) {
+  console.log('\n  ADVISORY');
+  for (const a of advisoryFailures) {
+    // Surface the actual failing lines — an advisory that hides its reason is
+    // just a warning nobody reads.
+    const lines = String(a.out).split('\n').filter((l) => /\[(FAIL|CRITICAL)/.test(l));
+    console.log(`\n    ${a.name}:`);
+    for (const l of lines.slice(0, 4)) console.log(`      ${l.trim()}`);
+  }
+}
+
+for (const f of hardFailures) {
+  console.log(`\n  FAILED — ${f.name}\n`);
+  const lines = String(f.out).split('\n').filter((l) => /\[FAIL\]|not ok|Error/.test(l));
+  for (const l of lines.slice(0, 12)) console.log(`    ${l.trim()}`);
+}
+
+console.log('\n  NOT CHECKED HERE — these need live model calls, and therefore credit:');
+console.log('    • answer quality on real questions   node infra/scripts/completion-suite.js');
+console.log('    • multi-turn conversations           node infra/scripts/multiturn-suite.js');
+console.log('    • reliability over repeated runs     node infra/scripts/reliability-completion.js');
+console.log('    • latency under load                 node infra/scripts/latency-probe.js');
+
+const skipped = results.filter((r) => r.skipped).length;
+console.log('\n' + '─'.repeat(64));
+if (hardFailures.length) {
+  console.log(`\n  NOT SOUND — ${hardFailures.length} of ${ran.length} suites failed.\n`);
+  process.exit(1);
+}
+// Count only what actually passed. Reporting all nine as "passed" alongside
+// "1 advisory" credited a suite that failed.
+const passedCount = ran.filter((r) => r.passed).length;
+console.log(`\n  SOUND — ${passedCount} of ${ran.length} suites passed`
+  + `${advisoryFailures.length ? `, ${advisoryFailures.length} advisory (see above)` : ''}`
+  + `${skipped ? `, ${skipped} skipped` : ''}.\n`);
+process.exit(0);
