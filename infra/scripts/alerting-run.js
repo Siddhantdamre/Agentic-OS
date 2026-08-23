@@ -17,6 +17,11 @@ const scripts = [
   'alerting-connector-401s.js',
   'alerting-rls-job.js',
   'alerting-langfuse-ingest.js',
+  // Runs here rather than on its own schedule because each invocation also
+  // RECORDS a provider-usage sample, and a burn rate is only as good as its
+  // sampling cadence. An empty LLM balance takes the whole product down with
+  // no error raised anywhere, so it belongs beside the other outage alarms.
+  'spend-guard.js',
 ];
 
 let failed = 0;
