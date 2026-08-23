@@ -187,9 +187,17 @@ function isCalendarInference(claim: Claim, haystack: string): boolean {
   return false;
 }
 
-export function verifyClaims(claims: Claim[], evidence: string): GroundingReport {
+export function verifyClaims(
+  claims: Claim[],
+  evidence: string,
+  dateContext = '',
+): GroundingReport {
   const haystack = (evidence || '').toLowerCase();
   const digitsOnly = haystack.replace(/[^\d]/g, '');
+  // Deliberately a second, separate haystack. Only `date` claims may consult
+  // it — see GroundingPolicy.dateContext for why mixing the two let "Saturday
+  // 30 August" ground an invented "30% off".
+  const dateHay = (dateContext || '').toLowerCase();
 
   const supported: Claim[] = [];
   const unsupported: Claim[] = [];
@@ -197,7 +205,7 @@ export function verifyClaims(claims: Claim[], evidence: string): GroundingReport
   for (const claim of claims) {
     let ok = false;
 
-    if (isCalendarInference(claim, haystack)) {
+    if (isCalendarInference(claim, haystack) || (claim.kind === 'date' && isCalendarInference(claim, dateHay))) {
       supported.push(claim);
       continue;
     }
@@ -206,7 +214,12 @@ export function verifyClaims(claims: Claim[], evidence: string): GroundingReport
       // Any recognisable fragment of the date appearing in evidence is enough;
       // "2026-03-01" and "1 March" should not be treated as different facts.
       const parts = claim.normalized.split(/[\s\/-]+/).filter((p) => p.length >= 2);
-      ok = parts.length > 0 && parts.every((p) => haystack.includes(p));
+      // A date may be supported by retrieved evidence OR by the dates the
+      // platform supplied — but ONLY a date. dateHay is never consulted for
+      // money, percentages or quantities, because "Saturday, 30 August" would
+      // otherwise ground an invented "30% off".
+      ok = parts.length > 0
+        && (parts.every((p) => haystack.includes(p)) || parts.every((p) => dateHay.includes(p)));
     } else if (claim.kind === 'identifier') {
       ok = haystack.replace(/[^a-z0-9]/g, '').includes(claim.normalized.toLowerCase());
     } else {
@@ -237,6 +250,16 @@ export interface GroundingPolicy {
   minGroundingScore?: number;
   /** Claim kinds that must ALWAYS be supported regardless of the score. */
   criticalKinds?: ClaimKind[];
+  /**
+   * Dates the PLATFORM supplied — today, last Monday, next Saturday and so on.
+   *
+   * Kept SEPARATE from evidence, and consulted only for `date` claims. Folding
+   * them into the general evidence string was a real fabrication hole: on 23
+   * August the block contains "Saturday, 30 August", and the digits "30" then
+   * grounded an invented "30% off the order". Date context may license a date;
+   * it must never license money, a percentage or a quantity.
+   */
+  dateContext?: string;
 }
 
 export interface GroundingVerdict {
@@ -262,7 +285,7 @@ export function evaluateGrounding(
   const minScore = policy.minGroundingScore ?? 1;
   const critical = new Set<ClaimKind>(policy.criticalKinds ?? ['money', 'identifier']);
 
-  const report = verifyClaims(extractClaims(draft), evidence);
+  const report = verifyClaims(extractClaims(draft), evidence, policy.dateContext || '');
 
   const criticalMisses = report.unsupported.filter((c) => critical.has(c.kind));
   if (criticalMisses.length > 0) {

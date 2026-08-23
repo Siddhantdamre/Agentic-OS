@@ -854,6 +854,14 @@ export async function criticCheckWithRevision(params: {
    * number it mentions treated as unsupported.
    */
   evidence?: string;
+  /**
+   * Dates the PLATFORM supplied to the agent this turn — today, next Saturday
+   * and so on. Kept OUT of `evidence` on purpose: folding them in let a date
+   * block license an unrelated figure. On 23 August the block reads
+   * "Saturday, 30 August", and those digits grounded an invented "30% off".
+   * Consulted only for `date` claims; money and percentages never see it.
+   */
+  dateContext?: string;
 }): Promise<{
   allow: boolean;
   finalDraft: string;
@@ -882,7 +890,11 @@ export async function criticCheckWithRevision(params: {
   // Caught by the live smoke test; unit tests missed it because they call
   // buildReplyCritique directly with an explicit flag.
   const skipGrounding = params.evidence === undefined;
-  const gateOptions = { evidence: params.evidence ?? '', skipGrounding };
+  const gateOptions = {
+    evidence: params.evidence ?? '',
+    skipGrounding,
+    grounding: { dateContext: params.dateContext ?? '' },
+  };
   const baseDeps = {
     critique: (draft: string, intent: 'send' | 'publish' | 'sign') =>
       runCriticCheck({ orgId, draft, intent, businessKey: params.businessKey }),

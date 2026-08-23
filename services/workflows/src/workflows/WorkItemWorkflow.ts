@@ -672,11 +672,10 @@ export async function WorkItemWorkflow(input: WorkItemWorkflowInput): Promise<Wo
     // can ground a claim — passing ids would have fed the gate a list of UUIDs
     // and silently grounded nothing.
     //
-    // groundingContext carries what the PLATFORM told the agent — today's date
-    // and the resolved relative dates. Those are supplied facts, as grounded as
-    // anything retrieved, and omitting them blocked a correct reply for saying
-    // "22 Aug".
-    [...(memory?.facts || []), ...(childResult.groundingContext || [])].filter(Boolean),
+    // childResult.groundingContext — the platform-supplied dates — is NOT
+    // merged here. It travels as `dateContext` below so it can license a date
+    // and nothing else.
+    (memory?.facts || []).filter(Boolean),
   );
 
   const critic = await criticCheckWithRevision({
@@ -686,6 +685,11 @@ export async function WorkItemWorkflow(input: WorkItemWorkflowInput): Promise<Wo
     intent: 'send',
     businessKey: `${businessKey}:criticCheck`,
     evidence,
+    // Supplied dates travel SEPARATELY and license only date claims. Folding
+    // them into `evidence` was a real fabrication hole: on 23 August the block
+    // contains "Saturday, 30 August", and those digits grounded an invented
+    // "30% off the order".
+    dateContext: (childResult.groundingContext || []).join(' | '),
   });
 
   // The text that actually goes out. Only trust finalDraft once allowed —
