@@ -25,6 +25,10 @@
 const crypto = require('crypto');
 const path = require('path');
 
+// Load infra/.env before anything reads process.env — without this the script
+// runs with no provider credentials and then blames the system for it.
+require('./lib/env').loadRepoEnv();
+
 let Client;
 try {
   Client = require('pg').Client;

@@ -19,6 +19,12 @@
  */
 const path = require('path');
 const fs = require('fs');
+const { loadRepoEnv } = require('./lib/env');
+
+// MUST run before anything reads process.env. Without it this script read no
+// credentials at all and reported a confident NO-GO over a healthy system —
+// see infra/scripts/lib/env.js for what that cost.
+const ENV = loadRepoEnv();
 
 let Client;
 try { Client = require('pg').Client; }
@@ -44,6 +50,60 @@ async function httpOk(url, timeoutMs = 5000) {
   } catch { return 0; }
 }
 
+/**
+ * Config landmines — settings that are wrong in a way nothing else notices.
+ *
+ * Neither of the two this catches produces an error anywhere: the system runs,
+ * the demo looks fine, and the damage is invisible until someone asks a
+ * question that needed the missing piece.
+ */
+function checkConfig() {
+  ENV.loaded.length
+    ? ok('env files loaded', ENV.loaded.join(', '))
+    : warn('no env file found', 'running on shell environment only');
+
+  for (const d of ENV.duplicates) {
+    // Not cosmetic. Compose takes the LAST occurrence, so which value reaches
+    // production depends on line order in a file nobody re-reads.
+    const detail = `defined at line ${d.firstLine} and again at line ${d.line}`
+      + ` — line ${d.line} wins${d.winnerWasEmpty ? ' and it is EMPTY' : ''}`;
+    if (d.winnerWasEmpty) stop(`${d.key} is defined twice and resolves to EMPTY`, detail);
+    else warn(`${d.key} is defined twice`, detail);
+  }
+  if (!ENV.duplicates.length) ok('no duplicate env keys', 'no value depends on line order');
+
+  for (const s of ENV.shadowed) {
+    // Harmless here only because the loader refuses to let "" beat a real
+    // value. Anything reading these files naively gets the placeholder.
+    warn(`${s.key} is declared empty in ${s.placeholder}`,
+      `the working value comes from ${s.real} — delete the empty one`);
+  }
+}
+
+/**
+ * Is semantic search actually on?
+ *
+ * Retrieval ranks by `0.4 * keyword + 0.6 * vector`. With no embedding
+ * provider that second term is always zero, so the system silently runs on
+ * keyword search alone. It still answers — and answers well — but "semantic
+ * search" is not a claim anyone should make on this configuration, and the
+ * operator deserves to know which engine their results came from.
+ */
+function checkEmbeddings() {
+  const model = process.env.EMBEDDING_MODEL;
+  if (model === undefined || model.trim() === '') {
+    warn('semantic search is OFF', 'EMBEDDING_MODEL is empty — retrieval is keyword-only');
+    return false;
+  }
+  if (!process.env.GEMINI_API_KEY && !process.env.OPENAI_API_KEY) {
+    stop('EMBEDDING_MODEL is set but no embedding provider key is',
+      'embed calls will fail — set GEMINI_API_KEY or clear EMBEDDING_MODEL');
+    return false;
+  }
+  ok('semantic search configured', model.trim());
+  return true;
+}
+
 /** How much money is left, and will it survive a demo? */
 async function checkCredit() {
   const key = process.env.OPENROUTER_API_KEY;
@@ -67,42 +127,114 @@ async function checkCredit() {
   }
 }
 
-/** Ask each tier directly, so a dead tier is visible BEFORE it is needed. */
+/**
+ * Ask each tier ON ITS OWN, so a dead tier is visible BEFORE it is needed.
+ *
+ * `fallbacks: []` is what makes this honest and must not be dropped. Without
+ * it, probing model "atomic-agent" exercises the whole chain: LiteLLM silently
+ * fails over and returns 200, so this table reported
+ *
+ *   [ OK ]  tier 1  openrouter paid  — answers
+ *
+ * with the balance at -$0.20 and tier 1 returning 402 on every real call. The
+ * free tier was quietly carrying the demo. A failover report that cannot tell
+ * a working tier from a working fallback measures nothing.
+ */
+async function callLiteLLM(model, { allowFallbacks = false } = {}) {
+  const body = {
+    model,
+    messages: [{ role: 'user', content: 'Reply with: OK' }],
+    // max_tokens matches what an agent turn actually requests. A tiny probe
+    // passes on a nearly-empty balance — the real 402 reads "you requested
+    // up to 8192 tokens, but can only afford 106" — so a 5-token check
+    // would report GO while production traffic fails. Test what ships.
+    max_tokens: 8192,
+  };
+  if (!allowFallbacks) body.fallbacks = [];
+  try {
+    const r = await fetch(`${LITELLM}/v1/chat/completions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${LLM_KEY}` },
+      body: JSON.stringify(body),
+    });
+    const b = await r.json().catch(() => ({}));
+    const good = r.ok && Boolean(b.choices?.length);
+    return {
+      good,
+      servedBy: b.model || '',
+      status: good ? 'answers' : (b.error?.message || `HTTP ${r.status}`).slice(0, 58),
+    };
+  } catch (e) {
+    return { good: false, servedBy: '', status: String(e.message || e).slice(0, 58) };
+  }
+}
+
 async function checkTiers() {
   const tiers = [
-    ['atomic-agent', 'tier 1  openrouter paid', true],
-    ['atomic-agent-fallback', 'tier 2  openrouter paid', false],
-    ['atomic-agent-deepseek', 'tier 3  openrouter free', false],
-    ['atomic-agent-direct', 'tier 4  deepseek direct', false],
-    ['atomic-agent-groq', 'tier 5  groq direct', false],
+    ['atomic-agent', 'tier 1  openrouter paid'],
+    ['atomic-agent-fallback', 'tier 2  openrouter paid'],
+    ['atomic-agent-deepseek', 'tier 3  openrouter free'],
+    ['atomic-agent-direct', 'tier 4  deepseek direct'],
+    ['atomic-agent-groq', 'tier 5  groq direct'],
   ];
-  let alive = 0;
-  for (const [model, label, required] of tiers) {
-    let status = 'no answer';
-    let good = false;
-    try {
-      const r = await fetch(`${LITELLM}/v1/chat/completions`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${LLM_KEY}` },
-        // max_tokens matches what an agent turn actually requests. A tiny probe
-        // passes on a nearly-empty balance — the real 402 reads "you requested
-        // up to 8192 tokens, but can only afford 106" — so a 5-token check
-        // would report GO while production traffic fails. Test what ships.
-        body: JSON.stringify({ model, messages: [{ role: 'user', content: 'Reply with: OK' }], max_tokens: 8192 }),
-      });
-      const b = await r.json().catch(() => ({}));
-      good = r.ok && Boolean(b.choices?.length);
-      status = good ? 'answers' : (b.error?.message || `HTTP ${r.status}`).slice(0, 58);
-    } catch (e) { status = String(e.message || e).slice(0, 58); }
+  // Alias -> underlying model, straight from the running proxy. Needed because
+  // the two probes speak different dialects: with `fallbacks: []` LiteLLM
+  // echoes the ALIAS ("atomic-agent-deepseek"), and on the chain it returns the
+  // UNDERLYING id ("nvidia/nemotron-3-ultra-550b-a55b:free"). Comparing one to
+  // the other never matches, and reading the mapping from the proxy keeps this
+  // correct when config.yaml changes.
+  const underlying = new Map();
+  try {
+    const r = await fetch(`${LITELLM}/model/info`, { headers: { Authorization: `Bearer ${LLM_KEY}` } });
+    const b = await r.json().catch(() => ({}));
+    for (const m of b.data || []) {
+      // Provider prefix is present in config and absent in responses.
+      underlying.set(m.model_name, String(m.litellm_params?.model || '').replace(/^openrouter\//, ''));
+    }
+  } catch { /* the chain check degrades to "could not name the tier" */ }
 
+  let alive = 0;
+  const tierAlive = new Map();
+  for (const [model, label] of tiers) {
+    const { good, status } = await callLiteLLM(model);
+
+    // No individual tier is a blocker — that is the entire point of having
+    // five. What blocks is the CHAIN failing, checked below.
+    tierAlive.set(model, good);
     if (good) { alive++; ok(label, status); }
-    else if (required) stop(`${label} is DOWN`, status);
     else if (/api_key|API key|not set|Missing/i.test(status)) console.log(`  [ -- ]  ${label}  — not configured (optional)`);
     else warn(`${label} unavailable`, status);
   }
-  if (alive === 0) stop('NO LLM tier is answering', 'the agent cannot reply at all');
+  if (alive === 0) warn('no individual tier answered', 'the chain check below decides GO/NO-GO');
   else if (alive === 1) warn('only ONE LLM tier is answering', 'no protection if it fails mid-demo');
   else ok(`${alive} LLM tiers answering`, 'failover has somewhere to go');
+
+  // The question a customer's message actually asks: does the router, with
+  // failover allowed, produce an answer — and which model paid for it?
+  const chain = await callLiteLLM('atomic-agent', { allowFallbacks: true });
+  if (!chain.good) {
+    stop('the LLM chain does not answer', `${chain.status} — the agent cannot reply at all`);
+  } else {
+    const [primaryAlias, primaryLabel] = tiers[0];
+
+    // Tiers 1 and 4 are BOTH deepseek-chat — one through OpenRouter, one
+    // direct — so the served model id alone cannot tell them apart, and any
+    // substring test on "deepseek" would report a fallback as the primary.
+    // The isolated probe settles it: if tier 1 did not answer on its own, the
+    // chain is on a fallback by definition, whatever it is serving.
+    const onPrimary = tierAlive.get(primaryAlias) === true
+      && chain.servedBy === underlying.get(primaryAlias);
+
+    if (onPrimary) {
+      ok('chain answers on the primary tier', chain.servedBy);
+    } else {
+      const name = [...underlying.entries()]
+        .filter(([alias]) => tierAlive.get(alias))
+        .find(([, id]) => id === chain.servedBy)?.[0];
+      warn('chain answers only via FALLBACK',
+        `${name || chain.servedBy} is carrying traffic, not ${primaryLabel.trim()}`);
+    }
+  }
   return alive;
 }
 
@@ -156,6 +288,21 @@ async function checkDatabase() {
     km.rows[0].n > 0
       ? ok('knowledge base has content', `${km.rows[0].n} documents across all orgs`)
       : warn('knowledge base is EMPTY', 'the agent will correctly say it does not know — upload a document first');
+
+    // Vector coverage, measured rather than assumed. EMBEDDING_MODEL can be
+    // set and embeddings can still be missing — a key added after ingest
+    // leaves every existing row unembedded until it is backfilled.
+    if (km.rows[0].n > 0) {
+      const vec = await db.query('SELECT COUNT(embedding)::int AS n FROM org_memory');
+      const pct = Math.round((vec.rows[0].n / km.rows[0].n) * 100);
+      if (vec.rows[0].n === 0) {
+        console.log(`  [ -- ]  no document embeddings  — keyword search only (${km.rows[0].n} documents)`);
+      } else if (pct < 90) {
+        warn('document embeddings are INCOMPLETE', `${pct}% embedded — the rest is keyword-only`);
+      } else {
+        ok('documents embedded', `${pct}%`);
+      }
+    }
     await db.end();
   } catch (e) {
     stop('database unreachable', String(e.message || e).slice(0, 70));
@@ -171,10 +318,14 @@ async function checkDatabase() {
   console.log('║  DAREX PREFLIGHT — is this safe to demo right now?           ║');
   console.log('╚══════════════════════════════════════════════════════════════╝\n');
 
-  console.log('SERVICES');
+  console.log('CONFIGURATION');
+  checkConfig();
+  console.log('\nSERVICES');
   await checkServices();
   console.log('\nDATABASE');
   await checkDatabase();
+  console.log('\nRETRIEVAL');
+  checkEmbeddings();
   console.log('\nLLM BUDGET');
   await checkCredit();
   console.log('\nPROVIDER INDEPENDENCE');

@@ -21,6 +21,10 @@
 const path = require('path');
 const fs = require('fs');
 
+// Load infra/.env before anything reads process.env — without this the script
+// runs with no provider credentials and then blames the system for it.
+require('./lib/env').loadRepoEnv();
+
 const LITELLM = process.env.LITELLM_URL || 'http://127.0.0.1:4000';
 const KEY = process.env.LITELLM_API_KEY || process.env.LITELLM_MASTER_KEY || 'sk-darex-local-dev';
 const MODEL = process.env.LITELLM_MODEL || 'atomic-agent';
