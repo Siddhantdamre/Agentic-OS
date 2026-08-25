@@ -39,7 +39,10 @@ async function execute(ctx: ToolActionContext) {
           timestamp,
         };
       } catch (execErr) {
-        await client.query('ROLLBACK').catch(() => {});
+        await client.query('ROLLBACK').catch((rollbackErr) => {
+          console.error('database_query: ROLLBACK failed, connection left in unknown state:', orgId, rollbackErr);
+          (client as any)._rollbackFailed = true;
+        });
         throw execErr;
       }
     });

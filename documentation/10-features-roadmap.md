@@ -56,7 +56,6 @@ Status mirrors `BUILD_STATE.md` (the authoritative log). Phase numbering follows
 ## Open items / known limitations
 
 1. **`META_ACCESS_TOKEN` expired** (session ended 2026-06-12). Must be rotated for real outbound WhatsApp sends and for `e2e-live-llm.js` to pass steps 2–5.
-2. **`apps/dashboard/app/api/agent/hermes/route.ts` is broken** — it imports `@/lib/db`, `@/lib/hermes-agent`, `@/lib/langfuse-trace`; `@/lib/hermes-agent` doesn't exist (LangGraph removed). Either delete it or rewire it to the atomic-agent client.
 3. **`apps/agents/` is a legacy placeholder** (LangGraph plan) and `packages/shared-types` is mostly placeholder. Do not build on either without a plan.
 4. **Connector real accounts:** Google Ads/Shopify/Zendesk/Razorpay env values are empty; integrations connect + stats show, but live tool calls for those return `not_connected` until real OAuth accounts are wired.
 5. **Web search** needs `EXA_API_KEY` for the Exa provider; without it atomic-agent's web search falls back to DuckDuckGo (per `render-config.mjs`).

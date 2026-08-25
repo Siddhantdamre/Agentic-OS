@@ -27,12 +27,17 @@ export async function withOrgScopedClient<T>(orgId: string, fn: (client: PoolCli
     await client.query("SELECT set_config('app.current_org_id', $1, false)", [orgId]);
     return await fn(client);
   } finally {
-    try {
-      await client.query('RESET app.current_org_id');
-    } catch {
-      // always release the pool slot
+    if ((client as any)._rollbackFailed) {
+      // Connection's transaction state is unknown; destroy it instead of returning it to the pool.
+      client.release(new Error('rollback failed, discarding connection'));
+    } else {
+      try {
+        await client.query('RESET app.current_org_id');
+      } catch {
+        // always release the pool slot
+      }
+      client.release();
     }
-    client.release();
   }
 }
 

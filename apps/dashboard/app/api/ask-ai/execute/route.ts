@@ -305,22 +305,22 @@ export async function GET(request: Request) {
                 output: { status: outcome.status, message: outcome.message, data: outcome.data },
                 metadata: { planId, step: i + 1 },
                 provider: 'atomic-agent',
-              }).catch(() => {});
+              }).catch((e) => console.debug('langfuse trace failed (non-fatal):', planId, i, e));
               // Only keep a non-skipped outcome (keep a slot for skipped ones so
               // indices stay aligned).
               results[i] = { stepIndex: i, ...outcome };
               if (outcome.status === 'error') {
-                await updatePlan({ current_step: i + 1 }).catch(() => {});
+                await updatePlan({ current_step: i + 1 }).catch((e) => console.error('updatePlan(current_step) failed:', planId, e));
                 const firedSoFar = results.filter(Boolean).length;
                 // Stop scheduling further stages on an error (fail-fast).
                 await updatePlan({
                   status: results.some((r) => r?.status === 'error') ? 'completed_with_errors' : 'completed',
-                }).catch(() => {});
+                }).catch((e) => console.error('updatePlan(status) failed:', planId, e));
                 send('execution_done', { planId, status: 'completed_with_errors', results: results.filter(Boolean) });
                 void firedSoFar;
                 return;
               }
-              await updatePlan({ current_step: i + 1 }).catch(() => {});
+              await updatePlan({ current_step: i + 1 }).catch((e) => console.error('updatePlan(current_step) failed:', planId, e));
             }
           }
 
@@ -336,7 +336,7 @@ export async function GET(request: Request) {
             output: { status: finalStatus, results: done },
             metadata: { planId },
             provider: 'atomic-agent',
-          }).catch(() => {});
+          }).catch((e) => console.debug('langfuse summary trace failed (non-fatal):', planId, e));
 
           send('execution_done', { planId, status: finalStatus, results: done });
         } catch (err: any) {

@@ -173,7 +173,7 @@ Always available: \`database_query\`, \`web_search\`, \`web_extract\`, \`file_op
         if (!cancelled && data.userId) userId = data.userId;
         if (!cancelled && data.orgId) orgId = data.orgId;
         if (data.email) setCurrentUserEmail(data.email);
-      } catch {}
+      } catch (e) { console.error('session fetch failed:', e); }
       if (cancelled) return;
       const key = storageNamespace(userId, orgId);
       storageKey.current = key;
@@ -825,7 +825,7 @@ Always available: \`database_query\`, \`web_search\`, \`web_extract\`, \`file_op
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ planId, action: 'cancel' }),
       });
-    } catch {}
+    } catch (e) { console.error('plan cancel failed, server state may not match UI:', planId, e); }
     const msgId = messages.find((m) => m.planCard?.planId === planId)?.id;
     if (msgId) {
       const cur = messages.find((m) => m.id === msgId)!;
@@ -845,7 +845,7 @@ Always available: \`database_query\`, \`web_search\`, \`web_extract\`, \`file_op
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ planId, steps: steps.map((s) => ({ id: s.id, description: s.description, enabled: s.enabled })) }),
       });
-    } catch {}
+    } catch (e) { console.error('step toggle sync failed, server state may not match UI:', planId, e); }
   };
 
   const handleAddInstruction = async (planId: string, instruction: string) => {
@@ -870,7 +870,7 @@ Always available: \`database_query\`, \`web_search\`, \`web_extract\`, \`file_op
           steps: steps.map((s) => ({ id: s.id, description: s.description, tool: s.tool, action: s.action, enabled: s.enabled })),
         }),
       });
-    } catch {}
+    } catch (e) { console.error('add instruction sync failed, server state may not match UI:', planId, e); }
   };
 
   const handleDraftRevised = (msgId: string, draft: DraftState) => {
