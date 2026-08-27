@@ -55,6 +55,29 @@ services:
     restart: unless-stopped
     ports:
       - "5432:5432"
+    # max_connections raised from the Postgres default of 100.
+    #
+    # Measured on a healthy idle stack: 102 connections against a limit of 100,
+    # of which Temporal alone held 75 (62 on `temporal`, 13 on
+    # `temporal_visibility`) — all idle. The application could not get a
+    # connection at all, and the symptom was
+    #
+    #   HTTP 500  remaining connection slots are reserved for roles with the
+    #             SUPERUSER attribute
+    #
+    # on /api/auth/register — the very first thing a new customer does. Nothing
+    # was leaking; the stack simply asks for more connections than the default
+    # allows, and it does so from the moment it boots.
+    #
+    # The demand, service by service: temporal ~40 (capped below), temporal
+    # visibility ~10, supertokens 10, langfuse 5, litellm 4, nango 2, pgbouncer
+    # server-side pool 25, plus migrations and operator scripts. 200 leaves
+    # roughly 40% headroom over that without pretending the ceiling is free —
+    # each connection costs memory, so this is sized, not maximised.
+    command:
+      - postgres
+      - -c
+      - max_connections=200
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-darex}
       POSTGRES_PASSWORD: ${DB_PASSWORD:-darex_dev_secret}
@@ -126,6 +149,21 @@ services:
       - DYNAMIC_CONFIG_FILE_PATH=config/dynamicconfig/development-sql.yaml
       - ENABLE_ES=false
       - TEMPORAL_CLI_ADDRESS=temporal:7233
+      # Temporal held 75 idle Postgres connections on an idle stack, which is
+      # most of the default 100-connection budget for a service that was doing
+      # nothing. auto-setup runs frontend, history, matching and worker in one
+      # container and each opens its own pool, so the defaults multiply.
+      #
+      # 20 main + 10 visibility is ample for this deployment's throughput
+      # (single history shard, tens of workflows in flight) and leaves the
+      # budget for the services that serve customers. Raise these before
+      # raising max_connections if Temporal ever becomes the bottleneck —
+      # idle connections are not free.
+      - SQL_MAX_CONNS=20
+      - SQL_MAX_IDLE_CONNS=5
+      - SQL_MAX_CONN_TIME=5m
+      - SQL_VIS_MAX_CONNS=10
+      - SQL_VIS_MAX_IDLE_CONNS=2
     volumes:
       - ./temporal/dynamicconfig:/etc/temporal/config/dynamicconfig:ro
     networks:
