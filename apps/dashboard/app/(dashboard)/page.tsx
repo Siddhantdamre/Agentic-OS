@@ -5,6 +5,7 @@ import { useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { Sparkles, AlertTriangle, Send, CheckCircle2, CircleDashed } from 'lucide-react';
 import { LiveRegion, StatusBadge } from '@/components/a11y';
+import { ImpactPanel } from '@/components/impact/ImpactPanel';
 
 export const dynamic = 'force-dynamic';
 
@@ -160,6 +161,15 @@ function HomeContent() {
           </Link>
         ) : null}
       </div>
+
+      {/*
+        Above the activity counters on purpose. "240 replies sent" describes
+        how busy the inbox was; "91% finished without a person, up 17 points"
+        is what decides whether this is worth paying for. Hidden during warm-up
+        because a brand new org has nothing finished yet, and a percentage over
+        no data is noise dressed as insight.
+      */}
+      {!isWarmup && <ImpactPanel days={30} />}
 
       {isWarmup ? (
         <div className="bg-white border-2 border-amber-500/30 rounded-3xl p-6 sm:p-8 shadow-lg relative overflow-hidden">

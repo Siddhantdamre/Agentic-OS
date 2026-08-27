@@ -187,6 +187,41 @@ async function ingestOutcomes(
   );
   total += resolved.rowCount ?? 0;
 
+  // A human stepping in AFTER the agent had already replied. This is the
+  // ledger's most important NEGATIVE signal, and nothing was recording it:
+  // outcome_events has allowed 'human_took_over' since migration 022 and no
+  // code ever inserted one.
+  //
+  // Without it the ledger can only count successes, and a measurement that
+  // moves in one direction is not a measurement. "91% handled without a human"
+  // only means something because the other 9% is counted here.
+  //
+  // A PRIOR assistant message is required. A human answering a thread the
+  // agent never touched is ordinary work, not a takeover, and counting it
+  // would blame the agent for conversations it was never given.
+  const takeover = await client.query(
+    `INSERT INTO outcome_events
+       (org_id, conversation_id, outcome_kind, occurred_at, source_table, source_id, metadata)
+     SELECT
+       h.org_id, h.conversation_id, 'human_took_over', h.created_at,
+       'messages', h.id::text, jsonb_build_object('role', h.role)
+     FROM messages h
+     WHERE h.org_id = $1
+       AND h.role = 'human_agent'
+       AND h.created_at >= $2::timestamptz
+       AND h.created_at <  $3::timestamptz
+       AND EXISTS (
+         SELECT 1 FROM messages a
+          WHERE a.org_id = h.org_id
+            AND a.conversation_id = h.conversation_id
+            AND a.role = 'assistant'
+            AND a.created_at < h.created_at
+       )
+     ON CONFLICT (org_id, source_table, source_id, outcome_kind) DO NOTHING`,
+    [orgId, since, until]
+  );
+  total += takeover.rowCount ?? 0;
+
   // Explicit thumbs. Negative votes are ingested exactly like positive ones —
   // a ledger that only records praise is worthless for improving anything.
   // Tolerated as optional: ask_ai_feedback ships in migration 020, and this

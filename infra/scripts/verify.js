@@ -101,6 +101,12 @@ const SUITES = [
     needsDocker: true,
   },
   {
+    name: 'impact / outcome ledger',
+    what: 'the renewal number is arithmetic, not a feeling — and it never counts an escalation as a win',
+    cmd: [process.execPath, [path.join(__dirname, 'check-impact-e2e.js')]],
+    needsDocker: true,
+  },
+  {
     name: 'inbound end-to-end',
     what: 'signed webhook to stored conversation, and unsigned is rejected',
     cmd: [process.execPath, [path.join(__dirname, 'check-e2e-inbound.js')]],

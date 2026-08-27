@@ -22,6 +22,13 @@ const scripts = [
   // sampling cadence. An empty LLM balance takes the whole product down with
   // no error raised anywhere, so it belongs beside the other outage alarms.
   'spend-guard.js',
+  // The outcome ledger runs here for the same reason the spend guard does:
+  // this is the only recurring cadence in the repo, and a job nobody schedules
+  // is a job that does not exist — which is exactly how the ledger sat built,
+  // tested and never once executed. 2s across 53 orgs, and every write is
+  // idempotent, so running it too often costs nothing and running it too
+  // rarely only lowers resolution.
+  'run-outcome-ledger.js',
 ];
 
 let failed = 0;

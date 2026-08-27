@@ -89,9 +89,12 @@ async function main() {
   );
 
   const QUESTION = 'How many days do I have to return something?';
+  // No channel_type column here: channel type lives on `channels` and is
+  // reached through conversations.channel_id. A conversation with no channel
+  // is the dashboard case, which is what this test exercises.
   const conv = await db.query(
-    `INSERT INTO conversations (org_id, contact_id, channel_type, status)
-     VALUES ($1, $2, 'dashboard', 'open') RETURNING id`,
+    `INSERT INTO conversations (org_id, contact_id, status)
+     VALUES ($1, $2, 'open') RETURNING id`,
     [orgId, `learner-${stamp}`],
   );
   const conversationId = conv.rows[0].id;
