@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { pool, getOrgScopedClient } from '@/lib/db';
 import { realtimeHub } from '@/lib/realtime-hub';
-import { assertMetaWebhookSignature } from '@/lib/webhook-crypto';
+import { assertMetaWebhookSignature, verifyMetaSubscribeToken } from '@/lib/webhook-crypto';
 import {
   employeePersonaText,
   fireInboundAgent,
@@ -25,7 +25,7 @@ export async function GET(req: Request) {
     const challenge = url.searchParams.get('hub.challenge');
     const verifyToken = process.env.VERIFY_TOKEN;
 
-    if (mode === 'subscribe' && verifyToken && token === verifyToken) {
+    if (mode === 'subscribe' && verifyMetaSubscribeToken(token, verifyToken)) {
       return new NextResponse(challenge, {
         status: 200,
         headers: { 'Content-Type': 'text/plain' },

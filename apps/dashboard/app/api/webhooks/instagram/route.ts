@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { fireInboundAgent } from '@/lib/inbound-agent';
-import { assertMetaWebhookSignature } from '@/lib/webhook-crypto';
+import { assertMetaWebhookSignature, verifyMetaSubscribeToken } from '@/lib/webhook-crypto';
 import {
   inboundJobFromPersist,
   persistInboundMessage,
@@ -21,7 +21,7 @@ export async function GET(req: Request) {
     const challenge = url.searchParams.get('hub.challenge');
     const verifyToken = process.env.VERIFY_TOKEN || process.env.INSTAGRAM_VERIFY_TOKEN;
 
-    if (mode === 'subscribe' && verifyToken && token === verifyToken) {
+    if (mode === 'subscribe' && verifyMetaSubscribeToken(token, verifyToken)) {
       return new NextResponse(challenge, {
         status: 200,
         headers: { 'Content-Type': 'text/plain' },

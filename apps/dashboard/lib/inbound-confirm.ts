@@ -166,7 +166,21 @@ export async function recordAuditEvent(
   }
 }
 
-async function loadBannedPhrases(client: PoolClient, orgId: string): Promise<string[]> {
+/**
+ * The org's own banned phrases, applied on top of the pack defaults.
+ *
+ * Returns null for UNKNOWN, which is deliberately distinct from [] meaning
+ * "this org configured none". A transient error used to return [] silently,
+ * and downstream that is indistinguishable from an org with no custom rules —
+ * so a business that had configured "never say guaranteed delivery" would have
+ * that rule quietly stop applying, the reply would go out clean, and nothing
+ * anywhere would record that a compliance control had been skipped.
+ *
+ * Throwing would be the other extreme: failing a customer reply over a blip in
+ * a rule most orgs never configure. So the uncertainty is returned honestly
+ * and the caller decides what to do with it.
+ */
+async function loadBannedPhrases(client: PoolClient, orgId: string): Promise<string[] | null> {
   try {
     const res = await client.query<{ phrases: unknown }>(
       `SELECT meta->'compliance'->'bannedPhrases' AS phrases FROM orgs WHERE id = $1 LIMIT 1`,
@@ -175,8 +189,13 @@ async function loadBannedPhrases(client: PoolClient, orgId: string): Promise<str
     const raw = res.rows[0]?.phrases;
     if (!Array.isArray(raw)) return [];
     return raw.filter((item): item is string => typeof item === 'string' && item.trim().length > 0);
-  } catch {
-    return [];
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error(
+      `[inbound-confirm] compliance rules unreadable for org ${orgId} — routing this `
+        + `reply to human review rather than sending it unchecked: ${message}`
+    );
+    return null;
   }
 }
 
@@ -234,19 +253,28 @@ export async function evaluateInboundConfirm(job: InboundConfirmJob): Promise<In
   const { client, orgId } = await getOrgScopedClient(job.orgId);
   try {
     const bannedPhrases = await loadBannedPhrases(client, orgId);
+    // null means the org's compliance rules could not be read at all. The pack
+    // defaults still apply, but this org's own additions are unknown, so the
+    // reply has not actually been checked against the rules its owner wrote.
+    // Pause for review rather than send something whose compliance state is a
+    // guess — the whole point of the confirm classes is that a human decides
+    // when the machine cannot.
+    const rulesUnknown = bannedPhrases === null;
     const evaluated = evaluateConfirmClasses({
       reply: job.reply,
       userMessage: job.userMessage,
       executedSteps: job.executedSteps,
-      bannedPhrases,
+      bannedPhrases: bannedPhrases ?? [],
     });
 
-    if (!evaluated.pause) {
+    if (!evaluated.pause && !rulesUnknown) {
       return { pause: false, classes: [], reason: '', eval: evaluated };
     }
 
     const primary = primaryConfirmClass(evaluated);
-    const reason = evaluated.hits[0]?.reason || `confirm class ${primary || 'unknown'}`;
+    const reason = evaluated.hits[0]?.reason
+      || (rulesUnknown ? 'compliance rules for this org could not be read' : '')
+      || `confirm class ${primary || 'unknown'}`;
     const workItemId = await markNeedsAttention(client, orgId, job.conversationId, reason);
 
     const actor: AuditActorInput = job.employeeId

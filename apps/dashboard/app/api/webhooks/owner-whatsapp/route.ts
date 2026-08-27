@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getOrgScopedClient } from '@/lib/db';
-import { assertMetaWebhookSignature } from '@/lib/webhook-crypto';
+import { assertMetaWebhookSignature, verifyMetaSubscribeToken } from '@/lib/webhook-crypto';
 import { recordAuditEvent } from '@/lib/inbound-confirm';
 import { replyTargetFromChannelMeta, sendChannelReply } from '@/lib/channel-outbound';
 import {
@@ -28,7 +28,7 @@ export async function GET(req: Request) {
     const verifyToken =
       process.env.OWNER_WHATSAPP_VERIFY_TOKEN || process.env.VERIFY_TOKEN;
 
-    if (mode === 'subscribe' && verifyToken && token === verifyToken) {
+    if (mode === 'subscribe' && verifyMetaSubscribeToken(token, verifyToken)) {
       return new NextResponse(challenge, {
         status: 200,
         headers: { 'Content-Type': 'text/plain' },

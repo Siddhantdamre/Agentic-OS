@@ -63,6 +63,22 @@ export default function ConversationsPage() {
   const [sendingReply, setSendingReply] = useState(false);
   const [replyAsCustomer, setReplyAsCustomer] = useState(false);
 
+  // The AI draft this reply is CORRECTING, if any.
+  //
+  // This is the learning loop, and it was disconnected. Migration 026 and
+  // POST /api/conversations/{id}/reply were both in place, but every operator
+  // reply went to /messages instead — so record_reply_edit was never called
+  // and reply_edits stayed empty forever. The most valuable signal the product
+  // can collect, a domain expert saying "not that, THIS" about a real customer
+  // in their own words, was being discarded by one URL.
+  //
+  // Non-null means the operator pressed "Improve this reply" and is editing
+  // the agent's own words. Only then is there a (question, draft, correction)
+  // triple worth learning from: a reply typed from scratch has no draft to
+  // compare against and teaches nothing.
+  const [correctingDraft, setCorrectingDraft] = useState<string | null>(null);
+  const [learningNote, setLearningNote] = useState<string | null>(null);
+
   // New Chat Modal
   const [isNewChatOpen, setIsNewChatOpen] = useState(false);
   const [newChatContact, setNewChatContact] = useState('');
@@ -258,6 +274,38 @@ export default function ConversationsPage() {
 
     try {
       setSendingReply(true);
+      setLearningNote(null);
+
+      // A correction goes through the learning endpoint; everything else keeps
+      // the existing path. Simulating a customer is a test harness, never a
+      // correction, so it must never reach record_reply_edit.
+      if (correctingDraft !== null && !replyAsCustomer) {
+        const res = await fetch(`/api/conversations/${selectedConvId}/reply`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ text: replyContent, aiDraft: correctingDraft }),
+        });
+        const data = await res.json();
+        if (res.ok && data.status === 'sent') {
+          setReplyContent('');
+          setCorrectingDraft(null);
+          // Say plainly whether anything was learned. Silence here would make
+          // "learned" and "refused for a good reason" look identical, and the
+          // refusals are the interesting ones — an edited security refusal is
+          // never learnable, by design.
+          setLearningNote(
+            data.learning?.learned
+              ? 'Sent. The agent learned this correction — it now outranks the document it corrected.'
+              : `Sent. Not learned${data.learning?.skipReason ? ` (${String(data.learning.skipReason).replace(/_/g, ' ')})` : ''}.`
+          );
+          await fetchMessages(selectedConvId);
+          fetchConversations();
+        } else {
+          setLearningNote(data.error || 'Could not send the reply.');
+        }
+        return;
+      }
+
       const targetRole = replyAsCustomer ? 'user' : 'human_agent';
 
       const res = await fetch(`/api/conversations/${selectedConvId}/messages`, {
@@ -280,6 +328,27 @@ export default function ConversationsPage() {
     } finally {
       setSendingReply(false);
     }
+  };
+
+  /**
+   * Load the agent's reply into the composer so the operator EDITS it.
+   *
+   * Editing is the point. A correction is only usable as training data when
+   * there is a draft to diff against — "the agent said X, the expert sent Y,
+   * for question Z". Asking someone to retype the whole answer produces a
+   * message and teaches nothing.
+   */
+  const handleImproveReply = (draft: string) => {
+    setReplyAsCustomer(false);
+    setCorrectingDraft(draft);
+    setReplyContent(draft);
+    setLearningNote(null);
+  };
+
+  const cancelCorrection = () => {
+    setCorrectingDraft(null);
+    setReplyContent('');
+    setLearningNote(null);
   };
 
   // Start New Test Conversation
@@ -687,6 +756,18 @@ export default function ConversationsPage() {
                       >
                         {isUser ? msg.content : <FormattedMarkdownResponse content={msg.content} />}
                       </div>
+                      {msg.role === 'assistant' && (
+                        // The entry point to the learning loop. Every press
+                        // that ends in a real edit makes the same mistake
+                        // impossible tomorrow, for this business specifically.
+                        <button
+                          type="button"
+                          onClick={() => handleImproveReply(msg.content)}
+                          className="mt-1 text-[10px] text-emerald-500 hover:text-[#F0C05A] transition underline underline-offset-2"
+                        >
+                          Improve this reply — teach the agent
+                        </button>
+                      )}
                     </div>
                   );
                 })
@@ -702,6 +783,27 @@ export default function ConversationsPage() {
 
             {/* Message Input Box */}
             <form onSubmit={handleSendMessage} className="p-3 border-t border-emerald-950/60 bg-[#16201D] space-y-2">
+              {correctingDraft !== null && (
+                <div className="flex items-start justify-between gap-3 rounded-xl border border-[#F0C05A]/40 bg-[#F0C05A]/10 px-3 py-2">
+                  <div className="text-[11px] text-emerald-100 leading-relaxed">
+                    <span className="font-bold text-[#F0C05A]">Correcting the agent.</span>{' '}
+                    Edit the reply below and send it. The agent learns the corrected
+                    answer for this business and will use it next time.
+                  </div>
+                  <button
+                    type="button"
+                    onClick={cancelCorrection}
+                    className="shrink-0 text-[10px] text-emerald-400 hover:text-emerald-200 underline"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              )}
+              {learningNote && (
+                <div className="rounded-xl border border-emerald-900/70 bg-[#1C2825] px-3 py-2 text-[11px] text-emerald-200">
+                  {learningNote}
+                </div>
+              )}
               <div className="flex items-center justify-between px-1">
                 <div className="flex items-center space-x-2">
                   <button
@@ -726,17 +828,31 @@ export default function ConversationsPage() {
               </div>
 
               <div className="flex items-center gap-2">
-                <input
-                  type="text"
-                  placeholder={
-                    replyAsCustomer
-                      ? "Simulate customer message (AI employee will reply live)..."
-                      : "Type a response as human agent..."
-                  }
-                  value={replyContent}
-                  onChange={(e) => setReplyContent(e.target.value)}
-                  className="flex-1 bg-[#1C2825] border border-emerald-900/80 rounded-xl px-4 py-2.5 text-xs text-emerald-100 placeholder-emerald-600 focus:outline-none focus:border-[#F0C05A]"
-                />
+                {correctingDraft !== null ? (
+                  // A textarea, not a single-line input: the operator is
+                  // editing a whole reply, and a one-line box makes reviewing
+                  // three sentences painful enough that people retype from
+                  // scratch instead — which produces no training pair at all.
+                  <textarea
+                    rows={4}
+                    placeholder="Edit the agent's reply into the answer it should have given..."
+                    value={replyContent}
+                    onChange={(e) => setReplyContent(e.target.value)}
+                    className="flex-1 bg-[#1C2825] border border-[#F0C05A]/60 rounded-xl px-4 py-2.5 text-xs text-emerald-100 placeholder-emerald-600 focus:outline-none focus:border-[#F0C05A] resize-y leading-relaxed"
+                  />
+                ) : (
+                  <input
+                    type="text"
+                    placeholder={
+                      replyAsCustomer
+                        ? "Simulate customer message (AI employee will reply live)..."
+                        : "Type a response as human agent..."
+                    }
+                    value={replyContent}
+                    onChange={(e) => setReplyContent(e.target.value)}
+                    className="flex-1 bg-[#1C2825] border border-emerald-900/80 rounded-xl px-4 py-2.5 text-xs text-emerald-100 placeholder-emerald-600 focus:outline-none focus:border-[#F0C05A]"
+                  />
+                )}
                 <button
                   type="submit"
                   disabled={sendingReply || !replyContent.trim()}

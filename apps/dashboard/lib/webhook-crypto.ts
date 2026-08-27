@@ -10,6 +10,23 @@ function timingSafeEqualString(a: string, b: string): boolean {
   return crypto.timingSafeEqual(aBuf, bBuf);
 }
 
+/**
+ * Constant-time compare for the Meta webhook VERIFY token.
+ *
+ * The subscribe handshake (`hub.mode=subscribe&hub.verify_token=…`) used
+ * `===` in all three Meta webhook routes. That short-circuits on the first
+ * differing byte and leaks the token's prefix through response timing. It is a
+ * long-lived shared secret configured in the Meta dashboard, not a one-time
+ * nonce, and the endpoint is public by necessity — so it gets the same
+ * treatment as every other secret in this file. Exported so the three routes
+ * share one implementation rather than three plain comparisons that each look
+ * individually harmless.
+ */
+export function verifyMetaSubscribeToken(provided: string | null, expected: string | null | undefined): boolean {
+  if (!provided || !expected) return false;
+  return timingSafeEqualString(provided, expected);
+}
+
 /** Chatwoot / Darex inbox HMAC: `x-chatwoot-signature: sha256=<hex>`. */
 export function verifyChatwootSignature(rawBody: string, signatureHeader: string | null, secret: string): boolean {
   if (!signatureHeader) return false;

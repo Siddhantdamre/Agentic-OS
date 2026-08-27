@@ -1,5 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getScopedClient } from '@/lib/db';
+import { realtimeHub } from '@/lib/realtime-hub';
+import { replyTargetFromChannelMeta, sendChannelReply } from '@/lib/channel-outbound';
 
 export const dynamic = 'force-dynamic';
 
@@ -46,13 +48,24 @@ export async function POST(
 
     // The conversation must belong to this org. RLS enforces it too, but an
     // explicit check returns 404 instead of a confusing empty result.
+    //
+    // The channel join is not incidental: this reply has to REACH the
+    // customer. An earlier version of this route only inserted a row, which
+    // would have recorded the operator's correction perfectly and left the
+    // customer waiting on a message that was never sent.
     const conv = await client.query(
-      `SELECT id FROM conversations WHERE id = $1 AND org_id = $2 LIMIT 1`,
+      `SELECT c.id, c.contact_id, c.chatwoot_conv_id,
+              ch.channel_type, ch.meta AS channel_meta
+         FROM conversations c
+         LEFT JOIN channels ch ON c.channel_id = ch.id
+        WHERE c.id = $1 AND c.org_id = $2
+        LIMIT 1`,
       [conversationId, orgId],
     );
     if (!conv.rows.length) {
       return NextResponse.json({ error: 'Conversation not found.' }, { status: 404 });
     }
+    const row = conv.rows[0];
 
     // The question this reply answers: the most recent customer message.
     // Without it a correction is an orphan — a right answer to an unknown
@@ -67,11 +80,42 @@ export async function POST(
 
     // Send first, learn second. The customer's reply must never be delayed or
     // lost because the learning step had a problem.
+    //
+    // Recorded as 'human_agent', not 'assistant'. A corrected reply was
+    // written by a person, and labelling it as the agent's own output would
+    // poison every later measurement — quality scoring, outcome attribution
+    // and the transcript an operator reads to decide whether the agent is
+    // improving would all count human work as machine work.
     const saved = await client.query(
       `INSERT INTO messages (org_id, conversation_id, role, content)
-       VALUES ($1, $2, 'assistant', $3) RETURNING id`,
+       VALUES ($1, $2, 'human_agent', $3) RETURNING id`,
       [orgId, conversationId, text],
     );
+
+    await client.query(
+      `UPDATE conversations SET updated_at = NOW(), summary = $1
+        WHERE id = $2 AND org_id = $3`,
+      [text.slice(0, 100), conversationId, orgId],
+    );
+
+    // Deliver to the channel the customer is actually on. Fire-and-forget for
+    // the same reason the insert comes first: a courier problem must not lose
+    // the operator's work or block the response they are waiting on.
+    const replyTarget = replyTargetFromChannelMeta(
+      row.channel_type ?? 'dashboard',
+      row.contact_id ?? 'unknown',
+      (row.channel_meta || {}) as Record<string, unknown>,
+      { chatwootConvId: row.chatwoot_conv_id },
+    );
+    void sendChannelReply(orgId, replyTarget, text);
+
+    realtimeHub.publish(orgId, {
+      type: 'conversation_updated',
+      conversationId,
+      message: text.slice(0, 200),
+      contactId: row.contact_id ?? 'unknown',
+      channelType: row.channel_type ?? 'dashboard',
+    });
 
     let learning: {
       captured: boolean;
