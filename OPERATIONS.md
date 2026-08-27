@@ -27,15 +27,19 @@ node infra/scripts/verify.js
 Runs nine suites and prints one verdict. On the reference deployment:
 
 ```
-  workflow unit tests          275/275   reply gates, grounding, claim extraction
+  workflow unit tests          282/282   reply gates, grounding, claim extraction
   env loader                     9/9     credentials resolve the way compose resolves them
   spend guard maths              7/7     burn rate refuses to extrapolate from noise
+  sql parameter lint             —       every $N has exactly one argument
+  tenant scope lint              —       no tenant table read without an org filter
   quality rules                 23/23    the reply scorer agrees with hand-labelled examples
   tenant registry isolation     14/14    one tenant cannot see, name or write another
   memory retrieval              11/11    two orgs retrieve their own facts and nothing else
   operator edit learning        10/10    a correction outranks the document it corrects
+  learning loop end-to-end      11/11    a correction through the real HTTP route becomes knowledge
+  impact / outcome ledger       13/13    the renewal number is arithmetic, not a feeling
   inbound end-to-end             8/8     signed webhook to stored conversation
-  infrastructure alarms          4/5     queue, connectors, RLS, Langfuse, budget
+  infrastructure alarms          4/6     queue, connectors, RLS, Langfuse, budget, ledger
 ```
 
 `--fast` skips the five suites that need the containers.
@@ -99,6 +103,54 @@ instead of extrapolating noise.
 
 It runs as part of `alerting-run.js`, which is the intended cadence — each run
 records a sample, and a burn rate is only as good as its sampling.
+
+---
+
+## The compounding loop
+
+Three things make the agent better at *this* business over time. All three now
+run; none of them did a week ago. If any one stops, the product stops
+improving and starts being replaceable.
+
+| Loop | Where a human touches it | What it produces |
+|---|---|---|
+| Corrections | "Improve this reply" on any agent message | a priority-100 memory that outranks the document it corrects |
+| Gaps | the Brain page, top section | a `faq` memory phrased the way customers actually ask |
+| Measurement | the dashboard home panel | autonomous-resolution rate, and its direction |
+
+```bash
+node infra/scripts/run-outcome-ledger.js   # also runs inside alerting-run.js
+```
+
+Closes conversations that have gone quiet, splits them into *autonomous* and
+*needed a human*, and materialises the ledger. Every write is idempotent, so
+running it twice changes nothing and running it late loses nothing. 2 seconds
+across 53 orgs.
+
+Two rules this deliberately obeys, because breaking either turns the headline
+number into a lie:
+
+- **An escalated conversation is never closed by going quiet.** It is waiting
+  on somebody. Closing it would count an unmet obligation as a success.
+- **`resolved_at` is the last message time, not the sweep time.** Otherwise a
+  missed run shifts every recorded close time and the reported numbers change
+  on re-run — a customer's ROI must not depend on cron punctuality.
+
+`CONVERSATION_QUIET_HOURS` (default 24) is how long silence must last before a
+conversation counts as finished. Lower it and you will inflate the rate by
+counting customers who were merely asleep.
+
+### What the impact number may and may not claim
+
+`GET /api/impact` reports teaching and trend side by side and never multiplies
+them into a claim. Without a holdout arm there is no control group, so the
+strongest honest statement is *"these moved together"*. The response says so
+explicitly in `causal.comparisonAvailable`, and the UI prints the caveat rather
+than burying it.
+
+A holdout means deliberately withholding the agent from a slice of real
+customers. That is a decision a business makes, never a default a script turns
+on — `holdoutPercent` stays 0 unless someone asks for it.
 
 ---
 
