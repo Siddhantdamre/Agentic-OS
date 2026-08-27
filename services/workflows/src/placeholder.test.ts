@@ -86,3 +86,56 @@ test('a reply that is ONLY a placeholder collapses to nothing usable', () => {
   assert.ok(out.removed.length > 0);
   assert.ok(out.text.length < 20, `expected an unusable remainder: ${out.text}`);
 });
+
+// ── Over-stripping: what "any bracket is a placeholder" actually cost ───────
+//
+// The original pattern was /\[[^\]\n]{2,60}\]/, which matches every square
+// bracket in the language. Each case below is a correct reply the gate was
+// mangling in production, found by probing the gate with realistic drafts
+// rather than with the one failure that motivated it.
+
+test('a CITATION does not delete the sentence that earned it', () => {
+  // The worst of the three. A grounded answer carries [M-n] markers, so the
+  // gate deleted precisely the sentences that were well sourced:
+  //   in : "We are open until 6pm on Saturday [M-17]. Please call ahead."
+  //   out: "Please call ahead."
+  // The customer asked for the opening hours and got "Please call ahead."
+  const out = stripPlaceholders('We are open until 6pm on Saturday [M-17]. Please call ahead.');
+  assert.deepEqual(out.removed, []);
+  assert.equal(out.text, 'We are open until 6pm on Saturday. Please call ahead.');
+});
+
+test('a markdown link survives, and is not cut in half at the domain dot', () => {
+  // Two bugs in one draft: the bracket looked like a slot, and the sentence
+  // splitter treated the dot in "example.com" as a sentence end — so the
+  // customer received the fragment "com/book). We open at 9am."
+  const draft = 'You can book here [our booking page](https://example.com/book). We open at 9am.';
+  const out = stripPlaceholders(draft);
+  assert.deepEqual(out.removed, []);
+  assert.equal(out.text, draft);
+});
+
+test('a bracketed aside keeps the priced sentence it sits in', () => {
+  const draft = 'The deposit is 5,000 rupees [refundable]. We hold it for 7 days.';
+  const out = stripPlaceholders(draft);
+  assert.deepEqual(out.removed, []);
+  assert.equal(out.text, draft);
+});
+
+test('real slots are still stripped — the gate did not just get switched off', () => {
+  for (const [draft, mustKeep] of [
+    ['Your appointment is on [current date] at 3pm. See you then.', 'See you then.'],
+    ['We will email you at <email> once it ships. Delivery takes 3 days.', 'Delivery takes 3 days.'],
+    ['Since today is [date - please confirm], Saturday works. We open at 9am.', 'We open at 9am.'],
+  ] as const) {
+    const out = stripPlaceholders(draft);
+    assert.ok(out.removed.length > 0, `slot not stripped: ${draft}`);
+    assert.equal(out.text, mustKeep);
+  }
+});
+
+test('a whole reply that is one template collapses, as before', () => {
+  const out = stripPlaceholders('Hi {{name}}, your order ships Tuesday.');
+  assert.ok(out.removed.length > 0);
+  assert.equal(out.text, '');
+});

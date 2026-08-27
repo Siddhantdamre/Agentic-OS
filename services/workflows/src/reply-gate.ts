@@ -470,8 +470,40 @@ export const HUMAN_REVIEW_REPLY =
 // your channel data" and "query the database" are not. Removing every mention
 // of Stripe would break real answers.
 
+// `connector` is a PRODUCT word before it is a systems word. A bare
+// /\bconnectors?\b/ deleted this, from a furniture business:
+//
+//   "The connector strip on the base is aluminium."  ->  removed
+//
+// Any business selling hardware, furniture, plumbing, cabling or electronics
+// uses the word about the thing it sells. So the systems sense has to be
+// identified by its company — a possessive, a named integration, or the
+// language of configuration — rather than by the word alone. Same species of
+// mistake as the citation markers above: a matcher built for one kind of input
+// applied to another.
+// `the` is deliberately NOT in this list. "The connector strip on the base is
+// aluminium" is ordinary product speech and was still being deleted while the
+// determiner was included. The systems sense travels with a possessive or a
+// category word — "your connectors", "payment connectors", "connectors like
+// Gmail" — not with a bare article.
+const SYSTEMS_CONNECTOR_RE = new RegExp(
+  [
+    // "your connectors", "other payment connectors"
+    '\\b(?:your|our|other|available|configured|connected)\\s+(?:\\w+\\s+)?connectors?\\b',
+    // "a financial connector", "the CRM connector" — a business-system
+    // CATEGORY in front of the noun is what makes it systems language.
+    '\\b(?:financial|payment|billing|crm|email|calendar|accounting|messaging'
+      + '|data|analytics|ads|storage|inventory|support)\\s+connectors?\\b',
+    // "connect a … connector", "connecting the connector" — the verb form.
+    '\\bconnect(?:ing|ed)?\\s+(?:a|an|the|your)?\\s*\\w*\\s*connectors?\\b',
+    // "connectors like Gmail", "connectors are connected"
+    '\\bconnectors?\\s+(?:like|such\\s+as|are\\s+connected|is\\s+connected|configured|available)\\b',
+  ].join('|'),
+  'i',
+);
+
 const MECHANISM_RE =
-  /\b(?:quer(?:y|ying|ied)(?:\s+\w+)?\s*databases?|quer(?:y|ying|ied)\s+the\s+\w+|the\s+database|our\s+database|channel\s+data|\bconnectors?\b|is\s+connected\s+for|only\s+\w+\s+is\s+connected|connected\s+services|available\s+tools|via\s+the\s+\w+\s+tools?|integration\s+(?:is|isn'?t|only\s+supports)|\w+\s+table\b|API\b|endpoint|webhook|sync(?:ed|ing)?\s+from|logged\s+in\s+your\b|in\s+your\s+(?:records|system\s+records)\b|tool\s+call|internal\s+system)/i;
+  /\b(?:quer(?:y|ying|ied)(?:\s+\w+)?\s*databases?|quer(?:y|ying|ied)\s+the\s+\w+|the\s+database|our\s+database|channel\s+data|is\s+connected\s+for|only\s+\w+\s+is\s+connected|connected\s+services|connected\s+systems?|available\s+tools|via\s+the\s+\w+\s+tools?|integration\s+(?:is|isn'?t|only\s+supports)|\w+\s+table\b|API\b|endpoint|webhook|sync(?:ed|ing)?\s+from|logged\s+in\s+your\b|in\s+your\s+(?:records|system\s+records)\b|tool\s+call|internal\s+system)/i;
 
 /**
  * Drop sentences that describe how the answer was obtained.
@@ -488,7 +520,8 @@ export function stripMechanismTalk(reply: string): { text: string; removed: stri
   const kept: string[] = [];
   const removed: string[] = [];
   for (const s of sentences) {
-    (MECHANISM_RE.test(s) ? removed : kept).push(s.trim());
+    const isMechanism = MECHANISM_RE.test(s) || SYSTEMS_CONNECTOR_RE.test(s);
+    (isMechanism ? removed : kept).push(s.trim());
   }
   if (!removed.length) return { text: original, removed: [] };
 
@@ -573,22 +606,90 @@ export function stripPreamble(reply: string): { text: string; removed: boolean }
 // still ships its slot times, just without the paragraph it could not fill in.
 
 /**
- * A bracketed slot the model failed to fill: [current date], {{name}}, <email>.
- * Bounded length and no sentence punctuation inside, so a genuine aside like
- * "(we're closed Sunday)" or a bracketed clarification is not caught.
+ * Citation markers that a GROUNDED reply carries: [M-17], [M-3].
+ *
+ * Removed inline, never by deleting the sentence around them. They are an
+ * artifact of the answer being well sourced, so treating them as unfilled
+ * slots deleted precisely the sentences most worth keeping:
+ *
+ *   in : "We are open until 6pm on Saturday [M-17]. Please call ahead."
+ *   out: "Please call ahead."
+ *
+ * The customer asked for the opening hours and received "Please call ahead."
  */
-const PLACEHOLDER_RE = /\[[^\]\n]{2,60}\]|\{\{[^}\n]{1,60}\}\}|<[a-z_]{2,30}>/i;
+const CITATION_RE = /\s*\[M-\d+\]/gi;
 
+/**
+ * An UNFILLED template slot — what this gate actually exists for.
+ *
+ * Observed verbatim: "[current date — please confirm]", "{{name}}", "<email>".
+ *
+ * Deliberately NOT "any bracketed text". The previous pattern was
+ * `\[[^\]\n]{2,60}\]`, which matches every square bracket in the language, and
+ * it cost three separate correct behaviours:
+ *
+ *   [M-17]                   a citation on a correct, grounded sentence
+ *   [our booking page](...)  a markdown link — and worse, the sentence
+ *                            splitter broke on the dot inside "example.com",
+ *                            so the customer received the fragment
+ *                            "com/book). We open at 9am."
+ *   [refundable]             an ordinary bracketed aside, taking a priced
+ *                            sentence out with it
+ *
+ * A slot is now recognised by SHAPE — something a writer was meant to fill in
+ * later — rather than by punctuation: an unambiguous template delimiter, or
+ * bracketed text that names a known slot or instructs the writer.
+ */
+const SLOT_WORDS =
+  "current date|today's date|date|time|name|first name|last name|customer name"
+  + '|email|phone|number|address|amount|price|link|url|company|company name'
+  + '|agent name|insert|tbd|xxx';
+const PLACEHOLDER_RE = new RegExp(
+  [
+    // {{anything}} — an unambiguous template delimiter.
+    '\\{\\{[^}\\n]{1,60}\\}\\}',
+    // <email>, <first_name> — angle slots, lowercase identifier only.
+    '<[a-z_]{2,30}>',
+    // [current date], [NAME], [insert price] — a known slot word with an
+    // optional short qualifier after it.
+    `\\[\\s*(?:${SLOT_WORDS})\\b[^\\]\\n]{0,40}\\]`,
+    // [anything — please confirm] / [TBD] — a directive to the writer.
+    '\\[[^\\]\\n]{0,60}(?:please\\s+(?:confirm|insert|fill|update|add)|tbd|to be confirmed)[^\\]\\n]{0,20}\\]',
+  ].join('|'),
+  'i',
+);
+
+/**
+ * Remove unfilled template slots, and citation markers, from a draft.
+ *
+ * A genuine unfilled slot makes its whole sentence unusable — "Your
+ * appointment is on [current date] at 3pm" cannot be repaired by deleting
+ * three words — so that sentence goes. Citations are the opposite case and are
+ * stripped in place, leaving the answer intact.
+ */
 export function stripPlaceholders(reply: string): { text: string; removed: string[] } {
   const original = (reply || '').trim();
-  if (!original || !PLACEHOLDER_RE.test(original)) return { text: original, removed: [] };
+  if (!original) return { text: original, removed: [] };
 
-  const sentences = original.match(/[^.!?]+[.!?]*/g) || [original];
-  const kept = [];
-  const removed = [];
+  // Citations first, inline, so a cited sentence is then judged on its own
+  // words rather than on the marker that proves it was sourced.
+  const decited = original.replace(CITATION_RE, '').replace(/\s{2,}/g, ' ').trim();
+  if (!PLACEHOLDER_RE.test(decited)) return { text: decited, removed: [] };
+
+  // Sentence split that does not cut inside brackets or parentheses, and does
+  // not treat the dot in "example.com" or "1.5" as a sentence end. The plain
+  // /[^.!?]+[.!?]*/ split shipped a half-URL to a customer.
+  const sentences =
+    decited.match(/(?:\[[^\]\n]*\]|\([^)\n]*\)|\.(?=\d)|\.(?=[a-z]{2,4}\b)|[^.!?])+[.!?]*/g)
+    || [decited];
+
+  const kept: string[] = [];
+  const removed: string[] = [];
   for (const s of sentences) {
-    if (PLACEHOLDER_RE.test(s)) removed.push(s.trim());
-    else kept.push(s.trim());
+    const t = s.trim();
+    if (!t) continue;
+    if (PLACEHOLDER_RE.test(t)) removed.push(t);
+    else kept.push(t);
   }
   const text = kept.join(' ').replace(/\s{2,}/g, ' ').trim();
   return { text, removed };

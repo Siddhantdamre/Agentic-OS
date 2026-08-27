@@ -138,3 +138,40 @@ test("naming a payment brand as an ANSWER still survives", () => {
     assert.deepEqual(stripMechanismTalk(good).removed, [], `wrongly edited: ${good}`);
   }
 });
+
+// ── Over-stripping: `connector` is a PRODUCT word before it is a systems word ──
+//
+// The pattern was a bare /\bconnectors?\b/, and it deleted this sentence from
+// a furniture business:
+//
+//   "The connector strip on the base is aluminium."
+//
+// Any business selling hardware, furniture, plumbing, cabling or electronics
+// talks about connectors as the thing it sells. Found by probing the gate with
+// realistic product sentences rather than only with the leak that motivated
+// it. The systems sense now has to travel with company — a possessive, a
+// business-system category, or the verb "connect".
+
+test('a product connector is not mistaken for an integration', () => {
+  for (const draft of [
+    'The connector strip on the base is aluminium. It holds up to 200kg.',
+    'Each shelf ships with four steel connectors. Assembly takes 20 minutes.',
+    'We stock a brass connector for 6mm pipe. It costs 240 rupees.',
+  ]) {
+    const out = stripMechanismTalk(draft);
+    assert.deepEqual(out.removed, [], `over-stripped: ${draft}`);
+    assert.equal(out.text, draft);
+  }
+});
+
+test('the systems sense is still caught in every phrasing that leaked', () => {
+  for (const draft of [
+    'You would need to connect a financial connector. Call us on 080-4000-1234.',
+    'Only two of your connectors are set up. I will pass this to the team.',
+    'I can check your other payment connectors. Revenue shows 0.',
+    'Connectors like Gmail are not configured yet. Call us.',
+  ]) {
+    const out = stripMechanismTalk(draft);
+    assert.ok(out.removed.length > 0, `systems talk survived: ${draft}`);
+  }
+});
