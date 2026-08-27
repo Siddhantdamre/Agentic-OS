@@ -59,6 +59,18 @@ const SUITES = [
     needsDocker: false,
   },
   {
+    name: 'sql parameter lint',
+    what: 'every $N has exactly one argument — the bug that silently emptied retrieval',
+    cmd: [process.execPath, [path.join(__dirname, 'lint-sql-params.js')]],
+    needsDocker: false,
+  },
+  {
+    name: 'tenant scope lint',
+    what: 'no tenant table is read without an org filter or a written-down reason',
+    cmd: [process.execPath, [path.join(__dirname, 'lint-tenant-scope.js')]],
+    needsDocker: false,
+  },
+  {
     name: 'quality rules',
     what: 'the reply scorer agrees with hand-labelled examples',
     cmd: [process.execPath, [path.join(__dirname, 'quality-rules.js'), '--self-test']],
