@@ -95,6 +95,12 @@ const SUITES = [
     needsDocker: true,
   },
   {
+    name: 'learning loop end-to-end',
+    what: 'a correction sent through the real HTTP route becomes retrievable knowledge',
+    cmd: [process.execPath, [path.join(__dirname, 'check-learning-e2e.js')]],
+    needsDocker: true,
+  },
+  {
     name: 'inbound end-to-end',
     what: 'signed webhook to stored conversation, and unsigned is rejected',
     cmd: [process.execPath, [path.join(__dirname, 'check-e2e-inbound.js')]],

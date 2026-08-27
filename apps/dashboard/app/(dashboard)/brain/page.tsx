@@ -4,6 +4,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { Brain, Search } from 'lucide-react';
 import { SnippetCard, type BrainSnippetView } from '@/components/brain/SnippetCard';
 import { SourceRow, type BrainSourceView } from '@/components/brain/SourceRow';
+import { KnowledgeGaps } from '@/components/brain/KnowledgeGaps';
 
 type BrainEntity = {
   entityType: string;
@@ -116,6 +117,13 @@ export default function BrainPage() {
           className="w-full pl-11 pr-4 py-3 rounded-2xl bg-white border border-cream-300 text-sm text-heading focus:outline-none focus:border-amber-500"
         />
       </form>
+
+      {/*
+        Above the stored memory on purpose. What the agent does NOT know is
+        more urgent than what it does, and it is the only list here that
+        converts a minute of an operator's time into a permanent capability.
+      */}
+      <KnowledgeGaps />
 
       {loading ? (
         <div className="space-y-3">
