@@ -20,6 +20,7 @@ import {
   stripMechanismTalk,
   stripPreamble,
   stripPlaceholders,
+  detectCommitment,
   INTERIM_ACK_REPLY,
   HUMAN_REVIEW_REPLY,
   SERVICE_FALLBACK_REPLY,
@@ -102,6 +103,7 @@ const {
   criticCheck,
   criticCheckWithRevision,
   recordKnowledgeGapActivity,
+  recordCommitmentActivity,
   enqueueEmbedActivity,
   markNeedsAttentionActivity,
   saveMessageActivity,
@@ -746,6 +748,35 @@ export async function WorkItemWorkflow(input: WorkItemWorkflowInput): Promise<Wo
       detectedVia: 'denied',
       conversationId: input.conversationId,
       workItemId,
+    });
+  }
+
+  // Keep the promise, or at least remember making it.
+  //
+  // "I'll check and get back to you" used to evaporate the moment this
+  // function returned. Nothing tracked a follow-up, a deadline or an owner, so
+  // the customer waited, nothing arrived, and they concluded the business did
+  // not care — the most expensive failure this system had, and the only one
+  // invisible in every metric, because the conversation looked resolved.
+  //
+  // Detection is deterministic and runs on the FINAL text, after every gate,
+  // so it sees exactly the sentence the customer will read. The detector is
+  // pure and returns a relative offset in minutes rather than a timestamp:
+  // `new Date()` inside workflow code differs across replay, so the database
+  // owns the clock.
+  const commitment = detectCommitment(finalReply);
+  if (commitment.made) {
+    await recordCommitmentActivity({
+      orgId: input.orgId,
+      promise: commitment.promise,
+      question: input.userMessage,
+      dueInMinutes: commitment.dueInMinutes,
+      conversationId: input.conversationId,
+      workItemId,
+      // Keyed by the business key, so a Temporal retry replaying this turn
+      // reopens nothing: one reply is one obligation however many times the
+      // platform runs it.
+      sourceMessageId: `${businessKey}:reply`,
     });
   }
 

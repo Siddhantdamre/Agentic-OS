@@ -172,6 +172,47 @@ const TRIGGERS = {
     })),
   },
 
+  'commitment.due': {
+    // Not null: trigger_dispatches.workflow_name is NOT NULL, and passing null
+    // made every escalation claim throw before it could fire. A named
+    // pseudo-workflow keeps the audit row readable — "(escalation)" is what
+    // actually happened.
+    workflow: '(escalation)',
+    kind: 'condition',
+    describe: 'a promise the agent made has come due with nothing sent',
+    // settle_commitments() runs first (in the engine, below), so anything the
+    // business has already answered is marked kept and never appears here.
+    // What is left is a genuine unkept promise.
+    query: `
+      SELECT c.id::text AS id, c.conversation_id::text AS conversation_id,
+             c.work_item_id::text AS work_item_id, c.promise, c.question, c.due_at
+        FROM commitments c
+       WHERE c.org_id = $1
+         AND c.status = 'broken'
+         AND c.escalated_at IS NULL
+       ORDER BY c.due_at
+       LIMIT $2`,
+    plan: (_now, _cfg, rows) => rows.map((r) => ({
+      fireKey: `commitment:${r.id}`,
+      input: {
+        commitmentId: r.id,
+        conversationId: r.conversation_id,
+        workItemId: r.work_item_id,
+        promise: r.promise,
+        question: r.question,
+      },
+    })),
+    // ESCALATE, do not auto-reply.
+    //
+    // The obvious move is to have the agent send the follow-up itself, and it
+    // is the wrong one today: that means generating outbound customer text
+    // unattended, and reliability x20 has not passed. An overdue promise
+    // appearing on somebody's screen carries most of the value and none of
+    // that risk. Automatic follow-up is a later step, once the gate is met —
+    // and it is a one-line change here when it is.
+    escalate: true,
+  },
+
   'inquiry.book_showing': {
     workflow: 'ShowingScheduleWorkflow',
     kind: 'event',
@@ -372,6 +413,20 @@ async function enabledAutomations() {
     const effectiveMode = FORCE_DRY ? 'dry_run' : row.mode;
 
     // Condition triggers read the world; time triggers read the clock.
+    // Settle commitments BEFORE reading which are broken. A promise the
+    // business answered five minutes ago must be marked kept, not escalated —
+    // escalating an obligation somebody already discharged is how an operator
+    // learns to ignore the list.
+    if (row.trigger_key === 'commitment.due') {
+      try {
+        await db.query(`SELECT * FROM settle_commitments($1::uuid)`, [row.org_id]);
+      } catch (err) {
+        console.log(`  [FAIL]  ${label} could not settle commitments — ${String(err.message).slice(0, 45)}`);
+        failed++;
+        continue;
+      }
+    }
+
     let rows = [];
     if (trigger.kind === 'condition') {
       try {
@@ -419,6 +474,38 @@ async function enabledAutomations() {
       if (effectiveMode === 'dry_run') {
         dryRun++;
         console.log(`  [DRY ]  ${label} would start ${trigger.workflow}  (${item.fireKey})`);
+        continue;
+      }
+
+      // An escalation trigger raises the item for a human instead of starting
+      // a workflow. Same claim, same audit trail, no unattended outbound.
+      if (trigger.escalate) {
+        try {
+          await db.query(
+            `UPDATE conversations SET status = 'needs_attention', updated_at = NOW()
+              WHERE id = $1 AND org_id = $2 AND status = 'open'`,
+            [item.input.conversationId, row.org_id],
+          );
+          await db.query(
+            `UPDATE commitments SET escalated_at = NOW()
+              WHERE id = $1 AND org_id = $2`,
+            [item.input.commitmentId, row.org_id],
+          );
+          await db.query(
+            `SELECT settle_trigger_fire($1::uuid, $2::text, $3::text, 'dispatched', NULL, $4::text)`,
+            [row.org_id, row.trigger_key, item.fireKey,
+              `escalated: ${String(item.input.promise).slice(0, 120)}`],
+          );
+          dispatched++;
+          console.log(`  [ OK ]  ${label} escalated an unkept promise  (${item.fireKey})`);
+        } catch (err) {
+          await db.query(
+            `SELECT settle_trigger_fire($1::uuid, $2::text, $3::text, 'failed', NULL, $4::text)`,
+            [row.org_id, row.trigger_key, item.fireKey, String(err.message).slice(0, 200)],
+          );
+          failed++;
+          console.log(`  [FAIL]  ${label} ${String(err.message).slice(0, 60)}`);
+        }
         continue;
       }
 

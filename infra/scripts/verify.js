@@ -113,6 +113,12 @@ const SUITES = [
     needsDocker: true,
   },
   {
+    name: 'commitment ledger',
+    what: 'a promise survives the end of the turn, and cannot keep itself',
+    cmd: [process.execPath, [path.join(__dirname, 'check-commitments.js')]],
+    needsDocker: true,
+  },
+  {
     name: 'impact / outcome ledger',
     what: 'the renewal number is arithmetic, not a feeling — and it never counts an escalation as a win',
     cmd: [process.execPath, [path.join(__dirname, 'check-impact-e2e.js')]],

@@ -710,3 +710,129 @@ export function stripPlaceholders(reply: string): { text: string; removed: strin
  */
 export const INTERIM_ACK_REPLY =
   "Just checking that for you — I will have an answer shortly.";
+
+// ── Commitments ─────────────────────────────────────────────────────────────
+//
+// When the agent says "I'll check and get back to you", nothing anywhere
+// remembered it. The turn ended and the promise evaporated. Nothing tracked a
+// follow-up, a due time, or an owner — there was no commitment concept in the
+// codebase at all outside the rent pack.
+//
+// That is the single biggest reason an AI assistant feels unreliable. Not
+// wrong answers — people forgive a wrong answer and ask again. An UNKEPT
+// PROMISE is different: the customer waits, nothing arrives, and they conclude
+// the business does not care. One of those costs more trust than ten wrong
+// answers.
+//
+// So a promise becomes a durable obligation with a due time, and something
+// sweeps for the ones that come due. This detector is the first half.
+//
+// PURE ON PURPOSE — no clock, no I/O.
+// It returns a RELATIVE offset in minutes, never a timestamp. It runs inside a
+// Temporal workflow, where `new Date()` is non-deterministic across replay: a
+// workflow that computed a due date inline would produce a different one when
+// replayed and fail the determinism check.
+
+/**
+ * A first-person promise to come back with something.
+ *
+ * Requires all three: a first-person subject, a future modality, and a
+ * follow-up verb. All three, because any one alone is far too broad —
+ * "we deliver on Tuesday" is a fact about the service, "I'll be happy to help"
+ * is a pleasantry, and "you will receive a confirmation" is not something this
+ * agent can be held to.
+ */
+// A regex LITERAL, not new RegExp(['...'].join('|')).
+//
+// The string form needs every backslash doubled, and this file has now lost
+// that argument three times: `\\s` collapses to `\s` (which is just `s`) and
+// `\\b` collapses to `\b`, which inside a single-quoted JS string is a literal
+// backspace character. The pattern still compiles, still reads correctly, and
+// silently matches nothing — this exact detector shipped dead once already and
+// only a probe against real sentences caught it.
+const COMMITMENT_RE =
+  /\b(?:i|we)\s*(?:'ll|\s+will|\s+am\s+going\s+to|\s+shall)\s+[^.!?]{0,40}?\b(?:check|confirm|get\s+back|revert|look\s+into|find\s+out|follow\s+up|update\s+you|send\s+(?:you|it|that|the)|email\s+you|call\s+you|have\s+an\s+answer)|\blet\s+me\s+(?:check|confirm|look\s+into|find\s+out|get\s+back)\b|\b(?:someone|somebody|a\s+colleague|the\s+team|our\s+team|a\s+member\s+of\s+the\s+team)\s+(?:from\s+(?:the\s+|our\s+)?team\s+)?(?:will|'ll)\s+[^.!?]{0,30}?\b(?:call|contact|email|get\s+back|come\s+back|follow\s+up|reach\s+out|be\s+in\s+touch)|\b(?:will|'ll)\s+be\s+in\s+touch\b/i;
+
+/**
+ * Phrases that look like a promise and are not one.
+ *
+ * Checked BEFORE the match, because a pleasantry containing "I'll" would
+ * otherwise open an obligation nobody owes and the kept-promise rate would
+ * decay for no reason. A trust metric that counts imaginary promises is worse
+ * than no metric.
+ */
+const NOT_A_COMMITMENT_RE =
+  // A pleasantry: "I'll be happy to help".
+  /\b(?:i|we)\s*(?:'ll|\s+will)\s+(?:be\s+)?(?:happy|glad|delighted|pleased)\b/i
+  // A REQUEST, not a promise: "we'll need your order number to check that".
+  // The ball is in the customer's court, so no obligation has been created —
+  // and without this the sentence reads as a promise to "check", opening an
+  // obligation nobody owes and decaying the kept-promise rate for no reason.
+  ;
+const CONDITIONAL_ON_CUSTOMER_RE =
+  /\b(?:i|we)\s*(?:'ll|\s+will)\s+need\b|\b(?:could|can|would)\s+you\s+(?:please\s+)?(?:send|share|confirm|provide|give)\b/i;
+
+/** How long the words themselves imply, in minutes. */
+const DUE_PHRASES: Array<[RegExp, number]> = [
+  [/\bwithin\s+(\d+)\s*min/i, 0],            // captured below
+  [/\bwithin\s+(\d+)\s*hour/i, 0],
+  [/\bin\s+(\d+)\s*min/i, 0],
+  [/\bin\s+(\d+)\s*hour/i, 0],
+  [/\b(?:right\s+away|immediately|straight\s+away)\b/i, 15],
+  [/\b(?:shortly|in\s+a\s+moment|in\s+a\s+minute|very\s+soon|soon)\b/i, 60],
+  [/\b(?:today|by\s+end\s+of\s+day|this\s+evening|this\s+afternoon)\b/i, 8 * 60],
+  [/\btomorrow\b/i, 24 * 60],
+  [/\bwithin\s+(?:24|twenty[-\s]?four)\s*hours?\b/i, 24 * 60],
+  [/\b(?:in\s+a\s+few\s+days|this\s+week)\b/i, 3 * 24 * 60],
+];
+
+/**
+ * Default when the promise names no time.
+ *
+ * Four hours, deliberately shorter than it feels comfortable. A promise with
+ * no stated deadline is the one a customer is most likely to be waiting on
+ * right now, and the cost of surfacing it early is an operator glancing at
+ * something already handled. The cost of surfacing it late is a customer who
+ * has already given up.
+ */
+const DEFAULT_DUE_MINUTES = 4 * 60;
+
+export interface CommitmentDetection {
+  /** True when the reply promises a follow-up this agent can be held to. */
+  made: boolean;
+  /** The sentence carrying the promise, for the operator to read. */
+  promise: string;
+  /** Minutes from send until it is overdue. Relative — never a timestamp. */
+  dueInMinutes: number;
+}
+
+export function detectCommitment(reply: string): CommitmentDetection {
+  const text = (reply || '').trim();
+  const none: CommitmentDetection = { made: false, promise: '', dueInMinutes: 0 };
+  if (!text) return none;
+
+  // Sentence-level, so the promise recorded is the sentence a human can read
+  // back, not the whole message.
+  const sentences = text.match(/[^.!?]+[.!?]*/g) || [text];
+  for (const raw of sentences) {
+    const s = raw.trim();
+    if (!s || NOT_A_COMMITMENT_RE.test(s) || CONDITIONAL_ON_CUSTOMER_RE.test(s)) continue;
+    if (!COMMITMENT_RE.test(s)) continue;
+
+    let dueInMinutes = DEFAULT_DUE_MINUTES;
+    // An explicit number wins over a vague word: "within 2 hours" is a
+    // stronger statement than "shortly" and the customer will hold you to it.
+    const mins = /\b(?:within|in)\s+(\d+)\s*min/i.exec(s);
+    const hours = /\b(?:within|in)\s+(\d+)\s*hour/i.exec(s);
+    if (mins) dueInMinutes = Math.max(5, Number(mins[1]));
+    else if (hours) dueInMinutes = Math.max(15, Number(hours[1]) * 60);
+    else {
+      for (const [re, minutes] of DUE_PHRASES) {
+        if (minutes > 0 && re.test(s)) { dueInMinutes = minutes; break; }
+      }
+    }
+
+    return { made: true, promise: s, dueInMinutes };
+  }
+  return none;
+}

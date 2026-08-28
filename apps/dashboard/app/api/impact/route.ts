@@ -115,6 +115,29 @@ export async function GET(request: Request) {
       [orgId, String(days)],
     );
 
+    // Promises made and kept.
+    //
+    // A separate number from resolution rate, and arguably a harder one: a
+    // business can resolve most conversations and still be the kind that says
+    // "I'll get back to you" and doesn't. Customers forgive a wrong answer and
+    // ask again; they do not forgive being left waiting, and until now that
+    // failure was invisible in every metric here because the conversation
+    // still looked resolved.
+    //
+    // 'cancelled' is excluded from the denominator: the customer stopped
+    // needing the answer, which is not a promise the business broke.
+    const promises = await client.query(
+      `SELECT
+         COUNT(*) FILTER (WHERE status IN ('kept', 'broken'))::int AS settled,
+         COUNT(*) FILTER (WHERE status = 'kept')::int              AS kept,
+         COUNT(*) FILTER (WHERE status = 'broken')::int            AS broken,
+         COUNT(*) FILTER (WHERE status = 'open')::int              AS open
+       FROM commitments
+      WHERE org_id = $1 AND created_at >= NOW() - ($2 || ' days')::interval`,
+      [orgId, String(days)],
+    );
+    const p = promises.rows[0];
+
     // Takeovers, from the ledger's own negative signal rather than recomputed
     // here — one definition, in one place.
     const takeovers = await client.query(
@@ -148,6 +171,17 @@ export async function GET(request: Request) {
       // turn into marketing ones.
       deltaPp,
       takeovers: takeovers.rows[0]?.n ?? 0,
+      promises: {
+        made: p.settled + p.open,
+        kept: p.kept,
+        broken: p.broken,
+        open: p.open,
+        // null, not 0, when nothing has been settled yet. A kept rate of 0%
+        // and "no promises have come due" are opposite statements about a
+        // business, and rendering the second as the first would be a serious
+        // and very visible lie.
+        keptPct: p.settled > 0 ? Math.round((p.kept / p.settled) * 1000) / 10 : null,
+      },
       teaching: {
         corrections: t.corrections,
         gapsAnswered: t.gaps_answered,

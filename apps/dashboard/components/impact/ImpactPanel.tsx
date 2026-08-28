@@ -38,6 +38,7 @@ type Impact = {
   previous: Period;
   deltaPp: number | null;
   takeovers: number;
+  promises: { made: number; kept: number; broken: number; open: number; keptPct: number | null };
   teaching: { corrections: number; gapsAnswered: number; gapsOpen: number; questionsMissed: number };
   causal: { holdoutActions: number; comparisonAvailable: boolean };
 };
@@ -133,6 +134,33 @@ export function ImpactPanel({ days = 30 }: { days?: number }) {
           )}
         </div>
       </div>
+
+      {/*
+        Promises kept, beside resolution rate and never folded into it.
+        A business can resolve most conversations and still be the kind that
+        says "I'll get back to you" and doesn't — customers forgive a wrong
+        answer and ask again, and do not forgive being left waiting.
+      */}
+      {data.promises?.keptPct !== null && data.promises?.made > 0 && (
+        <div className="flex items-baseline gap-3 border-t border-cream-300 pt-4">
+          <span className="text-2xl font-serif font-bold text-heading">
+            {data.promises.keptPct}%
+          </span>
+          <span className="text-xs text-slate-600">
+            of promises kept — {data.promises.kept} of{' '}
+            {data.promises.kept + data.promises.broken} that came due
+            {data.promises.open > 0 && (
+              <span className="text-slate-400"> · {data.promises.open} still within time</span>
+            )}
+          </span>
+        </div>
+      )}
+      {data.promises?.keptPct === null && data.promises?.open > 0 && (
+        <p className="text-xs text-slate-500 border-t border-cream-300 pt-4">
+          {data.promises.open} promise{data.promises.open === 1 ? '' : 's'} made and still
+          within time. None has come due yet, so there is no kept rate to show.
+        </p>
+      )}
 
       {previous.autonomousPct !== null && (
         <p className="text-xs text-slate-500">

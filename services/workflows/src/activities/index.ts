@@ -986,3 +986,59 @@ export async function recordKnowledgeGapActivity(params: {
     return { gapId: null };
   }
 }
+
+/**
+ * Record a promise the agent just made.
+ *
+ * "I'll check and get back to you" used to evaporate the moment the turn
+ * ended: nothing tracked a follow-up, a deadline or an owner. That is the
+ * single biggest reason an assistant feels unreliable — an unkept promise
+ * costs more trust than several wrong answers, and it was invisible in every
+ * metric here, because the conversation looked resolved and the customer was
+ * simply gone.
+ *
+ * `dueInMinutes` is RELATIVE and the database owns the clock. The caller is a
+ * Temporal workflow, where `new Date()` differs across replay, so a due date
+ * computed inline would fail the determinism check.
+ *
+ * Never throws. A promise that fails to record is a lost obligation, which is
+ * bad — but failing the reply a customer is waiting on, to protect the
+ * bookkeeping about that reply, is worse.
+ */
+export async function recordCommitmentActivity(params: {
+  orgId: string;
+  promise: string;
+  question: string;
+  dueInMinutes: number;
+  conversationId?: string;
+  workItemId?: string;
+  /** Idempotency: a replayed turn must not open a second obligation. */
+  sourceMessageId: string;
+}): Promise<{ commitmentId: string | null }> {
+  const orgId = requireOrgId(params.orgId);
+  const promise = (params.promise || '').trim();
+  if (!promise) return { commitmentId: null };
+
+  try {
+    return await withOrgClient(orgId, async (client) => {
+      const res = await client.query(
+        `SELECT record_commitment($1::uuid, $2::uuid, $3::uuid, $4::text,
+                                  $5::text, $6::int, $7::text) AS id`,
+        [
+          orgId,
+          params.conversationId || null,
+          params.workItemId || null,
+          promise.slice(0, 2000),
+          (params.question || '').slice(0, 2000),
+          params.dueInMinutes,
+          params.sourceMessageId,
+        ]
+      );
+      return { commitmentId: (res.rows[0]?.id as string) || null };
+    });
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    Context.current().log.warn('commitment not recorded', { message });
+    return { commitmentId: null };
+  }
+}
