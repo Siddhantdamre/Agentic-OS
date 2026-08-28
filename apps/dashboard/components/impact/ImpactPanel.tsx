@@ -39,6 +39,16 @@ type Impact = {
   deltaPp: number | null;
   takeovers: number;
   promises: { made: number; kept: number; broken: number; open: number; keptPct: number | null };
+  money: {
+    counts: {
+      meetingsBooked: number; paymentsReceived: number; dealsClosed: number;
+      withAmount: number; withoutAmount: number;
+    };
+    byCurrency: Array<{
+      currency: string; withoutHuman: number; withHuman: number;
+      total: number; autonomousPct: number | null;
+    }>;
+  };
   teaching: { corrections: number; gapsAnswered: number; gapsOpen: number; questionsMissed: number };
   causal: { holdoutActions: number; comparisonAvailable: boolean };
 };
@@ -160,6 +170,68 @@ export function ImpactPanel({ days = 30 }: { days?: number }) {
           {data.promises.open} promise{data.promises.open === 1 ? '' : 's'} made and still
           within time. None has come due yet, so there is no kept rate to show.
         </p>
+      )}
+
+      {/*
+        Money, per currency and never added across them.
+        "84% resolved" is a good number; "₹4,20,000 of value with nobody
+        stepping in" is a different conversation. Shown only when there is
+        something to show — a money section reading zero on a business that
+        has not connected any of this reads as failure rather than absence.
+      */}
+      {(data.money?.byCurrency?.length > 0 || data.money?.counts?.meetingsBooked > 0
+        || data.money?.counts?.dealsClosed > 0 || data.money?.counts?.paymentsReceived > 0) && (
+        <div className="border-t border-cream-300 pt-4 space-y-3">
+          <h3 className="text-xs font-bold text-heading">Value it moved</h3>
+
+          {data.money.byCurrency.map((c) => (
+            <div key={c.currency} className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+              <span className="text-2xl font-serif font-bold text-heading">
+                {/* Formatted in the currency's own convention — Indian grouping
+                    for INR reads as ₹4,20,000, not ₹420,000. */}
+                {new Intl.NumberFormat(c.currency === 'INR' ? 'en-IN' : 'en-US',
+                  { style: 'currency', currency: c.currency, maximumFractionDigits: 0 })
+                  .format(c.withoutHuman)}
+              </span>
+              <span className="text-xs text-slate-600">
+                {c.autonomousPct === null
+                  ? 'recorded, with no value attached'
+                  : <>handled with nobody stepping in — {c.autonomousPct}% of{' '}
+                      {new Intl.NumberFormat(c.currency === 'INR' ? 'en-IN' : 'en-US',
+                        { style: 'currency', currency: c.currency, maximumFractionDigits: 0 })
+                        .format(c.total)} total</>}
+              </span>
+            </div>
+          ))}
+
+          <div className="flex flex-wrap gap-x-5 gap-y-1 text-xs text-slate-600">
+            {data.money.counts.meetingsBooked > 0 && (
+              <span><span className="font-bold text-heading">{data.money.counts.meetingsBooked}</span> meeting{data.money.counts.meetingsBooked === 1 ? '' : 's'} booked</span>
+            )}
+            {data.money.counts.paymentsReceived > 0 && (
+              <span><span className="font-bold text-heading">{data.money.counts.paymentsReceived}</span> payment{data.money.counts.paymentsReceived === 1 ? '' : 's'} received</span>
+            )}
+            {data.money.counts.dealsClosed > 0 && (
+              <span><span className="font-bold text-heading">{data.money.counts.dealsClosed}</span> deal{data.money.counts.dealsClosed === 1 ? '' : 's'} closed</span>
+            )}
+          </div>
+
+          {data.money.counts.withoutAmount > 0 && (
+            // Said out loud. Silently omitting outcomes with no figure would
+            // make the total look like the whole picture when it is not.
+            <p className="text-xs text-slate-400">
+              {data.money.counts.withoutAmount} of these carried no amount, so they are counted
+              but not included in the value above.
+            </p>
+          )}
+
+          {!causal.comparisonAvailable && data.money.byCurrency.length > 0 && (
+            <p className="text-xs text-slate-500">
+              This is value that moved through conversations the AI handled. Without a
+              control group we cannot say it would not have happened anyway.
+            </p>
+          )}
+        </div>
       )}
 
       {previous.autonomousPct !== null && (

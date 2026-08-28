@@ -1,5 +1,9 @@
 import { NextResponse } from 'next/server';
 import { getScopedClient } from '@/lib/db';
+// The arithmetic lives in one place, with its own 15 unit tests. The API
+// shapes the query; it does not re-implement the sums, because two copies of
+// a revenue calculation drift and only one of them is tested.
+import { summariseMoney, autonomousValuePct } from '@darex/workflows/dist/outcomes/money.js';
 
 export const dynamic = 'force-dynamic';
 
@@ -147,6 +151,49 @@ export async function GET(request: Request) {
       [orgId, String(days)],
     );
 
+    // Money.
+    //
+    // The AI/human split is decided by whether a PERSON spoke in the
+    // conversation the outcome belongs to — read from messages, not from the
+    // resolution metadata, because a conversation carrying a payment may still
+    // be open and would otherwise be silently excluded.
+    //
+    // An outcome with no conversation cannot be attributed either way. It is
+    // counted, and its money is reported as human-involved rather than
+    // credited to the AI: revenue nobody can trace to an AI conversation must
+    // never inflate the AI's number.
+    const value = await client.query(
+      `SELECT
+         o.outcome_kind                       AS kind,
+         o.value_numeric                      AS amount,
+         o.value_currency                     AS currency,
+         COALESCE(
+           o.conversation_id IS NULL
+           OR EXISTS (
+             SELECT 1 FROM messages m
+              WHERE m.org_id = o.org_id
+                AND m.conversation_id = o.conversation_id
+                AND m.role = 'human_agent'
+           ), true)                           AS human_involved
+       FROM outcome_events o
+      WHERE o.org_id = $1
+        AND o.outcome_kind IN ('meeting_booked', 'payment_received', 'deal_closed')
+        AND o.occurred_at >= NOW() - ($2 || ' days')::interval`,
+      [orgId, String(days)],
+    );
+
+    const money = summariseMoney(
+      value.rows.map((r) => ({
+        kind: r.kind,
+        // NUMERIC arrives from pg as a string, on purpose — it is exact there
+        // and lossy as a float. Converted once, here, rather than letting a
+        // string reach the arithmetic and turn a sum into concatenation.
+        amount: r.amount === null ? null : Number(r.amount),
+        currency: r.currency,
+        humanInvolved: Boolean(r.human_involved),
+      })),
+    );
+
     // Is there a control group? Almost always no, and the answer changes what
     // any of this is allowed to claim.
     const holdout = await client.query(
@@ -171,6 +218,16 @@ export async function GET(request: Request) {
       // turn into marketing ones.
       deltaPp,
       takeovers: takeovers.rows[0]?.n ?? 0,
+      money: {
+        counts: money.counts,
+        // One entry per currency, each with its own autonomous share. Never a
+        // single cross-currency total: adding rupees to dollars produces a
+        // number that looks precise and means nothing.
+        byCurrency: money.byCurrency.map((c) => ({
+          ...c,
+          autonomousPct: autonomousValuePct(c),
+        })),
+      },
       promises: {
         made: p.settled + p.open,
         kept: p.kept,
