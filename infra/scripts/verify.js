@@ -131,6 +131,12 @@ const SUITES = [
     needsDocker: true,
   },
   {
+    name: 'earned autonomy',
+    what: 'the agent can be answered, earns trust slowly, and money never stops asking',
+    cmd: [process.execPath, [path.join(__dirname, 'check-approvals.js')]],
+    needsDocker: true,
+  },
+  {
     name: 'money metrics',
     what: 'revenue is traceable, split by who handled it, and currencies are never added',
     cmd: [process.execPath, [path.join(__dirname, 'check-money-metrics.js')]],

@@ -291,6 +291,37 @@ export async function signalPlanDecision(params: {
   }
 }
 
+/**
+ * Signal one WorkItemWorkflow with a human's decision.
+ *
+ * BEST EFFORT, AND THAT IS THE POINT. WorkItemWorkflow waits on the signal for
+ * HITL_WAIT_TIMEOUT — two minutes — and humans do not answer in two minutes.
+ * A decision made an hour later cannot un-time-out a workflow that has already
+ * moved on, so the DECISION is recorded durably in approval_requests first and
+ * this runs second. A "not found" here means the workflow finished, which is
+ * expected and not a failure: the record is what matters and what lets the
+ * work be re-driven.
+ */
+export async function signalWorkItemDecision(params: {
+  workflowId: string;
+  decision: 'approved' | 'rejected';
+}): Promise<{ signalled: boolean; reason?: string }> {
+  const client = await getTemporalClient();
+  if (!client) return { signalled: false, reason: 'Temporal unavailable' };
+  try {
+    const handle = client.workflow.getHandle(params.workflowId);
+    if (params.decision === 'rejected') await handle.signal('rejectWorkItem');
+    else await handle.signal('approveWorkItem', 'approved');
+    return { signalled: true };
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    if (/not found|not running|no running|completed/i.test(message)) {
+      return { signalled: false, reason: 'the workflow had already finished waiting' };
+    }
+    return { signalled: false, reason: message.slice(0, 120) };
+  }
+}
+
 export async function startOwnerBriefingWorkflow(input: OwnerBriefingWorkflowInput) {
   const client = await getTemporalClient();
   if (!client) return null;

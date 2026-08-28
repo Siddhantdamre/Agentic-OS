@@ -104,6 +104,7 @@ const {
   criticCheckWithRevision,
   recordKnowledgeGapActivity,
   recordCommitmentActivity,
+  recordApprovalRequestActivity,
   enqueueEmbedActivity,
   markNeedsAttentionActivity,
   saveMessageActivity,
@@ -344,6 +345,24 @@ export async function WorkItemWorkflow(input: WorkItemWorkflowInput): Promise<Wo
       payload: { classes: preHitl.classes, phase: 'before_tools' },
       businessKey: `${businessKey}:confirm_requested`,
     });
+
+    // Put it somewhere a human can actually answer.
+    //
+    // The work event above is append-only and nothing rendered it, so before
+    // this the agent asked and could never be answered: 24 requests waiting,
+    // 0 ever decided, the oldest for thirteen days. This writes the row
+    // /api/approvals reads, carrying the workflow id so a decision can be
+    // signalled back if this workflow is somehow still waiting.
+    for (const actionClass of preHitl.classes) {
+      await recordApprovalRequestActivity({
+        orgId: input.orgId,
+        workItemId,
+        conversationId: input.conversationId,
+        actionClass,
+        summary: `The agent wants to ${actionClass} in reply to: ${input.userMessage.slice(0, 200)}`,
+        workflowId: parentId,
+      });
+    }
 
     // Bounded, and strictly fail-CLOSED. Side-effecting send/pay/sign tools have
     // not run yet, so a timeout must never be read as approval — an unanswered

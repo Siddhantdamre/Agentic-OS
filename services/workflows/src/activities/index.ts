@@ -988,6 +988,56 @@ export async function recordKnowledgeGapActivity(params: {
 }
 
 /**
+ * Put an approval request somewhere a human can actually find it.
+ *
+ * WorkItemWorkflow already emitted a `confirm_requested` work event and set
+ * the item to waiting_approval. Neither is answerable: the event log is
+ * append-only and nothing rendered it. Measured before this shipped, 24
+ * requests were waiting and 0 had ever been answered, the oldest for thirteen
+ * days.
+ *
+ * This writes the row /api/approvals reads, carrying the workflow id so a
+ * decision can be signalled back — best effort, because the workflow only
+ * waits two minutes and a human answering in ten is still answering.
+ *
+ * Never throws: failing the turn because the bookkeeping about the turn failed
+ * would turn a pause into an outage.
+ */
+export async function recordApprovalRequestActivity(params: {
+  orgId: string;
+  workItemId: string;
+  conversationId?: string;
+  actionClass: string;
+  summary: string;
+  draft?: string;
+  workflowId?: string;
+}): Promise<{ requestId: string | null }> {
+  const orgId = requireOrgId(params.orgId);
+  try {
+    return await withOrgClient(orgId, async (client) => {
+      const res = await client.query(
+        `SELECT record_approval_request($1::uuid, $2::uuid, $3::uuid, $4::text,
+                                         $5::text, $6::text, $7::text) AS id`,
+        [
+          orgId,
+          params.workItemId || null,
+          params.conversationId || null,
+          params.actionClass,
+          (params.summary || '').slice(0, 500),
+          (params.draft || '').slice(0, 4000),
+          params.workflowId || null,
+        ]
+      );
+      return { requestId: (res.rows[0]?.id as string) || null };
+    });
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    Context.current().log.warn('approval request not recorded', { message });
+    return { requestId: null };
+  }
+}
+
+/**
  * Record a promise the agent just made.
  *
  * "I'll check and get back to you" used to evaporate the moment the turn

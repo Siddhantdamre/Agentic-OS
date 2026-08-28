@@ -6,6 +6,7 @@ import Link from 'next/link';
 import { Sparkles, AlertTriangle, Send, CheckCircle2, CircleDashed } from 'lucide-react';
 import { LiveRegion, StatusBadge } from '@/components/a11y';
 import { ImpactPanel } from '@/components/impact/ImpactPanel';
+import { ApprovalQueue } from '@/components/approvals/ApprovalQueue';
 
 export const dynamic = 'force-dynamic';
 
@@ -169,6 +170,13 @@ function HomeContent() {
         because a brand new org has nothing finished yet, and a percentage over
         no data is noise dressed as insight.
       */}
+      {/*
+        Above impact on purpose. What the agent is BLOCKED on is more urgent
+        than how it performed — an unanswered approval is a customer waiting,
+        and 24 of them sat unanswerable for thirteen days before this existed.
+      */}
+      {!isWarmup && <ApprovalQueue />}
+
       {!isWarmup && <ImpactPanel days={30} />}
 
       {isWarmup ? (
