@@ -113,6 +113,18 @@ const SUITES = [
     needsDocker: true,
   },
   {
+    name: 'digest gating',
+    what: 'preview is the default and only owners or admins are recipients',
+    cmd: [process.execPath, [path.join(__dirname, 'weekly-digest.js'), '--self-test']],
+    needsDocker: false,
+  },
+  {
+    name: 'weekly digest',
+    what: 'the right business gets its own numbers, and a quiet week sends nothing',
+    cmd: [process.execPath, [path.join(__dirname, 'check-digest.js')]],
+    needsDocker: true,
+  },
+  {
     name: 'commitment ledger',
     what: 'a promise survives the end of the turn, and cannot keep itself',
     cmd: [process.execPath, [path.join(__dirname, 'check-commitments.js')]],

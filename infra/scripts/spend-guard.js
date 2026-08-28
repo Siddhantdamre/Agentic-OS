@@ -139,6 +139,24 @@ if (process.argv.includes('--self-test')) {
 
   console.log('\n### SPEND GUARD SELF-TEST\n');
 
+  // An unreadable balance must EXIT NON-ZERO. This shipped exiting 0, and a
+  // single transient failure of the OpenRouter call made the budget alarm
+  // report green over an empty wallet — a full verify run came back
+  // "18 of 18 suites passed" on a deployment at -$0.20. Asserted as a
+  // subprocess because the exit code is the whole behaviour.
+  {
+    const r = require('child_process').spawnSync(
+      process.execPath, [__filename, '--no-record'],
+      {
+        encoding: 'utf8',
+        env: { ...process.env, OPENROUTER_API_KEY: 'sk-or-v1-definitely-not-a-real-key-000000' },
+      },
+    );
+    check('an UNREADABLE balance exits non-zero', r.status === 1,
+      `exit ${r.status} — "cannot tell" must never report as "fine"`);
+    check('and says so in words', /unreadable/i.test(`${r.stdout}${r.stderr}`));
+  }
+
   const none = burnRate([]);
   check('no samples is honest, not zero', none.known === false);
 
@@ -227,6 +245,18 @@ if (process.argv.includes('--self-test')) {
   }
 
   const verdict = (() => {
+    // UNKNOWN IS NOT OK, and this exits non-zero for it.
+    //
+    // It used to exit 0. One transient failure of the OpenRouter call — a
+    // timeout, a 401 on a rotated key, a rate limit — and the budget alarm
+    // reported green while the balance sat at -$0.20. It was caught exactly
+    // that way: a full verify run came back "18 of 18 suites passed" on a
+    // deployment whose wallet was empty.
+    //
+    // "I cannot tell whether you have money" is not "you have money". An alarm
+    // that cannot measure must never report the thing it failed to measure as
+    // fine, because a green it did not earn is worse than no alarm at all —
+    // the operator stops looking.
     if (!provider.ok) return { level: 'unknown', line: `provider balance unreadable — ${provider.reason}` };
     if (remaining <= 0) return { level: 'critical', line: `balance is EXHAUSTED ($${remaining.toFixed(2)})` };
     if (runwayDays !== null && runwayDays < RUNWAY_CRITICAL_DAYS) {
@@ -252,7 +282,9 @@ if (process.argv.includes('--self-test')) {
       tokens24h: volume.ok ? Number(volume.tokens_24h) : null,
       mix: volume.ok ? volume.mix.map((m) => ({ tier: m.model_group, calls: Number(m.calls) })) : [],
     }, null, 2));
-    process.exit(verdict.level === 'critical' ? 1 : 0);
+    // 'unknown' exits non-zero too: a balance we could not read is not a
+  // balance we can vouch for. See the verdict block above.
+  process.exit(verdict.level === 'critical' || verdict.level === 'unknown' ? 1 : 0);
   }
 
   const money = (n) => (n === null || n === undefined ? '—' : `$${Number(n).toFixed(4)}`);
@@ -300,5 +332,7 @@ if (process.argv.includes('--self-test')) {
     console.log('  rail (DEEPSEEK_API_KEY / GROQ_API_KEY) so one empty wallet cannot');
     console.log('  take every tier down at once.\n');
   }
-  process.exit(verdict.level === 'critical' ? 1 : 0);
+  // 'unknown' exits non-zero too: a balance we could not read is not a
+  // balance we can vouch for. See the verdict block above.
+  process.exit(verdict.level === 'critical' || verdict.level === 'unknown' ? 1 : 0);
 })();
