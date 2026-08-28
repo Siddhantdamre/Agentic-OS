@@ -101,6 +101,18 @@ const SUITES = [
     needsDocker: true,
   },
   {
+    name: 'trigger scheduling maths',
+    what: 'when something fires — the part that fails quietly',
+    cmd: [process.execPath, [path.join(__dirname, 'trigger-engine.js'), '--self-test']],
+    needsDocker: false,
+  },
+  {
+    name: 'trigger engine safety',
+    what: 'nothing fires unopted, nothing fires twice, a bad query cannot flood customers',
+    cmd: [process.execPath, [path.join(__dirname, 'check-trigger-engine.js')]],
+    needsDocker: true,
+  },
+  {
     name: 'impact / outcome ledger',
     what: 'the renewal number is arithmetic, not a feeling — and it never counts an escalation as a win',
     cmd: [process.execPath, [path.join(__dirname, 'check-impact-e2e.js')]],

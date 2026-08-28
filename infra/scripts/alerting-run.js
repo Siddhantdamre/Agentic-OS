@@ -29,6 +29,10 @@ const scripts = [
   // idempotent, so running it too often costs nothing and running it too
   // rarely only lowers resolution.
   'run-outcome-ledger.js',
+  // The ignition. Runs on the same cadence for the same reason: a scheduler
+  // nobody schedules is how the whole trigger vocabulary sat unused. It fires
+  // nothing until an org opts in, so adding it here is safe by construction.
+  'trigger-engine.js',
 ];
 
 let failed = 0;
