@@ -161,6 +161,12 @@ const SUITES = [
     needsDocker: true,
   },
   {
+    name: 'retention and erasure',
+    what: 'a person asking to be forgotten is, including what the agent learned about them',
+    cmd: [process.execPath, [path.join(__dirname, 'check-erasure.js')]],
+    needsDocker: true,
+  },
+  {
     name: 'money metrics',
     what: 'revenue is traceable, split by who handled it, and currencies are never added',
     cmd: [process.execPath, [path.join(__dirname, 'check-money-metrics.js')]],
