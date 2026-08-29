@@ -71,6 +71,12 @@ const SUITES = [
     needsDocker: false,
   },
   {
+    name: 'production port bindings',
+    what: 'the prod overlay replaces the kernel's ports instead of appending to them',
+    cmd: [process.execPath, [path.join(__dirname, 'lint-compose-ports.js')]],
+    needsDocker: true,
+  },
+  {
     name: 'tenant scope lint',
     what: 'no tenant table is read without an org filter or a written-down reason',
     cmd: [process.execPath, [path.join(__dirname, 'lint-tenant-scope.js')]],
