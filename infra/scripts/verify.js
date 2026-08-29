@@ -72,7 +72,7 @@ const SUITES = [
   },
   {
     name: 'production port bindings',
-    what: 'the prod overlay replaces the kernel's ports instead of appending to them',
+    what: 'the prod overlay replaces the kernel ports instead of appending to them',
     cmd: [process.execPath, [path.join(__dirname, 'lint-compose-ports.js')]],
     needsDocker: true,
   },
