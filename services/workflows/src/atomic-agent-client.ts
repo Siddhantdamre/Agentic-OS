@@ -450,7 +450,9 @@ export async function runAgentTurn(input: AgentTaskInput, opts?: RunAgentOptions
           'X-Atomic-Extensions': 'on',
         },
         body: JSON.stringify({
-          model: ATOMIC_AGENT_MODEL,
+          // The budget gate may pin this turn to the free tier; otherwise the
+          // usual alias, which carries the paid failover chain.
+          model: input.modelOverride || ATOMIC_AGENT_MODEL,
           stream: true,
           session_id: sessionId,
           // WHICH TENANT IS SPENDING THIS.

@@ -43,6 +43,10 @@ export type WorkItemStatus =
 export type WorkItemType = 'conversation';
 
 export type WorkEventKind =
+  // The per-tenant token budget was at or past its warning line when this turn
+  // started. Recorded for a warning as well as a breach, so the owner is not
+  // first told by their replies quietly getting worse.
+  | 'budget_exceeded'
   | 'inbound_received'
   | 'memory_retrieved'
   | 'employee_routed'
@@ -108,6 +112,7 @@ const {
   enqueueEmbedActivity,
   markNeedsAttentionActivity,
   saveMessageActivity,
+  checkLlmBudgetActivity,
 } = proxyActivities<typeof activities>({
   startToCloseTimeout: '2 minutes',
   scheduleToCloseTimeout: '6 minutes',
@@ -484,6 +489,66 @@ export async function WorkItemWorkflow(input: WorkItemWorkflowInput): Promise<Wo
     };
   }
 
+  // ── PER-TENANT BUDGET GATE ────────────────────────────────────────────────
+  // Read the meter before the expensive part. One agent turn on this
+  // deployment measures ~49,000 tokens, so this is the point where a runaway
+  // workspace stops being everybody else's problem.
+  //
+  // The gate never ends the conversation on its own: over budget means a
+  // cheaper model, not silence. Only an explicit `stop` policy refuses, and
+  // then it says so in words the customer can act on.
+  const budget = await checkLlmBudgetActivity({ orgId: input.orgId });
+
+  if (!budget.allowed) {
+    await appendWorkEventActivity({
+      orgId: input.orgId,
+      workItemId,
+      kind: 'budget_exceeded',
+      actor: 'system',
+      payload: {
+        state: budget.state,
+        usedTokens: budget.usedTokens,
+        limitTokens: budget.limitTokens,
+        onExceeded: 'stop',
+      },
+      businessKey: `${businessKey}:budget_stop`,
+    });
+    await updateWorkItemStatusActivity({
+      orgId: input.orgId,
+      workItemId,
+      status: 'needs_attention',
+      businessKey: `${businessKey}:budget_stop_status`,
+    });
+    return {
+      workItemId,
+      status: 'needs_attention',
+      replyMessage: budget.reason,
+      executedSteps: [],
+      savedByWorkflow: false,
+      success: false,
+      error: 'llm_budget_exceeded',
+    };
+  }
+
+  if (budget.state === 'exceeded' || budget.state === 'warn') {
+    // Recorded even for a warning, so the first the owner hears of a cap is
+    // not the moment their replies get worse.
+    await appendWorkEventActivity({
+      orgId: input.orgId,
+      workItemId,
+      kind: 'budget_exceeded',
+      actor: 'system',
+      payload: {
+        state: budget.state,
+        usedTokens: budget.usedTokens,
+        limitTokens: budget.limitTokens,
+        pctUsed: budget.pctUsed,
+        modelOverride: budget.modelOverride ?? null,
+      },
+      businessKey: `${businessKey}:budget_${budget.state}`,
+    });
+  }
+
   await appendWorkEventActivity({
     orgId: input.orgId,
     workItemId,
@@ -516,6 +581,9 @@ export async function WorkItemWorkflow(input: WorkItemWorkflowInput): Promise<Wo
     // text in the quality run. The parent now persists, once, after the reply
     // is actually cleared to send.
     skipPersist: true,
+    // Undefined for a normal turn; the free-tier alias when this workspace is
+    // over budget and set to degrade rather than stop.
+    modelOverride: budget.modelOverride,
   };
 
   let childResult: AgentTaskResult;

@@ -143,6 +143,24 @@ const SUITES = [
     needsDocker: true,
   },
   {
+    name: 'budget maths',
+    what: 'a bad read never becomes a ceiling of zero, and an absent limit never throttles',
+    cmd: [process.execPath, [path.join(__dirname, 'rollup-llm-usage.js'), '--self-test']],
+    needsDocker: false,
+  },
+  {
+    name: 'per-tenant budget',
+    what: 'the meter cannot be inflated, cannot leak, and the cap never causes silence',
+    cmd: [process.execPath, [path.join(__dirname, 'check-llm-budget.js')]],
+    needsDocker: true,
+  },
+  {
+    name: 'budget gate wired',
+    what: 'an over-budget workspace still answers, on the free tier, still attributed',
+    cmd: [process.execPath, [path.join(__dirname, 'check-budget-e2e.js')]],
+    needsDocker: true,
+  },
+  {
     name: 'money metrics',
     what: 'revenue is traceable, split by who handled it, and currencies are never added',
     cmd: [process.execPath, [path.join(__dirname, 'check-money-metrics.js')]],

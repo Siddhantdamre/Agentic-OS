@@ -24,6 +24,15 @@ export interface AgentTaskInput {
   priorToolResults?: AgentStepResult[];
   /** When true, AutonomousAgentWorkflow skips saveMessageActivity. */
   skipPersist?: boolean;
+  /**
+   * Pin this turn to a specific LiteLLM model alias instead of the default.
+   *
+   * Set by the per-tenant budget gate (migration 036) to route a workspace
+   * that is over its token budget to the zero-cost tier, so it keeps
+   * answering instead of going silent. Absent means normal routing with the
+   * usual failover chain.
+   */
+  modelOverride?: string;
 }
 
 export interface AgentTaskResult {

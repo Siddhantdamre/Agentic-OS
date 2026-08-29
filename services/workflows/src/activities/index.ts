@@ -25,6 +25,7 @@ import { memoryWriteBackActivity as runMemoryWriteBack } from './memory-writebac
 export { memoryWriteBackActivity } from './memory-writeback.js';
 
 export { redactForEmbedActivity } from './redact.js';
+export { checkLlmBudgetActivity } from './llm-budget.js';
 export { researchTopicActivity } from './market-research.js';
 export { embedIngestionJobActivity, embedQueuedJobsActivity } from './embed.js';
 export { ingestFileActivity, syncConnectorActivity } from './ingest-file.js';
@@ -75,7 +76,10 @@ type WorkEventKind =
   // Emitted when the pre-send sanitiser had to strip internal identifiers or
   // discard a draft that described its own operating instructions. A stream of
   // these means someone is probing the agent, so it is audited, not silent.
-  | 'reply_sanitised';
+  | 'reply_sanitised'
+  // The per-tenant token budget was at or past its warning line when the turn
+  // started. Recorded for a warning as well as a breach.
+  | 'budget_exceeded';
 
 const pool = new Pool({
   host: process.env.DB_HOST || 'localhost',
@@ -412,6 +416,7 @@ export async function appendWorkEventActivity(params: {
     case 'critic_blocked':
     case 'critic_revised':
     case 'reply_sanitised':
+    case 'budget_exceeded':
       break;
     default: {
       const _exhaustive: never = params.kind;
