@@ -453,6 +453,19 @@ export async function runAgentTurn(input: AgentTaskInput, opts?: RunAgentOptions
           model: ATOMIC_AGENT_MODEL,
           stream: true,
           session_id: sessionId,
+          // WHICH TENANT IS SPENDING THIS.
+          //
+          // Every one of the first 1,125 LLM calls was logged against
+          // `default_user_id`, because LiteLLM attributes the `user` column to
+          // the API KEY's owner and every call shares one master key. So spend
+          // could not be traced to a tenant at all — not approximately, not at
+          // all — which makes a per-tenant budget, usage pricing, and the
+          // question "which customer is costing me money" equally impossible.
+          //
+          // The OpenAI-compatible `user` field is the fix: LiteLLM records it
+          // as `end_user`, which IS its native per-customer tracking and works
+          // with a shared key. Verified by probe before relying on it.
+          user: input.orgId,
           messages: [
             { role: 'system', content: buildSystemPrompt(input) },
             ...(opts?.priorMessages || []),
