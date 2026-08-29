@@ -7,6 +7,7 @@ import { Sparkles, AlertTriangle, Send, CheckCircle2, CircleDashed } from 'lucid
 import { LiveRegion, StatusBadge } from '@/components/a11y';
 import { ImpactPanel } from '@/components/impact/ImpactPanel';
 import { ApprovalQueue } from '@/components/approvals/ApprovalQueue';
+import { ShadowPanel } from '@/components/shadow/ShadowPanel';
 
 export const dynamic = 'force-dynamic';
 
@@ -176,6 +177,13 @@ function HomeContent() {
         and 24 of them sat unanswerable for thirteen days before this existed.
       */}
       {!isWarmup && <ApprovalQueue />}
+
+      {/*
+        Between what is blocked and what was achieved. The agreement rate is
+        the number that decides how much MORE the agent gets to do, so it sits
+        beside the approvals it is earned from.
+      */}
+      {!isWarmup && <ShadowPanel days={30} />}
 
       {!isWarmup && <ImpactPanel days={30} />}
 

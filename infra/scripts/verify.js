@@ -131,6 +131,12 @@ const SUITES = [
     needsDocker: true,
   },
   {
+    name: 'shadow mode',
+    what: 'the agreement number cannot flatter — and never claims accuracy',
+    cmd: [process.execPath, [path.join(__dirname, 'check-shadow-mode.js')]],
+    needsDocker: true,
+  },
+  {
     name: 'earned autonomy',
     what: 'the agent can be answered, earns trust slowly, and money never stops asking',
     cmd: [process.execPath, [path.join(__dirname, 'check-approvals.js')]],
