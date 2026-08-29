@@ -278,6 +278,7 @@ export function parseWriteBackExtract(raw: unknown): MemoryWriteBackPayload {
 }
 
 async function extractWithLiteLLM(params: {
+  orgId: string;
   transcript: string;
   toolResults: unknown;
   closed: boolean;
@@ -321,6 +322,8 @@ async function extractWithLiteLLM(params: {
         model,
         stream: false,
         max_tokens: 800,
+        // See planCrewActivity: the write-back turn is billed like any other.
+        user: params.orgId,
         temperature: 0,
         reasoning: { enabled: false },
         messages: [
@@ -613,7 +616,7 @@ export async function memoryWriteBackActivity(input: MemoryWriteBackInput): Prom
     };
   }
 
-  const extracted = await extractWithLiteLLM({ transcript, toolResults, closed });
+  const extracted = await extractWithLiteLLM({ orgId, transcript, toolResults, closed });
   let factCount = 0;
   let skippedDuplicates = 0;
   let fieldUpdatesApplied = 0;

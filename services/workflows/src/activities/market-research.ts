@@ -92,7 +92,8 @@ async function searchWeb(query: string): Promise<ResearchSource[]> {
 /** Ask the model to extract findings. Returns null when unavailable. */
 async function synthesise(
   topic: string,
-  sources: ResearchSource[]
+  sources: ResearchSource[],
+  orgId: string
 ): Promise<{ findings: unknown[]; openQuestions: string[] } | null> {
   const isProd = process.env.NODE_ENV === 'production';
   const rawBase = process.env.LITELLM_BASE_URL || (isProd ? '' : 'http://localhost:4000/v1');
@@ -112,6 +113,8 @@ async function synthesise(
         model,
         stream: false,
         max_tokens: 1200,
+        // See planCrewActivity: without this the research spend is unattributable.
+        user: orgId,
         temperature: 0,
         reasoning: { enabled: false },
         messages: [
@@ -179,7 +182,7 @@ export async function researchTopicActivity(
     );
   }
 
-  const synthesised = await synthesise(topic, sources);
+  const synthesised = await synthesise(topic, sources, input.orgId);
   if (!synthesised) {
     return emptyResult(topic, 'synthesis model unavailable — sources were retrieved but not analysed');
   }

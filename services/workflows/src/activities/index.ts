@@ -798,6 +798,10 @@ export async function planCrewActivity(params: {
         model,
         stream: false,
         max_tokens: 600,
+        // Whose bill this lands on. LiteLLM records the request-body `user` as
+        // `end_user` in its spend log; without it the call is billed to the
+        // proxy key and no tenant can be charged or capped for it.
+        user: orgId,
         temperature: 0,
         reasoning: { enabled: false },
         messages: [
