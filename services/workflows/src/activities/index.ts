@@ -898,7 +898,10 @@ export async function criticCheckWithRevision(params: {
   const baseDeps = {
     critique: (draft: string, intent: 'send' | 'publish' | 'sign') =>
       runCriticCheck({ orgId, draft, intent, businessKey: params.businessKey }),
-    revise: reviseDraftWithLiteLLM,
+    // Bound to this org so the revision's tokens land on the right tenant's
+    // budget, same as the critic call above it.
+    revise: (draft: string, verdict: Parameters<typeof reviseDraftWithLiteLLM>[1], promptOverride?: string) =>
+      reviseDraftWithLiteLLM(draft, verdict, promptOverride, orgId),
   };
 
   const outcome = await reviseUntilAllowed(

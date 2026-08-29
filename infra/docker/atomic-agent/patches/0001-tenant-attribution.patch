@@ -1,0 +1,38 @@
+diff --git a/src/llm/provider/openai/openai-build-body.ts b/src/llm/provider/openai/openai-build-body.ts
+index 3f02d7f..772163e 100644
+--- a/src/llm/provider/openai/openai-build-body.ts
++++ b/src/llm/provider/openai/openai-build-body.ts
+@@ -48,5 +48,33 @@ export function buildOpenAiChatBody(
+       },
+     };
+   }
++
++  // Tenant attribution for the upstream proxy.
++  //
++  // A LiteLLM-style proxy records the OpenAI `user` field as `end_user`, which
++  // is how per-customer spend, budgets and rate limits are tracked. Without it
++  // every call from every tenant is attributed to the API key's owner, so a
++  // multi-tenant host cannot tell which customer spent what — measured on one
++  // deployment: 1,125 calls, all logged against a single default user.
++  //
++  // The session id already crosses every layer and carries the tenant when the
++  // host namespaces it as `<host>:<tenant>:<rest>`. Read here rather than
++  // threading a new field through the HTTP boundary, the agent loop and the
++  // provider interface, because it is the same information and costs nothing.
++  //
++  // Deliberately silent when the session id is absent or not namespaced: a
++  // single-user or local run has no tenant, and inventing one would be worse
++  // than omitting the field.
++  const sessionId = filtered.sessionId;
++  if (typeof sessionId === "string") {
++    // Indexed access is checked, not asserted: this project builds with
++    // noUncheckedIndexedAccess, so `parts[1]` is `string | undefined`.
++    const parts = sessionId.split(":");
++    const tenant = parts.length >= 3 ? parts[1] : undefined;
++    if (tenant) {
++      body.user = tenant;
++    }
++  }
++
+   return body;
+ }

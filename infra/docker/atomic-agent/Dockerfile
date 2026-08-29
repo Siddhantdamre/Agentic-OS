@@ -19,6 +19,19 @@ ARG ATOMIC_AGENT_TAG=v0.1.72
 RUN git clone --depth 1 --branch "${ATOMIC_AGENT_TAG}" \
       https://github.com/AtomicBot-ai/atomic-agent.git .
 
+# ── Local patches ────────────────────────────────────────────────────────────
+# Applied against the pinned tag, BEFORE the build, and the build FAILS if a
+# patch no longer applies. That is deliberate: a patch that silently no-ops on
+# a version bump is the worst outcome — the image builds, the feature is
+# missing, and nothing says so until somebody notices the data is wrong.
+#
+# 0001-tenant-attribution: forwards the tenant id (read from the namespaced
+# session id) as the OpenAI `user` field, so the LiteLLM proxy can attribute
+# spend per customer. Without it every call from every tenant is logged against
+# the API key's owner and per-org budgets are impossible.
+COPY patches ./patches
+RUN for p in patches/*.patch; do       echo "applying $p";       git apply --verbose "$p" || { echo "PATCH FAILED: $p does not apply to ${ATOMIC_AGENT_TAG} — reconcile it before bumping the tag"; exit 1; };     done
+
 # Pin the lockfile's native deps (better-sqlite3) are compiled via prebuilds;
 # fall back to source build if prebuilds are unavailable for this Node major.
 RUN npm ci

@@ -169,7 +169,7 @@ function parseCriticJson(raw: string): CriticCheckResult | null {
   }
 }
 
-async function criticWithLiteLLM(draft: string, intent: CriticIntent): Promise<CriticCheckResult | null> {
+async function criticWithLiteLLM(draft: string, intent: CriticIntent, orgId?: string): Promise<CriticCheckResult | null> {
   const isProd = process.env.NODE_ENV === 'production';
   const rawBase = process.env.LITELLM_BASE_URL || (isProd ? '' : 'http://localhost:4000/v1');
   const apiKey = process.env.LITELLM_API_KEY || process.env.LITELLM_MASTER_KEY || '';
@@ -188,6 +188,11 @@ async function criticWithLiteLLM(draft: string, intent: CriticIntent): Promise<C
         Authorization: `Bearer ${apiKey}`,
       },
       body: JSON.stringify({
+      // Attribute this call to the tenant. LiteLLM records the OpenAI `user`
+      // field as `end_user`, which is how per-customer spend and budgets are
+      // tracked; without it every call is logged against the API key's owner
+      // and one runaway tenant is indistinguishable from ordinary load.
+        ...(orgId ? { user: orgId } : {}),
         model,
         stream: false,
         max_tokens: 200,
@@ -227,7 +232,7 @@ export async function criticCheck(params: CriticCheckParams): Promise<CriticChec
   const heuristic = evaluateCriticDraft(params.draft, params.intent);
   if (!heuristic.allow) return heuristic;
 
-  const modeled = await criticWithLiteLLM(params.draft, params.intent);
+  const modeled = await criticWithLiteLLM(params.draft, params.intent, params.orgId);
   if (modeled && !modeled.allow) return modeled;
   return heuristic;
 }

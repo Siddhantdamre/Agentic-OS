@@ -276,7 +276,9 @@ export async function reviseDraftWithLiteLLM(
    * remove or retrieve the figure — and explicitly forbids hedging it, since
    * "approximately <invented number>" is the same fabrication with a qualifier.
    */
-  promptOverride?: string
+  promptOverride?: string,
+  /** Whose budget this call is spending. See the `user` field below. */
+  orgId?: string
 ): Promise<string> {
   const isProd = process.env.NODE_ENV === 'production';
   const rawBase = process.env.LITELLM_BASE_URL || (isProd ? '' : 'http://localhost:4000/v1');
@@ -293,6 +295,11 @@ export async function reviseDraftWithLiteLLM(
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
       body: JSON.stringify({
+        // Attribute this call to the tenant. LiteLLM records the OpenAI `user`
+        // field as `end_user`, which is how per-customer spend and budgets are
+        // tracked; without it every call is logged against the API key's owner
+        // and one runaway tenant is indistinguishable from ordinary load.
+        ...(orgId ? { user: orgId } : {}),
         model,
         stream: false,
         max_tokens: 500,
