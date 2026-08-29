@@ -65,6 +65,12 @@ const SUITES = [
     needsDocker: false,
   },
   {
+    name: 'executable bit lint',
+    what: 'the scripts the install guide tells people to run can actually be run',
+    cmd: [process.execPath, [path.join(__dirname, 'lint-exec-bit.js')]],
+    needsDocker: false,
+  },
+  {
     name: 'tenant scope lint',
     what: 'no tenant table is read without an org filter or a written-down reason',
     cmd: [process.execPath, [path.join(__dirname, 'lint-tenant-scope.js')]],
