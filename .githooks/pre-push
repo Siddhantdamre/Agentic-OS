@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+# Refuse to push executable code that does not load.
+#
+# Enable once per clone (hooks are not distributed by git itself):
+#
+#     git config core.hooksPath .githooks
+#
+# Bypass, only when you know why:  git push --no-verify
+#
+# This exists because two unloadable files reached main in a single session —
+# one that failed to parse, one whose top-level await made Node reparse it as
+# an ES module — both because the file was edited and committed without being
+# run. See infra/scripts/pre-push-check.js.
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+if ! command -v node >/dev/null 2>&1; then
+  echo "pre-push: node is not on PATH — cannot verify. Refusing." >&2
+  echo "          Use 'git push --no-verify' only if you have checked by hand." >&2
+  exit 1
+fi
+
+node "$ROOT/infra/scripts/pre-push-check.js"

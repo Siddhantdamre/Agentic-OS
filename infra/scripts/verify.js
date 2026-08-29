@@ -65,6 +65,18 @@ const SUITES = [
     needsDocker: false,
   },
   {
+    name: 'pre-push gate',
+    what: 'the check that refuses to push code which cannot load',
+    cmd: [process.execPath, [path.join(__dirname, 'pre-push-check.js'), '--self-test']],
+    needsDocker: false,
+  },
+  {
+    name: 'environment probe',
+    what: 'the runner can tell a dead machine from broken code',
+    cmd: [process.execPath, [path.join(__dirname, 'lib', 'env-reachable.js'), '--self-test']],
+    needsDocker: false,
+  },
+  {
     name: 'executable bit lint',
     what: 'the scripts the install guide tells people to run can actually be run',
     cmd: [process.execPath, [path.join(__dirname, 'lint-exec-bit.js')]],
@@ -212,6 +224,25 @@ console.log('\n╔════════════════════�
 console.log('║  DAREX VERIFY — what can be proven without spending money    ║');
 console.log('╚══════════════════════════════════════════════════════════════╝\n');
 
+// ── Is the machine even up? ─────────────────────────────────────
+// Checked BEFORE anything is judged. Spawned as a child rather than awaited
+// inline, because a top-level await turns this CommonJS file into an ES
+// module and every require() above stops working -- and `node --check` does
+// not catch it. Exit 2 means 'I could not check', which is a different fact
+// from 'something failed'. See lib/env-reachable.js for what that cost.
+if (!FAST && SUITES.some((s) => s.needsDocker)) {
+  const probe = spawnSync(process.execPath,
+    [path.join(__dirname, 'lib', 'env-reachable.js'), '--check'],
+    { encoding: 'utf8', env: process.env });
+  if (probe.status !== 0) {
+    console.log(`\n  ENVIRONMENT UNAVAILABLE — ${String(probe.stdout || '').trim()}\n`);
+    console.log('  NOTHING WAS VERIFIED. This is not a code failure: the suites below');
+    console.log('  never ran. Bring the stack up and run this again.\n');
+    console.log('    docker compose -f infra/docker-compose.yml up -d\n');
+    process.exit(2);
+  }
+}
+
 for (const suite of SUITES) {
   if (FAST && suite.needsDocker) {
     console.log(`  [ skip ]  ${suite.name}  — needs the containers (--fast)`);
@@ -273,7 +304,17 @@ if (advisoryFailures.length) {
 
 for (const f of hardFailures) {
   console.log(`\n  FAILED — ${f.name}\n`);
-  const lines = String(f.out).split('\n').filter((l) => /\[FAIL\]|not ok|Error/.test(l));
+  // Case-INSENSITIVE, and with a fallback. The original pattern was /Error/,
+  // which does not match "ERROR:" -- the exact prefix every check-*.js uses
+  // for a fatal error. So a suite that died on "ERROR: connect ECONNREFUSED"
+  // printed its heading and not one line of reason, and the failure looked
+  // like an unexplained flake. A reporter that can print nothing is worse
+  // than no reporter, because it is trusted.
+  let lines = String(f.out).split('\n').filter((l) => /\[FAIL\]|not ok|error/i.test(l));
+  if (!lines.length) {
+    lines = String(f.out).split('\n').filter((l) => l.trim()).slice(-8);
+    console.log('    (no recognised failure line - last output follows)');
+  }
   for (const l of lines.slice(0, 12)) console.log(`    ${l.trim()}`);
 }
 
