@@ -25,7 +25,8 @@
     "deploy": "bash ./deploy/deploy.sh",
     "db:seed": "node infra/db/seed.js",
     "worker:start": "pnpm --filter @darex/workflows run build && pnpm --filter @darex/workflows run start",
-    "prepare": "husky"
+    "prepare": "husky",
+    "typecheck:ci": "pnpm --filter @darex/shared-types exec tsc --noEmit && pnpm --filter @darex/shared-types build && pnpm --filter @darex/connectors exec tsc --noEmit && pnpm --filter @darex/workflows exec tsc --noEmit && pnpm --filter @darex/workflows build && pnpm --filter @darex/dashboard exec tsc --noEmit"
   },
   "devDependencies": {
     "husky": "^9.1.7",

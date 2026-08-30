@@ -257,6 +257,39 @@ const SUITES = [
     needsDocker: true,
   },
   {
+    name: 'dormant capability',
+    what: 'every shipped feature has actually produced a row — the check that '
+      + 'catches complete-but-unreachable',
+    cmd: [process.execPath, [path.join(__dirname, 'check-dormant-capability.js')]],
+    needsDocker: true,
+  },
+  // ── CI PARITY ───────────────────────────────────────────────────────────
+  // These three are what GitHub Actions runs. They were NOT here, so CI went
+  // red on four consecutive pushes while this suite reported 36/37 green: the
+  // isolation test had been asserting a raw `INSERT INTO orgs`, which
+  // migration 028 deliberately made impossible. Nothing local ever ran it.
+  //
+  // A verification suite that does not run what the gate runs is not a
+  // verification suite; it is a second opinion nobody asked for.
+  {
+    name: 'typecheck (all workspaces)',
+    what: 'what CI typechecks — shared-types, connectors, workflows, dashboard',
+    cmd: ['pnpm', ['-s', 'run', 'typecheck:ci'], { cwd: ROOT }],
+    needsDocker: false,
+  },
+  {
+    name: 'lint',
+    what: 'what CI lints',
+    cmd: ['pnpm', ['-s', 'lint'], { cwd: ROOT }],
+    needsDocker: false,
+  },
+  {
+    name: 'tenant isolation (CI parity)',
+    what: 'the suite CI runs against a fresh database, as darex_app',
+    cmd: [process.execPath, [path.join(ROOT, 'tests', 'e2e-tenant-isolation.test.js')]],
+    needsDocker: true,
+  },
+  {
     name: 'infrastructure alarms',
     what: 'queue lag, connector auth, RLS job, Langfuse ingest, LLM budget',
     cmd: [process.execPath, [path.join(__dirname, 'alerting-run.js')]],

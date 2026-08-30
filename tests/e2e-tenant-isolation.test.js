@@ -78,13 +78,28 @@ async function runTenantIsolationTests() {
     console.log(`  ✓ Connected as ${currentUser} (least-privilege app role)`);
 
     // Test 1: Create two distinct test organizations
-    console.log('[Test 1] Provisioning Org A and Org B...');
+    //
+    // THROUGH THE SIGNUP DOOR, NOT AROUND IT. This used to be a raw
+    // `INSERT INTO orgs`, which migration 028 deliberately made impossible:
+    // `orgs` is now under FORCE row-level security and the policy's WITH CHECK
+    // requires the new row's id to equal the session's org. At signup there is
+    // no session org and there cannot be — the row being written is what
+    // establishes it. So 028 added `org_provision()` as a named SECURITY
+    // DEFINER door and closed the wall behind it.
+    //
+    // The old insert had been failing here with
+    //   42501  new row violates row-level security policy for table "orgs"
+    // on every CI run since. That is the policy working, not a regression: the
+    // test was asserting a path the product had correctly removed. Going
+    // through the same door the dashboard's signup uses also means this suite
+    // now exercises the real path instead of a privileged shortcut.
+    console.log('[Test 1] Provisioning Org A and Org B via org_provision()...');
     const orgARes = await client.query(
-      `INSERT INTO orgs (name, slug, plan, status) VALUES ($1, $2, 'enterprise', 'active') RETURNING id`,
+      `SELECT org_provision($1, $2) AS id`,
       ['Test Org Alpha', `test-org-alpha-${Date.now()}`]
     );
     const orgBRes = await client.query(
-      `INSERT INTO orgs (name, slug, plan, status) VALUES ($1, $2, 'enterprise', 'active') RETURNING id`,
+      `SELECT org_provision($1, $2) AS id`,
       ['Test Org Beta', `test-org-beta-${Date.now()}`]
     );
 
