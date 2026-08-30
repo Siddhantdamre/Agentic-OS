@@ -257,6 +257,13 @@ const SUITES = [
     needsDocker: true,
   },
   {
+    name: 'teach a fact',
+    what: 'a person can tell it something without producing a file, and what they '
+      + 'say outranks a document that contradicts it',
+    cmd: [process.execPath, [path.join(__dirname, 'check-teach-fact.js')]],
+    needsDocker: true,
+  },
+  {
     name: 'satisfaction signal',
     what: 'the agent is judged on evidence, and silence is never counted as success',
     cmd: [process.execPath, [path.join(__dirname, 'check-satisfaction.js')]],

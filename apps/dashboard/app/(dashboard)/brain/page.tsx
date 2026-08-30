@@ -5,6 +5,7 @@ import { Brain, Search } from 'lucide-react';
 import { SnippetCard, type BrainSnippetView } from '@/components/brain/SnippetCard';
 import { SourceRow, type BrainSourceView } from '@/components/brain/SourceRow';
 import { KnowledgeGaps } from '@/components/brain/KnowledgeGaps';
+import { TeachFact } from '@/components/brain/TeachFact';
 
 type BrainEntity = {
   entityType: string;
@@ -123,6 +124,10 @@ export default function BrainPage() {
         more urgent than what it does, and it is the only list here that
         converts a minute of an operator's time into a permanent capability.
       */}
+      {/* Only for people who may change memory — the API enforces this too,
+          but showing a box that will 403 is its own small cruelty. */}
+      {data.canMutate && <TeachFact onSaved={() => void load(query)} />}
+
       <KnowledgeGaps />
 
       {loading ? (

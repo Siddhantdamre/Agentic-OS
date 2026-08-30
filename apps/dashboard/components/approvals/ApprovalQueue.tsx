@@ -126,11 +126,18 @@ export function ApprovalQueue() {
         <div className="flex items-start gap-2">
           <ShieldCheck className="w-4 h-4 text-amber-600 mt-0.5" />
           <div>
-            <h2 className="text-sm font-bold text-heading">Waiting on you</h2>
+            {/* "Handed to you", not "waiting on you". The agent is NOT blocked:
+                the workflow waits two minutes for a signal, then moves on, and
+                the durable record in approval_requests is what the decision
+                actually lands on. A person answering thirteen days later still
+                works. Saying "waiting" implied a customer sitting on hold and
+                made a queue that is safe to leave overnight read as an outage. */}
+            <h2 className="text-sm font-bold text-heading">Handed to you</h2>
             <p className="text-xs text-slate-500 mt-1">
               {pending.length === 0
                 ? 'Nothing is waiting. The agent has not needed permission for anything.'
-                : `${pending.length} thing${pending.length === 1 ? '' : 's'} the agent will not do without you.`}
+                : `${pending.length} thing${pending.length === 1 ? '' : 's'} the agent will not do without you. `
+                  + 'It has already moved on — answer whenever you can.'}
             </p>
           </div>
         </div>

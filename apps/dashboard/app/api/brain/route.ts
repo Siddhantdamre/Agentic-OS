@@ -365,6 +365,66 @@ export async function POST(request: Request) {
       const body = await request.json().catch(() => ({}));
       const action = typeof body?.action === 'string' ? body.action : '';
       switch (action) {
+        // ── Type a fact ─────────────────────────────────────────────────────
+        // Until now the ONLY way to teach the agent anything was to upload a
+        // file. For an SMB owner that is the difference between a thirty-second
+        // action and a task that never happens — and it showed: reply_edits and
+        // typed knowledge were both at zero while the agent answered 719
+        // conversations from pack defaults.
+        //
+        // Written at priority 100, the value migration 026 defines as "human
+        // correction". A person stating a fact outranks a PDF that contradicts
+        // it, which is the same rule an operator's reply edit already gets.
+        case 'add-fact': {
+          const title = String(body?.title || '').trim();
+          const factBody = String(body?.body || '').trim();
+          const kind = ['faq', 'policy', 'sop'].includes(String(body?.kind))
+            ? String(body.kind) : 'faq';
+
+          if (!factBody) {
+            return NextResponse.json(
+              { error: 'Write the fact you want the assistant to know.' }, { status: 400 });
+          }
+          if (factBody.length > 4000) {
+            return NextResponse.json(
+              { error: 'Keep it under 4000 characters. Upload a file for anything longer.' },
+              { status: 400 });
+          }
+
+          // Same conflict target as every other writer: the unique index is
+          // (org_id, source, source_ref, content_hash). Naming content_hash
+          // alone does not match it, and the insert silently does nothing.
+          const inserted = await client.query(
+            `INSERT INTO org_memory
+               (org_id, kind, title, body, source, source_ref, content_hash, priority, metadata)
+             VALUES ($1, $2, $3, $4, 'operator', $5,
+                     encode(digest($4, 'sha256'), 'hex'), 100,
+                     jsonb_build_object('author_user_id', $6::text))
+             ON CONFLICT (org_id, source, source_ref, content_hash) DO UPDATE
+               SET title = EXCLUDED.title,
+                   kind = EXCLUDED.kind,
+                   updated_at = NOW()
+             RETURNING id, (xmax = 0) AS created`,
+            [orgId, kind, title || factBody.slice(0, 60), factBody, `fact:${userId}`, userId],
+          );
+          const row = inserted.rows[0];
+
+          // Deliberately NOT enqueued for embedding. enqueueEmbedJob runs the
+          // whole ingestion path — it writes its own knowledge_source and its
+          // own org_memory rows — so calling it here would store the fact
+          // twice. Retrieval is full-text today (0 of 1,127 rows carry an
+          // embedding, and there is no GEMINI_API_KEY), so the fact is
+          // searchable the moment this returns. When embeddings are switched
+          // on, backfill from org_memory rather than double-writing here.
+
+          return NextResponse.json({
+            id: row.id,
+            created: row.created,
+            message: row.created
+              ? 'Learned. Your assistant will use this from now on.'
+              : 'You had already told it this — updated.',
+          });
+        }
         case 'reindex': {
           const rawId = typeof body?.sourceId === 'string' ? body.sourceId : '';
           const sourceId = rawId.startsWith('source:') ? rawId.slice(7) : rawId;
