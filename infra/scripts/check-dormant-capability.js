@@ -185,6 +185,17 @@ const CAPABILITIES = [
     note: 'waits for an action whose outcome moves the trust level',
   },
   {
+    // Filed here rather than under "tenant configuration", which is where it sat
+    // and why this check never looked at it. It is a CONTROL: it promises that
+    // nothing the agent writes reaches a customer. It was empty while the agent
+    // auto-replied on four channels.
+    name: 'shadow mode',
+    table: 'org_shadow_mode',
+    expectation: 'conditional',
+    trigger: 'SELECT COUNT(*) FROM orgs',
+    note: 'waits for an operator to switch it on; the switch is enforced at the send',
+  },
+  {
     name: 'audit trail',
     table: 'audit_events',
     expectation: 'every-turn',
@@ -208,7 +219,7 @@ const NON_CAPABILITY = {
     'orgs', 'users', 'ai_employees', 'channels', 'connector_defs', 'org_connectors',
     'org_onboarding', 'org_automation', 'org_retention_policy', 'org_packs',
     'org_sql_connections', 'widget_embed_tokens', 'org_invites', 'chatwoot_inbox_map',
-    'org_shadow_mode', 'org_action_autonomy', 'org_playbook_promotions', 'billing_meters',
+    'org_action_autonomy', 'org_playbook_promotions', 'billing_meters',
   ],
   'platform bookkeeping — not a customer-facing capability': [
     '_migrations', 'idempotency_keys', 'work_events', 'work_items', 'messages',

@@ -255,8 +255,23 @@ async function runInboundAgent(job: InboundAgentJob): Promise<void> {
     await persistAssistantMessage(job.orgId, job.conversationId, reply, executedSteps, job.channelKey);
   }
 
-  if (job.replyTarget) {
+  // ── SHADOW MODE: the agent drafts, a person sends ───────────────────────
+  // The switch promised "nothing is sent" and governed nothing: it had a table,
+  // an API, a migration and 18 passing assertions, and no runtime code read it.
+  // Meanwhile THIS line auto-replied to the customer on every inbound channel,
+  // because fireInboundAgent is called by the chatwoot, gmail, instagram and sms
+  // webhooks and the send lives one level below them.
+  //
+  // A labelled safety control that does not control is worse than none, because
+  // a person reads the label and relaxes. The reply is still written to the
+  // conversation either way, which is the whole point: the operator reads the
+  // draft, edits it if it is wrong, and sends it themselves.
+  const withheld = await shadowModeEnabled(job.orgId);
+  if (job.replyTarget && !withheld) {
     await sendChannelReply(job.orgId, job.replyTarget, reply);
+  } else if (withheld) {
+    console.info(`[inbound-agent] shadow mode on for org ${job.orgId}: `
+      + 'reply drafted and stored, not delivered');
   }
 
   realtimeHub.publish(job.orgId, {
@@ -273,6 +288,29 @@ async function runInboundAgent(job: InboundAgentJob): Promise<void> {
     contactId: job.replyTarget?.contactId,
     channelType: job.replyTarget?.channelType,
   });
+}
+
+/**
+ * Is this workspace watching rather than acting?
+ *
+ * Fails CLOSED on error: if the switch cannot be read we withhold the message.
+ * The cost of withholding wrongly is a reply an operator has to send by hand.
+ * The cost of sending wrongly is a message reaching a customer after somebody
+ * was told nothing would be sent, which is the promise this exists to keep.
+ */
+async function shadowModeEnabled(orgId: string): Promise<boolean> {
+  const { client } = await getOrgScopedClient(orgId);
+  try {
+    const res = await client.query(
+      `SELECT enabled FROM org_shadow_mode WHERE org_id = $1`, [orgId]);
+    return Boolean(res.rows[0]?.enabled);
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error('[inbound-agent] could not read shadow mode; withholding the send:', message);
+    return true;
+  } finally {
+    client.release();
+  }
 }
 
 async function claimOutboundSend(orgId: string, businessKey: string): Promise<boolean> {

@@ -270,6 +270,12 @@ const SUITES = [
     needsDocker: true,
   },
   {
+    name: 'shadow mode is load-bearing',
+    what: 'the switch that promises nothing is sent actually governs the send',
+    cmd: [process.execPath, [path.join(__dirname, 'lint-shadow-mode.js')]],
+    needsDocker: false,
+  },
+  {
     name: 'supervision coverage',
     what: 'no path can finish a task without the trio reporting — checked '
       + 'structurally, because the runtime check only catches this once traffic exists',
