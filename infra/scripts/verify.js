@@ -215,6 +215,12 @@ const SUITES = [
     needsDocker: true,
   },
   {
+    name: 'leak report reachable',
+    what: 'an owner can see the follow-up agent, and who it refused to contact',
+    cmd: [process.execPath, [path.join(__dirname, 'check-leaks-panel.js')]],
+    needsDocker: true,
+  },
+  {
     name: 'money metrics',
     what: 'revenue is traceable, split by who handled it, and currencies are never added',
     cmd: [process.execPath, [path.join(__dirname, 'check-money-metrics.js')]],

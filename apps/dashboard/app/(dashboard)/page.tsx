@@ -8,6 +8,7 @@ import { LiveRegion, StatusBadge } from '@/components/a11y';
 import { ImpactPanel } from '@/components/impact/ImpactPanel';
 import { ApprovalQueue } from '@/components/approvals/ApprovalQueue';
 import { ShadowPanel } from '@/components/shadow/ShadowPanel';
+import { LeakPanel } from '@/components/leaks/LeakPanel';
 
 export const dynamic = 'force-dynamic';
 
@@ -183,6 +184,15 @@ function HomeContent() {
         the number that decides how much MORE the agent gets to do, so it sits
         beside the approvals it is earned from.
       */}
+      {/* Where money is walking out. Placed ABOVE shadow mode deliberately:
+          shadow mode answers "can I trust it", which is the second question.
+          The first is "what am I losing", and it is the one an owner opens the
+          dashboard to find out. It also shows during warm-up, because a brand
+          new workspace with unanswered questions and threads waiting on a
+          person has leaks on day one -- that is exactly when they are cheapest
+          to fix. */}
+      <LeakPanel />
+
       {!isWarmup && <ShadowPanel days={30} />}
 
       {!isWarmup && <ImpactPanel days={30} />}
