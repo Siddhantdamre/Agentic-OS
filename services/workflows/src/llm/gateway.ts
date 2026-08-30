@@ -33,7 +33,47 @@
  * file posts to chat/completions, so the sixth call site cannot be written
  * without either using this door or deliberately deleting the lock.
  */
+import { AsyncLocalStorage } from 'node:async_hooks';
+
 import { checkLlmBudgetActivity } from '../activities/llm-budget.js';
+
+/**
+ * ── COUNTING WHAT WAS SPENT, WITHOUT PLUMBING ─────────────────────────────
+ *
+ * `monitor_used_model` on every supervision row was hard-coded `false`. It is
+ * meant to be a COST alarm: if the share of tasks needing a model to judge
+ * trends toward 1.0, the deterministic gates have stopped carrying their share
+ * and the price per conversation is quietly tripling. Hard-coded, it could
+ * never fire.
+ *
+ * The obvious fix — return a flag from the critic and thread it up — has to
+ * cross five layers of critique/revision composition, and the reviser returns
+ * a bare string, so the flag would have to change signatures the tests pin.
+ * Worse, it would need re-threading for every future call site.
+ *
+ * Instead the door counts. Because the lint guarantees this is the ONLY
+ * function that can reach the proxy, a counter here sees every paid call at
+ * any depth, including ones written later by someone who never read this note.
+ *
+ * NOT a global counter: an async-local one, so concurrent activities on the
+ * same worker cannot bleed into each other's tallies. Outside any scope the
+ * store is undefined and nothing is counted, which is why this is safe to
+ * leave in every path.
+ */
+interface LlmCallTally { dispatched: number }
+const callScope = new AsyncLocalStorage<LlmCallTally>();
+
+/**
+ * Run `fn` and report how many paid calls it actually dispatched, at any depth.
+ * Nested scopes count independently — the inner one wins for its own subtree.
+ */
+export async function countLlmCalls<T>(
+  fn: () => Promise<T>,
+): Promise<{ result: T; dispatched: number }> {
+  const tally: LlmCallTally = { dispatched: 0 };
+  const result = await callScope.run(tally, fn);
+  return { result, dispatched: tally.dispatched };
+}
 
 export interface LlmMessage {
   role: 'system' | 'user' | 'assistant';
@@ -155,6 +195,15 @@ export async function llmChat(params: LlmChatParams): Promise<LlmChatResult> {
     model = routing.model;
     degraded = routing.degraded;
   }
+
+  // ── PAST THIS LINE THE CALL COSTS MONEY ─────────────────────────────────
+  // Every return above dispatched nothing: an unattributed call, a missing
+  // endpoint, a budget stop. Counting here rather than at the top of the
+  // function is the whole point — a tally that included refused calls would
+  // report spend that never happened, and this number exists to catch spend
+  // that did. A timeout or HTTP error below still counts: the request went out.
+  const tally = callScope.getStore();
+  if (tally) tally.dispatched += 1;
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), params.timeoutMs ?? 30_000);

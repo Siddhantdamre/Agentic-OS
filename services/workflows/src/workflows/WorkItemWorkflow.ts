@@ -1143,13 +1143,12 @@ export async function WorkItemWorkflow(input: WorkItemWorkflowInput): Promise<Wo
     criticBlocked: !critic.allow,
     criticRevised: Boolean(critic.allow && critic.finalDraft && critic.finalDraft !== reply),
     criticReason: critic.reason || critic.policy || '',
-    // NOT YET OBSERVABLE. criticCheckWithRevision does not report whether the
-    // model critic was consulted or whether the deterministic gates decided
-    // alone, so this is recorded as false rather than guessed. It is a COST
-    // signal, and a fabricated one would be worse than an absent one: it would
-    // read as "the cheap layer is carrying everything" precisely when it is
-    // not. Exposing it means threading a flag out of critic-check.ts.
-    criticUsedModel: false,
+    // A COST signal, now observed rather than guessed. Counted at the LLM
+    // gateway — the one function that can reach the proxy — so it covers the
+    // critic call and every revision call in the loop. If this trends toward
+    // 1.0 the deterministic gates have stopped carrying their share and the
+    // price per conversation is quietly tripling.
+    criticUsedModel: critic.usedModel,
     // LEARNER
     gapRecorded: knowledgeGapRecorded,
     memoryWritten: true,

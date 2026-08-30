@@ -1,4 +1,4 @@
-import { llmChat } from '../llm/gateway.js';
+import { llmChat, countLlmCalls } from '../llm/gateway.js';
 import { ApplicationFailure, Context } from '@temporalio/activity';
 import { Pool, PoolClient } from 'pg';
 import type { AgentTaskInput, AgentTaskResult } from '../agent-engine.js';
@@ -861,6 +861,10 @@ export async function criticCheckWithRevision(params: {
   stopReason: string;
   escalationReason?: string;
   attempts: Array<{ attempt: number; allowed: boolean; policy: string; violations: string[] }>;
+  /** A paid call was dispatched to judge or rewrite this reply. A COST signal. */
+  usedModel: boolean;
+  /** How many. Distinguishes one critic call from a three-revision loop. */
+  modelCalls: number;
 }> {
   const orgId = requireOrgId(params.orgId);
   const key = sideEffectKey(orgId, 'criticCheckWithRevision', params.businessKey);
@@ -893,7 +897,11 @@ export async function criticCheckWithRevision(params: {
       reviseDraftWithLiteLLM(draft, verdict, promptOverride, orgId),
   };
 
-  const outcome = await reviseUntilAllowed(
+  // Counted at the gateway, which the lint guarantees is the only way to reach
+  // the proxy — so this sees the critic call, every revision call, and any
+  // paid call added inside this loop later, with no flag threaded through the
+  // critique/revision composition. See countLlmCalls in llm/gateway.ts.
+  const { result: outcome, dispatched } = await countLlmCalls(() => reviseUntilAllowed(
     params.draft,
     params.intent,
     {
@@ -901,7 +909,7 @@ export async function criticCheckWithRevision(params: {
       revise: buildReplyReviser(baseDeps, gateOptions),
     },
     { maxRevisions: params.maxRevisions }
-  );
+  ));
 
   const last = outcome.attempts[outcome.attempts.length - 1];
   const result = {
@@ -913,6 +921,12 @@ export async function criticCheckWithRevision(params: {
     revisionsUsed: outcome.revisionsUsed,
     stopReason: outcome.stopReason,
     escalationReason: outcome.escalationReason,
+    // Whether judging this reply cost anything. Stored in the idempotency
+    // record with everything else, so a Temporal replay reports what the
+    // ORIGINAL run spent rather than zero — the replay itself dispatches
+    // nothing, and reporting that would make spend vanish on every retry.
+    usedModel: dispatched > 0,
+    modelCalls: dispatched,
     // Verdict history only: drafts can be long and the text already lives on
     // the message/work-item record. What audit needs is the chain of rulings.
     attempts: outcome.attempts.map((a) => ({
