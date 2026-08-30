@@ -197,6 +197,12 @@ const SUITES = [
     needsDocker: true,
   },
   {
+    name: 'identity and erasure by person',
+    what: 'one human across every spelling, and erasing them reaches all of it',
+    cmd: [process.execPath, [path.join(__dirname, 'check-identity.js')]],
+    needsDocker: true,
+  },
+  {
     name: 'retention and erasure',
     what: 'a person asking to be forgotten is, including what the agent learned about them',
     cmd: [process.execPath, [path.join(__dirname, 'check-erasure.js')]],
