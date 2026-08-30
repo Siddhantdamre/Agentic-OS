@@ -211,6 +211,19 @@ services:
   # Dedicated Langfuse BullMQ Redis (WS-12 / A1). Isolated from Nango and
   # from the dashboard SSE bus — do not point REDIS_URL / realtime-hub here.
   langfuse-redis:
+    # OPT-IN. Langfuse is 2.47 GB of a 4.05 GB idle stack — 61% — across
+    # ClickHouse, MinIO, its own Redis, a server and a worker. Everything that
+    # actually serves a customer fits in about 1.6 GB.
+    #
+    # Nothing outside this cluster depends on it: no depends_on in the worker,
+    # the dashboard or the inbox points here, which is what makes a profile
+    # safe rather than a coupling change. Tracing that a deployment cannot
+    # afford to run is not observability, it is overhead.
+    #
+    # Local dev keeps it (start.sh sets COMPOSE_PROFILES=observability).
+    # A first VPS deploy does not. Turn it on when there is traffic worth
+    # tracing:  docker compose --profile observability up -d
+    profiles: ["observability"]
     image: redis:7-alpine
     container_name: darex-langfuse-redis
     restart: unless-stopped
@@ -282,6 +295,7 @@ services:
   # Uses ClickHouse for trace storage + Postgres for metadata.
   # ─────────────────────────────────────────────────────────────────────────
   langfuse-clickhouse:
+    profiles: ["observability"]
     image: clickhouse/clickhouse-server:24.3
     container_name: darex-langfuse-clickhouse
     restart: unless-stopped
@@ -308,6 +322,7 @@ services:
       - darex-net
 
   langfuse-minio:
+    profiles: ["observability"]
     image: minio/minio:RELEASE.2024-06-13T22-53-53Z
     container_name: darex-langfuse-minio
     restart: unless-stopped
@@ -331,6 +346,7 @@ services:
       - darex-net
 
   langfuse-minio-createbuckets:
+    profiles: ["observability"]
     image: minio/mc
     container_name: darex-langfuse-minio-init
     depends_on:
@@ -348,6 +364,7 @@ services:
       - darex-net
 
   langfuse-server:
+    profiles: ["observability"]
     image: langfuse/langfuse:3
     container_name: darex-langfuse-server
     restart: unless-stopped
@@ -413,6 +430,7 @@ services:
       start_period: 45s
 
   langfuse-worker:
+    profiles: ["observability"]
     image: langfuse/langfuse-worker:3
     container_name: darex-langfuse-worker
     restart: unless-stopped

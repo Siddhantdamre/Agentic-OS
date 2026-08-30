@@ -15,6 +15,16 @@
 
 set -euo pipefail
 
+# ── Observability is opt-in, and local dev opts in ─────────────────────────
+# The six Langfuse services sit behind the "observability" compose profile
+# because they are 2.47 GB of a 4.05 GB idle stack and a first VPS deploy on a
+# 6 GB box cannot spare that for a product with no traffic yet.
+#
+# Local development is the one place tracing earns its keep while building, so
+# start.sh turns it on. A deploy does not — see deploy/RUNBOOK.md. Set
+# COMPOSE_PROFILES yourself to override.
+export COMPOSE_PROFILES="${COMPOSE_PROFILES:-observability}"
+
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$ROOT"
 

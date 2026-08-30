@@ -155,6 +155,35 @@ verify it on the real machine anyway.
 
 ---
 
+## Tracing is off, on purpose
+
+The first deploy does **not** start Langfuse. That is a decision, not an
+oversight.
+
+Measured on the development stack: Langfuse is **2.47 GB of a 4.05 GB idle
+footprint — 61%** — across ClickHouse, MinIO, its own Redis, a server and a
+worker. Everything that actually answers a customer fits in about 1.6 GB. On a
+6 GB box, running it from day one spends most of your headroom observing a
+system with no traffic to observe.
+
+Nothing depends on it. No worker, dashboard or inbox service has a `depends_on`
+pointing at Langfuse, which is why it can be gated behind a compose profile
+rather than untangled.
+
+Turn it on when there is something worth tracing:
+
+```bash
+docker compose --profile observability up -d
+```
+
+To make that permanent on the server, put `COMPOSE_PROFILES=observability` in
+`.env`. Local development already enables it — `start.sh` sets it for you — so
+what you see while building is unchanged.
+
+Budget roughly 2.5 GB extra when you do. On a 6 GB box that is comfortable
+until real traffic arrives; past that, move Langfuse to its own machine rather
+than shrinking the product to fit beside it.
+
 ## 6. Afterwards
 
 ```bash
