@@ -1,6 +1,7 @@
 import type { ToolCatalogEntry, ToolExecutionParams, ToolExecutionResult } from '@darex/shared-types';
 import { withOrgScopedClient } from './tools/shared.js';
 import { executeProvider } from './tools/index.js';
+import { isToolGranted, riskOf } from './tools/capability.js';
 
 export type { ToolCatalogEntry, ToolExecutionParams, ToolExecutionResult };
 export type { ToolRisk, ToolModule, ProviderKey } from './tools/index.js';
@@ -91,11 +92,16 @@ export function mergeRuntimeAllowlist(employeeList: string[] | undefined, connec
   return Array.from(union).filter(Boolean);
 }
 
+// This used to also match `a.startsWith(tool + '-')`, which runs the grant
+// BACKWARDS: holding `razorpay-refund-status` returned true for `razorpay`, so
+// permission to check a refund's status conferred the entire payments provider,
+// payouts included. Reproduced against the shipped code before the change.
+//
+// The corrected rule — permission flows downward only — lives in
+// tools/capability.ts beside the test that pins it, and this file delegates so
+// there is exactly one implementation of "may this employee use this tool".
 function isToolAllowed(baseTool: string, allowlist: string[]): boolean {
-  const tool = normalizeToolKey(baseTool);
-  const allowed = allowlist.map(normalizeToolKey).filter(Boolean);
-  if (allowed.includes(tool)) return true;
-  return allowed.some((a) => tool.startsWith(a + '-') || a.startsWith(tool + '-'));
+  return isToolGranted(baseTool, allowlist);
 }
 
 export async function executeAutonomousToolAction(
@@ -111,10 +117,38 @@ export async function executeAutonomousToolAction(
   // if its base key is listed. An attacker / prompt-injected tool call that is
   // not on the list is rejected here. If the caller didn't pass one, fall back
   // to the org's active-employee allowlist (cached).
-  const effectiveAllowlist =
-    (Array.isArray(params.toolAllowlist) && params.toolAllowlist.length > 0)
-      ? params.toolAllowlist
-      : await resolveOrgToolAllowlist(params.orgId);
+  const namedEmployee = Array.isArray(params.toolAllowlist) && params.toolAllowlist.length > 0;
+  const effectiveAllowlist = namedEmployee
+    ? params.toolAllowlist!
+    : await resolveOrgToolAllowlist(params.orgId);
+
+  // FAIL SAFE WHEN NOBODY IS NAMED.
+  //
+  // resolveOrgToolAllowlist returns the UNION of every active employee's tools
+  // plus every connected channel. That is the right answer to "does this ORG
+  // own the tool" and the wrong answer to "may THIS EMPLOYEE use it" — and it
+  // was being used for both. So a caller that omitted an allowlist inherited
+  // the most privileged employee in the workspace: the moment one employee is
+  // given `razorpay`, an unattributed call could charge a card.
+  //
+  // The union still decides whether the org owns a tool at all, but with no
+  // employee named the call may only READ. Acting requires somebody to say
+  // which employee is acting.
+  if (!namedEmployee) {
+    const risk = riskOf(baseTool, actionName);
+    if (risk !== 'read') {
+      return {
+        tool: params.tool,
+        action: actionName,
+        status: 'error',
+        message:
+          `"${params.tool}" is a ${risk} action and no employee was named for this call. `
+          + 'Reads are allowed without an employee; anything that changes the world is not.',
+        data: { allowed: false, reason: 'no_employee_named', risk },
+        timestamp,
+      };
+    }
+  }
 
   if (effectiveAllowlist.length > 0 && !isToolAllowed(baseTool, effectiveAllowlist)) {
     return {
