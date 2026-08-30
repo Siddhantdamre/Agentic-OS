@@ -14,6 +14,7 @@ import {
   resolveOrgByChatwootInbox,
   upsertChatwootInboxMap,
 } from '@/lib/channel-normalize';
+import { resolvePersonId } from '@/lib/resolve-person';
 
 type ChatwootEvent =
   | 'message_created'
@@ -399,8 +400,8 @@ export async function POST(request: Request) {
       );
     } else {
       const newConv = await client.query(
-        `INSERT INTO conversations (org_id, channel_id, chatwoot_conv_id, status, contact_id, employee_id, summary, metadata, started_at, updated_at)
-         VALUES ($1, $2, $3, 'open', $4, $5, $6, $7, NOW(), NOW())
+        `INSERT INTO conversations (org_id, channel_id, chatwoot_conv_id, status, contact_id, employee_id, summary, metadata, started_at, updated_at, person_id)
+         VALUES ($1, $2, $3, 'open', $4, $5, $6, $7, NOW(), NOW(), $8)
          RETURNING id`,
         [
           orgId,
@@ -410,6 +411,7 @@ export async function POST(request: Request) {
           assignedEmployeeId,
           inbound.content.slice(0, 100),
           JSON.stringify(metadata),
+          await resolvePersonId(client, orgId, inbound.contactId, inbound.channelType),
         ]
       );
       conversationId = newConv.rows[0].id;

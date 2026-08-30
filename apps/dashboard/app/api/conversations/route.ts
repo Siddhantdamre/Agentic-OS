@@ -3,6 +3,7 @@ import { getScopedClient } from '@/lib/db';
 import type { PoolClient } from 'pg';
 import { employeePersonaText, fireInboundAgent, parseToolAllowlist } from '@/lib/inbound-agent';
 import { replyTargetFromChannelMeta } from '@/lib/channel-outbound';
+import { resolvePersonId } from '@/lib/resolve-person';
 
 export async function GET(request: Request) {
   try {
@@ -182,10 +183,12 @@ export async function POST(request: Request) {
       }
 
       const convRes = await client.query(
-        `INSERT INTO conversations (org_id, contact_id, channel_id, employee_id, status, summary, started_at, updated_at)
-         VALUES ($1, $2, $3, $4, 'open', $5, NOW(), NOW())
+        `INSERT INTO conversations (org_id, contact_id, channel_id, employee_id, status, summary, started_at, updated_at, person_id)
+         VALUES ($1, $2, $3, $4, 'open', $5, NOW(), NOW(), $6)
          RETURNING id, org_id, contact_id, status, summary, created_at`,
-        [orgId, contact, channelId, assignedEmployeeId, initialMessage ? initialMessage.slice(0, 100) : 'New conversation']
+        [orgId, contact, channelId, assignedEmployeeId,
+         initialMessage ? initialMessage.slice(0, 100) : 'New conversation',
+         await resolvePersonId(client, orgId, contact)]
       );
 
       const conversation = convRes.rows[0];

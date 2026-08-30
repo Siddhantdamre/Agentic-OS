@@ -24,6 +24,7 @@ import { retrieveMemory } from '@darex/workflows/dist/memory/retrieve';
 import { planRequiresDurableExecute } from '@darex/workflows/dist/plan-steps';
 import { startMemoryWriteBackWorkflow, startPlanExecuteWorkflow } from '@darex/workflows/dist/workflow-client';
 import type { PoolClient } from 'pg';
+import { resolvePersonId } from '@/lib/resolve-person';
 
 export const dynamic = 'force-dynamic';
 
@@ -89,10 +90,11 @@ async function ensureAskAiConversation(
   if (existing.rows[0]?.id) return existing.rows[0].id;
 
   const created = await client.query(
-    `INSERT INTO conversations (org_id, contact_id, status, summary, metadata, started_at, updated_at)
-     VALUES ($1, $2, 'open', 'Ask AI', $3::jsonb, NOW(), NOW())
+    `INSERT INTO conversations (org_id, contact_id, status, summary, metadata, started_at, updated_at, person_id)
+     VALUES ($1, $2, 'open', 'Ask AI', $3::jsonb, NOW(), NOW(), $4)
      RETURNING id`,
-    [orgId, contactId, JSON.stringify({ source: 'ask-ai', userId })]
+    [orgId, contactId, JSON.stringify({ source: 'ask-ai', userId }),
+     await resolvePersonId(client, orgId, contactId)]
   );
   return created.rows[0].id;
 }

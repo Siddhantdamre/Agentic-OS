@@ -101,6 +101,12 @@ const SUITES = [
     needsDocker: true,
   },
   {
+    name: 'conversation identity lint',
+    what: 'no conversation is created without resolving who it is with',
+    cmd: [process.execPath, [path.join(__dirname, 'lint-conversation-person.js')]],
+    needsDocker: false,
+  },
+  {
     name: 'tenant scope lint',
     what: 'no tenant table is read without an org filter or a written-down reason',
     cmd: [process.execPath, [path.join(__dirname, 'lint-tenant-scope.js')]],

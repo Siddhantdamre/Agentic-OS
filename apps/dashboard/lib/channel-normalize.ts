@@ -11,6 +11,7 @@ import {
   type InboundAgentJob,
 } from '@/lib/inbound-agent';
 import { replyTargetFromChannelMeta } from '@/lib/channel-outbound';
+import { resolvePersonId } from './resolve-person';
 
 export const CHANNEL_KEYS = [
   'whatsapp',
@@ -285,9 +286,17 @@ export async function persistInboundMessageWithClient(
       [input.content.slice(0, 100), JSON.stringify(metadata), conversationId, orgId]
     );
   } else {
+    // Who is this? Resolved BEFORE the conversation exists, so it is linked to
+    // everything this human has said before rather than starting as a stranger.
+    // resolvePersonId never throws: a null here degrades the conversation, and
+    // refusing to store an inbound customer message because the identity table
+    // had a bad moment would be an outage caused by a context feature.
+    const personId = await resolvePersonId(
+      client, orgId, input.contactId, input.channelType);
+
     const newConv = await client.query(
-      `INSERT INTO conversations (org_id, channel_id, contact_id, employee_id, status, summary, metadata, started_at, updated_at)
-       VALUES ($1, $2, $3, $4, 'open', $5, $6, NOW(), NOW())
+      `INSERT INTO conversations (org_id, channel_id, contact_id, employee_id, status, summary, metadata, started_at, updated_at, person_id)
+       VALUES ($1, $2, $3, $4, 'open', $5, $6, NOW(), NOW(), $7)
        RETURNING id`,
       [
         orgId,
@@ -296,6 +305,7 @@ export async function persistInboundMessageWithClient(
         employee?.id ?? null,
         input.content.slice(0, 100),
         JSON.stringify(metadata),
+        personId,
       ]
     );
     conversationId = newConv.rows[0].id;

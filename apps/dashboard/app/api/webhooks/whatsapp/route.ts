@@ -10,6 +10,7 @@ import {
 import { replyTargetFromChannelMeta } from '@/lib/channel-outbound';
 import { denyWebhookIfLimited, isRateLimitError, responseFromRateLimit } from '@/lib/rate-limit';
 import { resolveChannelByMeta } from '@/lib/channel-normalize';
+import { resolvePersonId } from '@/lib/resolve-person';
 
 /**
  * GET /api/webhooks/whatsapp
@@ -233,8 +234,8 @@ export async function POST(req: Request) {
               );
             } else {
               const newConv = await client.query(
-                `INSERT INTO conversations (org_id, channel_id, contact_id, employee_id, status, summary, metadata, started_at, updated_at)
-                 VALUES ($1, $2, $3, $4, 'open', $5, $6, NOW(), NOW())
+                `INSERT INTO conversations (org_id, channel_id, contact_id, employee_id, status, summary, metadata, started_at, updated_at, person_id)
+                 VALUES ($1, $2, $3, $4, 'open', $5, $6, NOW(), NOW(), $7)
                  RETURNING id`,
                 [
                   orgId,
@@ -243,6 +244,7 @@ export async function POST(req: Request) {
                   employee?.id ?? null,
                   text.slice(0, 100),
                   JSON.stringify({ sender_name: from, channel: 'whatsapp' }),
+                  await resolvePersonId(client, orgId, from, 'whatsapp'),
                 ]
               );
               conversationId = newConv.rows[0].id;
