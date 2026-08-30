@@ -5,6 +5,7 @@
  */
 
 import { ApplicationFailure } from '@temporalio/activity';
+import { llmChat } from '../llm/gateway.js';
 import { createConnection, type Socket } from 'node:net';
 import { connect as tlsConnect } from 'node:tls';
 import { Pool, PoolClient } from 'pg';
@@ -407,53 +408,30 @@ export async function listNeedsAttentionActivity(params: {
   return saved;
 }
 
-async function litellmNarrative(aggregatesJson: string): Promise<string | null> {
-  const isProd = process.env.NODE_ENV === 'production';
-  const rawBase = process.env.LITELLM_BASE_URL || (isProd ? '' : 'http://localhost:4000/v1');
-  const apiKey = process.env.LITELLM_API_KEY || process.env.LITELLM_MASTER_KEY || '';
-  const model = process.env.LITELLM_MODEL || 'atomic-agent';
-  if (!rawBase || !apiKey) return null;
-  const baseUrl = rawBase.replace(/\/$/, '');
-  const url = baseUrl.endsWith('/v1') ? `${baseUrl}/chat/completions` : `${baseUrl}/v1/chat/completions`;
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 15_000);
-  try {
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${apiKey}`,
+async function litellmNarrative(aggregatesJson: string, orgId: string): Promise<string | null> {
+  // Through the gateway: the owner briefing is a paid call on the workspace's
+  // budget like any other. It used to read LITELLM_MODEL directly.
+  const res = await llmChat({
+    orgId,
+    purpose: 'research',
+    maxTokens: 280,
+    temperature: 0,
+    timeoutMs: 15_000,
+    messages: [
+      {
+        role: 'system',
+        content: [
+          'You write a short owner morning briefing from pre-aggregated KPI numbers only.',
+          'Never invent counts. Never ask for raw messages or scan inboxes.',
+          'If a metric is listed in gaps, say the connector or table is missing -- do not guess.',
+          'Reply with 3-6 sentences of plain prose, no JSON.',
+        ].join(' '),
       },
-      body: JSON.stringify({
-        model,
-        stream: false,
-        max_tokens: 280,
-        temperature: 0,
-        reasoning: { enabled: false },
-        messages: [
-          {
-            role: 'system',
-            content: [
-              'You write a short owner morning briefing from pre-aggregated KPI numbers only.',
-              'Never invent counts. Never ask for raw messages or scan inboxes.',
-              'If a metric is listed in gaps, say the connector or table is missing — do not guess.',
-              'Reply with 3-6 sentences of plain prose, no JSON.',
-            ].join(' '),
-          },
-          { role: 'user', content: aggregatesJson },
-        ],
-      }),
-      signal: controller.signal,
-    });
-    if (!res.ok) return null;
-    const data = (await res.json()) as { choices?: Array<{ message?: { content?: string } }> };
-    const content = (data?.choices?.[0]?.message?.content || '').trim();
-    return content || null;
-  } catch {
-    return null;
-  } finally {
-    clearTimeout(timer);
-  }
+      { role: 'user', content: aggregatesJson },
+    ],
+  });
+  if (res.error || !res.content) return null;
+  return res.content.trim() || null;
 }
 
 function templateNarrative(
@@ -489,7 +467,7 @@ export async function narrateBriefingActivity(params: {
     gaps: params.gaps,
     needsAttentionCount: params.needsAttentionCount,
   });
-  const modeled = await litellmNarrative(aggregates);
+  const modeled = await litellmNarrative(aggregates, params.orgId);
   if (modeled) return { narrative: modeled, source: 'litellm' };
   return {
     narrative: templateNarrative(params.points, params.gaps, params.needsAttentionCount),

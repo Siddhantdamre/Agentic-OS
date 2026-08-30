@@ -37,6 +37,7 @@
  *     "why did this go out?" is always answerable.
  */
 
+import { llmChat } from '../llm/gateway.js';
 import type { CriticCheckResult, CriticIntent, CriticPolicy } from './critic-check.js';
 
 /** Policies where automated revision is permitted. See safety note 2. */
@@ -280,62 +281,39 @@ export async function reviseDraftWithLiteLLM(
   /** Whose budget this call is spending. See the `user` field below. */
   orgId?: string
 ): Promise<string> {
-  const isProd = process.env.NODE_ENV === 'production';
-  const rawBase = process.env.LITELLM_BASE_URL || (isProd ? '' : 'http://localhost:4000/v1');
-  const apiKey = process.env.LITELLM_API_KEY || process.env.LITELLM_MASTER_KEY || '';
-  const model = process.env.LITELLM_MODEL || 'atomic-agent';
-  if (!rawBase || !apiKey) return '';
-
-  const baseUrl = rawBase.replace(/\/$/, '');
-  const url = baseUrl.endsWith('/v1') ? `${baseUrl}/chat/completions` : `${baseUrl}/v1/chat/completions`;
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 12_000);
-  try {
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
-      body: JSON.stringify({
-        // Attribute this call to the tenant. LiteLLM records the OpenAI `user`
-        // field as `end_user`, which is how per-customer spend and budgets are
-        // tracked; without it every call is logged against the API key's owner
-        // and one runaway tenant is indistinguishable from ordinary load.
-        ...(orgId ? { user: orgId } : {}),
-        model,
-        stream: false,
-        max_tokens: 500,
-        temperature: 0,
-        reasoning: { enabled: false },
-        messages: [
-          {
-            role: 'system',
-            content: [
-              'You rewrite outbound business messages that failed a compliance check.',
-              'Return ONLY the corrected message text — no preamble, no explanation, no quotes.',
-              'Never promise guaranteed or assured returns, yields, or loan approvals.',
-              'Never target or exclude people by faith, family status, disability, or source of income.',
-              'Do not invent facts, figures, or registration numbers.',
-            ].join(' '),
-          },
-          { role: 'user', content: promptOverride || buildRevisionPrompt(draft, verdict) },
-        ],
-      }),
-      signal: controller.signal,
-    });
-    if (!res.ok) return '';
-    const data = (await res.json()) as { choices?: Array<{ message?: { content?: string } }> };
-    const content = data?.choices?.[0]?.message?.content || '';
-    // Models often wrap prose in fences or quotes despite instructions.
-    return content
-      .trim()
-      .replace(/^```(?:\w+)?\s*/i, '')
-      .replace(/```$/, '')
-      .replace(/^["']|["']$/g, '')
-      .trim();
-  } catch {
-    return '';
-  } finally {
-    clearTimeout(timer);
-  }
+  // Through the gateway: the model comes from the WORKSPACE'S BUDGET, not from
+  // LITELLM_MODEL. Previously this read that env var directly, so a tenant that
+  // had been degraded to the free tier still paid full price to have its reply
+  // rewritten. See llm/gateway.ts.
+  if (!orgId) return '';
+  const res = await llmChat({
+    orgId,
+    purpose: 'revise',
+    maxTokens: 500,
+    temperature: 0,
+    timeoutMs: 12_000,
+    messages: [
+      {
+        role: 'system',
+        content: [
+          'You rewrite outbound business messages that failed a compliance check.',
+          'Return ONLY the corrected message text -- no preamble, no explanation, no quotes.',
+          'Never promise guaranteed or assured returns, yields, or loan approvals.',
+          'Never target or exclude people by faith, family status, disability, or source of income.',
+          'Do not invent facts, figures, or registration numbers.',
+        ].join(' '),
+      },
+      { role: 'user', content: promptOverride || buildRevisionPrompt(draft, verdict) },
+    ],
+  });
+  if (res.error || !res.content) return '';
+  // Models often wrap prose in fences or quotes despite instructions.
+  return res.content
+    .trim()
+    .replace(/^```(?:\w+)?\s*/i, '')
+    .replace(/```$/, '')
+    .replace(/^["']|["']$/g, '')
+    .trim();
 }
 
 /**

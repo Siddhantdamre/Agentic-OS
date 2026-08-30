@@ -12,6 +12,7 @@
  * nothing, because it will be acted on.
  */
 
+import { llmChat } from '../llm/gateway.js';
 import {
   buildResearchPrompt,
   validateFindings,
@@ -95,43 +96,25 @@ async function synthesise(
   sources: ResearchSource[],
   orgId: string
 ): Promise<{ findings: unknown[]; openQuestions: string[] } | null> {
-  const isProd = process.env.NODE_ENV === 'production';
-  const rawBase = process.env.LITELLM_BASE_URL || (isProd ? '' : 'http://localhost:4000/v1');
-  const apiKey = process.env.LITELLM_API_KEY || process.env.LITELLM_MASTER_KEY || '';
-  const model = process.env.LITELLM_MODEL || 'atomic-agent';
-  if (!rawBase || !apiKey) return null;
-
-  const baseUrl = rawBase.replace(/\/$/, '');
-  const url = baseUrl.endsWith('/v1') ? `${baseUrl}/chat/completions` : `${baseUrl}/v1/chat/completions`;
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 30_000);
+  // Through the gateway: model chosen by the workspace's budget.
+  const out = await llmChat({
+    orgId,
+    purpose: 'research',
+    maxTokens: 1200,
+    temperature: 0,
+    timeoutMs: 30_000,
+    messages: [
+      {
+        role: 'system',
+        content:
+          'You extract findings from supplied web excerpts. Cite only the URLs given. Reply with ONLY the JSON object described.',
+      },
+      { role: 'user', content: buildResearchPrompt(topic, sources) },
+    ],
+  });
+  if (out.error || !out.content) return null;
+  const content = out.content;
   try {
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
-      body: JSON.stringify({
-        model,
-        stream: false,
-        max_tokens: 1200,
-        // See planCrewActivity: without this the research spend is unattributable.
-        user: orgId,
-        temperature: 0,
-        reasoning: { enabled: false },
-        messages: [
-          {
-            role: 'system',
-            content:
-              'You extract findings from supplied web excerpts. Cite only the URLs given. Reply with ONLY the JSON object described.',
-          },
-          { role: 'user', content: buildResearchPrompt(topic, sources) },
-        ],
-      }),
-      signal: controller.signal,
-    });
-    if (!res.ok) return null;
-    const data = (await res.json()) as { choices?: Array<{ message?: { content?: string } }> };
-    const content = data?.choices?.[0]?.message?.content || '';
-
     const fenced = content.match(/```(?:json)?\s*([\s\S]*?)```/i);
     const body = (fenced?.[1] || content).trim();
     const start = body.indexOf('{');
@@ -150,8 +133,6 @@ async function synthesise(
     };
   } catch {
     return null;
-  } finally {
-    clearTimeout(timer);
   }
 }
 

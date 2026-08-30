@@ -78,7 +78,7 @@ async function classifyWithAgent(
         { role: 'system', content: systemPrompt },
         { role: 'user', content: `User request: ${prompt}` },
       ],
-      { maxTokens: 300, temperature: 0, timeoutMs: 20000 }
+      { maxTokens: 300, temperature: 0, timeoutMs: 20000, orgId }
     );
     return parseClassifierJson(content);
   } catch (err) {

@@ -192,7 +192,7 @@ function validateLlmPlan(parsed: unknown, roster: CrewRosterMember[], message: s
   }
 }
 
-async function planWithLiteLLM(message: string, roster: CrewRosterMember[]): Promise<CrewPlan | null> {
+async function planWithLiteLLM(message: string, roster: CrewRosterMember[], orgId: string): Promise<CrewPlan | null> {
   const rosterJson = roster.map((e) => ({
     id: e.id,
     name: e.name,
@@ -217,7 +217,7 @@ async function planWithLiteLLM(message: string, roster: CrewRosterMember[]): Pro
           content: `Roster:\n${JSON.stringify(rosterJson)}\n\nUser request:\n${message}`,
         },
       ],
-      { maxTokens: 400, temperature: 0, timeoutMs: 20000 }
+      { maxTokens: 400, temperature: 0, timeoutMs: 20000, orgId }
     );
     return validateLlmPlan(extractJsonObject(content), roster, message);
   } catch (err) {
@@ -226,9 +226,9 @@ async function planWithLiteLLM(message: string, roster: CrewRosterMember[]): Pro
   }
 }
 
-export async function planCrew(message: string, roster: CrewRosterMember[]): Promise<CrewPlan> {
+export async function planCrew(message: string, roster: CrewRosterMember[], orgId: string): Promise<CrewPlan> {
   const fallback = heuristicCrewPlan(message, roster);
-  const fromLlm = await planWithLiteLLM(message, roster);
+  const fromLlm = await planWithLiteLLM(message, roster, orgId);
   return fromLlm || fallback;
 }
 

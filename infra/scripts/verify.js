@@ -83,6 +83,12 @@ const SUITES = [
     needsDocker: false,
   },
   {
+    name: 'one door (llm gateway)',
+    what: 'no paid model call can bypass the budget and the attribution',
+    cmd: [process.execPath, [path.join(__dirname, 'lint-llm-gateway.js')]],
+    needsDocker: false,
+  },
+  {
     name: 'startup coupling',
     what: 'no auxiliary service can block the product from starting or being rolled back',
     cmd: [process.execPath, [path.join(__dirname, 'lint-startup-coupling.js')]],

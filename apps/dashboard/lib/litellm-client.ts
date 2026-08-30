@@ -1,3 +1,4 @@
+import { checkLlmBudgetActivity } from '@darex/workflows/dist/activities/llm-budget';
 // Minimal OpenAI-compatible client for LiteLLM, used by the classify/plan/revise
 // paths. These are plain chat completions that must return a single JSON object
 // (or plain text) — they intentionally bypass atomic-agent's agent loop, which
@@ -29,6 +30,17 @@ export interface ChatOptions {
   temperature?: number;
   timeoutMs?: number;
   maxRetries?: number;
+  /**
+   * Whose budget this spends. REQUIRED, and deliberately not optional.
+   *
+   * The dashboard had its own path to the model — classify, crew planning and
+   * plan generation all came through here — and none of it consulted the
+   * per-workspace budget or attributed the spend. Making this required rather
+   * than optional means the compiler finds every caller, which is the only way
+   * to be sure none was missed; an optional field would have been forgotten in
+   * exactly the places nobody thought to look.
+   */
+  orgId: string;
 }
 
 const RETRYABLE_STATUSES = new Set([429, 500, 502, 503, 504]);
@@ -41,9 +53,32 @@ export async function chatCompletion(
   messages: ChatMessage[],
   options: ChatOptions
 ): Promise<string> {
-  const { baseUrl, apiKey, model } = resolveLiteLLMConfig();
+  const { baseUrl, apiKey } = resolveLiteLLMConfig();
   const maxRetries = options.maxRetries ?? 2;
   const timeoutMs = options.timeoutMs ?? 120000;
+
+  // THE MODEL COMES FROM THE WORKSPACE'S BUDGET, not from LITELLM_MODEL.
+  //
+  // The dashboard had its own route to the proxy — classification, crew
+  // planning, plan generation and draft revision all arrived here — and every
+  // one of them read the paid alias out of the environment. A workspace that
+  // the budget gate had already degraded to the free tier went on paying full
+  // price for all four, because the gate and this file had never met.
+  //
+  // checkLlmBudgetActivity fails OPEN by design: if the meter cannot be read
+  // the turn proceeds on the normal tier, because a cost control that causes
+  // an outage is a worse problem than the cost it was controlling.
+  let model = process.env.LITELLM_MODEL || 'atomic-agent';
+  try {
+    const gate = await checkLlmBudgetActivity({ orgId: options.orgId });
+    if (!gate.allowed) {
+      // on_exceeded='stop'. Opt-in, rare, and the caller's fallback handles it.
+      return '';
+    }
+    if (gate.modelOverride) model = gate.modelOverride;
+  } catch {
+    // Fail open, as above. The gate logs its own reason loudly.
+  }
 
   let lastError: Error | null = null;
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
@@ -66,6 +101,10 @@ export async function chatCompletion(
           // calls return empty and large ones hang. These paths only need the
           // final answer, so disable chain-of-thought.
           reasoning: { enabled: false },
+          // LiteLLM records the request-body `user` as `end_user` in its spend
+          // log. Without it the call is billed to the proxy's own key and no
+          // workspace can be charged, capped, or shown what it spent.
+          user: options.orgId,
           messages,
         }),
         signal: controller.signal,

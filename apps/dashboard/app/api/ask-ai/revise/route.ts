@@ -53,7 +53,7 @@ export async function POST(request: Request) {
     const currentDraft = String(plan.draft?.content || '');
     const summary = String(plan.summary || '');
 
-    const revised = (await reviseDraft(summary || '', currentDraft, String(feedback))).trim();
+    const revised = (await reviseDraft(summary || '', currentDraft, String(feedback), orgId)).trim();
     if (!revised) {
       return NextResponse.json({ error: 'Draft revision produced empty output' }, { status: 502 });
     }

@@ -6,6 +6,7 @@
  */
 
 import { createHash } from 'crypto';
+import { llmChat } from '../llm/gateway.js';
 import { createConnection, type Socket } from 'node:net';
 import { connect as tlsConnect } from 'node:tls';
 import { ApplicationFailure } from '@temporalio/activity';
@@ -309,39 +310,25 @@ async function extractWithLiteLLM(params: {
     JSON.stringify(params.toolResults ?? []).slice(0, 8000),
   ].join('\n');
 
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), EXTRACT_TIMEOUT_MS);
-  try {
-    const res = await fetch(litellmChatUrl(), {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify({
-        model,
-        stream: false,
-        max_tokens: 800,
-        // See planCrewActivity: the write-back turn is billed like any other.
-        user: params.orgId,
-        temperature: 0,
-        reasoning: { enabled: false },
-        messages: [
-          { role: 'system', content: system },
-          { role: 'user', content: user },
-        ],
-      }),
-      signal: controller.signal,
-    });
-    if (!res.ok) return { facts: [], fieldUpdates: [], openQuestions: [], relations: [] };
-    const data = (await res.json()) as { choices?: Array<{ message?: { content?: string } }> };
-    const content = data?.choices?.[0]?.message?.content || '';
-    return parseWriteBackExtract(extractJsonObject(content));
-  } catch {
+  // Through the gateway: the model comes from the workspace's budget. This runs
+  // after EVERY successful conversation, so it was the largest paid path that
+  // had never heard of the budget -- an over-budget tenant was degraded for the
+  // reply and then charged full price to remember it.
+  const res = await llmChat({
+    orgId: params.orgId,
+    purpose: 'writeback',
+    maxTokens: 800,
+    temperature: 0,
+    timeoutMs: EXTRACT_TIMEOUT_MS,
+    messages: [
+      { role: 'system', content: system },
+      { role: 'user', content: user },
+    ],
+  });
+  if (res.error || !res.content) {
     return { facts: [], fieldUpdates: [], openQuestions: [], relations: [] };
-  } finally {
-    clearTimeout(timer);
   }
+  return parseWriteBackExtract(extractJsonObject(res.content));
 }
 
 async function loadTranscript(

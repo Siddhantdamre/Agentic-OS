@@ -74,7 +74,7 @@ export async function POST(request: Request) {
     }
 
     const userMessage = String(body.userMessage);
-    const plan = await planCrew(userMessage, roster);
+    const plan = await planCrew(userMessage, roster, orgId);
     const byId = new Map(roster.map((e) => [e.id, e]));
     const stamp = `crew:${Date.now()}`;
 

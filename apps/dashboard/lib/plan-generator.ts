@@ -149,7 +149,7 @@ export async function generatePlan(
         { role: 'system', content: systemPrompt },
         { role: 'user', content: `USER REQUEST: ${prompt}` },
       ],
-      { maxTokens: 1200, temperature: 0.2, timeoutMs: 60000 }
+      { maxTokens: 1200, temperature: 0.2, timeoutMs: 60000, orgId }
     );
     const parsed = extractJson(content);
 
@@ -176,7 +176,9 @@ export async function generatePlan(
 export async function reviseDraft(
   originalRequest: string,
   currentDraft: string,
-  feedback: string
+  feedback: string,
+  /** Whose budget this spends. See ChatOptions.orgId in litellm-client. */
+  orgId: string
 ): Promise<string> {
   try {
     const systemPrompt = [
@@ -197,7 +199,7 @@ export async function reviseDraft(
         { role: 'system', content: systemPrompt },
         { role: 'user', content: userPrompt },
       ],
-      { maxTokens: 1000, temperature: 0.2, timeoutMs: 60000 }
+      { maxTokens: 1000, temperature: 0.2, timeoutMs: 60000, orgId }
     );
     return content.trim().slice(0, 4000);
   } catch (err) {

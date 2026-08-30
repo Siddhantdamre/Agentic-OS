@@ -2,6 +2,7 @@
  * Critic gate (E3): LiteLLM JSON + deterministic policy before send/publish/sign.
  * Known-bad fair-housing drafts are blocked even when LiteLLM is down.
  */
+import { llmChat } from '../llm/gateway.js';
 
 export type CriticIntent = 'send' | 'publish' | 'sign';
 
@@ -170,59 +171,37 @@ function parseCriticJson(raw: string): CriticCheckResult | null {
 }
 
 async function criticWithLiteLLM(draft: string, intent: CriticIntent, orgId?: string): Promise<CriticCheckResult | null> {
-  const isProd = process.env.NODE_ENV === 'production';
-  const rawBase = process.env.LITELLM_BASE_URL || (isProd ? '' : 'http://localhost:4000/v1');
-  const apiKey = process.env.LITELLM_API_KEY || process.env.LITELLM_MASTER_KEY || '';
-  const model = process.env.LITELLM_MODEL || 'atomic-agent';
-  if (!rawBase || !apiKey) return null;
-
-  const baseUrl = rawBase.replace(/\/$/, '');
-  const url = baseUrl.endsWith('/v1') ? `${baseUrl}/chat/completions` : `${baseUrl}/v1/chat/completions`;
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 12_000);
-  try {
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${apiKey}`,
+  // Through the gateway, which resolves the model from the WORKSPACE'S BUDGET
+  // rather than from LITELLM_MODEL. This call used to read that env var
+  // directly, so an over-budget tenant had its agent turn degraded to the free
+  // tier and then paid full price for the critic on the very next line: the
+  // gate fired and the spending carried on. See llm/gateway.ts.
+  if (!orgId) return null;
+  const res = await llmChat({
+    orgId,
+    purpose: 'critic',
+    maxTokens: 200,
+    temperature: 0,
+    timeoutMs: 12_000,
+    messages: [
+      {
+        role: 'system',
+        content: [
+          'You are a compliance critic for outbound business messages.',
+          'Reply with ONLY JSON: {"allow":true|false,"policy":"ok"|"fair_housing"|"legal_promise"|"rera"|"model","reason":"...","violations":[]}',
+          'Block fair housing steering (protected class, no kids, adults only, no Section 8, faith/family targeting).',
+          'Block guaranteed returns and invented legal promises.',
+          'Do not invent facts. Begin with the JSON object.',
+        ].join(' '),
       },
-      body: JSON.stringify({
-      // Attribute this call to the tenant. LiteLLM records the OpenAI `user`
-      // field as `end_user`, which is how per-customer spend and budgets are
-      // tracked; without it every call is logged against the API key's owner
-      // and one runaway tenant is indistinguishable from ordinary load.
-        ...(orgId ? { user: orgId } : {}),
-        model,
-        stream: false,
-        max_tokens: 200,
-        temperature: 0,
-        reasoning: { enabled: false },
-        messages: [
-          {
-            role: 'system',
-            content: [
-              'You are a compliance critic for outbound business messages.',
-              'Reply with ONLY JSON: {"allow":true|false,"policy":"ok"|"fair_housing"|"legal_promise"|"rera"|"model","reason":"...","violations":[]}',
-              'Block fair housing steering (protected class, no kids, adults only, no Section 8, faith/family targeting).',
-              'Block guaranteed returns and invented legal promises.',
-              'Do not invent facts. Begin with the JSON object.',
-            ].join(' '),
-          },
-          { role: 'user', content: `intent=${intent}\n---\n${draft.slice(0, 4000)}` },
-        ],
-      }),
-      signal: controller.signal,
-    });
-    if (!res.ok) return null;
-    const data = (await res.json()) as { choices?: Array<{ message?: { content?: string } }> };
-    const content = data?.choices?.[0]?.message?.content || '';
-    return parseCriticJson(content);
-  } catch {
-    return null;
-  } finally {
-    clearTimeout(timer);
-  }
+      { role: 'user', content: `intent=${intent}\n---\n${draft.slice(0, 4000)}` },
+    ],
+  });
+  // No answer means the heuristics stand alone, exactly as before. The critic
+  // can only ever TIGHTEN a verdict, so losing it forfeits a chance to block
+  // and never creates a chance to allow.
+  if (res.error || !res.content) return null;
+  return parseCriticJson(res.content);
 }
 
 /**

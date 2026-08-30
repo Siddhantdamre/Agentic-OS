@@ -1,3 +1,4 @@
+import { llmChat } from '../llm/gateway.js';
 import { ApplicationFailure, Context } from '@temporalio/activity';
 import { Pool, PoolClient } from 'pg';
 import type { AgentTaskInput, AgentTaskResult } from '../agent-engine.js';
@@ -785,50 +786,28 @@ export async function planCrewActivity(params: {
   // A crew needs at least two employees to exist at all.
   if (candidates.length < 2) return solo(`roster has ${candidates.length} active employee(s)`);
 
-  const isProd = process.env.NODE_ENV === 'production';
-  const rawBase = process.env.LITELLM_BASE_URL || (isProd ? '' : 'http://localhost:4000/v1');
-  const apiKey = process.env.LITELLM_API_KEY || process.env.LITELLM_MASTER_KEY || '';
-  const model = process.env.LITELLM_MODEL || 'atomic-agent';
-  if (!rawBase || !apiKey) return solo('planner unavailable (no LLM gateway configured)');
-
-  const baseUrl = rawBase.replace(/\/$/, '');
-  const url = baseUrl.endsWith('/v1') ? `${baseUrl}/chat/completions` : `${baseUrl}/v1/chat/completions`;
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 15_000);
-  try {
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
-      body: JSON.stringify({
-        model,
-        stream: false,
-        max_tokens: 600,
-        // Whose bill this lands on. LiteLLM records the request-body `user` as
-        // `end_user` in its spend log; without it the call is billed to the
-        // proxy key and no tenant can be charged or capped for it.
-        user: orgId,
-        temperature: 0,
-        reasoning: { enabled: false },
-        messages: [
-          {
-            role: 'system',
-            content:
-              'You allocate work to AI employees. Reply with ONLY the JSON object described. Never invent an employee id.',
-          },
-          { role: 'user', content: buildCrewPlanPrompt(params.userMessage, candidates) },
-        ],
-      }),
-      signal: controller.signal,
-    });
-    if (!res.ok) return solo(`planner HTTP ${res.status}`);
-    const data = (await res.json()) as { choices?: Array<{ message?: { content?: string } }> };
-    const parsed = extractPlanJson(data?.choices?.[0]?.message?.content || '');
-    return validateCrewPlan(parsed, candidates);
-  } catch (err: any) {
-    return solo(`planner error: ${err?.message || 'unknown'}`);
-  } finally {
-    clearTimeout(timer);
+  // Through the gateway: the model comes from the workspace's budget, not from
+  // LITELLM_MODEL. Crew planning is a paid call like any other and had never
+  // consulted the budget. See llm/gateway.ts.
+  const planned = await llmChat({
+    orgId,
+    purpose: 'crew-plan',
+    maxTokens: 600,
+    temperature: 0,
+    timeoutMs: 15_000,
+    messages: [
+      {
+        role: 'system',
+        content:
+          'You allocate work to AI employees. Reply with ONLY the JSON object described. Never invent an employee id.',
+      },
+      { role: 'user', content: buildCrewPlanPrompt(params.userMessage, candidates) },
+    ],
+  });
+  if (planned.error || !planned.content) {
+    return solo(`planner unavailable (${planned.error || 'empty response'})`);
   }
+  return validateCrewPlan(extractPlanJson(planned.content), candidates);
 }
 
 /**
