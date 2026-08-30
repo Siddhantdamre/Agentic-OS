@@ -221,6 +221,12 @@ const SUITES = [
     needsDocker: true,
   },
   {
+    name: 'task supervision (the trio)',
+    what: 'every task reports what the doer, the monitor and the learner did',
+    cmd: [process.execPath, [path.join(__dirname, 'check-supervision.js')]],
+    needsDocker: true,
+  },
+  {
     name: 'quiet leads',
     what: 'the agent acts first — and leaves alone the six it must never contact',
     cmd: [process.execPath, [path.join(__dirname, 'check-quiet-leads.js')]],

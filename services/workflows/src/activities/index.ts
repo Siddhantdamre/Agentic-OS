@@ -27,6 +27,7 @@ export { memoryWriteBackActivity } from './memory-writeback.js';
 
 export { redactForEmbedActivity } from './redact.js';
 export { checkLlmBudgetActivity } from './llm-budget.js';
+export { recordTaskSupervisionActivity } from './task-supervision.js';
 export { researchTopicActivity } from './market-research.js';
 export { embedIngestionJobActivity, embedQueuedJobsActivity } from './embed.js';
 export { ingestFileActivity, syncConnectorActivity } from './ingest-file.js';

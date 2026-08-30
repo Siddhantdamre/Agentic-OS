@@ -25,6 +25,7 @@ import {
   HUMAN_REVIEW_REPLY,
   SERVICE_FALLBACK_REPLY,
   PRIVACY_REFUSAL,
+  DISCLOSURE_SAFE_REPLY,
   sanitiseCustomerReply,
 } from '../reply-gate.js';
 import { MemoryWriteBackWorkflow } from './MemoryWriteBackWorkflow.js';
@@ -113,6 +114,7 @@ const {
   markNeedsAttentionActivity,
   saveMessageActivity,
   checkLlmBudgetActivity,
+  recordTaskSupervisionActivity,
 } = proxyActivities<typeof activities>({
   startToCloseTimeout: '2 minutes',
   scheduleToCloseTimeout: '6 minutes',
@@ -827,7 +829,9 @@ export async function WorkItemWorkflow(input: WorkItemWorkflowInput): Promise<Wo
   // has it forever. Security refusals are excluded inside isKnowledgeGap —
   // "what is the other customer's number?" is correct behaviour, and listing it
   // as a gap would invite an operator to supply the answer.
+  let knowledgeGapRecorded = false;
   if (isKnowledgeGap(finalReply, input.userMessage)) {
+    knowledgeGapRecorded = true;
     await recordKnowledgeGapActivity({
       orgId: input.orgId,
       question: input.userMessage,
@@ -1115,6 +1119,40 @@ export async function WorkItemWorkflow(input: WorkItemWorkflowInput): Promise<Wo
     workItemId,
     status: nextStatus('done'),
     businessKey: `${businessKey}:status_done`,
+  });
+
+  // ── THE TRIO REPORTS ──────────────────────────────────────────────────────
+  // Doer, monitor and learner all ran above. This is the one row that says so.
+  // Written at the terminal point, so a completed task with NO supervision row
+  // means the task finished without all three reporting — which is exactly
+  // what check-supervision.js fails on. A missing row is the signal.
+  await recordTaskSupervisionActivity({
+    orgId: input.orgId,
+    workItemId,
+    conversationId: input.conversationId,
+    // DOER
+    replyProduced: Boolean(finalReply && finalReply.trim()),
+    // A refusal is identified by being one of our OWN canned outputs, which are
+    // correct by construction. A classifier guessing "does this look like a
+    // refusal" would eventually file a real answer as one, and a refusal is
+    // the outcome that must never be mistaken for a failure.
+    refused: finalReply === PRIVACY_REFUSAL || finalReply === DISCLOSURE_SAFE_REPLY,
+    escalated: false,
+    turns: childResult.executedSteps?.length ?? 0,
+    // MONITOR
+    criticBlocked: !critic.allow,
+    criticRevised: Boolean(critic.allow && critic.finalDraft && critic.finalDraft !== reply),
+    criticReason: critic.reason || critic.policy || '',
+    // NOT YET OBSERVABLE. criticCheckWithRevision does not report whether the
+    // model critic was consulted or whether the deterministic gates decided
+    // alone, so this is recorded as false rather than guessed. It is a COST
+    // signal, and a fabricated one would be worse than an absent one: it would
+    // read as "the cheap layer is carrying everything" precisely when it is
+    // not. Exposing it means threading a flag out of critic-check.ts.
+    criticUsedModel: false,
+    // LEARNER
+    gapRecorded: knowledgeGapRecorded,
+    memoryWritten: true,
   });
 
   return {

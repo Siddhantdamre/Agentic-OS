@@ -226,6 +226,16 @@ BEGIN
   GET DIAGNOSTICS v_n = ROW_COUNT;
   v_counts := v_counts || jsonb_build_object('lead_followups', v_n);
 
+  -- The supervision record for this person's tasks. It holds no message text,
+  -- but it is linked to their conversations and monitor_reason can name why a
+  -- reply to them was blocked. Added because the catalog sweep in
+  -- check-erasure.js failed the day migration 042 created the table -- the
+  -- third time that test has caught a new table nobody remembered to wire in,
+  -- which is the whole reason it reads pg_class instead of a list.
+  DELETE FROM task_supervision WHERE org_id = p_org_id AND conversation_id = ANY(v_convs);
+  GET DIAGNOSTICS v_n = ROW_COUNT;
+  v_counts := v_counts || jsonb_build_object('task_supervision', v_n);
+
   DELETE FROM approval_requests WHERE org_id = p_org_id AND conversation_id = ANY(v_convs);
   GET DIAGNOSTICS v_n = ROW_COUNT;
   v_counts := v_counts || jsonb_build_object('approval_requests', v_n);
@@ -345,6 +355,7 @@ BEGIN
   DELETE FROM org_memory
    WHERE org_id = p_org_id AND source = 'conversation'
      AND source_ref = ANY(SELECT unnest(v_convs)::text);
+  DELETE FROM task_supervision  WHERE org_id = p_org_id AND conversation_id = ANY(v_convs);
   DELETE FROM lead_followups    WHERE org_id = p_org_id AND conversation_id = ANY(v_convs);
   DELETE FROM knowledge_gaps    WHERE org_id = p_org_id AND conversation_id = ANY(v_convs);
   DELETE FROM approval_requests WHERE org_id = p_org_id AND conversation_id = ANY(v_convs);
