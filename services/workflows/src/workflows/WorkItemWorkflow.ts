@@ -190,7 +190,100 @@ function eventKindForConfirm(decision: WorkItemConfirmDecision): WorkEventKind {
  * Does not replace the child. Does not auto-spawn CrewWorkflow.
  * Session for the child turn: darex:{orgId}:{workItemId} via sessionKey=workItemId.
  */
+/**
+ * What the trio observed. Filled in as the work proceeds; anything left
+ * `undefined` is derived from the RESULT by the wrapper below, so a path that
+ * never reached the critic still reports an honest doer outcome instead of a
+ * guess.
+ */
+interface SupervisionDraft {
+  workItemId?: string;
+  replyProduced?: boolean;
+  refused?: boolean;
+  escalated?: boolean;
+  turns?: number;
+  criticBlocked?: boolean;
+  criticRevised?: boolean;
+  criticReason?: string;
+  criticUsedModel?: boolean;
+  gapRecorded?: boolean;
+  memoryWritten?: boolean;
+}
+
+/**
+ * THE TRIO REPORTS ON EVERY EXIT, NOT JUST THE GOOD ONE.
+ *
+ * Supervision used to be recorded at a single point near the end of the work
+ * item. There were TEN returns before it — six failures, two cancellations, one
+ * escalation to a human, and one success — and not one of them recorded
+ * anything. The trio reported only on tasks that ran cleanly to the end, which
+ * is precisely the population that needs the least supervising.
+ *
+ * Worse, the check guarding it only looked at work items in status `done`, so
+ * the six failure paths and the escalation could never have been caught by it.
+ * A supervisor that sees only successes does not measure quality; it measures
+ * how often nothing went wrong, and reports that as the same thing.
+ *
+ * So the recording moved out here, where no `return` inside the body can skip
+ * it and a thrown activity cannot either. `recordTaskSupervisionActivity` never
+ * throws, so this cannot turn a working task into a failed one, and it cannot
+ * mask an error on the way out.
+ */
 export async function WorkItemWorkflow(input: WorkItemWorkflowInput): Promise<WorkItemWorkflowResult> {
+  const draft: SupervisionDraft = {};
+  try {
+    const result = await runWorkItem(input, draft);
+    await reportTrio(input, draft, result);
+    return result;
+  } catch (err) {
+    // The task died. That is exactly when a supervision row matters most, and
+    // exactly when the old placement guaranteed there would not be one.
+    await reportTrio(input, draft, undefined);
+    throw err;
+  }
+}
+
+async function reportTrio(
+  input: WorkItemWorkflowInput,
+  draft: SupervisionDraft,
+  result: WorkItemWorkflowResult | undefined,
+): Promise<void> {
+  // No work item means the upsert itself failed, so there is nothing to hang a
+  // supervision row on. Recording against a null id would be inventing a task.
+  if (!draft.workItemId) return;
+
+  const reply = (result?.replyMessage || '').trim();
+  await recordTaskSupervisionActivity({
+    orgId: input.orgId,
+    workItemId: draft.workItemId,
+    conversationId: input.conversationId,
+    // DOER — explicit where the body knew, derived from the outcome otherwise.
+    replyProduced: draft.replyProduced ?? Boolean(reply),
+    // A refusal is identified by being one of our OWN canned outputs, which are
+    // correct by construction. A classifier guessing "does this look like a
+    // refusal" would eventually file a real answer as one, and a refusal is the
+    // outcome that must never be mistaken for a failure.
+    refused: draft.refused ?? (reply === PRIVACY_REFUSAL || reply === DISCLOSURE_SAFE_REPLY),
+    // An escalation is a work item handed to a person. It is its own outcome,
+    // not a failure — the agent correctly declined to guess.
+    escalated: draft.escalated ?? (result?.status === 'needs_attention'),
+    turns: draft.turns ?? (result?.executedSteps?.length ?? 0),
+    // MONITOR — false on a path that never reached the critic, which is true:
+    // it did not block anything, because it never ran.
+    criticBlocked: draft.criticBlocked ?? false,
+    criticRevised: draft.criticRevised ?? false,
+    criticReason: draft.criticReason ?? '',
+    criticUsedModel: draft.criticUsedModel ?? false,
+    // LEARNER
+    gapRecorded: draft.gapRecorded ?? false,
+    memoryWritten: draft.memoryWritten ?? false,
+  });
+}
+
+async function runWorkItem(
+  input: WorkItemWorkflowInput,
+  draft: SupervisionDraft,
+): Promise<WorkItemWorkflowResult> {
   const parentId = workflowInfo().workflowId;
   const businessKey = input.idempotencyKey || input.inboundEventId || parentId;
   let lastConfirm: WorkItemConfirmDecision | undefined;
@@ -215,6 +308,8 @@ export async function WorkItemWorkflow(input: WorkItemWorkflowInput): Promise<Wo
   });
 
   const workItemId = upserted.workItemId;
+  // From here on every exit is supervised, including the ones that throw.
+  draft.workItemId = workItemId;
 
   await appendWorkEventActivity({
     orgId: input.orgId,
@@ -1121,38 +1216,25 @@ export async function WorkItemWorkflow(input: WorkItemWorkflowInput): Promise<Wo
     businessKey: `${businessKey}:status_done`,
   });
 
-  // ── THE TRIO REPORTS ──────────────────────────────────────────────────────
-  // Doer, monitor and learner all ran above. This is the one row that says so.
-  // Written at the terminal point, so a completed task with NO supervision row
-  // means the task finished without all three reporting — which is exactly
-  // what check-supervision.js fails on. A missing row is the signal.
-  await recordTaskSupervisionActivity({
-    orgId: input.orgId,
-    workItemId,
-    conversationId: input.conversationId,
-    // DOER
-    replyProduced: Boolean(finalReply && finalReply.trim()),
-    // A refusal is identified by being one of our OWN canned outputs, which are
-    // correct by construction. A classifier guessing "does this look like a
-    // refusal" would eventually file a real answer as one, and a refusal is
-    // the outcome that must never be mistaken for a failure.
-    refused: finalReply === PRIVACY_REFUSAL || finalReply === DISCLOSURE_SAFE_REPLY,
-    escalated: false,
-    turns: childResult.executedSteps?.length ?? 0,
-    // MONITOR
-    criticBlocked: !critic.allow,
-    criticRevised: Boolean(critic.allow && critic.finalDraft && critic.finalDraft !== reply),
-    criticReason: critic.reason || critic.policy || '',
-    // A COST signal, now observed rather than guessed. Counted at the LLM
-    // gateway — the one function that can reach the proxy — so it covers the
-    // critic call and every revision call in the loop. If this trends toward
-    // 1.0 the deterministic gates have stopped carrying their share and the
-    // price per conversation is quietly tripling.
-    criticUsedModel: critic.usedModel,
-    // LEARNER
-    gapRecorded: knowledgeGapRecorded,
-    memoryWritten: true,
-  });
+  // ── WHAT THE TRIO OBSERVED ────────────────────────────────────────────────
+  // Recorded into the draft rather than written here. The wrapper writes the
+  // row on EVERY exit, so this block no longer decides whether supervision
+  // happens — only how precise it is on the path that got this far.
+  draft.replyProduced = Boolean(finalReply && finalReply.trim());
+  draft.refused = finalReply === PRIVACY_REFUSAL || finalReply === DISCLOSURE_SAFE_REPLY;
+  draft.escalated = false;
+  draft.turns = childResult.executedSteps?.length ?? 0;
+  draft.criticBlocked = !critic.allow;
+  draft.criticRevised = Boolean(critic.allow && critic.finalDraft && critic.finalDraft !== reply);
+  draft.criticReason = critic.reason || critic.policy || '';
+  // A COST signal, observed rather than guessed. Counted at the LLM gateway —
+  // the one function that can reach the proxy — so it covers the critic call
+  // and every revision call in the loop. If this trends toward 1.0 the
+  // deterministic gates have stopped carrying their share and the price per
+  // conversation is quietly tripling.
+  draft.criticUsedModel = critic.usedModel;
+  draft.gapRecorded = knowledgeGapRecorded;
+  draft.memoryWritten = true;
 
   return {
     workItemId,

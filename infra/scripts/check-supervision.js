@@ -139,17 +139,36 @@ const stamp = Date.now();
       ? ok('three recordings of one task produce one row', 'upsert assigns, never accumulates')
       : no('three recordings of one task produce one row', `${dupes} rows`);
 
-    // ── 6. THE BLUNT CHECK ──────────────────────────────────────────────────
-    console.log('\n6. A completed task with NO supervision row is a failure');
-    const orphan = await workItem(A);   // deliberately never recorded
-    const unsupervised = await db.query(
-      `SELECT COUNT(*)::int AS n FROM work_items w
-        WHERE w.org_id = $1 AND w.status = 'done'
-          AND NOT EXISTS (SELECT 1 FROM task_supervision t WHERE t.work_item_id = w.id)`, [A]);
-    unsupervised.rows[0].n === 1
-      ? ok('the unsupervised task is detected', 'a missing row IS the signal — this is what catches a role that stopped')
-      : no('the unsupervised task is detected', `${unsupervised.rows[0].n}`);
-    await db.query(`DELETE FROM work_items WHERE id=$1`, [orphan]);
+    // ── 6. THE BLUNT CHECK, ON EVERY TERMINAL STATUS ────────────────────────
+    // This used to read `w.status = 'done'` only. The workflow has THREE
+    // terminal statuses, and the two it ignored are where supervision matters
+    // most:
+    //
+    //   done            finished cleanly
+    //   needs_attention failed, or escalated to a person   <- was invisible
+    //   cancelled       stopped deliberately               <- was invisible
+    //
+    // Ten returns in WorkItemWorkflow exited before supervision was recorded;
+    // eight of them landed in the two statuses this check never looked at. A
+    // supervisor that sees only successes does not measure quality, it measures
+    // how often nothing went wrong and reports that as the same thing.
+    console.log('\n6. A finished task with NO supervision row is a failure — whatever it finished as');
+    const TERMINAL = ['done', 'needs_attention', 'cancelled'];
+    for (const status of TERMINAL) {
+      const orphan = (await db.query(
+        `INSERT INTO work_items (org_id, type, status, channel)
+         VALUES ($1,'conversation',$2,'inbox') RETURNING id`, [A, status])).rows[0].id;
+      const missed = Number((await db.query(
+        `SELECT COUNT(*)::int AS n FROM work_items w
+          WHERE w.org_id = $1 AND w.status = ANY($2::text[])
+            AND NOT EXISTS (SELECT 1 FROM task_supervision t WHERE t.work_item_id = w.id)`,
+        [A, TERMINAL])).rows[0].n);
+      missed === 1
+        ? ok(`an unsupervised '${status}' task is detected`,
+          status === 'done' ? 'a missing row IS the signal' : 'previously invisible to this check')
+        : no(`an unsupervised '${status}' task is detected`, `${missed} found, expected 1`);
+      await db.query(`DELETE FROM work_items WHERE id=$1`, [orphan]);
+    }
 
     // ── 7. Reading it ───────────────────────────────────────────────────────
     console.log('\n7. The numbers refuse to flatter');

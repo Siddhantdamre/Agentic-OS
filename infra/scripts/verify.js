@@ -257,6 +257,13 @@ const SUITES = [
     needsDocker: true,
   },
   {
+    name: 'supervision coverage',
+    what: 'no path can finish a task without the trio reporting — checked '
+      + 'structurally, because the runtime check only catches this once traffic exists',
+    cmd: [process.execPath, [path.join(__dirname, 'lint-supervision-coverage.js')]],
+    needsDocker: false,
+  },
+  {
     name: 'dormant capability',
     what: 'every shipped feature has actually produced a row — the check that '
       + 'catches complete-but-unreachable',
