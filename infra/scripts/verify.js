@@ -257,6 +257,12 @@ const SUITES = [
     needsDocker: true,
   },
   {
+    name: 'satisfaction signal',
+    what: 'the agent is judged on evidence, and silence is never counted as success',
+    cmd: [process.execPath, [path.join(__dirname, 'check-satisfaction.js')]],
+    needsDocker: true,
+  },
+  {
     name: 'supervision coverage',
     what: 'no path can finish a task without the trio reporting — checked '
       + 'structurally, because the runtime check only catches this once traffic exists',
@@ -323,7 +329,14 @@ if (!FAST && SUITES.some((s) => s.needsDocker)) {
     [path.join(__dirname, 'lib', 'env-reachable.js'), '--check'],
     { encoding: 'utf8', env: process.env });
   if (probe.status !== 0) {
-    console.log(`\n  ENVIRONMENT UNAVAILABLE — ${String(probe.stdout || '').trim()}\n`);
+    // stderr as well as stdout. This probe exists to tell a dead machine apart
+    // from broken code; when the probe ITSELF fails it writes to stderr, and
+    // printing only stdout produced `ENVIRONMENT UNAVAILABLE — ` with no reason
+    // at all — the exact ambiguity the whole mechanism was built to remove.
+    const why = [probe.stdout, probe.stderr]
+      .map((x) => String(x || '').trim()).filter(Boolean).join(' | ')
+      || `the probe exited ${probe.status} without saying why`;
+    console.log(`\n  ENVIRONMENT UNAVAILABLE — ${why}\n`);
     console.log('  NOTHING WAS VERIFIED. This is not a code failure: the suites below');
     console.log('  never ran. Bring the stack up and run this again.\n');
     console.log('    docker compose -f infra/docker-compose.yml up -d\n');
