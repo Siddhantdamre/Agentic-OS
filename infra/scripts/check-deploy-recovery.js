@@ -296,6 +296,23 @@ function restartCounts() {
         ? ok('the previous image can be tagged', `${IMAGE}:rollback-proof`)
         : no('the previous image can be tagged', String(tag.stderr).slice(0, 160));
 
+      // BREAK AN OPTIONAL SERVICE FIRST.
+      //
+      // A rollback that only works when everything else is healthy is not a
+      // rollback — an incident is precisely when something else is not. Nango
+      // is third-party connector OAuth and answers no customer, so stopping it
+      // must not affect the ability to redeploy or serve.
+      //
+      // It used to. atomic-bridge required nango HEALTHY, and the chain
+      // dashboard -> atomic-agent -> atomic-bridge -> nango-server meant this
+      // exact step failed with "dependency failed to start: container
+      // darex-nango is unhealthy". That is why this is now part of the proof
+      // rather than a footnote.
+      const stoppedNango = docker(['stop', 'darex-nango'], 120000).status === 0;
+      stoppedNango
+        ? ok('an optional service is deliberately stopped first', 'nango down — a rollback must work during an incident')
+        : no('an optional service is deliberately stopped first', 'could not stop nango');
+
       const t2 = Date.now();
       const recreate = compose(['up', '-d', '--force-recreate', 'dashboard'], 600000);
       recreate.status === 0
@@ -316,6 +333,24 @@ function restartCounts() {
       await authIsEnforced()
         ? ok('and authentication survived the rollback', 'HTTP 401')
         : no('and authentication survived the rollback');
+
+      // The data has to still be there too. A rollback that serves an empty
+      // database is a different disaster wearing the same green tick.
+      const afterRb = await snapshot();
+      Number(afterRb.orgs) >= Number(before.orgs) && Number(afterRb.messages) >= Number(before.messages)
+        ? ok('and the database survived the rollback', `orgs ${afterRb.orgs}, messages ${afterRb.messages}`)
+        : no('and the database survived the rollback',
+          `orgs ${before.orgs}->${afterRb.orgs}, messages ${before.messages}->${afterRb.messages}`);
+
+      // Put the optional service back and confirm the stack is whole again, so
+      // this proof leaves the machine as it found it.
+      if (stoppedNango) {
+        compose(['up', '-d', 'nango-server'], 300000);
+        const restored = await waitForStackSettled(180000);
+        restored !== null
+          ? ok('the optional service is restored afterwards', `stack whole again in ${(restored / 1000).toFixed(1)}s`)
+          : no('the optional service is restored afterwards', 'the stack did not settle');
+      }
     }
   } else {
     console.log('\n4. Rollback — skipped (pass --rollback to include it)');

@@ -32,6 +32,7 @@
 --
 --      knowledge_gaps      question       <- the customer's words, verbatim
 --      approval_requests   draft          <- the reply text
+--      lead_followups      draft          <- quotes the customer back (039)
 --
 --    So the obvious implementation of erasure leaves the customer's actual
 --    words in reply_edits, orphaned but readable.
@@ -216,6 +217,15 @@ BEGIN
   GET DIAGNOSTICS v_n = ROW_COUNT;
   v_counts := v_counts || jsonb_build_object('knowledge_gaps', v_n);
 
+  -- lead_followups.draft quotes the customer's own words back at them, so a
+  -- follow-up record is personal data like any message. Added here because the
+  -- catalog sweep in check-erasure.js failed the day migration 039 created the
+  -- table -- which is the entire reason that test reads pg_class instead of a
+  -- list somebody has to remember to update.
+  DELETE FROM lead_followups WHERE org_id = p_org_id AND conversation_id = ANY(v_convs);
+  GET DIAGNOSTICS v_n = ROW_COUNT;
+  v_counts := v_counts || jsonb_build_object('lead_followups', v_n);
+
   DELETE FROM approval_requests WHERE org_id = p_org_id AND conversation_id = ANY(v_convs);
   GET DIAGNOSTICS v_n = ROW_COUNT;
   v_counts := v_counts || jsonb_build_object('approval_requests', v_n);
@@ -335,6 +345,7 @@ BEGIN
   DELETE FROM org_memory
    WHERE org_id = p_org_id AND source = 'conversation'
      AND source_ref = ANY(SELECT unnest(v_convs)::text);
+  DELETE FROM lead_followups    WHERE org_id = p_org_id AND conversation_id = ANY(v_convs);
   DELETE FROM knowledge_gaps    WHERE org_id = p_org_id AND conversation_id = ANY(v_convs);
   DELETE FROM approval_requests WHERE org_id = p_org_id AND conversation_id = ANY(v_convs);
   DELETE FROM reply_edits       WHERE org_id = p_org_id AND conversation_id = ANY(v_convs);

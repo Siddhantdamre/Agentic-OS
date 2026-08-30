@@ -83,6 +83,12 @@ const SUITES = [
     needsDocker: false,
   },
   {
+    name: 'startup coupling',
+    what: 'no auxiliary service can block the product from starting or being rolled back',
+    cmd: [process.execPath, [path.join(__dirname, 'lint-startup-coupling.js')]],
+    needsDocker: false,
+  },
+  {
     name: 'production port bindings',
     what: 'the prod overlay replaces the kernel ports instead of appending to them',
     cmd: [process.execPath, [path.join(__dirname, 'lint-compose-ports.js')]],
@@ -188,6 +194,12 @@ const SUITES = [
     name: 'retention and erasure',
     what: 'a person asking to be forgotten is, including what the agent learned about them',
     cmd: [process.execPath, [path.join(__dirname, 'check-erasure.js')]],
+    needsDocker: true,
+  },
+  {
+    name: 'quiet leads',
+    what: 'the agent acts first — and leaves alone the six it must never contact',
+    cmd: [process.execPath, [path.join(__dirname, 'check-quiet-leads.js')]],
     needsDocker: true,
   },
   {

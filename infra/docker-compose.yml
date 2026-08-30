@@ -532,8 +532,29 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      # STARTED, not healthy — deliberately.
+      #
+      # Nango is third-party connector OAuth (Gmail, Slack). It is not on the
+      # path that answers a customer, and the application already handles it
+      # being unavailable: connector tools report "not connected", which the
+      # connector-honesty tests assert.
+      #
+      # Requiring it HEALTHY let one auxiliary service take down the whole
+      # product and — far worse — the ability to recover from that:
+      #
+      #   nango unhealthy -> atomic-bridge won't start
+      #                   -> atomic-agent won't start
+      #                   -> dashboard cannot be recreated
+      #
+      # Measured by attempting an actual rollback:
+      #   "dependency failed to start: container darex-nango is unhealthy"
+      #
+      # An incident is precisely when an auxiliary service is down AND you need
+      # to roll back. Coupling the recovery path to something that is not on
+      # the serving path turns a degraded feature into an outage you cannot
+      # exit. Hard-depend only on what the service cannot function without.
       nango-server:
-        condition: service_healthy
+        condition: service_started
       pgbouncer:
         condition: service_healthy
     ports:
@@ -748,10 +769,24 @@ services:
         condition: service_healthy
       supertokens:
         condition: service_healthy
+      # Temporal and the agent are STARTED, not healthy — same principle as
+      # atomic-bridge -> nango above.
+      #
+      # The dashboard can sign a user in, show every past conversation, the
+      # approval queue, the shadow-mode evidence and the impact numbers with
+      # neither of these available; all of that is served from Postgres, which
+      # IS a hard dependency and stays one. What degrades without them is
+      # starting new work — and that path already retries, falls back through
+      # three model tiers, and tells the customer it is still working rather
+      # than going silent.
+      #
+      # Requiring them healthy meant a slow agent start left the entire
+      # product — including the pages an operator would use to diagnose the
+      # slow agent — refusing to come up at all.
       temporal:
-        condition: service_healthy
+        condition: service_started
       atomic-agent:
-        condition: service_healthy
+        condition: service_started
       redis:
         condition: service_healthy
       pgbouncer:
