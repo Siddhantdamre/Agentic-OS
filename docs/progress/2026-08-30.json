@@ -1,0 +1,23 @@
+{
+  "at": "2026-08-30T20:20:45.344Z",
+  "built": {
+    "suites": 44,
+    "guards": 44,
+    "migrations": 43,
+    "decisions": 15,
+    "unitTests": 452
+  },
+  "exercised": {
+    "conversations answered": 719,
+    "people recognised": 719,
+    "tasks supervised": 0,
+    "facts a person typed": 1,
+    "replies an operator fixed": 0,
+    "leads chased unprompted": 8,
+    "decisions handed to a human": 0,
+    "automations that fired": 0,
+    "memory rows with embeddings": 0,
+    "conversations with a real exchange": 49,
+    "replies we can read a verdict from": 3
+  }
+}
