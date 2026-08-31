@@ -18,7 +18,6 @@ export async function GET() {
 
     // Real conversation counts
     let conversationCount = 0;
-    let conversationCountYesterday = 0;
     let needsAttentionCount = 0;
     let avgResponseMs: number | null = null;
     let aiAutomationRate: number | null = null;
@@ -29,13 +28,6 @@ export async function GET() {
         [orgId]
       );
       conversationCount = parseInt(convRes.rows[0]?.count || '0', 10);
-
-      // Yesterday's count (last 48h vs last 24h)
-      const convYestRes = await client.query(
-        `SELECT COUNT(*) FROM conversations WHERE org_id = $1 AND started_at >= NOW() - INTERVAL '48 hours' AND started_at < NOW() - INTERVAL '24 hours'`,
-        [orgId]
-      );
-      conversationCountYesterday = parseInt(convYestRes.rows[0]?.count || '0', 10);
 
       // Needs attention count
       const needsRes = await client.query(
@@ -78,15 +70,30 @@ export async function GET() {
       console.warn('Stats computation error (non-critical):', e);
     }
 
-    // Compute percent change vs yesterday
-    let conversationChangePct: number | null = null;
-    if (conversationCountYesterday > 0) {
-      const todayConvRes = await client.query(
+    /**
+     * How many conversations started in the last 24 hours — an absolute count,
+     * deliberately not a percentage.
+     *
+     * This used to be a "% vs yesterday", and it made the card contradict
+     * itself. `conversationCount` above is an ALL-TIME total with no date
+     * filter, so pairing it with a day-over-day delta put two different
+     * quantities in one card: an org with 8 conversations, all from the day
+     * before, read as "8 conversations, -100% vs yesterday". Both halves were
+     * individually true and the sentence they formed was false — you cannot be
+     * down 100% and still have 8.
+     *
+     * A percentage is also the wrong instrument at this scale. Against a base of
+     * 8, one extra conversation is "+13%" and two fewer is "-25%"; the number
+     * moves violently and means nothing. An absolute count of what is new
+     * describes the same population as the headline and cannot mislead.
+     */
+    let conversationsLast24h = 0;
+    {
+      const recentRes = await client.query(
         `SELECT COUNT(*) FROM conversations WHERE org_id = $1 AND started_at >= NOW() - INTERVAL '24 hours'`,
         [orgId]
       ).catch(() => ({ rows: [{ count: '0' }] }));
-      const todayCount = parseInt(todayConvRes.rows[0]?.count || '0', 10);
-      conversationChangePct = Math.round(((todayCount - conversationCountYesterday) / conversationCountYesterday) * 100);
+      conversationsLast24h = parseInt(recentRes.rows[0]?.count || '0', 10);
     }
 
     let channelCount = 0;
@@ -128,7 +135,7 @@ export async function GET() {
       userEmail,
       userRole,
       conversationCount,
-      conversationChangePct,
+      conversationsLast24h,
       needsAttentionCount,
       avgResponseMs,
       aiAutomationRate,

@@ -84,9 +84,18 @@ export default function AnalyticsPage() {
         </div>
 
         <div className="bg-cream-200/70 border border-cream-300 p-5 rounded-2xl space-y-2 shadow-sm">
-          <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">AI Automation Rate</span>
+          {/*
+            Named for the population it measures. The home page shows the share
+            of conversations that got an agent reply; this shows the share of
+            replies that actually called a tool. Both were titled some form of
+            "AI automation rate", so the two screens read as 88% and 0.0% for
+            what looked like one number. A reply that answers from memory is
+            not a failure — it simply is not tool use, and the distinction is
+            the point of having both.
+          */}
+          <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Replies That Used A Tool</span>
           <div className="text-3xl font-bold text-emerald-600">{loading || !metrics ? '—' : metrics.automationRate}</div>
-          <span className="text-xs text-slate-500 font-medium">Assistant messages that used tools</span>
+          <span className="text-xs text-slate-500 font-medium">Share of agent replies that called a tool, not just answered</span>
         </div>
 
         <div className="bg-cream-200/70 border border-cream-300 p-5 rounded-2xl space-y-2 shadow-sm">

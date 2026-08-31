@@ -32,8 +32,20 @@ interface AIEmployee {
 // Persona is stored as either plain text or a JSON-encoded pack descriptor
 // (`{"text": "...", "packId": "...", "rosterKey": "..."}`). Show the human
 // text, never the raw JSON.
+/**
+ * The fallback says the persona is missing; it does not invent one.
+ *
+ * It used to read "Specialized AI employee for processing inquiries and
+ * handling user interactions" — a confident sentence describing work the
+ * employee has been given no instructions to do. Every seeded employee here
+ * carries a real persona ("never invent pipeline amounts", "never invent order
+ * status"), so the one card showing the fallback is precisely the one nobody
+ * has finished configuring, and that is the useful thing to say. An operator
+ * who reads "no instructions yet" goes and writes some; an operator who reads
+ * the old sentence believes the employee is ready.
+ */
 function describePersona(persona: unknown): string {
-  const fallback = 'Specialized AI employee for processing inquiries and handling user interactions.';
+  const fallback = 'No instructions written yet. This employee will not act until someone gives it a persona.';
   if (!persona) return fallback;
 
   if (typeof persona === 'object') {
@@ -70,7 +82,37 @@ const AVAILABLE_TOOLS = [
   { id: 'notion', label: 'Notion' },
   { id: 'meta-ads', label: 'Meta Ads' },
   { id: 'web_search', label: 'Web search' },
+  { id: 'web_extract', label: 'Read a web page' },
+  { id: 'database_query', label: 'Your own data' },
+  { id: 'metrics', label: 'Your own KPIs' },
+  { id: 'stripe', label: 'Stripe' },
+  { id: 'razorpay', label: 'Razorpay' },
+  { id: 're', label: 'Real estate' },
 ];
+
+/**
+ * Human label for a tool slug.
+ *
+ * The badges used to print the raw slug under a CSS `capitalize`, which is fine
+ * for `gmail` and unreadable for everything else: `re` — a real tool, the
+ * real-estate namespace — rendered as the badge "Re", which looks like a
+ * truncation bug rather than a capability, and `web_search` rendered as
+ * "Web_search". These badges are the page's answer to "what is this employee
+ * allowed to touch", so they have to be legible to someone who does not know
+ * the slugs. Unknown slugs are prettified rather than dropped: a tool nobody
+ * has named yet must still be visible, because hiding one would understate
+ * what an employee can reach.
+ */
+const TOOL_LABELS: Record<string, string> = Object.fromEntries(
+  AVAILABLE_TOOLS.map((t) => [t.id, t.label])
+);
+
+function toolLabel(slug: string): string {
+  const known = TOOL_LABELS[String(slug).toLowerCase()];
+  if (known) return known;
+  const words = String(slug).replace(/[-_]+/g, ' ').trim();
+  return words.charAt(0).toUpperCase() + words.slice(1);
+}
 
 export default function EmployeesPage() {
   const [employees, setEmployees] = useState<AIEmployee[]>([]);
@@ -337,9 +379,9 @@ export default function EmployeesPage() {
                         tools.map((tool) => (
                           <span
                             key={tool}
-                            className="text-[11px] font-medium px-2 py-0.5 bg-cream-200 text-slate-700 rounded-md border border-cream-300 capitalize"
+                            className="text-[11px] font-medium px-2 py-0.5 bg-cream-200 text-slate-700 rounded-md border border-cream-300"
                           >
-                            {tool}
+                            {toolLabel(tool)}
                           </span>
                         ))
                       ) : (

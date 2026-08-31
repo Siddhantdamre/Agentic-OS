@@ -185,6 +185,20 @@ const CAPABILITIES = [
     note: 'waits for an action whose outcome moves the trust level',
   },
   {
+    // Filed as "platform bookkeeping" until someone asked about the multi-agent
+    // system. agent_plans is the CREW's output — the plan naming which
+    // specialists to spawn. Shelving it as bookkeeping made this check blind to
+    // the largest dormant capability in the product, which is the second time a
+    // misclassification here hid exactly what the check exists to find.
+    name: 'multi-agent crew',
+    table: 'agent_plans',
+    expectation: 'conditional',
+    trigger: 'SELECT COUNT(*) FROM ai_employees',
+    note: 'waits for someone to spawn a crew from the Employees page; the '
+      + 'child-workflow fan-out, the cap and the synthesis exist but have '
+      + 'never executed once',
+  },
+  {
     // Filed here rather than under "tenant configuration", which is where it sat
     // and why this check never looked at it. It is a CONTROL: it promises that
     // nothing the agent writes reaches a customer. It was empty while the agent
@@ -224,7 +238,6 @@ const NON_CAPABILITY = {
   'platform bookkeeping — not a customer-facing capability': [
     '_migrations', 'idempotency_keys', 'work_events', 'work_items', 'messages',
     'channel_logs', 'sync_cursors', 'provider_spend_snapshots', 'password_reset_tokens',
-    'agent_plans',
   ],
   'vertical pack tables — empty unless that pack is installed for a workspace': [
     'packs', 'pack_entity_schemas', 're_inquiries', 're_listings', 're_showings',

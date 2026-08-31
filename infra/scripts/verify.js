@@ -283,6 +283,27 @@ const SUITES = [
     needsDocker: false,
   },
   {
+    name: 'no silent answers',
+    what: 'a reply either says something or says it failed — a blank bubble under '
+      + 'the agent\'s name is the one failure mode that misleads',
+    cmd: [process.execPath, [path.join(__dirname, 'check-no-empty-answers.js')]],
+    needsDocker: true,
+  },
+  {
+    name: 'gap dedupe',
+    what: 'one unanswered question is one row — /brain headlines a count, and a '
+      + 'duplicate inflates the number an operator is asked to act on',
+    cmd: [process.execPath, [path.join(__dirname, 'check-gap-dedupe.js')]],
+    needsDocker: true,
+  },
+  {
+    name: 'nango browser host',
+    what: 'the OAuth popup opens on an address the browser can resolve — this '
+      + 'fails silently, and only at the moment someone first connects for real',
+    cmd: [process.execPath, [path.join(__dirname, 'check-nango-browser-host.js')]],
+    needsDocker: false,
+  },
+  {
     name: 'dormant capability',
     what: 'every shipped feature has actually produced a row — the check that '
       + 'catches complete-but-unreachable',

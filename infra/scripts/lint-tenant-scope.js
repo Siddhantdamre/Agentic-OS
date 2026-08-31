@@ -122,12 +122,87 @@ const TABLE_RE = new RegExp(
   'gi',
 );
 
+/**
+ * Blank out JavaScript comments, preserving every byte offset and newline.
+ *
+ * The scan below finds queries by looking for backtick-delimited spans. It has
+ * no idea which backticks open a template literal and which are just prose
+ * quoting an identifier in a doc comment — so a single new backtick in a comment
+ * re-pairs every backtick after it. That is not hypothetical: adding two comment
+ * backticks near the end of integrations-catalog.ts paired the file's line-3
+ * comment backtick with one 598 lines later, and the lint reported those 598
+ * lines as one unscoped statement touching `channels`.
+ *
+ * A false positive is the milder half. Because the org-filter test also reads
+ * the 800 characters preceding a query, the word org_id sitting in a nearby
+ * COMMENT was enough to certify a genuinely unscoped query as scoped — a silent
+ * false pass on the check that enforces tenant isolation. Blanking comments
+ * closes both, and it is the root cause rather than either symptom.
+ *
+ * Offsets and line breaks are preserved exactly so reported line numbers still
+ * point at the real source. String and template-literal bodies are left intact,
+ * which matters because the `-- lint-tenant-scope:` exemption markers live
+ * inside SQL text and must survive.
+ *
+ * Known limit: a template literal nesting another template inside `${...}` can
+ * desynchronise the scanner. That fails toward treating a comment as code — the
+ * old noisy behaviour — never toward silently passing an unscoped query.
+ */
+function blankComments(src) {
+  const out = src.split('');
+  const n = src.length;
+  let i = 0;
+  let state = 'code'; // code | line | block | sq | dq | tpl
+
+  while (i < n) {
+    const c = src[i];
+    const d = src[i + 1];
+
+    if (state === 'code') {
+      if (c === '/' && d === '/') { out[i] = ' '; out[i + 1] = ' '; state = 'line'; i += 2; continue; }
+      if (c === '/' && d === '*') { out[i] = ' '; out[i + 1] = ' '; state = 'block'; i += 2; continue; }
+      if (c === "'") { state = 'sq'; i += 1; continue; }
+      if (c === '"') { state = 'dq'; i += 1; continue; }
+      if (c === '`') { state = 'tpl'; i += 1; continue; }
+      i += 1;
+      continue;
+    }
+
+    if (state === 'line') {
+      if (c === '\n') { state = 'code'; i += 1; continue; }
+      out[i] = ' ';
+      i += 1;
+      continue;
+    }
+
+    if (state === 'block') {
+      if (c === '*' && d === '/') { out[i] = ' '; out[i + 1] = ' '; state = 'code'; i += 2; continue; }
+      if (c !== '\n') out[i] = ' ';
+      i += 1;
+      continue;
+    }
+
+    // Inside a string or template literal: contents are preserved verbatim.
+    if (c === '\\') { i += 2; continue; }
+    if ((state === 'sq' && c === "'") || (state === 'dq' && c === '"') || (state === 'tpl' && c === '`')) {
+      state = 'code';
+      i += 1;
+      continue;
+    }
+    i += 1;
+  }
+
+  return out.join('');
+}
+
 const findings = [];
 const exempted = [];
 
 for (const rel of SCAN) {
   for (const file of collect(path.join(ROOT, rel))) {
-    const src = fs.readFileSync(file, 'utf8');
+    // Comments blanked in place: prose can neither masquerade as a query nor
+    // vouch for one. Offsets are unchanged, so line numbers still line up.
+    const src = blankComments(fs.readFileSync(file, 'utf8'));
     const shown = path.relative(ROOT, file).split(path.sep).join('/');
 
     // Every SQL-looking template literal in the file.
@@ -192,8 +267,13 @@ if (!findings.length) {
 
 // Raw-pool findings first: those cannot even fall back to a session policy.
 findings.sort((a, b) => Number(b.onRawPool) - Number(a.onRawPool));
+// The tag says WHAT STILL PROTECTS the query, not whether it is scoped — every
+// row here is unscoped. It used to read `[ SCOPED ]`, meaning "runs on a scoped
+// client", which in a list titled "unscoped statement(s)" said the opposite of
+// what it meant. RLS ONLY: no org filter in the SQL, so row-level security is
+// the last line. RAW POOL: no org filter and no session context either.
 for (const f of findings) {
-  console.log(`  [${f.onRawPool ? 'RAW POOL' : ' SCOPED '}]  ${f.file}:${f.line}  — ${f.tables.join(', ')}`);
+  console.log(`  [${f.onRawPool ? 'RAW POOL' : 'RLS ONLY'}]  ${f.file}:${f.line}  — ${f.tables.join(', ')}`);
   console.log(`              ${f.snippet}`);
 }
 console.log(`\n  ${findings.length} unscoped statement(s). Add an org filter, or an explicit`);

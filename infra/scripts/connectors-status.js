@@ -4,15 +4,19 @@
  * WHAT THE AI EMPLOYEES CANNOT REACH YET, AND WHAT EACH KEY WOULD UNLOCK.
  *
  * 95 tools are wired to the agent over MCP and 47 tool modules implement a real
- * `execute`. Two of them — database_query and metrics — read the tenant's own
- * data and work today. The other 93 reach outside the business, and every one
- * of those needs an account credential that only the business owner can obtain.
+ * `execute`. Most reach outside the business and need an account credential only
+ * the business owner can obtain. A few do not, and which few was worth checking
+ * rather than assuming — database_query and metrics read the tenant's own data,
+ * and web_extract turned out to read the open internet with no key at all
+ * (r.jina.ai answers keyless; verified HTTP 200 with real page text, while
+ * s.jina.ai returns 401). So the agent can already READ any page it is pointed
+ * at. It cannot go FIND pages, because search is the half that needs the key.
  *
  * Measured, not assumed: Nango is healthy with 0 provider configs and 0
  * connections, and the environment holds exactly one external credential
  * (the model provider). So the honest state is:
  *
- *     the hands are built, the arms are wired, and nothing is plugged in.
+ *     the hands are built, the arms are wired, and almost nothing is plugged in.
  *
  * ── WHY THIS IS ORDERED BY LEVERAGE ───────────────────────────────────────
  * Seventeen Google tools share ONE Nango config key (`google`). Connecting a
@@ -50,8 +54,18 @@ const PROVIDERS = [
   { key: 'whatsapp', auth: 'key', tools: 2, env: ['META_ACCESS_TOKEN', 'WHATSAPP_PHONE_NUMBER_ID'],
     unlocks: 'whatsapp_send — the channel your customers actually use',
     get: 'developers.facebook.com — WhatsApp Business API number + permanent token' },
-  { key: 'web_search', auth: 'key', tools: 2, env: ['JINA_API_KEY'],
-    unlocks: 'web_search, web_extract — the agent can read the open internet',
+  // Measured, not assumed, and it changed the answer. These two were one row
+  // needing JINA_API_KEY. From inside the worker container, keyless:
+  //   r.jina.ai (web_extract) -> HTTP 200, real page text
+  //   s.jina.ai (web_search)  -> HTTP 401, authentication required
+  // So the agent can already READ any URL it is given; it cannot DISCOVER urls
+  // by searching. Reporting them together understated what works today, which
+  // is the same sin as overstating it.
+  { key: 'web_extract', auth: 'none', tools: 1,
+    unlocks: 'web_extract — read any page the agent is pointed at',
+    get: 'already working — Jina Reader answers without a key' },
+  { key: 'web_search', auth: 'key', tools: 1, env: ['JINA_API_KEY'],
+    unlocks: 'web_search — finding pages instead of being handed them',
     get: 'jina.ai — free tier available, no card' },
   { key: 'hubspot', auth: 'oauth', tools: 2, unlocks: 'contact create/update — the CRM most SMBs already run', get: 'developers.hubspot.com' },
   { key: 'razorpay', auth: 'key', tools: 1, env: ['RAZORPAY_KEY_ID', 'RAZORPAY_KEY_SECRET'],
@@ -128,7 +142,7 @@ const has = (name) => {
     console.log(`  ${'PROVIDER'.padEnd(16)}${'AUTH'.padEnd(7)}${'TOOLS'.padEnd(7)}STATUS`);
 
     // Value order, hand-set. Tool count is a vendor artefact, not importance.
-    const VALUE = ['google', 'whatsapp', 'web_search', 'razorpay', 'maps', 'leegality',
+    const VALUE = ['google', 'whatsapp', 'web_extract', 'web_search', 'razorpay', 'maps', 'leegality',
       'hubspot', 'twilio', 'meta-ads', 'zoho', 'stripe', 'docusign', 'quickbooks',
       'salesforce', 'zendesk', 'intercom', 'shopify', 'slack', 'notion', 'github',
       'database_query', 'metrics'];

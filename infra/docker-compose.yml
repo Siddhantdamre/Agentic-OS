@@ -820,7 +820,12 @@ services:
       - DB_NAME=${DB_NAME:-darex}
       - DB_PASSWORD=${APP_DB_PASSWORD:-darex_app_dev_secret}
       - REDIS_URL=redis://redis:6379
+      # Two addresses for one server. NANGO_HOST is how THIS container reaches
+      # Nango; NEXT_PUBLIC_NANGO_HOST is how the BROWSER reaches it, and the
+      # browser cannot resolve a compose service name. The OAuth popup and the
+      # setup link both use the public one. Override for a real deployment.
       - NANGO_HOST=http://nango-server:3003
+      - NEXT_PUBLIC_NANGO_HOST=${NEXT_PUBLIC_NANGO_HOST:-http://127.0.0.1:3003}
       - TEMPORAL_ADDRESS=temporal:7233
       - SUPERTOKENS_CONNECTION_URI=http://supertokens:3567
       - ATOMIC_AGENT_URL=http://atomic-agent:8787

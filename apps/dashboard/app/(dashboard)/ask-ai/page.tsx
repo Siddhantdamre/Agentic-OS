@@ -26,6 +26,13 @@ import { CitationChips } from '@/components/ask-ai/CitationChips';
 import { parseEmployeeMentions, type MentionableEmployee } from '@/lib/employee-mentions';
 import { LiveRegion, StatusBadge } from '@/components/a11y';
 
+/** A non-OAuth tool and whether the server says it can actually run today. */
+interface CoreTool {
+  name: string;
+  available: boolean;
+  needs?: string | null;
+}
+
 interface Message {
   id: string;
   sender: 'user' | 'ai';
@@ -128,7 +135,33 @@ I can answer questions and query your Darex data. Connector actions only run for
     }
   };
 
-  const buildWelcome = (name: string, channels: string[]): Message => ({
+  /**
+   * The tool lines are rendered from what the server reports as usable, never
+   * from a hardcoded list.
+   *
+   * This used to assert "Always available: database_query, web_search,
+   * web_extract, file_ops". Two of the four were wrong, in opposite directions:
+   * web_search needs JINA_API_KEY and refuses without it, so the greeting
+   * promised a capability the agent then declined two messages later; while
+   * web_extract works keyless and was being undersold. A demo does not survive
+   * the product contradicting itself in its own opening paragraph.
+   *
+   * If `coreTools` is absent we print nothing rather than guess — a silent
+   * omission is honest, a confident wrong list is not.
+   */
+  const toolLines = (tools?: CoreTool[]): string => {
+    if (!tools || tools.length === 0) return '';
+    const on = tools.filter((t) => t.available).map((t) => `\`${t.name}\``);
+    const off = tools.filter((t) => !t.available);
+    const parts: string[] = [];
+    if (on.length) parts.push(`Working right now, nothing to set up: ${on.join(', ')}.`);
+    for (const t of off) {
+      parts.push(`\`${t.name}\` is off until ${t.needs || 'a credential'} is set. I will tell you that rather than guess an answer.`);
+    }
+    return parts.join('\n\n');
+  };
+
+  const buildWelcome = (name: string, channels: string[], tools?: CoreTool[]): Message => ({
     id: 'welcome',
     sender: 'ai',
     text:
@@ -139,7 +172,7 @@ I can answer questions about **${name}** and act on the connectors that are actu
 
 ${channels.map((c) => `- \`${c}\``).join('\n')}
 
-Core tools (no OAuth): \`database_query\`, \`web_search\`, \`web_extract\`, \`file_ops\`.
+${toolLines(tools)}
 
 If a connector is missing I will say so and point you to \`/connectors\` — I will not invent results.`
         : `### Hello from DareX Executive
@@ -148,7 +181,7 @@ I can answer questions about **${name}** and query your Darex data.
 
 No OAuth connectors are connected yet. I will not invent Gmail, Calendar, CRM, or ads data. Connect tools at \`/connectors\` when you want me to act on them.
 
-Always available: \`database_query\`, \`web_search\`, \`web_extract\`, \`file_ops\`.`,
+${toolLines(tools)}`,
     provider: 'Atomic Intelligence Agent',
     timestamp: 'Just now',
   });
@@ -285,7 +318,7 @@ Always available: \`database_query\`, \`web_search\`, \`web_extract\`, \`file_op
               void handleApprovePlan(orphan.id);
             }
           } else {
-            setMessages([buildWelcome(thread.orgName || 'Your Business', thread.connectedChannels || [])]);
+            setMessages([buildWelcome(thread.orgName || 'Your Business', thread.connectedChannels || [], thread.coreTools)]);
           }
         } else {
           const saved = localStorage.getItem(key);
@@ -460,10 +493,31 @@ Always available: \`database_query\`, \`web_search\`, \`web_extract\`, \`file_op
   const sendRequest = async (prompt: string, threadId?: string) => {
     setLoading(true);
 
+    /**
+     * A bounded wait, because an unbounded one turns a loud failure into a
+     * silent one.
+     *
+     * This fetch had no timeout. When the model provider rejected the request —
+     * a 402 for exhausted credit, logged plainly by LiteLLM within seconds —
+     * the route stopped answering and the browser simply kept waiting. The
+     * spinner read "Synthesizing multi-tool intelligence response…" for as long
+     * as anyone was willing to watch: the failure was known to the server,
+     * invisible to the person, and unattributable from the screen.
+     *
+     * The catch below could always render an error; nothing ever bounded the
+     * wait so it could fire. Two minutes is chosen to sit above real work — a
+     * multi-step answer makes several model calls and has been measured near a
+     * minute at p95 — and far below a person's patience.
+     */
+    const ASK_AI_TIMEOUT_MS = 120_000;
+    const controller = new AbortController();
+    const timeoutTimer = setTimeout(() => controller.abort(), ASK_AI_TIMEOUT_MS);
+
     try {
       const res = await fetch('/api/ask-ai', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        signal: controller.signal,
         body: JSON.stringify({
           prompt,
           conversationId: threadId || conversationIdRef.current || undefined,
@@ -578,18 +632,33 @@ Always available: \`database_query\`, \`web_search\`, \`web_extract\`, \`file_op
       }
     } catch (err) {
       console.error('Ask AI error:', err);
+      // A timeout and an unreachable backend are different facts and get
+      // different sentences. Saying "connection error" when the connection was
+      // fine but the model provider refused would be a wrong attribution, which
+      // is worse than a vague one — it sends the reader to the wrong place.
+      const timedOut = err instanceof Error && err.name === 'AbortError';
       const errMessage: Message = {
         id: `ai_err_${Date.now()}`,
         sender: 'ai',
-        text: '❌ **Connection error.** Could not reach the Ask AI backend. Please confirm the worker & atomic-agent services are running, then try again.',
+        text: timedOut
+          ? '❌ **No answer came back within two minutes, so I stopped waiting.**\n\n'
+            + 'The request reached the backend — this is not a connection problem. The usual cause is the '
+            + 'model provider refusing the call, most often an exhausted credit balance, which is visible in '
+            + 'the LiteLLM logs and reported by the infrastructure alarms.\n\n'
+            + 'I have not answered, and I have not invented an answer. Nothing was sent to anyone.'
+          : '❌ **Connection error.** Could not reach the Ask AI backend. Please confirm the worker & atomic-agent services are running, then try again.',
         provider: 'Atomic Agent',
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-        error: 'Connection error',
+        error: timedOut ? 'No response within the time budget' : 'Connection error',
         retryable: true,
         retryPrompt: prompt,
       };
       setMessages((prev) => [...prev, errMessage]);
     } finally {
+      // Always cancel the abort timer. A streamed answer can finish well inside
+      // the budget, and a timer left armed would abort a request that already
+      // succeeded — turning a working reply into a spurious timeout message.
+      clearTimeout(timeoutTimer);
       setLoading(false);
     }
   };

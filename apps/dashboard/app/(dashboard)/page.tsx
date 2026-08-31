@@ -33,7 +33,7 @@ function HomeContent() {
   const [stats, setStats] = useState<{
     userEmail?: string;
     conversationCount?: number;
-    conversationChangePct?: number | null;
+    conversationsLast24h?: number;
     avgResponseMs?: number | null;
     aiAutomationRate?: number | null;
     needsAttentionCount?: number;
@@ -243,10 +243,18 @@ function HomeContent() {
             <div className="bg-cream-200/70 border border-cream-300 p-5 rounded-2xl space-y-2 shadow-sm">
               <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Conversations</span>
               <div className="text-3xl font-bold text-heading">{stats?.conversationCount ?? 0}</div>
+              {/*
+                The headline is an all-time total, so the line under it counts
+                the same thing over a stated window. It used to read "% vs
+                yesterday", which described a different population and let the
+                card contradict itself — "8 conversations, -100% vs yesterday".
+                Week-over-week percentages live on /analytics, where the
+                headline is windowed too and the comparison is like-for-like.
+              */}
               <span className="text-xs text-slate-500 font-medium">
-                {stats?.conversationChangePct == null
-                  ? 'No prior-day volume to compare'
-                  : `${stats.conversationChangePct >= 0 ? '+' : ''}${stats.conversationChangePct}% vs yesterday`}
+                {stats?.conversationsLast24h
+                  ? `${stats.conversationsLast24h} new in the last 24 hours`
+                  : 'none new in the last 24 hours'}
               </span>
             </div>
 
@@ -255,8 +263,19 @@ function HomeContent() {
               <div className="text-3xl font-bold text-heading">
                 {stats?.avgResponseMs ? (stats.avgResponseMs / 1000).toFixed(1) + 's' : 'N/A'}
               </div>
+              {/*
+                Says which population it measures, because /analytics carries a
+                different one under a name that used to collide with this. Here:
+                the share of conversations the agent replied to at all. There:
+                the share of replies that called a tool. On this workspace those
+                read 88% and 0.0%, and both are true — but labelled "AI
+                automated" and "AI automation rate", two screens appeared to
+                contradict each other about the same thing.
+              */}
               <span className="text-xs text-slate-500 font-medium">
-                {stats?.aiAutomationRate != null ? `${stats.aiAutomationRate}% AI automated` : 'No automation sample yet'}
+                {stats?.aiAutomationRate != null
+                  ? `${stats.aiAutomationRate}% of conversations got an agent reply`
+                  : 'No automation sample yet'}
               </span>
             </div>
 

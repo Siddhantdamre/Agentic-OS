@@ -413,7 +413,39 @@ function streamSimpleAnswer(args: {
           }
         );
 
-        const answer = sanitizeAgentReply(result.replyMessage);
+        const rawAnswer = sanitizeAgentReply(result.replyMessage);
+
+        /**
+         * An empty reply is a failure, and must never be stored or streamed as
+         * if it were an answer.
+         *
+         * Observed: the tools ran fine — metrics_list and metrics_query both
+         * executed and showed as badges in the thread — and then the model call
+         * was refused with HTTP 402, exhausted credit. `replyMessage` came back
+         * empty, and this code persisted a zero-length assistant message and
+         * streamed it as `answer`. The thread rendered a blank bubble under the
+         * agent's name, timestamped, beside evidence that tools had run.
+         *
+         * A blank bubble is the worst of the three possible outcomes. A correct
+         * answer is best; a stated failure is fine; an answer-shaped silence
+         * invites the reader to conclude the agent had nothing to say, when in
+         * fact it was never allowed to speak. `result.error` already carried the
+         * provider's reason — it was recorded in tool_calls metadata and then
+         * not shown to anyone.
+         *
+         * Note the existing guard on line ~434 (`result.success && answer`):
+         * the emptiness was already known here, and used to skip the memory
+         * write-back, while still being handed to the user as content.
+         */
+        const emptyReply = rawAnswer.trim().length === 0;
+        const failureReason = result.error
+          || 'The model returned nothing. No reason was reported by the provider.';
+        const answer = emptyReply
+          ? `I could not produce an answer, so I am not going to guess one.\n\n**What happened:** ${failureReason}`
+          : rawAnswer;
+        if (emptyReply) {
+          console.warn('[Ask AI] empty reply from agent — surfaced as a failure, not stored as an answer:', failureReason);
+        }
         await logLangfuseTrace({
           name: args.fallbackReason ? 'AskAI-PlanFallback' : 'AskAI-AutonomousExecution',
           orgId: args.orgId,
@@ -456,8 +488,11 @@ function streamSimpleAnswer(args: {
             observation: s.result,
           })),
           proposedAction: null,
-          error: result.error || null,
-          retryable: result.retryable || false,
+          // An empty reply is reported as an error even when the run did not
+          // throw, so the client styles it as a failure and offers Retry rather
+          // than presenting it as a delivered answer.
+          error: result.error || (emptyReply ? failureReason : null),
+          retryable: result.retryable || emptyReply,
           partialReply: result.partialReply || null,
         });
       } catch (err: any) {
@@ -511,10 +546,39 @@ export async function GET() {
       [orgId, userId]
     );
 
+    /**
+     * Which non-OAuth tools the agent can ACTUALLY use right now.
+     *
+     * The greeting used to assert "Always available: database_query,
+     * web_search, web_extract, file_ops" as a hardcoded string. Two of those
+     * four were wrong in opposite directions, which is worse than being vague:
+     *
+     *   web_search  needs JINA_API_KEY. Without it s.jina.ai returns 401 and
+     *               the tool refuses — correctly, it never fabricates results.
+     *               So the greeting promised a capability, and the agent then
+     *               declined it two lines later in the same conversation.
+     *   web_extract sends that key only when it is present, and r.jina.ai
+     *               answers keyless (verified: HTTP 200 with real page text).
+     *               So it works today and nothing needed to be bought.
+     *
+     * Computed from the environment rather than written down, so the greeting
+     * stops being a claim and starts being a reading. Add JINA_API_KEY and
+     * web_search turns on here with no code change.
+     */
+    const jinaKey = Boolean(process.env.JINA_API_KEY || process.env.JINA_READ_API_KEY);
+    const coreTools = [
+      { name: 'database_query', available: true, needs: null },
+      { name: 'metrics', available: true, needs: null },
+      { name: 'file_ops', available: true, needs: null },
+      { name: 'web_extract', available: true, needs: null },
+      { name: 'web_search', available: jinaKey, needs: jinaKey ? null : 'JINA_API_KEY' },
+    ];
+
     return NextResponse.json({
       conversationId,
       orgName,
       connectedChannels,
+      coreTools,
       messages: msgRes.rows.map((row: any) => ({
         id: row.id,
         role: row.role,

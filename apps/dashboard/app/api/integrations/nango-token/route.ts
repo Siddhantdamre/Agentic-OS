@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getScopedClient } from '@/lib/db';
-import { getIntegration, isIntegrationId, isPublicMetaKey, nangoUiUrl } from '@/lib/integrations-catalog';
+import { browserReachableOrigin, getIntegration, isIntegrationId, isPublicMetaKey, nangoUiUrl } from '@/lib/integrations-catalog';
 import { nangoKeysFor } from '@darex/connectors';
 import {
   getNangoConfigStatus,
@@ -26,7 +26,9 @@ export async function GET(request: Request) {
 
     const spec = getIntegration(provider);
     const { publicKey, host } = getNangoServerConfig();
-    const nangoHost = process.env.NEXT_PUBLIC_NANGO_HOST || host;
+    // The browser dials this host in the OAuth popup, so it must be an address
+    // the browser can resolve — never the compose service name this container uses.
+    const nangoHost = browserReachableOrigin(process.env.NEXT_PUBLIC_NANGO_HOST || host);
     const connectionId = primaryConnectionId(orgId, provider);
     const keys = nangoKeysFor(provider);
     const config = spec?.authMode === 'oauth' ? await getNangoConfigStatus(provider) : null;

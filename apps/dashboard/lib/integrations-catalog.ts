@@ -594,6 +594,37 @@ export function isPublicMetaKey(key: string): key is PublicMetaKey {
   return (PUBLIC_META_KEYS as readonly string[]).includes(key);
 }
 
+/**
+ * Rewrite a container-internal origin into one a browser can actually open.
+ *
+ * The same Nango server has two different addresses depending on who is asking.
+ * This container reaches it at its compose service name, `http://nango-server:3003`;
+ * a browser cannot resolve that name at all, because it exists only inside the
+ * Docker network. So any URL we hand to the browser — the OAuth popup host, and
+ * the "go and register a client id" link — has to be a published address.
+ *
+ * A single-label hostname (no dot, and not `localhost`) can only be a compose
+ * service name, so we rewrite it to loopback and keep the port, which is where
+ * compose publishes it. Set NEXT_PUBLIC_NANGO_HOST to state the public origin
+ * explicitly; it is honoured ahead of this and is what production should use.
+ *
+ * This failure is silent without the guard: the popup opens on an unresolvable
+ * host and the user gets a blank window with nothing in any log to explain it.
+ */
+export function browserReachableOrigin(raw: string): string {
+  try {
+    const url = new URL(raw);
+    if (!url.hostname.includes('.') && url.hostname !== 'localhost') {
+      url.hostname = '127.0.0.1';
+    }
+    return url.toString().replace(/\/$/, '');
+  } catch {
+    return raw;
+  }
+}
+
 export function nangoUiUrl(): string {
-  return process.env.NEXT_PUBLIC_NANGO_HOST || process.env.NANGO_HOST || 'http://localhost:3003';
+  return browserReachableOrigin(
+    process.env.NEXT_PUBLIC_NANGO_HOST || process.env.NANGO_HOST || 'http://localhost:3003'
+  );
 }

@@ -234,13 +234,22 @@ export default function ConnectorsPage() {
   return (
     <div className="max-w-7xl mx-auto space-y-8 pb-20 md:pb-16">
       <LiveRegion message={statusNotification?.message || ''} />
-      {/* Notification Toast */}
+      {/*
+        Sticky, and opaque rather than translucent, because of where the click is.
+        There are 27 provider cards down a ~4,700px scroll container, so a
+        Connect press happens thousands of pixels below the top of the page. This
+        banner used to render in flow at the very top: the explanation existed,
+        was correct, and was invisible to the person who had just asked for it —
+        the button read as dead. Sticking it to the scrollport keeps the answer
+        next to the question, and a solid background keeps it legible over the
+        cards that now scroll underneath.
+      */}
       {statusNotification && (
         <div
-          className={`p-4 rounded-2xl border flex items-center justify-between shadow-md text-xs font-semibold ${
+          className={`sticky top-0 z-40 p-4 rounded-2xl border flex items-center justify-between shadow-md text-xs font-semibold ${
             statusNotification.type === 'success'
-              ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-800'
-              : 'bg-amber-500/10 border-amber-500/30 text-amber-900'
+              ? 'bg-emerald-50 border-emerald-500/30 text-emerald-800'
+              : 'bg-amber-50 border-amber-500/30 text-amber-900'
           }`}
         >
           <div className="flex items-center space-x-2">
