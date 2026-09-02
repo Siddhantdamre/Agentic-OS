@@ -283,6 +283,13 @@ const SUITES = [
     needsDocker: false,
   },
   {
+    name: 'model fallbacks',
+    what: 'no model group is a dead end, and a zero-cost tier never fails over '
+      + 'onto a paid one — the gap that made four agents run their tools and report nothing',
+    cmd: [process.execPath, [path.join(__dirname, 'check-model-fallbacks.js')]],
+    needsDocker: false,
+  },
+  {
     name: 'inbound routing',
     what: 'a message reaches an employee that can work the channel it arrived on '
       + '— a roster of specialists is decorative if one arbitrary employee gets everything',

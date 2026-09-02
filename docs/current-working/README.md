@@ -31,6 +31,7 @@ and **confirm before running multi-step plans**.
 | [15-env-and-run.md](./15-env-and-run.md) | Commands to boot and verify |
 | [16-updates-2026-08-13.md](./16-updates-2026-08-13.md) | Changelog: last commit → 13 Aug working tree (includes plan wrap-up) |
 | [19-updates-2026-09-02.md](./19-updates-2026-09-02.md) | Changelog: `0cd87b1` → `8c3035d`. Routing, recurring work, briefings, employee activity, and the operational traps found the hard way |
+| [20-shift-run-2026-09-02.md](./20-shift-run-2026-09-02.md) | The first real shift run: three attempts, the model-group dead end that made four agents report nothing, and the six duties that finally produced work |
 
 Path from today to the complete OS (documentation only, not shipped):
 [`docs/plan/`](../plan/README.md). Written later on 13 Aug. Start at
