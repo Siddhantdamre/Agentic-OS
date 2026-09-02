@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
+import Link from 'next/link';
 import {
   Users,
   Plus,
@@ -349,7 +350,14 @@ export default function EmployeesPage() {
                         <Bot className="w-6 h-6 text-amber-600" />
                       </div>
                       <div>
-                        <h3 className="font-bold font-serif text-lg text-heading">{employee.name}</h3>
+                        {/* The name is the way in. A detail page nothing links
+                            to is a page that does not exist. */}
+                        <Link
+                          href={`/employees/${employee.id}`}
+                          className="font-bold font-serif text-lg text-heading hover:underline underline-offset-2"
+                        >
+                          {employee.name}
+                        </Link>
                         <span className="text-xs font-semibold px-2.5 py-0.5 rounded-full bg-amber-500/20 text-amber-700">
                           {employee.role}
                         </span>

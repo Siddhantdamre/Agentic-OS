@@ -176,17 +176,47 @@ const no = (m, d = '') => { fail++; line(`  [FAIL] ${m}${d ? ` — ${d}` : ''}`)
          FROM agent_actions a LEFT JOIN ai_employees e ON e.id = a.employee_id
         WHERE a.org_id = $1 GROUP BY 1,2 ORDER BY n DESC LIMIT 5`, [org])).rows;
     if (acts.length) {
-      for (const a of acts) line(`    ${String(a.name || '(unknown)').padEnd(10)} ${String(a.action_kind).padEnd(16)} ${a.n}`);
+      // '(console)' not '(unknown)': a null employee here means a person acted
+      // through Ask AI, which is known, not missing.
+      for (const a of acts) line(`    ${String(a.name || '(console)').padEnd(10)} ${String(a.action_kind).padEnd(16)} ${a.n}`);
     } else {
       line('    (no recorded actions in this workspace yet)');
     }
 
+    /**
+     * The invariant is that no action is ANONYMOUS — not that every action was
+     * taken by an employee.
+     *
+     * This asserted `COUNT(employee_id) === COUNT(*)` and went red the first
+     * time somebody used the Ask AI console, because a console reply genuinely
+     * has no employee: the operator asked the platform a question directly, and
+     * no member of the roster did anything. Attributing it to an employee to
+     * make the number round would have recorded a person's action against an
+     * agent that never acted, which is a worse lie than the one it fixed.
+     *
+     * The action is still fully traced — the Ask AI conversation carries the
+     * asking user in `contact_id` ('ask-ai:<userId>') and in metadata — so the
+     * right question is whether any action has NO actor at all. That is the
+     * thing that would actually break accountability, and the answer must be
+     * zero.
+     */
     const attributed = (await db.query(
-      `SELECT COUNT(employee_id)::int AS named, COUNT(*)::int AS total FROM agent_actions`)).rows[0];
+      `SELECT
+         COUNT(*) FILTER (WHERE a.employee_id IS NOT NULL)::int                                    AS by_employee,
+         COUNT(*) FILTER (WHERE a.employee_id IS NULL AND c.metadata->>'userId' IS NOT NULL)::int  AS by_operator,
+         COUNT(*) FILTER (WHERE a.employee_id IS NULL AND c.metadata->>'userId' IS NULL)::int      AS anonymous,
+         COUNT(*)::int                                                                             AS total
+       FROM agent_actions a
+       LEFT JOIN conversations c ON c.id = a.conversation_id`)).rows[0];
     line('');
-    attributed.named === attributed.total
-      ? ok('every action names the employee that took it', `${attributed.named}/${attributed.total}`)
-      : no('every action names the employee', `${attributed.named}/${attributed.total}`);
+    line(`    by an AI employee   ${attributed.by_employee}`);
+    line(`    by a human operator ${attributed.by_operator}   (Ask AI console — no employee acted)`);
+    line(`    by nobody           ${attributed.anonymous}`);
+    line('');
+    attributed.anonymous === 0
+      ? ok('every action names an actor',
+        `${attributed.by_employee} employee + ${attributed.by_operator} operator, 0 anonymous`)
+      : no('every action names an actor', `${attributed.anonymous} of ${attributed.total} name nobody`);
 
   } finally {
     await db.end().catch(() => {});

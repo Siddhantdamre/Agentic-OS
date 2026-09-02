@@ -1,6 +1,107 @@
 import { NextResponse } from 'next/server';
 import { getScopedClient } from '@/lib/db';
 
+/**
+ * GET /api/employees/[id] — what this employee has actually done.
+ *
+ * Until this existed you could pause or delete an employee but never see its
+ * work, even though every action has named its employee since the outcome
+ * ledger shipped. The roster was a list of permissions with no history behind
+ * it, which is the wrong half: the permission answers "what may it touch", and
+ * the only question an operator actually asks is "what did it do".
+ *
+ * Every field below is read from a persisted row. Nothing is derived from a
+ * model, estimated, or filled in when absent — a counter with no rows returns
+ * 0 and the page says so. An invented metric on this page would undo the
+ * attribution work it exists to display.
+ */
+export async function GET(
+  _request: Request,
+  { params }: { params: { id: string } }
+) {
+  try {
+    const { id } = params;
+    const { client, orgId } = await getScopedClient();
+    try {
+      const emp = await client.query(
+        `SELECT id, name, role, status, persona, tool_allowlist, created_at
+           FROM ai_employees WHERE id = $1 AND org_id = $2 LIMIT 1`,
+        [id, orgId]
+      );
+      if (!emp.rows[0]) {
+        return NextResponse.json({ error: 'Employee not found' }, { status: 404 });
+      }
+
+      // What it did, by kind. agent_actions is the ledger the outcome pipeline
+      // materialises; action_kind is its own vocabulary, not a UI label.
+      const actions = await client.query(
+        `SELECT action_kind, COUNT(*)::int AS n, MAX(occurred_at) AS last_at
+           FROM agent_actions
+          WHERE org_id = $1 AND employee_id = $2
+          GROUP BY action_kind ORDER BY n DESC`,
+        [orgId, id]
+      );
+
+      // The threads it owns, newest first. Capped — this is a summary view.
+      const conversations = await client.query(
+        `SELECT id, status, summary, contact_id, started_at, resolved_at
+           FROM conversations
+          WHERE org_id = $1 AND employee_id = $2
+          ORDER BY started_at DESC LIMIT 20`,
+        [orgId, id]
+      );
+
+      const convStats = await client.query(
+        `SELECT
+           COUNT(*)::int                                              AS total,
+           COUNT(*) FILTER (WHERE status = 'resolved')::int           AS resolved,
+           COUNT(*) FILTER (WHERE status = 'needs_attention')::int    AS needs_attention,
+           COUNT(*) FILTER (WHERE status = 'open')::int               AS open
+         FROM conversations WHERE org_id = $1 AND employee_id = $2`,
+        [orgId, id]
+      );
+
+      // Recent individual actions, so the page can show real timestamps rather
+      // than only aggregates. metadata carries whatever the source row had.
+      const recent = await client.query(
+        `SELECT a.action_kind, a.occurred_at, a.conversation_id, a.metadata,
+                a.source_table, a.source_id
+           FROM agent_actions a
+          WHERE a.org_id = $1 AND a.employee_id = $2
+          ORDER BY a.occurred_at DESC LIMIT 25`,
+        [orgId, id]
+      );
+
+      const e = emp.rows[0];
+      const persona = typeof e.persona === 'object' && e.persona
+        ? (e.persona as { text?: string }).text ?? null
+        : null;
+
+      return NextResponse.json({
+        id: e.id,
+        name: e.name,
+        role: e.role,
+        status: e.status,
+        persona,
+        tools: Array.isArray(e.tool_allowlist) ? e.tool_allowlist : [],
+        createdAt: e.created_at,
+        conversationStats: convStats.rows[0],
+        actionsByKind: actions.rows,
+        conversations: conversations.rows,
+        recentActions: recent.rows,
+      });
+    } finally {
+      client.release();
+    }
+  } catch (error: any) {
+    if (error?.message === 'Unauthorized') {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+    console.error('[employees/:id GET]', error);
+    return NextResponse.json({ error: 'Could not load this employee.' }, { status: 500 });
+  }
+}
+
 export async function PATCH(
   request: Request,
   { params }: { params: { id: string } }

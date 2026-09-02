@@ -283,6 +283,17 @@ const SUITES = [
     needsDocker: false,
   },
   {
+    // Was not in this list, and went red unnoticed the first time the Ask AI
+    // console was used — verify reported SOUND while the demo everyone is told
+    // to run was failing. A check nothing runs is not a check.
+    name: 'an AI employee at work',
+    what: 'an employee does real work through the production path, is refused a '
+      + 'payout it does not hold, waits for a person on a customer email — and '
+      + 'no recorded action names nobody',
+    cmd: [process.execPath, [path.join(__dirname, 'demo-ai-employee.js')]],
+    needsDocker: true,
+  },
+  {
     name: 'no silent answers',
     what: 'a reply either says something or says it failed — a blank bubble under '
       + 'the agent\'s name is the one failure mode that misleads',
