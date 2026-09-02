@@ -26,3 +26,4 @@ wrong, and the Evidence section names the incident or the check that pins it.
 | 16 | [Work is routed by capability, never by row order](016-route-by-capability-not-row-order.md) |
 | 17 | [Recurring work schedules itself; it only needs starting](017-recurring-work-schedules-itself.md) |
 | 18 | [Searching and reading are separate capabilities](018-searching-and-reading-are-separate.md) |
+| 19 | [A market fact carries its source, or it does not exist](019-market-facts-carry-their-source.md) |

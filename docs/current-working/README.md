@@ -32,6 +32,7 @@ and **confirm before running multi-step plans**.
 | [16-updates-2026-08-13.md](./16-updates-2026-08-13.md) | Changelog: last commit → 13 Aug working tree (includes plan wrap-up) |
 | [19-updates-2026-09-02.md](./19-updates-2026-09-02.md) | Changelog: `0cd87b1` → `8c3035d`. Routing, recurring work, briefings, employee activity, and the operational traps found the hard way |
 | [20-shift-run-2026-09-02.md](./20-shift-run-2026-09-02.md) | The first real shift run: three attempts, the model-group dead end that made four agents report nothing, and the six duties that finally produced work |
+| [21-updates-2026-09-02-evening.md](./21-updates-2026-09-02-evening.md) | Changelog: `8c3035d` → `b8c6303`. The stale env file that would have deployed with no model key, a quarter of verification that never ran, the realtime bus that never published, and market context with provenance. First measured reliability: 58/60 |
 
 Path from today to the complete OS (documentation only, not shipped):
 [`docs/plan/`](../plan/README.md). Written later on 13 Aug. Start at
