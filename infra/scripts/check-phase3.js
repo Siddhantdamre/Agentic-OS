@@ -1,3 +1,11 @@
+/**
+ * Darex Phase 3 — inbound webhook exit criteria.
+ *
+ * EXCLUDED-FROM-VERIFY: stale. It posts an org id read from a `darex_org_id` cookie that the auth flow
+ * no longer sets, because a client-supplied org id must never be trusted. The
+ * same path is covered by check-e2e-inbound.js, which uses the documented
+ * per-tenant webhook URL.
+ */
 const http = require('http');
 // NOTE: 127.0.0.1, never 'localhost'. Node resolves localhost to IPv6 ::1 first;
 // Docker publishes on [::] but that path resets the connection, producing

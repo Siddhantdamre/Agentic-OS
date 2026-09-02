@@ -1,3 +1,10 @@
+/**
+ * Darex Phase 2 — connector layer exit criteria.
+ *
+ * EXCLUDED-FROM-VERIFY: requires live WhatsApp Business credentials. With none configured the connect
+ * call returns a correct HTTP 400, which is honest behaviour rather than a
+ * defect, so it cannot pass in a workspace that has bought no connectors.
+ */
 const http = require('http');
 
 console.log('\n=== Darex Phase 2 — Comprehensive Connector Layer Exit Criteria Check ===\n');

@@ -26,6 +26,9 @@
  *   node infra/scripts/check-deploy-recovery.js --rollback   also prove rollback
  *
  * Exit: 0 = the stack survives, 1 = it does not.
+  *
+ * EXCLUDED-FROM-VERIFY: destructive by design. It knocks the stack over to prove it comes back, so it
+ * must be run deliberately during a deployment rehearsal, never on every commit.
  */
 const { execFileSync, spawnSync } = require('child_process');
 const path = require('path');

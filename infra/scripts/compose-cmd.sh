@@ -46,8 +46,27 @@ fi
 
 FILES+=("${OVERLAYS[@]+"${OVERLAYS[@]}"}")
 
+# The env file that sits NEXT TO the compose file wins.
+#
+# This looked only at "$ROOT/.env" and both files exist: a stale root .env from
+# 16 August whose OPENROUTER_API_KEY is an empty placeholder, and infra/.env
+# from 31 August holding the real 73-character key. Every compose command run
+# through this wrapper therefore declared the model key as empty.
+#
+# Nothing broke, because the running containers were created when a different
+# environment was in effect and kept their values in memory. check-config-drift
+# reported it — "declared len 0, running len 73" — and the next `up -d` or any
+# rollback would have recreated LiteLLM with no OpenRouter key at all, so every
+# model call would fail at the moment somebody was deploying.
+#
+# An empty placeholder outranking a real value is the same failure that once
+# put two OPENROUTER_API_KEY lines in one file and let the blank one win. The
+# rule that avoids it: the env beside the compose file is the env for that
+# compose file, and a file further away never silently substitutes for it.
 ENV_FILE=()
-if [ -f "$ROOT/.env" ]; then
+if [ -f "$ROOT/infra/.env" ]; then
+  ENV_FILE=(--env-file "$ROOT/infra/.env")
+elif [ -f "$ROOT/.env" ]; then
   ENV_FILE=(--env-file "$ROOT/.env")
 fi
 

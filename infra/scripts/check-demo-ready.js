@@ -20,6 +20,10 @@
  * Usage:
  *   node infra/scripts/check-demo-ready.js
  *   node infra/scripts/check-demo-ready.js --org <uuid>   the workspace you will show
+  *
+ * EXCLUDED-FROM-VERIFY: advisory GO/NO-GO for a live demo, not a correctness gate. It fails when the
+ * model balance is low or a workspace has no documents — true facts about the
+ * environment that must not turn the build red.
  */
 const path = require('path');
 const { execFileSync } = require('child_process');

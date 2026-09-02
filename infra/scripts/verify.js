@@ -283,6 +283,67 @@ const SUITES = [
     needsDocker: false,
   },
   {
+    name: 'config drift',
+    what: 'what is running matches what is declared — a stale root .env made every compose command declare an empty model key',
+    cmd: [process.execPath, [path.join(__dirname, 'check-config-drift.js')]],
+    needsDocker: true,
+  },
+  {
+    name: 'outcome ledger',
+    what: 'an outcome is arithmetic over recorded actions, never a feeling',
+    cmd: [process.execPath, [path.join(__dirname, 'check-outcome-ledger.js')]],
+    needsDocker: true,
+  },
+  {
+    name: 'agent reply end-to-end',
+    what: 'a message through the real agent path comes back answered and attributed',
+    cmd: [process.execPath, [path.join(__dirname, 'check-e2e-agent-reply.js')]],
+    needsDocker: true,
+  },
+  {
+    name: 'reply gate live',
+    what: 'the gate that strips mechanism talk and refuses disclosure, against the running stack',
+    cmd: [process.execPath, [path.join(__dirname, 'check-reply-gate-live.js')]],
+    needsDocker: true,
+  },
+  {
+    name: 'connector auth honesty',
+    what: 'a never-configured connector reports notConnected instead of guessing',
+    cmd: [process.execPath, [path.join(__dirname, 'check-auth-nango.js')]],
+    needsDocker: true,
+  },
+  {
+    name: 'memory phase 6',
+    what: 'retrieval returns only the facts belonging to this tenant',
+    cmd: [process.execPath, [path.join(__dirname, 'check-phase6-memory.js')]],
+    needsDocker: true,
+  },
+  {
+    name: 'document upload',
+    what: 'a real file becomes retrievable knowledge for its own org only',
+    cmd: [process.execPath, [path.join(__dirname, 'check-upload-e2e.js')]],
+    needsDocker: true,
+  },
+  {
+    name: 'upload formats',
+    what: 'each accepted file type parses, and an unsupported one is refused honestly',
+    cmd: [process.execPath, [path.join(__dirname, 'check-upload-formats.js')]],
+    needsDocker: true,
+  },
+  {
+    name: 'two-replica SSE',
+    what: 'two dashboard replicas both receive one publish — the Redis contract a scaled deploy needs',
+    cmd: [process.execPath, [path.join(__dirname, 'check-two-replica-sse.js')]],
+    needsDocker: true,
+  },
+  {
+    name: 'check coverage',
+    what: 'every checker is in this list or carries a written reason it is not — '
+      + 'three real defects hid behind checks nobody was running',
+    cmd: [process.execPath, [path.join(__dirname, 'lint-check-coverage.js')]],
+    needsDocker: false,
+  },
+  {
     name: 'model fallbacks',
     what: 'no model group is a dead end, and a zero-cost tier never fails over '
       + 'onto a paid one — the gap that made four agents run their tools and report nothing',

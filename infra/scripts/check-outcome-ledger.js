@@ -23,6 +23,13 @@
 // curl hides this by falling back to IPv4 — Node's fetch and pg do not.
 const path = require('path');
 
+// Every other check in this directory loads the repo environment; this one did
+// not, so it died with "SASL: SCRAM-SERVER-FIRST-MESSAGE: client password must
+// be a string" whenever it was run outside a shell that happened to export
+// DB_PASSWORD. That reads as a broken ledger rather than a missing variable,
+// which is why it sat outside verify.js unnoticed.
+require('./lib/env').loadRepoEnv();
+
 let Client;
 try {
   Client = require('pg').Client;

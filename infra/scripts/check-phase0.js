@@ -1,3 +1,11 @@
+/**
+ * Darex Phase 0 — infrastructure exit criteria.
+ *
+ * EXCLUDED-FROM-VERIFY: smoke test that asserts optional containers are up, including temporal-ui and
+ * the Langfuse stack. Those are stopped routinely to free build memory on a
+ * developer machine, so it reports failure for a configuration that is fully
+ * supported. Run it deliberately when validating a full deployment.
+ */
 const { execSync } = require('child_process');
 const http = require('http');
 
