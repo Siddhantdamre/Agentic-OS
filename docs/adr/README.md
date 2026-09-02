@@ -23,3 +23,6 @@ wrong, and the Evidence section names the incident or the check that pins it.
 | 13 | [Erasure follows the person, not the conversation](013-erasure-by-person.md) |
 | 14 | [Deterministic gates decide; a model may only tighten](014-deterministic-first-model-to-tighten.md) |
 | 15 | [The local suite runs what CI runs](015-verification-runs-what-the-gate-runs.md) |
+| 16 | [Work is routed by capability, never by row order](016-route-by-capability-not-row-order.md) |
+| 17 | [Recurring work schedules itself; it only needs starting](017-recurring-work-schedules-itself.md) |
+| 18 | [Searching and reading are separate capabilities](018-searching-and-reading-are-separate.md) |
