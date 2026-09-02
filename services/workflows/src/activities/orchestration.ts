@@ -163,7 +163,15 @@ function encodeRedis(args: string[]): Buffer {
   return Buffer.concat(parts);
 }
 
-async function publishOrgEvent(orgId: string, type: string, extra: Record<string, unknown>): Promise<void> {
+/**
+ * Exported so logChannelActivity can announce agent runs on the same bus.
+ *
+ * One publisher, not two. It already carries the Redis target resolution, the
+ * per-org channel naming and the failure handling that a live view must not be
+ * allowed to break; a second copy in another module would drift from this one
+ * the first time the channel format changed.
+ */
+export async function publishOrgEvent(orgId: string, type: string, extra: Record<string, unknown>): Promise<void> {
   const target = redisTarget();
   if (!target) return;
   const payload = JSON.stringify({ type, orgId, ts: Date.now(), ...extra });

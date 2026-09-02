@@ -136,7 +136,53 @@ async function ingestActions(
     [orgId, since, until]
   );
 
-  return (replies.rowCount ?? 0) + (tools.rowCount ?? 0);
+  /**
+   * Duty runs → 'duty_run', attributed to the employee that ran it.
+   *
+   * An employee's standing duty produces an AGENT_EXECUTION log and no message,
+   * because a duty is not a customer conversation and must not be persisted as
+   * one. Neither branch above ingested it: replies come from `messages`, tools
+   * from `proxy_call`. So six employees ran their duties three times each, all
+   * eighteen runs were logged with the employee's name, and `agent_actions`
+   * held none of them — which meant the employee detail page, whose entire job
+   * is showing what an employee did, showed nothing for any of it.
+   *
+   * Only successful runs count, matching the rule for tools above: a failed
+   * duty is not work the employee did. `succeeded` is written by
+   * AutonomousAgentWorkflow, which now treats an empty reply as a failure.
+   *
+   * employee_id comes from the payload, never a join on name — there are 52
+   * employees called "Sarah" in this database, so a name is not an identity.
+   */
+  const duties = await client.query(
+    `INSERT INTO agent_actions
+       (org_id, conversation_id, employee_id, action_kind, source_table, source_id, occurred_at, metadata)
+     SELECT
+       cl.org_id,
+       NULL,
+       (cl.payload->>'employeeId')::uuid,
+       'duty_run',
+       'channel_logs',
+       cl.id::text,
+       cl.created_at,
+       jsonb_build_object(
+         'employeeName', cl.payload->>'employeeName',
+         'usedTools',    COALESCE(cl.payload->'usedTools', '[]'::jsonb),
+         'stepsCount',   COALESCE(cl.payload->>'stepsCount', '0')
+       )
+     FROM channel_logs cl
+     WHERE cl.org_id = $1
+       AND cl.event_type = 'AGENT_EXECUTION'
+       AND cl.payload->>'selfDirected' = 'true'
+       AND cl.payload->>'succeeded' = 'true'
+       AND cl.payload->>'employeeId' IS NOT NULL
+       AND cl.created_at >= $2::timestamptz
+       AND cl.created_at <  $3::timestamptz
+     ON CONFLICT (org_id, source_table, source_id, action_kind) DO NOTHING`,
+    [orgId, since, until]
+  );
+
+  return (replies.rowCount ?? 0) + (tools.rowCount ?? 0) + (duties.rowCount ?? 0);
 }
 
 /**

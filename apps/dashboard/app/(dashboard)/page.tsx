@@ -8,6 +8,7 @@ import { LiveRegion, StatusBadge } from '@/components/a11y';
 import { ImpactPanel } from '@/components/impact/ImpactPanel';
 import { ApprovalQueue } from '@/components/approvals/ApprovalQueue';
 import { BriefingPanel } from '@/components/briefings/BriefingPanel';
+import { LiveActivity } from '@/components/activity/LiveActivity';
 import { ShadowPanel } from '@/components/shadow/ShadowPanel';
 import { LeakPanel } from '@/components/leaks/LeakPanel';
 
@@ -186,6 +187,13 @@ function HomeContent() {
         this on its own schedule; this panel only reads it.
       */}
       {!isWarmup && <BriefingPanel />}
+
+      {/*
+        Under the overnight summary: what happened while you slept, then what is
+        happening as you read. Both answer "what are my employees doing", one
+        looking back and one looking now.
+      */}
+      {!isWarmup && <LiveActivity />}
 
       {/*
         Between what is blocked and what was achieved. The agreement rate is

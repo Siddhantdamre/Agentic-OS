@@ -337,6 +337,20 @@ const SUITES = [
     needsDocker: true,
   },
   {
+    name: 'realtime bus',
+    what: 'the publisher can reach the subscriber — only the dashboard had '
+      + 'REDIS_URL, so every event the worker emitted was silently dropped',
+    cmd: [process.execPath, [path.join(__dirname, 'check-realtime-bus.js')]],
+    needsDocker: false,
+  },
+  {
+    name: 'duty visibility',
+    what: 'work an employee did reaches that employee page — eighteen duty runs '
+      + 'were logged and none reached the ledger',
+    cmd: [process.execPath, [path.join(__dirname, 'check-duty-visible.js')]],
+    needsDocker: true,
+  },
+  {
     name: 'check coverage',
     what: 'every checker is in this list or carries a written reason it is not — '
       + 'three real defects hid behind checks nobody was running',

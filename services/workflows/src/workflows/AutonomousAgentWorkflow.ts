@@ -137,6 +137,17 @@ export async function AutonomousAgentWorkflow(input: AgentTaskInput): Promise<Ag
       logType: 'AGENT_EXECUTION',
       payload: {
         employeeName: input.employeeName,
+        // The id, not just the name. The outcome ledger attributes an action to
+        // an employee by id; with only a name it had nothing to join on, so
+        // every shift an employee ran was recorded here and appeared nowhere on
+        // that employee's own page. Two employees can also share a name — there
+        // are 52 rows called "Sarah" in this database — so a name is not an
+        // identity even when it looks like one.
+        employeeId: input.employeeId ?? null,
+        // Carried so the ledger can tell a duty from a customer reply without
+        // re-deriving it: a shift skips message persistence by design.
+        selfDirected: Boolean(input.skipPersist),
+        succeeded: resultToSave.success,
         usedTools: resultToSave.usedTools,
         stepsCount: resultToSave.executedSteps.length,
         engine: 'atomic-agent',

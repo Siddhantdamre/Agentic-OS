@@ -728,6 +728,17 @@ services:
     environment:
       # `environment` wins over env_file. Runtime role is darex_app (WS-02).
       - TEMPORAL_ADDRESS=temporal:7233
+      # The worker is the PUBLISHER on the realtime bus; the dashboard is only
+      # the subscriber. Only the dashboard had REDIS_URL, so publishOrgEvent —
+      # which returns silently when no Redis is configured — was a no-op in
+      # every activity that calls it: owner.briefing, conversation_updated,
+      # plan.step, and agent activity. The SSE route worked, the dashboard
+      # subscribed correctly, and nothing was ever sent.
+      #
+      # Same Redis as the dashboard subscribes to (`redis`), never
+      # langfuse-redis — a publisher pointed at the observability instance
+      # reaches no subscriber and looks identical to this bug.
+      - REDIS_URL=redis://redis:6379
       - DB_HOST=pgbouncer
       - DB_USER=${APP_DB_USER:-darex_app}
       - DB_PORT=5432

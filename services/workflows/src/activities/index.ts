@@ -48,6 +48,11 @@ export {
   queryInsightMetricActivity,
   persistInsightActionActivity,
 } from './orchestration.js';
+
+// A real import, not a re-export. The block above forwards names to callers of
+// this module; it does not bring them into scope here, which is why the first
+// attempt compiled to "Cannot find name 'publishOrgEvent'".
+import { publishOrgEvent } from './orchestration.js';
 export {
   installPackActivity,
   uninstallPackActivity,
@@ -251,6 +256,41 @@ export async function logChannelActivity(params: {
   });
 
   await writeIdempotent(params.orgId, key, saved);
+
+  /**
+   * Say it out loud, so an operator can watch the agent work.
+   *
+   * Every agent run was written to channel_logs and published nowhere. The SSE
+   * bus existed, per-org and working, and the only screen subscribing to it was
+   * the conversations list — so the honest answer to "what is my AI employee
+   * doing right now" was: open the database.
+   *
+   * Published here rather than in each workflow because every agent run already
+   * passes through this function. One insertion point, and no workflow can
+   * forget to emit.
+   *
+   * Deliberately never throws. A dead Redis must cost the live view, never the
+   * work: the row above is already committed and is the durable record. The
+   * feed is a window onto that record, not the record itself.
+   */
+  if (params.logType === 'AGENT_EXECUTION') {
+    try {
+      const p = (params.payload || {}) as Record<string, unknown>;
+      await publishOrgEvent(params.orgId, 'agent.activity', {
+        employeeName: p.employeeName ?? null,
+        employeeId: p.employeeId ?? null,
+        // A duty the employee gave itself, versus work a customer triggered.
+        selfDirected: Boolean(p.selfDirected),
+        succeeded: p.succeeded !== false,
+        usedTools: Array.isArray(p.usedTools) ? p.usedTools : [],
+        stepsCount: Number(p.stepsCount ?? 0),
+        at: new Date().toISOString(),
+      });
+    } catch {
+      // Intentionally swallowed — see above.
+    }
+  }
+
   return saved;
 }
 
