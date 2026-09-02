@@ -187,6 +187,66 @@ export function dutyForRole(role: string): Duty | null {
 }
 
 /**
+ * A fact about the market this business operates in, and where it came from.
+ *
+ * Every fact carries its source, and the source is shown to the agent. That is
+ * what separates business intelligence from a rumour: an employee reading
+ * "Thane ready-reckoner rates rose 3.9%" needs to know whether that came from
+ * the government registry, a news site, or the owner's own typing, because it
+ * changes how much weight the claim can carry in an answer to a customer.
+ */
+export interface MarketFact {
+  fact: string;
+  /** A URL, or 'operator' when a person typed it. Never blank. */
+  source: string;
+  observedAt?: string;
+}
+
+/**
+ * The market briefing every employee carries into its duty.
+ *
+ * An agent working only from internal rows can tell you a lead went quiet. It
+ * cannot tell you that the lead went quiet in the month stamp duty changed —
+ * and that second half is the difference between a report and intelligence.
+ *
+ * ── WHY THE PROVENANCE IS IN THE PROMPT ───────────────────────────────────
+ * The facts are shown WITH their sources and with an explicit instruction to
+ * cite them. Without that the model treats supplied context as its own
+ * knowledge and states it flatly, which is exactly how a confident wrong number
+ * reaches a customer. With it, a market claim in an answer arrives attached to
+ * where it came from, and an operator reading the answer can judge it.
+ *
+ * Empty context produces an empty string, not a placeholder. An agent told
+ * "market context: none available" tends to apologise for it in the answer;
+ * an agent told nothing simply answers from what it has.
+ */
+export function marketBriefing(facts: MarketFact[]): string {
+  const usable = (facts || []).filter((f) => f && String(f.fact).trim() && String(f.source).trim());
+  if (usable.length === 0) return '';
+
+  const lines = usable
+    .slice(0, 8)
+    .map((f) => `- ${String(f.fact).trim()} [source: ${String(f.source).trim()}]`)
+    .join('\n');
+
+  return '\n\nMARKET CONTEXT for this business, each line with its source:\n'
+    + lines
+    + '\n\nUse this only where it genuinely bears on what you were asked. When you '
+    + 'rely on one of these facts, name its source in the same sentence. Never state '
+    + 'a market fact that is not on this list, and never present one as more certain '
+    + 'than its source makes it.';
+}
+
+/**
+ * The instruction an employee actually receives: its duty, plus the market it
+ * is working in. Kept separate from `Duty.instruction` so the standing duty
+ * stays a fixed, reviewable thing and the context varies by day and workspace.
+ */
+export function dutyInstruction(duty: Duty, facts: MarketFact[] = []): string {
+  return duty.instruction + marketBriefing(facts);
+}
+
+/**
  * Is this tool usable right now, in this environment?
  *
  * Separate from "is the employee allowed to use it". An employee can hold a
@@ -225,19 +285,44 @@ export interface DutyPlan {
    * Never the employee's full authority — see the header.
    */
   dutyAllowlist: string[];
+  /**
+   * What to actually send the agent: the duty plus the market it works in.
+   *
+   * Callers must use this rather than `duty.instruction`. Two of them already
+   * existed and each composed the message itself, so adding market context in
+   * one place would have silently left the other blind — the same shape as the
+   * defect where six employees ran duties and none reached the ledger.
+   * Composing it here makes forgetting impossible.
+   */
+  instruction: string;
+  /** How many market facts were supplied, for reporting. */
+  marketFactCount: number;
 }
 
 /** Decide what one employee will do, and say plainly why not when it will not. */
 export function planDuty(
   employee: { id: string; name: string; role: string; toolAllowlist: string[] },
   env: Record<string, string | undefined> = process.env,
-  liveOauthProviders: string[] = []
+  liveOauthProviders: string[] = [],
+  /**
+   * What this business's market currently looks like. Every employee gets the
+   * same briefing — a sales agent and an ops analyst reading different facts
+   * about the same market is how two people in one company reach opposite
+   * conclusions and both cite "the data".
+   */
+  marketFacts: MarketFact[] = []
 ): DutyPlan {
+  const usableFacts = (marketFacts || []).filter(
+    (f) => f && String(f.fact).trim() && String(f.source).trim()
+  );
+
   const base = {
     employeeId: employee.id,
     employeeName: employee.name,
     role: employee.role,
     dutyAllowlist: [] as string[],
+    instruction: '',
+    marketFactCount: usableFacts.length,
   };
 
   const duty = dutyForRole(employee.role);
@@ -252,7 +337,13 @@ export function planDuty(
     return { ...base, duty, runnable: false, blockedBecause: 'not-connected' };
   }
 
-  return { ...base, duty, runnable: true, dutyAllowlist: [duty.needs] };
+  return {
+    ...base,
+    duty,
+    runnable: true,
+    dutyAllowlist: [duty.needs],
+    instruction: dutyInstruction(duty, usableFacts),
+  };
 }
 
 /** How to say a block out loud, for an operator rather than a log. */

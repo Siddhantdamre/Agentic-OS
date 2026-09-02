@@ -14,6 +14,7 @@ import {
   toolIsLiveToday,
   planDuty,
   explainBlock,
+  marketBriefing,
 } from './duties';
 
 const EMPTY_ENV: Record<string, string | undefined> = {};
@@ -176,4 +177,69 @@ test('duty ids are unique', () => {
 
 test('role lookup ignores case and surrounding space', () => {
   assert.strictEqual(dutyForRole('  ops / ANALYST ')?.id, 'ops.kpi-movement');
+});
+
+// ── Market context: business intelligence, not rumour ──────────────────────
+
+test('a fact is never shown to the agent without its source', () => {
+  const brief = marketBriefing([
+    { fact: 'Thane ready-reckoner rates rose 3.9% in 2026', source: 'igrmaharashtra.gov.in' },
+  ]);
+  assert.match(brief, /3\.9%/);
+  assert.match(brief, /igrmaharashtra\.gov\.in/);
+  // The instruction to cite is what stops the model restating it as its own.
+  assert.match(brief, /name its source/i);
+});
+
+test('a fact with no source is dropped, not shown unsourced', () => {
+  const brief = marketBriefing([
+    { fact: 'Prices are going up', source: '' },
+    { fact: 'Stamp duty is 6% in Thane', source: 'igrmaharashtra.gov.in' },
+  ]);
+  assert.ok(!/Prices are going up/.test(brief), 'an unsourced claim reached the agent');
+  assert.match(brief, /Stamp duty is 6%/);
+});
+
+test('the agent is forbidden from inventing market facts', () => {
+  const brief = marketBriefing([{ fact: 'x', source: 'y' }]);
+  assert.match(brief, /Never state a market fact that is not on this list/i);
+});
+
+test('no facts produces no briefing at all, not a placeholder', () => {
+  // "market context: none available" makes the agent apologise for it in the
+  // answer. Silence makes it answer from what it has.
+  assert.strictEqual(marketBriefing([]), '');
+  assert.strictEqual(marketBriefing([{ fact: '  ', source: 'x' }]), '');
+});
+
+test('every runnable employee receives the same market briefing', () => {
+  // Two people in one company reading different facts about the same market is
+  // how they reach opposite conclusions and both cite "the data".
+  const facts = [{ fact: 'Thane inventory up 12% QoQ', source: 'operator' }];
+  const sarah = planDuty(
+    { id: '1', name: 'Sarah', role: 'Sales / front-of-house', toolAllowlist: ['database_query'] },
+    EMPTY_ENV, [], facts);
+  const marcus = planDuty(
+    { id: '2', name: 'Marcus', role: 'Ops / analyst', toolAllowlist: ['metrics'] },
+    EMPTY_ENV, [], facts);
+
+  assert.ok(sarah.instruction.includes('Thane inventory up 12% QoQ'));
+  assert.ok(marcus.instruction.includes('Thane inventory up 12% QoQ'));
+  assert.strictEqual(sarah.marketFactCount, 1);
+  assert.strictEqual(marcus.marketFactCount, 1);
+});
+
+test('the composed instruction still carries the duty itself', () => {
+  const p = planDuty(
+    { id: '1', name: 'Sarah', role: 'Sales / front-of-house', toolAllowlist: ['database_query'] },
+    EMPTY_ENV, [], [{ fact: 'f', source: 's' }]);
+  assert.match(p.instruction, /most recent message is from the customer/);
+});
+
+test('a blocked employee gets no instruction to run', () => {
+  const p = planDuty(
+    { id: '1', name: 'Kabir', role: 'Showing coordinator', toolAllowlist: ['google-calendar'] },
+    EMPTY_ENV, [], [{ fact: 'f', source: 's' }]);
+  assert.strictEqual(p.runnable, false);
+  assert.strictEqual(p.instruction, '');
 });
