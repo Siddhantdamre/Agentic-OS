@@ -255,10 +255,46 @@ export async function persistInboundMessageWithClient(
   const channelId = channelRes.rows[0].id as string;
   const chanMeta = (channelRes.rows[0].meta || {}) as Record<string, unknown>;
 
+  /**
+   * Route the message to an employee that can actually work the channel it
+   * arrived on.
+   *
+   * This was `WHERE status = 'active' LIMIT 1` with no ORDER BY — every inbound
+   * message went to whichever row Postgres happened to return first. The effect
+   * was visible in the data long before anyone looked for it: one employee per
+   * org held every recorded action and the rest held none, because there was no
+   * routing at all. A roster of specialists with different tool allowlists is
+   * decorative if the same arbitrary one receives everything, and without an
+   * ORDER BY it was not even a consistent arbitrary one.
+   *
+   * The channel is the one capability signal available before a model runs, and
+   * the allowlist already encodes it — an employee holding `whatsapp` can work a
+   * WhatsApp thread and one holding only `google-sheets` cannot. So prefer a
+   * holder of the channel's tool, then the broader allowlist, then oldest first
+   * so the choice is stable across replays and identical inputs.
+   *
+   * This is deliberately not a skills model. It does not read the message. It
+   * removes the case where a message lands on an employee that provably cannot
+   * answer it, and nothing more.
+   */
+  const CHANNEL_TOOL: Record<string, string> = {
+    whatsapp: 'whatsapp',
+    email: 'gmail',
+    gmail: 'gmail',
+    instagram: 'whatsapp', // Meta inbox; the same messaging hands apply
+    sms: 'twilio',
+  };
+  const channelTool = CHANNEL_TOOL[String(input.channelType).toLowerCase()]
+    ?? String(input.channelType).toLowerCase();
+
   const empRes = await client.query(
     `SELECT id, name, role, persona, tool_allowlist FROM ai_employees
-     WHERE org_id = $1 AND status = 'active' LIMIT 1`,
-    [orgId]
+      WHERE org_id = $1 AND status = 'active'
+      ORDER BY ($2 = ANY(tool_allowlist)) DESC,
+               COALESCE(array_length(tool_allowlist, 1), 0) DESC,
+               created_at ASC
+      LIMIT 1`,
+    [orgId, channelTool]
   );
   const employee = empRes.rows[0] as PersistInboundResult['employee'];
 

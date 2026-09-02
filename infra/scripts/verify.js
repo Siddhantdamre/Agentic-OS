@@ -283,6 +283,13 @@ const SUITES = [
     needsDocker: false,
   },
   {
+    name: 'inbound routing',
+    what: 'a message reaches an employee that can work the channel it arrived on '
+      + '— a roster of specialists is decorative if one arbitrary employee gets everything',
+    cmd: [process.execPath, [path.join(__dirname, 'check-inbound-routing.js')]],
+    needsDocker: true,
+  },
+  {
     // Was not in this list, and went red unnoticed the first time the Ask AI
     // console was used — verify reported SOUND while the demo everyone is told
     // to run was failing. A check nothing runs is not a check.
