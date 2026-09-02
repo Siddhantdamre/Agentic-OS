@@ -28,6 +28,24 @@ export interface ResearchActivityInput {
   queries?: string[];
   /** Cap on sources fed to the model. Keeps the prompt bounded. */
   maxSources?: number;
+  /**
+   * Pages to read directly, with no search involved.
+   *
+   * Searching and reading are separate capabilities with separate costs.
+   * Discovery — "what exists about this topic" — needs a search provider, and
+   * therefore JINA_API_KEY. Reading a page somebody already named needs no key
+   * at all: Jina's reader endpoint answers unauthenticated.
+   *
+   * Without this, an org with no search key got an empty report reading "no
+   * search provider configured", even for competitor pages, portal listings and
+   * regulator notices whose URLs the owner could simply have supplied. That
+   * withheld the whole capability over the half of it that costs money.
+   *
+   * Named URLs are also the better half for competitive work: an owner knows
+   * which three competitors matter, and watching those every morning beats
+   * discovering strangers.
+   */
+  urls?: string[];
 }
 
 export interface ResearchActivityResult {
@@ -85,6 +103,52 @@ async function searchWeb(query: string): Promise<ResearchSource[]> {
       .filter((s) => s.url && s.snippet);
   } catch {
     return [];
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * Read one named page. No API key required.
+ *
+ * Jina's reader answers unauthenticated (verified: HTTP 200 with real page
+ * text), so this is the half of research that works with nothing bought. The
+ * key is still sent when present — it raises the rate limit, it is not what
+ * makes the call legal.
+ *
+ * Returns null rather than throwing, for the same reason searchWeb returns []:
+ * one unreachable competitor page must degrade that source, never the run.
+ */
+async function readUrl(url: string): Promise<ResearchSource | null> {
+  const clean = String(url || '').trim();
+  if (!/^https?:\/\//i.test(clean)) return null;
+
+  const jinaKey = process.env.JINA_API_KEY || process.env.JINA_READ_API_KEY;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 20_000);
+  try {
+    const headers: Record<string, string> = { Accept: 'text/plain', 'X-Retain-Images': 'none' };
+    if (jinaKey) headers.Authorization = `Bearer ${jinaKey}`;
+
+    const res = await fetch(`https://r.jina.ai/${encodeURIComponent(clean)}`, {
+      headers,
+      signal: controller.signal,
+    });
+    if (!res.ok) return null;
+    const body = await res.text();
+    if (!body.trim()) return null;
+
+    // The reader prefixes "Title: ..." and "URL Source: ..." lines. Use the
+    // title when it is there so citations read as a publisher, not a URL.
+    const titleLine = body.match(/^Title:\s*(.+)$/m);
+    return {
+      url: clean,
+      title: titleLine ? titleLine[1].trim() : clean,
+      // Bounded: the synthesis prompt holds several sources at once.
+      snippet: body.slice(0, 6000),
+    };
+  } catch {
+    return null;
   } finally {
     clearTimeout(timer);
   }
@@ -148,6 +212,14 @@ export async function researchTopicActivity(
   // Gather, de-duplicating by URL: the same page returned by two queries is one
   // source, and counting it twice would inflate apparent corroboration.
   const byUrl = new Map<string, ResearchSource>();
+
+  // Named pages first: they need no key, and an owner naming a competitor is a
+  // stronger signal than anything a search would surface for the same topic.
+  for (const u of (input.urls || []).slice(0, maxSources)) {
+    const s = await readUrl(u);
+    if (s && !byUrl.has(s.url)) byUrl.set(s.url, s);
+  }
+
   for (const q of queries) {
     for (const s of await searchWeb(q)) {
       if (!byUrl.has(s.url)) byUrl.set(s.url, s);
@@ -157,9 +229,18 @@ export async function researchTopicActivity(
 
   if (sources.length === 0) {
     const hasKey = Boolean(process.env.JINA_API_KEY || process.env.JINA_READ_API_KEY);
+    const askedForUrls = (input.urls || []).length > 0;
+    // Name the stage that came up empty. "No search provider" is the wrong
+    // reason to give someone who supplied URLs and got nothing back.
     return emptyResult(
       topic,
-      hasKey ? 'search returned no usable results' : 'no search provider configured (JINA_API_KEY unset)'
+      askedForUrls && !hasKey
+        ? 'none of the supplied pages could be read, and no search provider is configured (JINA_API_KEY unset)'
+        : askedForUrls
+          ? 'none of the supplied pages could be read and search returned no usable results'
+          : hasKey
+            ? 'search returned no usable results'
+            : 'no search provider configured (JINA_API_KEY unset) and no pages were supplied to read'
     );
   }
 

@@ -21,6 +21,8 @@ export interface MarketResearchWorkflowInput {
   /** Additional queries to broaden coverage. */
   queries?: string[];
   maxSources?: number;
+  /** Pages to read directly. Needs no search key — see ResearchActivityInput. */
+  urls?: string[];
   /** Re-run on an interval. Omit or 0 for a single pass. */
   repeatEveryHours?: number;
   idempotencyKey?: string;
@@ -69,6 +71,7 @@ export async function MarketResearchWorkflow(
     topic: input.topic,
     queries: input.queries,
     maxSources: input.maxSources,
+    urls: input.urls,
   });
 
   const corroboratedCount = outcome.report.findings.filter(

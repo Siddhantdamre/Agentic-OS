@@ -7,6 +7,7 @@ import { Sparkles, AlertTriangle, Send, CheckCircle2, CircleDashed } from 'lucid
 import { LiveRegion, StatusBadge } from '@/components/a11y';
 import { ImpactPanel } from '@/components/impact/ImpactPanel';
 import { ApprovalQueue } from '@/components/approvals/ApprovalQueue';
+import { BriefingPanel } from '@/components/briefings/BriefingPanel';
 import { ShadowPanel } from '@/components/shadow/ShadowPanel';
 import { LeakPanel } from '@/components/leaks/LeakPanel';
 
@@ -178,6 +179,13 @@ function HomeContent() {
         and 24 of them sat unanswerable for thirteen days before this existed.
       */}
       {!isWarmup && <ApprovalQueue />}
+
+      {/*
+        Directly under what needs the owner, because it answers the question
+        they arrive with: what happened since I last looked. The agent writes
+        this on its own schedule; this panel only reads it.
+      */}
+      {!isWarmup && <BriefingPanel />}
 
       {/*
         Between what is blocked and what was achieved. The agreement rate is
