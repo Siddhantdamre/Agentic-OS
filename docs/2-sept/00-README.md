@@ -12,7 +12,8 @@ Written to be read cold by three audiences without translation:
 Everything factual here is grounded in the repository at migration `021`: 45+
 tables, 15 Temporal workflows, 50+ tool executors, ~70 API routes, 6 golden eval
 suites, 3 packs. Where something is real but blocked on credentials it is marked
-**ops-blocked**, never "done".
+**ops-blocked**, never "done"; where a document specifies something unbuilt, it
+says **specification, not built** at the top.
 
 ---
 
@@ -44,6 +45,16 @@ suites, 3 packs. Where something is real but blocked on credentials it is marked
 | 16 | [API surface](16-api-surface.md) | Every route and the rule its group enforces |
 | 17 | [Operations runbook](17-ops-runbook.md) | Boot, verify, diagnose, recover |
 | 18 | [Evals and quality](18-evals-and-quality.md) | The suites, the `negativeOutput` technique, what is untested |
+
+### Design specs — the Tier 1 gaps, made buildable
+| # | Doc | Answers |
+|---|---|---|
+| 21 | [Spec: entity graph](21-spec-entity-graph.md) | Full DDL for entities, facts, conflicts and the predicate vocabulary; extraction, reconciliation, entity resolution, rollout |
+| 22 | [Spec: proactivity engine](22-spec-proactivity.md) | Baselines, watchers, signal ranking, the silence budget, the brief |
+| 23 | [Spec: procedures](23-spec-procedures.md) | The procedure object, the record and describe compilers, execution, versioning |
+| 24 | [Spec: autonomy ladder](24-spec-autonomy.md) | L0–L4 per procedure, promotion gates, automatic demotion, the kill switch |
+| 25 | [Security threat model](25-spec-threat-model.md) | Adversaries, shipped vs. specified controls, OWASP LLM Top 10, incident response |
+| 26 | [Known issues register](26-known-issues.md) | Every defect and hazard, severity-ranked, with fixes and resolved-issue lessons |
 
 ### Strategy
 | # | Doc | Answers |
