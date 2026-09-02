@@ -113,11 +113,41 @@ router_settings:
   #   4 deepseek direct   — SEPARATE account, survives OpenRouter entirely
   #   5 groq direct       — separate again, real free tier, survives no-payment
   # Tiers 4 and 5 are skipped instantly when their keys are unset.
+  #
+  # EVERY ENTRY POINT NEEDS A CHAIN, NOT JUST THE FRONT DOOR.
+  #
+  # This listed fallbacks for `atomic-agent` alone, on the assumption stated at
+  # the top of this file — "the atomic-agent always calls model atomic-agent".
+  # That assumption is false. The per-tenant budget gate pins an over-budget
+  # workspace straight to a zero-cost tier via modelOverride, so the request
+  # arrives as `atomic-agent-deepseek` and never passes the front door.
+  #
+  # Found on the first real shift run. Nvidia returned "Service temporarily
+  # overloaded", LiteLLM logged `No fallback model group found for original
+  # model_group=atomic-agent-deepseek`, and four of six agents executed their
+  # tools correctly — metrics_query, database_query, intercom_fetch — then
+  # returned an EMPTY reply. The work happened and the report vanished.
+  #
+  # The budget intent must survive the fix: a workspace pinned to a free tier
+  # because it is over budget must not fail over onto a paid one. So the
+  # zero-cost floor falls through to the OTHER zero-cost tier — different
+  # provider, separate balance — and stops there.
   fallbacks:
     - atomic-agent:
         - atomic-agent-fallback
         - atomic-agent-deepseek
         - atomic-agent-direct
+        - atomic-agent-groq
+    # Zero-cost floor → zero-cost floor. Never onto a paid tier: that would bill
+    # exactly the workspace the budget gate was protecting the account from.
+    - atomic-agent-deepseek:
+        - atomic-agent-groq
+    # Paid tier 2 keeps the rest of the chain beneath it.
+    - atomic-agent-fallback:
+        - atomic-agent-direct
+        - atomic-agent-groq
+    # Second payment rail, in case the gate or a caller pins it directly.
+    - atomic-agent-direct:
         - atomic-agent-groq
   retry_policy:
     timeout: 0

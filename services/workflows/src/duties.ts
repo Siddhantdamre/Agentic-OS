@@ -105,10 +105,20 @@ export const DUTIES: Duty[] = [
     role: 'Buyer ISA',
     summary: 'Find new enquiries nobody has qualified yet.',
     needs: 'database_query',
+    /**
+     * Asks only for columns that exist.
+     *
+     * This said "conversations with no recorded qualification and no owner".
+     * There is no qualification field in the schema, so on the first real shift
+     * the agent could not form a query, returned nothing, and the run reported
+     * success with an empty reply. A duty that names a column the database does
+     * not have is a duty that cannot be done, and the agent was right to
+     * produce nothing — the instruction was wrong, not the agent.
+     */
     instruction:
-      'Query this workspace for conversations started in the last seven days that have no '
-      + 'recorded qualification and no owner. List at most five with the contact and when they '
-      + 'arrived. If there are none, say so. Do not contact anyone. '
+      'Query the conversations table in this workspace for rows started in the last seven days '
+      + 'where employee_id is null. Report the count, and list at most five with contact_id and '
+      + 'started_at, oldest first. If there are none, say so. Do not contact anyone. '
       + 'Never state a budget, requirement or timeline that is not in the retrieved rows.',
   },
   {
@@ -137,10 +147,26 @@ export const DUTIES: Duty[] = [
     role: 'Research',
     summary: 'Read the watchlist pages and report what changed.',
     needs: 'web_extract',
+    /**
+     * Carries its own pages.
+     *
+     * This said "read each page on the research watchlist" and nothing supplied
+     * one, so on the first real shift the agent replied — correctly — "I don't
+     * see a research watchlist in your message. Could you share the list of
+     * pages?" An instruction that depends on context the caller never provides
+     * is not an instruction; the agent behaved better than the duty did.
+     *
+     * Until a per-workspace watchlist exists, the duty names public sources
+     * that are true for every Indian brokerage. These are read keyless through
+     * the reader endpoint, so this duty costs nothing to run. Replace with the
+     * tenant's own competitor list when there is somewhere to store one.
+     */
     instruction:
-      'Read each page on the research watchlist. Report only claims the retrieved text '
-      + 'supports, each with the page it came from. Where two sources disagree, say so rather '
-      + 'than choosing. If a page could not be read, name it. Never cite a page you did not read.',
+      'Read these pages and report what they currently state: '
+      + 'https://maharera.maharashtra.gov.in and https://igrmaharashtra.gov.in . '
+      + 'Report only claims the retrieved text supports, each with the page it came from. '
+      + 'Where two sources disagree, say so rather than choosing. If a page could not be read, '
+      + 'name it. Never cite a page you did not read.',
   },
   {
     id: 'finance.outstanding',

@@ -97,7 +97,38 @@ export async function AutonomousAgentWorkflow(input: AgentTaskInput): Promise<Ag
     };
   }
 
-  const resultToSave = finalResult!;
+  /**
+   * A run that produced nothing is not a success.
+   *
+   * The activity's verdict used to pass through untouched, and it reported
+   * `success: true` with an empty reply and an empty tool list. Found on a real
+   * shift run: Aisha's duty completed, claimed success, used no tool and said
+   * nothing. An operator reading that sees a green tick under an employee that
+   * did not do its job — which is the one failure mode this system treats as
+   * worse than an outage, because it is the only one that actively misleads.
+   *
+   * ADR 3 says silence is never recorded as success. That was enforced on the
+   * customer reply path in WorkItemWorkflow and not here, so Ask AI and every
+   * shift inherited the hole.
+   *
+   * The two empty cases are separated because they need different responses. No
+   * reply and no tools means nothing happened at all — usually a prompt the
+   * model could not act on. No reply but tools ran means work occurred and went
+   * unreported, which is a reporting bug rather than an idle agent, and the
+   * executed steps are still there to inspect.
+   */
+  const raw = finalResult!;
+  const producedNothing = !String(raw.replyMessage || '').trim();
+  const resultToSave: AgentTaskResult = producedNothing
+    ? {
+      ...raw,
+      success: false,
+      error: raw.error
+        || (raw.usedTools.length === 0
+          ? 'the agent produced no reply and used no tool — nothing was attempted'
+          : `the agent used ${raw.usedTools.join(', ')} but reported no result`),
+    }
+    : raw;
 
   if (input.orgId) {
     await logChannelActivity({
