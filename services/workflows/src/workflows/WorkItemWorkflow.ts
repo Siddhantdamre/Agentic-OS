@@ -28,6 +28,7 @@ import {
   DISCLOSURE_SAFE_REPLY,
   sanitiseCustomerReply,
 } from '../reply-gate.js';
+import { shouldAttemptLookup } from '../answerable.js';
 import { MemoryWriteBackWorkflow } from './MemoryWriteBackWorkflow.js';
 import { isHumanDestination } from '../route-employee.js';
 import { resolveInboundHitlGate } from '../inbound-hitl.js';
@@ -124,6 +125,19 @@ const {
     backoffCoefficient: 2,
     nonRetryableErrorTypes: ['AuthorizationError', 'InvalidArgumentError'],
   },
+});
+
+/**
+ * The lookup that runs before we accept "I don't know". Its own proxy because
+ * it has a different shape from every other activity here: several fetches plus
+ * a synthesis pass, so it needs minutes rather than seconds — and exactly one
+ * attempt, because a customer waiting on a reply must not wait through retries
+ * of an optional enrichment. A failed lookup falls through to the denial.
+ */
+const { researchTopicActivity } = proxyActivities<typeof activities>({
+  startToCloseTimeout: '3 minutes',
+  scheduleToCloseTimeout: '4 minutes',
+  retry: { maximumAttempts: 1 },
 });
 
 /**
@@ -917,15 +931,81 @@ async function runWorkItem(
   // opened "I’d be happy to help you book a showroom viewing." before any of
   // the detail asked for. Deterministic, because the prompt rule held in 21 of
   // 22 replies — close enough to be a tendency, not a control.
-  const finalReply = formatForChannel(stripPreamble(cleanedReply).text, input.channel);
+  let finalReply = formatForChannel(stripPreamble(cleanedReply).text, input.channel);
+
+  /**
+   * Before accepting "I don't know", go and find out — when finding out is
+   * possible.
+   *
+   * A business does not want an employee who shrugs at a question every
+   * competitor's website answers. But "always produce an answer" is the
+   * fabrication path, so the lookup is gated twice.
+   *
+   * classifyAnswerability decides whether a public source could hold the
+   * answer. "What is the stamp duty on a 1.2cr flat in Thane?" can be looked
+   * up. "Do you have anything in Chembur under 90 lakh?" cannot — that is our
+   * inventory, and searching the web for it would surface a competitor's flat
+   * to quote as ours. Ambiguity resolves to internal, so the tie goes to a
+   * human rather than to a search engine.
+   *
+   * Then the answer is gated again on the way out: only findings corroborated
+   * by two or more INDEPENDENT publishers survive, and the text passes through
+   * exactly the same sanitiser, mechanism strip and channel formatter as any
+   * other reply. A researched answer gets no shortcut past the reply gate.
+   */
+  let answeredByLookup = false;
+  const denied = isKnowledgeGap(finalReply, input.userMessage);
+  const lookup = shouldAttemptLookup({
+    isDenial: denied,
+    question: input.userMessage,
+    // web_extract reads a named page with no credential, so retrieval is
+    // reachable in every workspace. Search widens it; it is not required.
+    retrievalAvailable: true,
+  });
+
+  if (lookup.attempt) {
+    try {
+      const found = await researchTopicActivity({
+        orgId: input.orgId,
+        topic: input.userMessage,
+        maxSources: 4,
+      });
+
+      const corroborated = found.report.findings.filter((f) => f.independentSourceCount >= 2);
+      if (corroborated.length > 0) {
+        const drafted = corroborated
+          .slice(0, 3)
+          .map((f) => f.claim)
+          .join(' ');
+
+        // The same gate as any other reply. If sanitising leaves too little to
+        // be useful, the denial stands — a half-sentence is worse than an
+        // honest "I could not confirm that".
+        const gated = sanitiseCustomerReply(drafted);
+        const cleaned = stripMechanismTalk(gated.text).text;
+        const shaped = formatForChannel(stripPreamble(cleaned).text, input.channel);
+
+        if (shaped.trim().length >= 40) {
+          finalReply = shaped;
+          answeredByLookup = true;
+        }
+      }
+    } catch {
+      // A failed lookup must never cost the customer their reply. The denial
+      // below still ships, and the gap is still recorded.
+    }
+  }
 
   // Learn from the miss. If the agent could not answer, that question goes on
   // the org's knowledge-gap list so a human can answer it ONCE and the agent
   // has it forever. Security refusals are excluded inside isKnowledgeGap —
   // "what is the other customer's number?" is correct behaviour, and listing it
   // as a gap would invite an operator to supply the answer.
+  //
+  // A question answered by lookup is not a gap: nobody needs to write down what
+  // the agent can now source on its own.
   let knowledgeGapRecorded = false;
-  if (isKnowledgeGap(finalReply, input.userMessage)) {
+  if (denied && !answeredByLookup) {
     knowledgeGapRecorded = true;
     await recordKnowledgeGapActivity({
       orgId: input.orgId,
