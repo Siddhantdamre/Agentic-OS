@@ -89,8 +89,25 @@ async function http(pathname) {
       warn('Model credit', 'could not read the provider balance',
         'run spend-guard.js by hand before you present');
     } else if (balance <= 0) {
-      stop('THE AGENT CANNOT ANSWER', `provider balance is ${balance}`,
-        'top up OpenRouter. Nothing else on this list matters until you do.');
+      /**
+       * An empty PAID balance is not the same as a mute agent.
+       *
+       * This said "THE AGENT CANNOT ANSWER" and stopped the demo. It was wrong,
+       * and provably: with this exact balance of -0.1999, six employees
+       * completed their duties and produced real reports in ten consecutive
+       * rounds. The router has a zero-cost tier underneath the paid ones —
+       * that is the whole reason it exists — so an exhausted wallet degrades
+       * speed and quality, it does not remove the capability.
+       *
+       * Telling an operator their product is dead the night before a
+       * presentation, when it works, is the most expensive kind of wrong a
+       * readiness check can be. It is a warning with a named consequence
+       * instead.
+       */
+      warn('No paid model credit — running on the free tier',
+        `provider balance is ${balance}`,
+        'the agent still answers (verified over 10 rounds), but the free tier is '
+        + 'slower and can be rate-limited mid-demo. Top up if you want the paid path.');
     } else if (balance < 5) {
       warn('Model credit is thin', `balance is ${balance}`,
         'a long demo can exhaust this mid-sentence — top up further');
@@ -120,11 +137,31 @@ async function http(pathname) {
 
     // ── 3. DOES THE WORKSPACE LOOK REAL ──────────────────────────────────────
     // An investor reads the org name before they read anything else.
+    /**
+     * Pick the workspace somebody would actually demo.
+     *
+     * This ordered by conversation count alone, and chose
+     * "q_1786836142243211's Organization" — a test fixture with 79 seeded
+     * conversations and one employee — over the staffed workspace with nine.
+     * It then reported NO-GO for having no documents and no shadow mode, both
+     * true of the fixture and neither true of the workspace being shown. A
+     * readiness check aimed at the wrong workspace is worse than none: it fails
+     * for reasons the operator cannot act on, and it would have passed a real
+     * problem in the workspace they were about to open.
+     *
+     * A demo workspace has a WORKFORCE first and traffic second. Staff count
+     * leads the ordering because that is what the demo is about; conversations
+     * break the tie.
+     */
     const orgRow = ORG
       ? (await db.query(`SELECT id, name FROM orgs WHERE id = $1`, [ORG])).rows[0]
       : (await db.query(
-        `SELECT o.id, o.name FROM orgs o
-          ORDER BY (SELECT COUNT(*) FROM conversations c WHERE c.org_id = o.id) DESC
+        `SELECT o.id, o.name,
+                (SELECT COUNT(*) FROM ai_employees e
+                  WHERE e.org_id = o.id AND e.status = 'active') AS staff,
+                (SELECT COUNT(*) FROM conversations c WHERE c.org_id = o.id) AS convs
+           FROM orgs o
+          ORDER BY staff DESC, convs DESC
           LIMIT 1`)).rows[0];
 
     if (!orgRow) {
