@@ -69,6 +69,7 @@ export interface Message {
 
 export const CORE_TOOLS = [
   'web_search',
+  'deep_research',
   'web_extract',
   'database_query',
   'file_ops',

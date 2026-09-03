@@ -1,6 +1,7 @@
 import type { ToolRisk } from './risk.js';
 import type { ToolActionContext, ToolModule } from './shared.js';
-import { apiError, confirmFromRisk } from './shared.js';
+import { confirmFromRisk } from './shared.js';
+import { searchWeb } from './search-providers.js';
 
 const ACTIONS = ['search'] as const;
 
@@ -8,48 +9,53 @@ function riskFor(_action: string): ToolRisk {
   return 'read';
 }
 
+/**
+ * Live web search.
+ *
+ * All provider selection, key handling and fallback lives in
+ * `search-providers.ts`. This file used to hold its own copy of the Jina call
+ * and therefore its own copy of the 401 — see that module's header.
+ *
+ * On total failure this reports which providers were tried and why each one
+ * did not answer. "Search failed" with no attribution is an outage nobody can
+ * act on; "duckduckgo: HTTP 429; wikipedia: timeout" is a fixable one.
+ */
 async function execute(ctx: ToolActionContext) {
   const { payload, timestamp } = ctx;
   const query = payload.query || payload.q || payload.search;
   if (!query) {
-    return { tool: 'web_search', action: 'search', status: 'error' as const, message: 'Search query is required', data: null, timestamp };
-  }
-  console.log(`[Web Search Tool] Performing live web search via Jina for: "${query}"...`);
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 15000);
-  try {
-    const searchHeaders: Record<string, string> = {
-      'Accept': 'application/json',
-      'X-Retain-Images': 'none',
-    };
-    const jinaKey = process.env.JINA_API_KEY || process.env.JINA_READ_API_KEY;
-    if (!jinaKey) {
-      return apiError('web_search', 'search', timestamp, 'web_search requires JINA_API_KEY. No fake results are returned.', { configured: false });
-    }
-    searchHeaders['Authorization'] = `Bearer ${jinaKey}`;
-    const searchRes = await fetch(`https://s.jina.ai/${encodeURIComponent(query)}`, {
-      headers: searchHeaders,
-      signal: controller.signal
-    });
-    clearTimeout(timeout);
-    if (!searchRes.ok) throw new Error(`Jina Search API failed: ${searchRes.statusText}`);
-    const data = await searchRes.json();
-    const results = Array.isArray(data.data) ? data.data.slice(0, 5) : [];
-
     return {
-      tool: 'web_search',
-      action: 'search',
-      status: results.length > 0 ? 'executed' as const : 'error' as const,
-      message: results.length > 0
-        ? `✅ Found ${results.length} live web search results for "${query}"`
-        : `No web search results found for "${query}"`,
-      data: { query, results },
+      tool: 'web_search', action: 'search', status: 'error' as const,
+      message: 'Search query is required', data: null, timestamp,
+    };
+  }
+
+  const limit = Math.min(Math.max(parseInt(String(payload.limit ?? 5), 10) || 5, 1), 10);
+  const outcome = await searchWeb(String(query), limit);
+
+  if (outcome.results.length === 0) {
+    const tried = outcome.attempts.map((a) => `${a.provider}: ${a.detail}`).join('; ');
+    return {
+      tool: 'web_search', action: 'search', status: 'error' as const,
+      message: `No web results for "${query}". Providers tried — ${tried || 'none'}.`,
+      data: { query, results: [], attempts: outcome.attempts },
       timestamp,
     };
-  } catch (err: any) {
-    clearTimeout(timeout);
-    return { tool: 'web_search', action: 'search', status: 'error' as const, message: `Search failed: ${err.message}`, data: null, timestamp };
   }
+
+  return {
+    tool: 'web_search',
+    action: 'search',
+    status: 'executed' as const,
+    message: `Found ${outcome.results.length} live web results for "${query}" via ${outcome.provider}`,
+    data: {
+      query,
+      provider: outcome.provider,
+      results: outcome.results,
+      attempts: outcome.attempts,
+    },
+    timestamp,
+  };
 }
 
 export const webSearch: ToolModule = {

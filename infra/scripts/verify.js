@@ -344,6 +344,13 @@ const SUITES = [
     needsDocker: false,
   },
   {
+    name: 'web search',
+    what: 'an agent can find a page with no credential — search was one call to '
+      + 's.jina.ai, copied into three files, and that key was never set here',
+    cmd: [process.execPath, [path.join(__dirname, 'check-web-search.js')]],
+    needsDocker: true,
+  },
+  {
     name: 'duty visibility',
     what: 'work an employee did reaches that employee page — eighteen duty runs '
       + 'were logged and none reached the ledger',

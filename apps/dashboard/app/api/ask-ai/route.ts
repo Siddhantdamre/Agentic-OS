@@ -57,7 +57,7 @@ function buildPersona(
     connectedChannels.length > 0
       ? connectedChannels.join(', ')
       : 'none — do not invent connector data; tell the user to connect tools at /connectors';
-  return `You are DareX Executive, an autonomous AI assistant for ${orgName}. Current user: ${currentUserEmail}. Connected connectors: ${connected}. Core tools always available: database_query, web_search, web_extract, file_ops. Act decisively and execute tools when needed. Your org_id is ${orgId} — always pass it to mcp.darex.database_query and mcp.darex.database_execute, and never search memory to find it.`;
+  return `You are DareX Executive, an autonomous AI assistant for ${orgName}. Current user: ${currentUserEmail}. Connected connectors: ${connected}. Core tools always available: database_query, web_search, deep_research, web_extract, file_ops. Use deep_research rather than web_search whenever the answer must be defensible. Act decisively and execute tools when needed. Your org_id is ${orgId} — always pass it to mcp.darex.database_query and mcp.darex.database_execute, and never search memory to find it.`;
 }
 
 async function withOrgClient<T>(orgId: string, fn: (client: PoolClient) => Promise<T>): Promise<T> {
@@ -553,25 +553,27 @@ export async function GET() {
      * web_search, web_extract, file_ops" as a hardcoded string. Two of those
      * four were wrong in opposite directions, which is worse than being vague:
      *
-     *   web_search  needs JINA_API_KEY. Without it s.jina.ai returns 401 and
-     *               the tool refuses — correctly, it never fabricates results.
-     *               So the greeting promised a capability, and the agent then
-     *               declined it two lines later in the same conversation.
+     *   web_search  used to need JINA_API_KEY, which was never set here, so
+     *               the greeting either promised a capability the agent then
+     *               declined, or — after this block was added — correctly
+     *               reported that the product could not search the web at all.
+     *               It now falls through Jina and Brave to DuckDuckGo and
+     *               Wikipedia, which need no credential, so it is available in
+     *               every workspace. See tools/search-providers.ts.
      *   web_extract sends that key only when it is present, and r.jina.ai
      *               answers keyless (verified: HTTP 200 with real page text).
-     *               So it works today and nothing needed to be bought.
      *
-     * Computed from the environment rather than written down, so the greeting
-     * stops being a claim and starts being a reading. Add JINA_API_KEY and
-     * web_search turns on here with no code change.
+     * Still computed rather than written down. Nothing here should ever become
+     * a hardcoded claim again — the value of this block is that it is a reading
+     * of the system, and a reading stays true when the system changes.
      */
-    const jinaKey = Boolean(process.env.JINA_API_KEY || process.env.JINA_READ_API_KEY);
     const coreTools = [
       { name: 'database_query', available: true, needs: null },
       { name: 'metrics', available: true, needs: null },
       { name: 'file_ops', available: true, needs: null },
       { name: 'web_extract', available: true, needs: null },
-      { name: 'web_search', available: jinaKey, needs: jinaKey ? null : 'JINA_API_KEY' },
+      { name: 'web_search', available: true, needs: null },
+      { name: 'deep_research', available: true, needs: null },
     ];
 
     return NextResponse.json({

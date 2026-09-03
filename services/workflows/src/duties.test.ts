@@ -127,19 +127,23 @@ test('an unknown role is a missing duty, not a permission problem', () => {
 
 // ── What is live today ─────────────────────────────────────────────────────
 
-test('the four credential-free tools are always live', () => {
+test('the credential-free tools are always live', () => {
   for (const t of ['database_query', 'metrics', 'web_extract', 'file_ops']) {
     assert.ok(toolIsLiveToday(t, EMPTY_ENV), t);
   }
 });
 
-test('web_search is dead without a key and live with one', () => {
-  assert.strictEqual(toolIsLiveToday('web_search', EMPTY_ENV), false);
-  assert.strictEqual(toolIsLiveToday('web_search', { JINA_API_KEY: 'sk-live' }), true);
+test('web_search is live with no credential at all', () => {
+  // It used to be gated on JINA_API_KEY, which was never set, so every
+  // employee was told search was "not connected". The provider chain has a
+  // keyless floor now; an agent that cannot look anything up is not an
+  // employee, and a workspace with no budget still gets one.
+  assert.strictEqual(toolIsLiveToday('web_search', EMPTY_ENV), true);
 });
 
 test('an empty key is not a key', () => {
-  assert.strictEqual(toolIsLiveToday('web_search', { JINA_API_KEY: '   ' }), false);
+  assert.strictEqual(toolIsLiveToday('whatsapp', { META_ACCESS_TOKEN: '   ' }), false);
+  assert.strictEqual(toolIsLiveToday('whatsapp', { META_ACCESS_TOKEN: 'tok' }), true);
 });
 
 test('an OAuth tool is never live from an environment variable alone', () => {

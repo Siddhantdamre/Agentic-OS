@@ -15,6 +15,7 @@ export type { GeneratedPlan, PlanStep };
 export const CORE_PLAN_TOOLS = [
   'database_query',
   'web_search',
+  'deep_research',
   'web_extract',
   'file_ops',
   'sandbox',
@@ -135,7 +136,7 @@ export async function generatePlan(
       '{"reasoning": "1-2 sentence rationale", "summary": "one-line plan title", "steps": [{"description": "human step", "tool": "gmail", "action": "send_email", "payload": {"to":"x@y.com","subject":"...","body":"..."}}], "draft": "full drafted email/message content if the user wants a message authored, else empty string"}',
       'Rules:',
       '- step.tool must be one of the connected tools.',
-      '- step.action must be a real action for that tool (e.g. gmail: fetch_latest_emails, triage_emails, draft_email, send_email, extract_otp, extract_attachment; google-calendar: check_availability, create_event, list_events; google-drive: drive_search, drive_list, drive_get_text, drive_upload, drive_share; google-docs: docs_create, docs_read, docs_append; google-sheets: sheets_create, sheets_read, sheets_append_row; hubspot: create_crm_contact, update_contact; github: create_repo, create_issue, fetch_user_repos; zendesk: create_support_ticket, update_ticket, fetch_tickets; notion: create_page, append_page_content, search_workspace_docs; google-analytics: analytics_report; google-chat: chat_list_spaces, chat_send_message; google-meet: meet_create_space, meet_get_space; google-search-console: search_console_sites, search_console_query; google-business-profile: business_list_locations; google-cloud: cloud_list_projects; database_query: query; web_search: search; web_extract: extract; sandbox: execute).',
+      '- step.action must be a real action for that tool (e.g. gmail: fetch_latest_emails, triage_emails, draft_email, send_email, extract_otp, extract_attachment; google-calendar: check_availability, create_event, list_events; google-drive: drive_search, drive_list, drive_get_text, drive_upload, drive_share; google-docs: docs_create, docs_read, docs_append; google-sheets: sheets_create, sheets_read, sheets_append_row; hubspot: create_crm_contact, update_contact; github: create_repo, create_issue, fetch_user_repos; zendesk: create_support_ticket, update_ticket, fetch_tickets; notion: create_page, append_page_content, search_workspace_docs; google-analytics: analytics_report; google-chat: chat_list_spaces, chat_send_message; google-meet: meet_create_space, meet_get_space; google-search-console: search_console_sites, search_console_query; google-business-profile: business_list_locations; google-cloud: cloud_list_projects; database_query: query; web_search: search; web_extract: extract; deep_research: research; sandbox: execute).',
       '- Step payloads must include all required params for the action.',
       '- To pass the result of a previous step (like search results or fetched content) into a text field, use the exact syntax {{stepN_output}} where N is the 1-based index (e.g. {{step1_output}}). DO NOT write placeholders like "[Insert results here]".',
       '- Never invent a user email/phone — if the user did not provide the recipient, leave the param empty and note it in description.',

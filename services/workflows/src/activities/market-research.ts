@@ -5,14 +5,15 @@
  * `market-research.ts` module, which is where the tests are.
  *
  * FAILS SOFT, ALWAYS AND VISIBLY.
- * Missing search key, no results, model down, unparseable output — every path
- * returns a report with zero findings and a `reason` explaining why. It never
- * throws and never invents a finding to fill the gap. An empty report that says
- * "no search provider configured" is useful; a fabricated one is worse than
- * nothing, because it will be acted on.
+ * No results, model down, unparseable output — every path returns a report with
+ * zero findings and a `reason` explaining why. It never throws and never invents
+ * a finding to fill the gap. An empty report that names the stage that came up
+ * empty is useful; a fabricated one is worse than nothing, because it will be
+ * acted on.
  */
 
 import { llmChat } from '../llm/gateway.js';
+import { searchWeb } from '../tools/search-providers.js';
 import {
   buildResearchPrompt,
   validateFindings,
@@ -31,15 +32,12 @@ export interface ResearchActivityInput {
   /**
    * Pages to read directly, with no search involved.
    *
-   * Searching and reading are separate capabilities with separate costs.
-   * Discovery — "what exists about this topic" — needs a search provider, and
-   * therefore JINA_API_KEY. Reading a page somebody already named needs no key
-   * at all: Jina's reader endpoint answers unauthenticated.
+   * Searching and reading are separate capabilities (ADR 18). Discovery — "what
+   * exists about this topic" — goes through the provider chain; reading a page
+   * somebody already named needs nothing but the reader endpoint.
    *
-   * Without this, an org with no search key got an empty report reading "no
-   * search provider configured", even for competitor pages, portal listings and
-   * regulator notices whose URLs the owner could simply have supplied. That
-   * withheld the whole capability over the half of it that costs money.
+   * Both halves are keyless today, but they stay separate because they answer
+   * different questions and fail for different reasons.
    *
    * Named URLs are also the better half for competitive work: an owner knows
    * which three competitors matter, and watching those every morning beats
@@ -68,43 +66,27 @@ function emptyResult(topic: string, reason: string): ResearchActivityResult {
 }
 
 /**
- * Search via Jina.
+ * Discovery, through the shared provider chain.
  *
- * Returns [] rather than throwing on any failure — a dead search provider must
- * degrade to "no findings", not to a failed workflow.
+ * This held its own copy of the Jina call and its own `if (!jinaKey) return []`,
+ * so an unset key silently emptied every research run. Provider choice and
+ * fallback now live in one place — see `tools/search-providers.ts`.
+ *
+ * Still returns [] rather than throwing on any failure: a dead search provider
+ * must degrade to "no findings", not to a failed workflow.
  */
-async function searchWeb(query: string): Promise<ResearchSource[]> {
-  const jinaKey = process.env.JINA_API_KEY || process.env.JINA_READ_API_KEY;
-  if (!jinaKey) return [];
-
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 20_000);
+async function discover(query: string): Promise<ResearchSource[]> {
   try {
-    const res = await fetch(`https://s.jina.ai/${encodeURIComponent(query)}`, {
-      headers: {
-        Accept: 'application/json',
-        'X-Retain-Images': 'none',
-        Authorization: `Bearer ${jinaKey}`,
-      },
-      signal: controller.signal,
-    });
-    if (!res.ok) return [];
-    const data = (await res.json()) as { data?: Array<Record<string, unknown>> };
-    const rows = Array.isArray(data?.data) ? data.data : [];
-
-    return rows
+    const outcome = await searchWeb(query, 5);
+    return outcome.results
       .map((r) => ({
-        url: String(r.url ?? ''),
-        title: String(r.title ?? ''),
-        // Jina names the body differently across result types.
-        snippet: String(r.content ?? r.description ?? r.snippet ?? ''),
-        publishedAt: typeof r.date === 'string' ? r.date : undefined,
+        url: r.url,
+        title: r.title || r.url,
+        snippet: r.snippet,
       }))
       .filter((s) => s.url && s.snippet);
   } catch {
     return [];
-  } finally {
-    clearTimeout(timer);
   }
 }
 
@@ -221,26 +203,23 @@ export async function researchTopicActivity(
   }
 
   for (const q of queries) {
-    for (const s of await searchWeb(q)) {
+    for (const s of await discover(q)) {
       if (!byUrl.has(s.url)) byUrl.set(s.url, s);
     }
   }
   const sources = Array.from(byUrl.values()).slice(0, maxSources);
 
   if (sources.length === 0) {
-    const hasKey = Boolean(process.env.JINA_API_KEY || process.env.JINA_READ_API_KEY);
     const askedForUrls = (input.urls || []).length > 0;
-    // Name the stage that came up empty. "No search provider" is the wrong
-    // reason to give someone who supplied URLs and got nothing back.
+    // Name the stage that came up empty. Search always has a keyless floor now,
+    // so "no provider configured" is no longer a reason this can fail — if
+    // discovery returned nothing, every provider in the chain came up empty,
+    // which is a different problem and must read differently.
     return emptyResult(
       topic,
-      askedForUrls && !hasKey
-        ? 'none of the supplied pages could be read, and no search provider is configured (JINA_API_KEY unset)'
-        : askedForUrls
-          ? 'none of the supplied pages could be read and search returned no usable results'
-          : hasKey
-            ? 'search returned no usable results'
-            : 'no search provider configured (JINA_API_KEY unset) and no pages were supplied to read'
+      askedForUrls
+        ? 'none of the supplied pages could be read and no search provider returned a usable result'
+        : 'no search provider returned a usable result for this topic'
     );
   }
 

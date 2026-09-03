@@ -311,10 +311,31 @@ const TOOLS: ToolDef[] = [
   },
   {
     name: 'web_search',
-    description: 'Perform a live web search via Jina for a query. Requires JINA_API_KEY.',
+    description:
+      'Live web search. Works with no credential: the provider chain falls from '
+      + 'Jina and Brave (when keyed) to DuckDuckGo and Wikipedia, which need none. '
+      + 'Returns real URLs and the provider that found them; never invents results.',
     schema: { org_id: z.string(), query: z.string() },
     tool: 'web_search',
     action: 'search',
+  },
+  {
+    name: 'deep_research',
+    description:
+      'Research a topic properly: several rounds of search, reading the pages '
+      + 'rather than the snippets, and a synthesis that counts INDEPENDENT '
+      + 'publishers. Use this instead of web_search when the answer must be '
+      + 'defensible — pricing, regulation, a competitor claim. Slower and costs '
+      + 'model tokens. The result states how many rounds ran and why it stopped; '
+      + 'a report marked PARTIAL is not a finished answer.',
+    schema: {
+      org_id: z.string(),
+      topic: z.string(),
+      urls: z.array(z.string()).optional(),
+      maxRounds: z.number().optional(),
+    },
+    tool: 'deep_research',
+    action: 'research',
   },
   {
     name: 'web_extract',

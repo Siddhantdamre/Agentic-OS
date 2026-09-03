@@ -32,8 +32,18 @@
  * that erodes quietly the first time somebody wants a duty to "just send it".
  */
 
-/** A tool that needs no external credential works in any workspace today. */
-const NEEDS_NO_CREDENTIAL = new Set(['database_query', 'metrics', 'web_extract', 'file_ops']);
+/**
+ * A tool that needs no external credential works in any workspace today.
+ *
+ * `web_search` is on this list because the provider chain has a keyless floor
+ * (DuckDuckGo, then Wikipedia) beneath the keyed providers — see
+ * `tools/search-providers.ts`. It was previously KEY_GATED on JINA_API_KEY,
+ * which has never been set here, so every employee's search was reported "not
+ * connected" and no duty could ever look anything up.
+ */
+const NEEDS_NO_CREDENTIAL = new Set([
+  'database_query', 'metrics', 'web_extract', 'web_search', 'file_ops',
+]);
 
 /**
  * Tools reachable only with a key in the environment. Deliberately small: an
@@ -42,7 +52,6 @@ const NEEDS_NO_CREDENTIAL = new Set(['database_query', 'metrics', 'web_extract',
  * rather than guessed here.
  */
 const KEY_GATED: Record<string, string[]> = {
-  web_search: ['JINA_API_KEY', 'JINA_READ_API_KEY'],
   whatsapp: ['META_ACCESS_TOKEN'],
   razorpay: ['RAZORPAY_KEY_ID'],
   twilio: ['TWILIO_ACCOUNT_SID'],

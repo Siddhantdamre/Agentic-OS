@@ -156,7 +156,7 @@ export function stageSteps(steps: PlanStepLike[]): StagedPlanStep[][] {
 }
 
 export const CORE_PLAN_EXECUTE_TOOLS = [
-  'web_search', 'web_extract', 'database_query', 'db_query', 'sql_analytics',
+  'web_search', 'web_extract', 'deep_research', 'database_query', 'db_query', 'sql_analytics',
   'metrics', 'metrics_query',
   'file_ops', 'workspace_file', 'file_system', 'sandbox', 'code_execution', 'execute_code',
 ];

@@ -13,6 +13,7 @@ export { confirmForRisk, resolveToolRisk, getToolModule, TOOL_MODULES } from './
 // external OAuth connectors. maps still returns honest notConnected without a key.
 export const ALWAYS_ALLOWED_CORE_TOOLS = [
   'web_search', 'search', 'google_search',
+  'deep_research', 'research', 'deep_think',
   'web_extract', 'fetch_url', 'read_url',
   'database_query', 'db_query', 'sql_analytics',
   'metrics', 'metrics_query',
@@ -220,7 +221,8 @@ export const AUTONOMOUS_TOOL_CATALOG: ToolCatalogEntry[] = [
   { name: 'google-search-console', category: 'Marketing', description: 'List sites and query Search Console analytics', mcpName: 'search_console_sites', oauth: true },
   { name: 'google-business-profile', category: 'Marketing', description: 'List Business Profile accounts and locations', mcpName: 'business_list_locations', oauth: true },
   { name: 'google-cloud', category: 'Development', description: 'List GCP projects via Resource Manager', mcpName: 'cloud_list_projects', oauth: true },
-  { name: 'web_search', category: 'Core', description: 'Live web search via Jina', mcpName: 'web_search', oauth: false },
+  { name: 'web_search', category: 'Core', description: 'Live web search — keyless fallback chain, no credential required', mcpName: 'web_search', oauth: false },
+  { name: 'deep_research', category: 'Core', description: 'Multi-round research: search, read pages, synthesise with independent-publisher counts', mcpName: 'deep_research', oauth: false },
   { name: 'web_extract', category: 'Core', description: 'Extract page text via Jina', mcpName: 'web_extract', oauth: false },
   { name: 'database_query', category: 'Core', description: 'Read-only org-scoped SQL (SELECT/WITH, max 25 rows). Prefer metrics.query for KPIs.', mcpName: 'database_query', oauth: false },
   { name: 'metrics', category: 'Core', description: 'Semantic metrics registry (Unworked inquiries, open conversations). Not free SQL.', mcpName: 'metrics_query', oauth: false },

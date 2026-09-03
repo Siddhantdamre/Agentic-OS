@@ -5,6 +5,7 @@ import type { ToolActionContext, ToolModule } from './shared.js';
 import { sandbox } from './sandbox.js';
 import { webSearch } from './web-search.js';
 import { webExtract } from './web-extract.js';
+import { deepResearch } from './deep-research.js';
 import { databaseQuery } from './database.js';
 import { fileOps } from './file-ops.js';
 import { gmail } from './gmail.js';
@@ -59,6 +60,7 @@ export const TOOL_MODULES = {
   sandbox,
   webSearch,
   webExtract,
+  deepResearch,
   databaseQuery,
   fileOps,
   gmail,
@@ -108,6 +110,7 @@ export const PROVIDER_KEYS = [
   'sandbox', 'code_execution', 'execute_code',
   'web_search', 'search', 'google_search',
   'web_extract', 'fetch_url', 'read_url',
+  'deep_research', 'research', 'deep_think',
   'database_query', 'db_query', 'sql_analytics',
   'file_ops', 'file_system', 'workspace_file',
   'gmail',
@@ -177,6 +180,10 @@ export function moduleForProvider(key: ProviderKey): ToolModule {
     case 'fetch_url':
     case 'read_url':
       return webExtract;
+    case 'deep_research':
+    case 'research':
+    case 'deep_think':
+      return deepResearch;
     case 'database_query':
     case 'db_query':
     case 'sql_analytics':
