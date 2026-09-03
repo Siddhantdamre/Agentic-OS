@@ -247,3 +247,57 @@ test('a blocked employee gets no instruction to run', () => {
   assert.strictEqual(p.runnable, false);
   assert.strictEqual(p.instruction, '');
 });
+
+// ── Role vocabularies ───────────────────────────────────────────────────────
+// There are two in this product. Pack manifests install "Sales / front-of-house";
+// the dashboard's DEFAULT_ROSTER installs "Sales & Lead Gen". dutyForRole is an
+// exact match, so Sarah, Emma and Marcus - the first three employees any new
+// user ever sees - resolved to NO DUTY and could never do standing work.
+
+test('the roles a brand-new workspace is seeded with all have a duty', () => {
+  for (const role of ['Sales & Lead Gen', 'Customer Support', 'Marketing & Analytics', 'Research', 'Finance']) {
+    assert.ok(dutyForRole(role), `${role} has no duty - that employee would never work`);
+  }
+});
+
+test('the pack roles still have theirs', () => {
+  for (const role of [
+    'Sales / front-of-house', 'Support / success', 'Ops / analyst',
+    'Buyer ISA', 'Showing coordinator', 'Listing coordinator',
+  ]) {
+    assert.ok(dutyForRole(role), role);
+  }
+});
+
+test('an alias resolves to the same duty as its canonical role', () => {
+  assert.equal(dutyForRole('Sales & Lead Gen').id, dutyForRole('Sales / front-of-house').id);
+  assert.equal(dutyForRole('Customer Support').id, dutyForRole('Support / success').id);
+  assert.equal(dutyForRole('Marketing & Analytics').id, dutyForRole('Ops / analyst').id);
+});
+
+test('matching is case-insensitive and trims, but is never fuzzy', () => {
+  assert.ok(dutyForRole('  sales & lead gen  '));
+  // A similarity test would match these. A duty acts on a real business's data
+  // unattended; guessing which job an unknown role means is how an employee
+  // ends up doing work nobody assigned it.
+  assert.equal(dutyForRole('Sales Engineer'), null);
+  assert.equal(dutyForRole('Support Engineering Manager'), null);
+  assert.equal(dutyForRole('Analytics'), null);
+});
+
+test('no role string is claimed by two duties', () => {
+  const seen = new Map();
+  for (const d of DUTIES) {
+    for (const r of [d.role, ...(d.aliases || [])]) {
+      const k = r.toLowerCase();
+      assert.ok(!seen.has(k) || seen.get(k) === d.id,
+        `"${r}" claimed by both ${seen.get(k)} and ${d.id} - the second would never fire`);
+      seen.set(k, d.id);
+    }
+  }
+});
+
+test('an empty or blank role resolves to nothing', () => {
+  assert.equal(dutyForRole(''), null);
+  assert.equal(dutyForRole('   '), null);
+});

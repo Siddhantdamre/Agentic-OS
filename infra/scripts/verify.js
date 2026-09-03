@@ -398,6 +398,14 @@ const SUITES = [
     needsDocker: true,
   },
   {
+    name: 'duty coverage',
+    what: 'every role this product can create has a job it does unprompted — '
+      + 'three of the five roles a new workspace is seeded with matched no duty '
+      + 'at all, because packs and the dashboard speak different vocabularies',
+    cmd: [process.execPath, [path.join(__dirname, 'check-duty-coverage.js')]],
+    needsDocker: false,
+  },
+  {
     name: 'tool declarations',
     what: 'the agent is told about nothing it cannot actually call — tool and '
       + 'action are plain strings, so a wrong one typechecks and fails only in '

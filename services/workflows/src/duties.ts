@@ -62,6 +62,26 @@ export interface Duty {
   id: string;
   /** Exact `role` string from the pack manifests. */
   role: string;
+  /**
+   * Other role strings that mean the same job.
+   *
+   * There are two role vocabularies in this product and they never met. Pack
+   * manifests install "Sales / front-of-house"; the dashboard's DEFAULT_ROSTER
+   * — what a brand-new workspace is seeded with, and so the first thing a new
+   * user ever sees — installs "Sales & Lead Gen". `dutyForRole` is an exact
+   * match, so Sarah, Emma and Marcus, the flagship trio, resolved to NO DUTY
+   * and could never do standing work.
+   *
+   * That is precisely the defect this whole feature exists to end: an employee
+   * with no inbound traffic doing nothing at all, forever, while the workspace
+   * looks fully staffed.
+   *
+   * Aliases are an explicit list, never a fuzzy match. A duty is a standing
+   * instruction to act on a real business's data unattended; guessing that
+   * "Marketing & Analytics" is near enough to some duty is how an employee ends
+   * up doing a job nobody assigned it.
+   */
+  aliases?: string[];
   /** One line an operator would recognise as this person's morning job. */
   summary: string;
   /** The tool the duty cannot be done without. */
@@ -79,6 +99,7 @@ export const DUTIES: Duty[] = [
   {
     id: 'sales.unworked-inquiries',
     role: 'Sales / front-of-house',
+    aliases: ['Sales & Lead Gen', 'Sales', 'Sales & Marketing'],
     summary: 'Find people who asked something and never got an answer.',
     needs: 'database_query',
     instruction:
@@ -90,6 +111,7 @@ export const DUTIES: Duty[] = [
   {
     id: 'support.needs-attention',
     role: 'Support / success',
+    aliases: ['Customer Support', 'Support', 'Customer Success'],
     summary: 'Find threads that stalled waiting on a person.',
     needs: 'database_query',
     instruction:
@@ -101,6 +123,7 @@ export const DUTIES: Duty[] = [
   {
     id: 'ops.kpi-movement',
     role: 'Ops / analyst',
+    aliases: ['Marketing & Analytics', 'Operations', 'Ops'],
     summary: 'Check the numbers and flag what moved.',
     needs: 'metrics',
     instruction:
@@ -189,10 +212,30 @@ export const DUTIES: Duty[] = [
   },
 ];
 
-/** The duty for a role, or null when that role has none defined. */
+/**
+ * The duty for a role, or null when that role has none defined.
+ *
+ * Matches the canonical role and its declared aliases, case-insensitively, and
+ * nothing else. See `Duty.aliases` for why aliases exist and why they are a
+ * list rather than a similarity test.
+ */
 export function dutyForRole(role: string): Duty | null {
   const wanted = String(role || '').trim().toLowerCase();
-  return DUTIES.find((d) => d.role.toLowerCase() === wanted) ?? null;
+  if (!wanted) return null;
+  return DUTIES.find((d) => d.role.toLowerCase() === wanted
+    || (d.aliases || []).some((a) => a.toLowerCase() === wanted)) ?? null;
+}
+
+/**
+ * Every role string that resolves to a duty.
+ *
+ * Exported so a check can assert that every role the PRODUCT can create is in
+ * here. Reading the duty table is not enough on its own: the table looked
+ * complete while three of the five roles a new workspace is seeded with matched
+ * nothing in it.
+ */
+export function rolesWithDuties(): string[] {
+  return DUTIES.flatMap((d) => [d.role, ...(d.aliases || [])]).sort();
 }
 
 /**
