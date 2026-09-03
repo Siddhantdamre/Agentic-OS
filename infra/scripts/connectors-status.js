@@ -54,19 +54,25 @@ const PROVIDERS = [
   { key: 'whatsapp', auth: 'key', tools: 2, env: ['META_ACCESS_TOKEN', 'WHATSAPP_PHONE_NUMBER_ID'],
     unlocks: 'whatsapp_send — the channel your customers actually use',
     get: 'developers.facebook.com — WhatsApp Business API number + permanent token' },
-  // Measured, not assumed, and it changed the answer. These two were one row
-  // needing JINA_API_KEY. From inside the worker container, keyless:
-  //   r.jina.ai (web_extract) -> HTTP 200, real page text
-  //   s.jina.ai (web_search)  -> HTTP 401, authentication required
-  // So the agent can already READ any URL it is given; it cannot DISCOVER urls
-  // by searching. Reporting them together understated what works today, which
-  // is the same sin as overstating it.
+  // Measured, not assumed, and it has changed twice.
+  //
+  // These were once one row needing JINA_API_KEY. Then it was measured that
+  // r.jina.ai answers keyless and s.jina.ai returns 401, so they were split:
+  // the agent could READ any URL it was given and could not DISCOVER one.
+  //
+  // Search now falls through Jina and Brave to DuckDuckGo and Wikipedia, which
+  // need no credential (tools/search-providers.ts), so BOTH halves work with
+  // nothing bought. This row said "needs JINA_API_KEY" for a while after that
+  // stopped being true — the sixth copy of the same stale claim, and a reminder
+  // that an operator-facing status page is a claim like any other and goes
+  // stale like any other.
   { key: 'web_extract', auth: 'none', tools: 1,
     unlocks: 'web_extract — read any page the agent is pointed at',
     get: 'already working — Jina Reader answers without a key' },
-  { key: 'web_search', auth: 'key', tools: 1, env: ['JINA_API_KEY'],
-    unlocks: 'web_search — finding pages instead of being handed them',
-    get: 'jina.ai — free tier available, no card' },
+  { key: 'web_search', auth: 'none', tools: 2,
+    unlocks: 'web_search + deep_research — finding pages instead of being handed them',
+    get: 'already working — DuckDuckGo and Wikipedia need no key. '
+      + 'A Brave key (2,000 free queries/month) removes the burst throttling.' },
   { key: 'hubspot', auth: 'oauth', tools: 2, unlocks: 'contact create/update — the CRM most SMBs already run', get: 'developers.hubspot.com' },
   { key: 'razorpay', auth: 'key', tools: 1, env: ['RAZORPAY_KEY_ID', 'RAZORPAY_KEY_SECRET'],
     unlocks: 'payment links — the collections story', get: 'dashboard.razorpay.com — API keys' },
