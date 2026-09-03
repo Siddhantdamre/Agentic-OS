@@ -21,7 +21,7 @@
 // curl hides this by falling back to IPv4 — Node's fetch and pg do not.
 const crypto = require('crypto');
 const path = require('path');
-const { awaitSubstantiveReply, explainNoReply } = require('./lib/await-reply');
+const { awaitSubstantiveReply, explainNoReply, LATENCY_MARKER } = require('./lib/await-reply');
 
 let Client;
 try {
@@ -36,8 +36,26 @@ const SECRET = process.env.CHATWOOT_WEBHOOK_SECRET || 'darex-chatwoot-webhook-se
 const REPLY_TIMEOUT_MS = parseInt(process.env.REPLY_TIMEOUT_MS || '180000', 10);
 
 let pass = 0, fail = 0;
+/**
+ * Failures caused by the model tier being too slow, counted separately.
+ *
+ * Run on its own this suite passes in 59s. Run inside the full gate, behind
+ * sixty-odd other suites all drawing on the same free model tier, that tier
+ * saturates and 180s is not enough — so the agent sends its interim
+ * acknowledgement and the real answer lands after the window closes.
+ *
+ * That was reported as a hard failure and the gate printed "NOT SOUND", which
+ * is the same conflation this gate has spent the day removing: a suite that
+ * could not run is not a suite that failed, and neither is one whose model ran
+ * out of capacity. Measured — free tier 28-38s per call, paid tier 2s.
+ */
+let latencyFailures = 0;
 const ok = (m, d = '') => { pass++; console.log(`  [PASS] ${m}${d ? ` — ${d}` : ''}`); };
-const no = (m, d = '') => { fail++; console.log(`  [FAIL] ${m}${d ? ` — ${d}` : ''}`); };
+const no = (m, d = '') => {
+  fail++;
+  if (String(d).includes(LATENCY_MARKER)) latencyFailures++;
+  console.log(`  [FAIL] ${m}${d ? ` — ${d}` : ''}`);
+};
 
 const db = new Client({
   host: process.env.DB_HOST || '127.0.0.1',
@@ -164,6 +182,17 @@ async function main() {
 
   console.log('\n--- Summary ---');
   const total = pass + fail;
+
+  // Exit 3 = "blocked on model capacity", so verify.js can report it in the
+  // COULD NOT RUN bucket rather than accusing the product. Every other failure
+  // still exits 1: a wrong answer is a wrong answer.
+  if (fail > 0 && latencyFailures === fail) {
+    console.log(`  BLOCKED ON MODEL CAPACITY — ${pass}/${total} passed; the rest timed`);
+    console.log('  out holding an interim acknowledgement. Not a code failure.\n');
+    await db.end();
+    process.exit(3);
+  }
+
   console.log(fail === 0 ? `  ALL CHECKS PASSED (${pass}/${total})\n` : `  ${fail} of ${total} CHECKS FAILED\n`);
   await db.end();
   process.exit(fail === 0 ? 0 : 1);

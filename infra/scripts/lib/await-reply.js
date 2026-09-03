@@ -39,6 +39,17 @@
  */
 const INTERIM_ACK = /just checking that for you/i;
 
+/**
+ * The word a caller greps for to tell "too slow" from "wrong".
+ *
+ * Exported rather than duplicated. check-e2e-agent-reply.js counts latency
+ * failures separately so it can exit 3 ("blocked on model capacity") instead of
+ * 1, and it was matching this wording with its own hardcoded regex — two copies
+ * of one string, which is the drift that turns a careful distinction back into
+ * a plain failure the first time somebody rewords a sentence.
+ */
+const LATENCY_MARKER = 'LATENCY';
+
 /** Is this the agent saying "still working" rather than answering? */
 function isInterimAck(text) {
   return INTERIM_ACK.test(String(text || ''));
@@ -96,11 +107,13 @@ function explainNoReply(outcome) {
   const secs = (outcome.waitedMs / 1000).toFixed(0);
   if (outcome.sawAck) {
     return `no substantive answer in ${secs}s — the agent sent only its interim `
-      + 'acknowledgement, so this is LATENCY, not a wrong answer. Check which model '
-      + 'tier is serving: the free tier measures 28-38s per call.';
+      + `acknowledgement, so this is ${LATENCY_MARKER}, not a wrong answer. Check which `
+      + 'model tier is serving: the free tier measures 28-38s per call.';
   }
   return `no assistant message at all in ${secs}s — the agent never replied. `
     + 'This is not latency; nothing was produced.';
 }
 
-module.exports = { awaitSubstantiveReply, isInterimAck, explainNoReply, INTERIM_ACK };
+module.exports = {
+  awaitSubstantiveReply, isInterimAck, explainNoReply, INTERIM_ACK, LATENCY_MARKER,
+};

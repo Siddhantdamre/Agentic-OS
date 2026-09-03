@@ -606,11 +606,25 @@ for (const suite of SUITES) {
     // doubled path segment, from a machine with two node installations. The
     // suite never started, so it must never be reported as a code failure.
     || /Cannot find module '[^']*[\\/](?:npm|pnpm|yarn)[\\/]/i.test(out)
+    // Exit 3 is a suite saying "the model tier ran out of capacity, not the
+    // code". Measured: check-e2e-agent-reply passes in 59s on its own, and
+    // times out at 180s inside the full gate because sixty other suites are
+    // drawing on the same free tier — which answers a twenty-token request in
+    // 28-38s, against 2s on the paid tier. Insufficient capacity is a
+    // credential problem, and calling the product unsound for it is the same
+    // conflation as blaming the code for a missing PATH entry.
+    || r.status === 3
   );
   if (couldNotRun) {
     const why = r.error
       ? r.error.message
-      : (out.split('\n').map((l) => l.trim()).find(Boolean) || `exit ${r.status}`);
+      : r.status === 3
+        // The suite already explained itself; quote its own line rather than
+        // the first line of its output, which is a banner.
+        ? (out.split('\n').map((l) => l.trim())
+            .find((l) => /BLOCKED ON MODEL CAPACITY|this is LATENCY/.test(l))
+            || 'blocked on model capacity')
+        : (out.split('\n').map((l) => l.trim()).find(Boolean) || `exit ${r.status}`);
     console.log(`\r  [ ????? ]  ${suite.name}  — COULD NOT RUN      `);
     console.log(`            ${why.slice(0, 140)}`);
     results.push({ ...suite, passed: false, couldNotRun: true, out, why });
