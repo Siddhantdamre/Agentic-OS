@@ -27,3 +27,5 @@ wrong, and the Evidence section names the incident or the check that pins it.
 | 17 | [Recurring work schedules itself; it only needs starting](017-recurring-work-schedules-itself.md) |
 | 18 | [Searching and reading are separate capabilities](018-searching-and-reading-are-separate.md) |
 | 19 | [A market fact carries its source, or it does not exist](019-market-facts-carry-their-source.md) |
+| 20 | [Search has a floor that needs no credential](020-search-has-a-keyless-floor.md) |
+| 21 | [The repair loop diagnoses; it never edits](021-the-repair-loop-never-edits.md) |

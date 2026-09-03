@@ -33,6 +33,7 @@ and **confirm before running multi-step plans**.
 | [19-updates-2026-09-02.md](./19-updates-2026-09-02.md) | Changelog: `0cd87b1` → `8c3035d`. Routing, recurring work, briefings, employee activity, and the operational traps found the hard way |
 | [20-shift-run-2026-09-02.md](./20-shift-run-2026-09-02.md) | The first real shift run: three attempts, the model-group dead end that made four agents report nothing, and the six duties that finally produced work |
 | [21-updates-2026-09-02-evening.md](./21-updates-2026-09-02-evening.md) | Changelog: `8c3035d` → `b8c6303`. The stale env file that would have deployed with no model key, a quarter of verification that never ran, the realtime bus that never published, and market context with provenance. First measured reliability: 58/60 |
+| [22-updates-2026-09-03.md](./22-updates-2026-09-03.md) | Changelog: `077582d` -> `0a45f82`. The agents could not search the web and never could; deep research; the gate that had never run on Windows; a bug triage loop; and the supervision lint that read one file of sixteen |
 
 Path from today to the complete OS (documentation only, not shipped):
 [`docs/plan/`](../plan/README.md). Written later on 13 Aug. Start at
