@@ -398,6 +398,13 @@ const SUITES = [
     needsDocker: true,
   },
   {
+    name: 'migrations applied',
+    what: 'the ledger matches the files — 044 and 045 were applied by hand and '
+      + 'never recorded, so the record a deploy reads said they had never run',
+    cmd: [process.execPath, [path.join(__dirname, 'check-migrations-applied.js')]],
+    needsDocker: true,
+  },
+  {
     name: 'duty coverage',
     what: 'every role this product can create has a job it does unprompted — '
       + 'three of the five roles a new workspace is seeded with matched no duty '
