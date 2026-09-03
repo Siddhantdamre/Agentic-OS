@@ -75,6 +75,19 @@ const ALLOWED = new Set([
   'infra/scripts/latency-probe.js',
   'infra/scripts/harden-suite.js',
   'infra/scripts/check-reply-gate-live.js',
+
+  // The bug triage loop. It diagnoses THIS REPO's own failing checks, so there
+  // is no tenant and no workspace budget to consult — and routing it through
+  // llmChat would mean inventing an orgId, which charges repo maintenance to a
+  // customer and pollutes that customer's usage record. The invariant this lint
+  // protects is attribution to the workspace that caused the spend; a call with
+  // no workspace behind it cannot satisfy that and must not pretend to.
+  //
+  // Bounded instead: operator-invoked only, `--triage-only` skips the model
+  // entirely, and it asks a model ONLY about failures that deterministic triage
+  // has already classified as code defects — which across every measured run so
+  // far has been none, because every red line was the machine.
+  'infra/scripts/self-repair.js',
 ]);
 
 function git(args) {
