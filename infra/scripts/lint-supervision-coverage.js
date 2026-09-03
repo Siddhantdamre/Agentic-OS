@@ -110,5 +110,74 @@ if (iWrapper >= 0 && iReport >= 0 && iBody >= 0) {
     : no('the body has returns to supervise', 'structure changed — re-read this file');
 }
 
+// ── 5. Every OTHER workflow has stated its position ────────────────────────
+//
+// The four checks above prove that every exit of WorkItemWorkflow is
+// supervised. That is all they prove — and the header above them claimed
+// "EVERY EXIT IS SUPERVISED" while reading exactly one file.
+//
+// There are sixteen workflows. One records supervision. Among the other fifteen
+// is AutonomousAgentWorkflow, which is what every standing duty and every
+// inbound customer reply actually runs through. Measured on this database:
+// 807 rows in agent_actions, ONE row in task_supervision.
+//
+// Some of those fifteen genuinely should not report the trio — an embedding job
+// is not agent work and has no doer to monitor. The defect was never that they
+// are unsupervised. It is that nothing recorded WHICH they were, so a
+// deliberate exclusion and an oversight were indistinguishable from outside.
+//
+// So: the same bargain lint-check-coverage.js already makes for checkers.
+// Staying outside requires stating your case in writing.
+//
+//   SUPERVISION: not-agent-work — <why>   excused
+//   SUPERVISION: GAP — <why>              a known hole, counted and printed
+//
+// A workflow with neither a recording call nor a marker FAILS, because the
+// silent case is the actual defect. A declared GAP does not fail the build —
+// failing today would only get the marker downgraded to the weaker one — but it
+// is printed on every run, with a count, so it cannot quietly become normal.
+const WF_DIR = path.join(__dirname, '..', '..', 'services', 'workflows', 'src', 'workflows');
+const workflowFiles = fs.readdirSync(WF_DIR)
+  .filter((f) => /Workflow\.ts$/.test(f) && !/\.test\./.test(f))
+  .sort();
+
+const gaps = [];
+const excused = [];
+const silent = [];
+let supervised = 0;
+
+for (const f of workflowFiles) {
+  const body = fs.readFileSync(path.join(WF_DIR, f), 'utf8');
+  if (/recordTaskSupervisionActivity\s*\(/.test(body)) { supervised += 1; continue; }
+  // Matches to the end of the comment block, not the end of the line. A wrapped
+  // reason read one line deep, so "THE LARGEST ONE. Every standing duty and
+  // every inbound" was all anyone saw of the largest gap in the system.
+  const marker = /SUPERVISION:\s*(GAP|not-agent-work)\s*—\s*([\s\S]*?)\*\//.exec(body);
+  const reason = marker
+    ? marker[2].split('\n').map((l) => l.replace(/^\s*\*\s?/, '').trim()).join(' ').trim()
+    : '';
+  const gap = marker && marker[1] === 'GAP' ? [null, reason] : null;
+  const exc = marker && marker[1] === 'not-agent-work' ? [null, reason] : null;
+  if (gap) gaps.push([f, gap[1].trim()]);
+  else if (exc) excused.push([f, exc[1].trim()]);
+  else silent.push(f);
+}
+
+console.log('');
+ok(`${supervised} of ${workflowFiles.length} workflows record the supervision trio`);
+if (excused.length) ok(`${excused.length} excused in writing as not agent work`);
+
+if (silent.length) {
+  no(`${silent.length} workflow(s) neither supervise nor say why`,
+    `${silent.join(', ')} — add a SUPERVISION: marker to the file header`);
+} else {
+  ok('no workflow is silently unsupervised', 'every one supervises or states its case');
+}
+
+if (gaps.length) {
+  console.log(`\n  KNOWN GAPS (${gaps.length}) — unsupervised, and we know it:`);
+  for (const [f, why] of gaps) console.log(`    ${f}\n      ${why}`);
+}
+
 console.log(`\n  passed ${pass} / ${pass + fail}\n`);
 process.exit(fail ? 1 : 0);

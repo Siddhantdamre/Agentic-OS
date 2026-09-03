@@ -1,3 +1,7 @@
+/**
+ * SUPERVISION: GAP — fans out to NurtureWorkflow for stale conversations.
+ * The selection of who to chase is unsupervised.
+ */
 import { ApplicationFailure, proxyActivities, startChild, ParentClosePolicy } from '@temporalio/workflow';
 import type * as activities from '../activities/index.js';
 import { MAX_NURTURE_FANOUT, MAX_STALE_CHASE, nurtureWorkflowId } from '../quiet-hours.js';

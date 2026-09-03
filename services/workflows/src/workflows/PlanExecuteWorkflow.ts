@@ -1,3 +1,8 @@
+/**
+ * SUPERVISION: GAP — executes a plan a human confirmed. The confirmation is
+ * a gate before the work, not supervision of how it went - a step that
+ * half-succeeded is judged by nothing.
+ */
 import {
   ApplicationFailure,
   condition,

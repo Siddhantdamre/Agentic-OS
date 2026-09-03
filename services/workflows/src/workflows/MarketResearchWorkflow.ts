@@ -1,3 +1,9 @@
+/**
+ * SUPERVISION: GAP — produces findings a business may act on.
+ * validateFindings enforces sourcing, which is stronger than a monitor for
+ * factual claims, but nothing judges whether the research answered the
+ * question that was asked.
+ */
 import { ApplicationFailure, continueAsNew, proxyActivities, sleep } from '@temporalio/workflow';
 import type * as activities from '../activities/index.js';
 

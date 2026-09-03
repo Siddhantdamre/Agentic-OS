@@ -1,3 +1,13 @@
+/**
+ * SUPERVISION: GAP — THE LARGEST ONE. Every standing duty and every inbound
+ * customer reply runs through here, and none of it reports the
+ * doer/monitor/learner trio. Measured on this database: 807 rows in
+ * agent_actions, 1 in task_supervision. Outcomes ARE recorded - the ledger,
+ * the reply gate and the empty-result check all apply - but no monitor
+ * judges the reply after the fact. Closing this means a second model call
+ * per run, which is a cost decision an operator has to make, not a fix to
+ * slip in.
+ */
 import { proxyActivities, defineQuery, setHandler } from '@temporalio/workflow';
 import type * as activities from '../activities/index.js';
 import type { AgentTaskInput, AgentTaskResult } from '../agent-engine.js';

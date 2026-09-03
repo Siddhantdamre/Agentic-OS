@@ -1,3 +1,8 @@
+/**
+ * SUPERVISION: GAP — spawns specialists and synthesises their output.
+ * Nothing judges the synthesis, so a crew that agreed on something wrong
+ * reports the same as one that got it right.
+ */
 import { executeChild, proxyActivities, workflowInfo } from '@temporalio/workflow';
 import type * as activities from '../activities/index.js';
 import type { AgentTaskInput, CrewSpawnResult, CrewWorkflowInput, CrewWorkflowResult } from '@darex/shared-types';

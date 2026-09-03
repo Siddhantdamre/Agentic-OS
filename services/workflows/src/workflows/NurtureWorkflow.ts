@@ -1,3 +1,7 @@
+/**
+ * SUPERVISION: GAP — contacts a lead on a schedule. It reaches a real
+ * customer, which is exactly where an unjudged outcome costs most.
+ */
 import {
   ApplicationFailure,
   condition,

@@ -1,3 +1,8 @@
+/**
+ * SUPERVISION: not-agent-work — writes memory rows produced by a run that
+ * was itself supervised. Supervising the write as well would double-count
+ * one piece of work.
+ */
 import { proxyActivities, ApplicationFailure } from '@temporalio/workflow';
 import type * as activities from '../activities/index.js';
 

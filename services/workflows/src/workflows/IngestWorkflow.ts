@@ -1,3 +1,8 @@
+/**
+ * SUPERVISION: not-agent-work — parses and stores an uploaded or synced
+ * document. Its outcomes are recorded as skip reasons on the document
+ * itself.
+ */
 import { proxyActivities, ApplicationFailure } from '@temporalio/workflow';
 import type * as activities from '../activities/index.js';
 

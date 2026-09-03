@@ -1,3 +1,7 @@
+/**
+ * SUPERVISION: GAP — decides which insight to act on and starts the briefing
+ * and chase workflows. The decision itself is unsupervised.
+ */
 import { ApplicationFailure, proxyActivities, startChild, ParentClosePolicy } from '@temporalio/workflow';
 import type * as activities from '../activities/index.js';
 import { insightActionWorkflowId, ownerBriefingWorkflowId, staleChaseWorkflowId } from '../quiet-hours.js';

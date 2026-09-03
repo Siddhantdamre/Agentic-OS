@@ -1,3 +1,8 @@
+/**
+ * SUPERVISION: not-agent-work — computes and stores embeddings. There is no
+ * doer, no reply and no decision, so there is nothing for a monitor to
+ * judge.
+ */
 import { proxyActivities, ApplicationFailure } from '@temporalio/workflow';
 import type * as activities from '../activities/index.js';
 

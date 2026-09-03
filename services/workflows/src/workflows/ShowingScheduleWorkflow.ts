@@ -1,3 +1,6 @@
+/**
+ * SUPERVISION: GAP — schedules a viewing with a real person at a real time.
+ */
 import { ApplicationFailure, proxyActivities } from '@temporalio/workflow';
 import type * as activities from '../activities/index.js';
 
