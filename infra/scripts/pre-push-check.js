@@ -227,20 +227,64 @@ for (const f of js) {
 }
 
 if (ts.length) {
-  const r = spawnSync('npx', ['tsc', '--noEmit'], {
-    cwd: path.join(ROOT, 'services', 'workflows'),
-    encoding: 'utf8',
-    shell: process.platform === 'win32',
-    timeout: 600000,
-  });
-  if (r.status !== 0) {
+  /**
+   * Run the compiler directly, never through `npx`.
+   *
+   * This blocked a push with the message "typecheck fails" and an EMPTY detail
+   * while `tsc --noEmit` passed cleanly by hand. The cause was not the code:
+   * `npx` is broken in this environment — npm's own launcher resolves a doubled
+   * path and dies with "Cannot find module ...\npm\bin\node_modules\npm\bin\
+   * npm-prefix.js" on stderr, exit 1, and NOTHING on stdout. The old code read
+   * only stdout, so the gate failed closed with no reason anyone could act on.
+   *
+   * A gate that blocks for an unexplainable reason gets routed around with
+   * --no-verify, which is strictly worse than no gate at all.
+   *
+   * Two changes, both about being able to act on a failure:
+   *   1. Invoke node_modules/typescript/bin/tsc with this same node binary.
+   *      No npm launcher, no shell, no PATH lookup — and it is faster.
+   *   2. Separate "the compiler ran and found errors" from "the compiler could
+   *      not be run". They need opposite responses and read identically before.
+   */
+  const WF = path.join(ROOT, 'services', 'workflows');
+  const tscBin = [
+    path.join(WF, 'node_modules', 'typescript', 'bin', 'tsc'),
+    path.join(ROOT, 'node_modules', 'typescript', 'bin', 'tsc'),
+  ].find((candidate) => fs.existsSync(candidate));
+
+  if (!tscBin) {
     problems.push({
       f: 'services/workflows',
-      why: 'typecheck fails',
-      detail: String(r.stdout || '').split('\n').filter(Boolean).slice(0, 3).join(' '),
+      why: 'typecheck could not run',
+      detail: 'no local typescript found — run pnpm install; this is not a code failure',
     });
   } else {
-    console.log('  [ok]  services/workflows tsc --noEmit');
+    const r = spawnSync(process.execPath, [tscBin, '--noEmit'], {
+      cwd: WF,
+      encoding: 'utf8',
+      timeout: 600000,
+      // The headroom this repo needs elsewhere. Without it tsc can exit with
+      // "FATAL ERROR: Zone Allocation failed", which is not a type error.
+      env: Object.assign({}, process.env, { NODE_OPTIONS: '--max-old-space-size=4096' }),
+    });
+    const out = String(r.stdout || '') + String(r.stderr || '');
+    const lines = out.split('\n').filter(Boolean);
+
+    if (r.error || r.signal) {
+      problems.push({
+        f: 'services/workflows',
+        why: 'typecheck could not run',
+        detail: (r.error ? r.error.message : 'killed by ' + r.signal) + ' — not a code failure',
+      });
+    } else if (r.status !== 0) {
+      problems.push({
+        f: 'services/workflows',
+        why: lines.some((l) => /error TS\d+/.test(l)) ? 'typecheck fails' : 'typecheck could not run',
+        detail: lines.slice(0, 3).join(' ') || ('exit ' + r.status + ' with no output'),
+      });
+    } else {
+      console.log('  [ok]  services/workflows tsc --noEmit');
+    }
   }
 }
 
