@@ -20,7 +20,7 @@
 import test from 'node:test';
 import assert from 'node:assert';
 
-import { countLlmCalls, llmChat } from './gateway';
+import { countLlmCalls, llmChat, effectiveTimeoutMs } from './gateway';
 
 const ORG = '11111111-1111-1111-1111-111111111111';
 
@@ -164,4 +164,44 @@ test('a call outside any scope is safe and counted nowhere', async () => {
     const res = await chat();          // no countLlmCalls wrapper
     assert.equal(res.content, 'hi');   // must not throw
   } finally { restore(); }
+});
+
+// -- Timeout floor -----------------------------------------------------------
+//
+// A timeout shorter than the serving tier's latency is not a timeout.
+//
+// Measured 3 September 2026, twenty-token reply: the paid tier answers in 2s,
+// the free tier in 28-38s. The free tier is the failover chain's zero-cost
+// floor, so it serves whenever the paid tiers are exhausted or unfunded.
+//
+// Against it, the critic's 12-second budget does not fail fast - it fails
+// ALWAYS. The critic never runs and the reply skips the gate it was supposed to
+// pass, with every layer behaving exactly as written and nothing reporting it.
+
+test('a budget below the floor is raised to it', () => {
+  // The real call sites, as they were written for a fast paid model.
+  for (const chosenForAFastModel of [12_000, 15_000, 30_000, 40_000]) {
+    assert.strictEqual(
+      effectiveTimeoutMs(chosenForAFastModel),
+      60_000,
+      `${chosenForAFastModel}ms is below the free tier's own measured latency`
+    );
+  }
+});
+
+test('a caller asking for more than the floor keeps it', () => {
+  // The floor is a minimum, not a cap.
+  assert.strictEqual(effectiveTimeoutMs(90_000), 90_000);
+  assert.strictEqual(effectiveTimeoutMs(300_000), 300_000);
+});
+
+test('an unspecified budget still clears the floor', () => {
+  assert.strictEqual(effectiveTimeoutMs(undefined), 60_000);
+  assert.strictEqual(effectiveTimeoutMs(), 60_000);
+});
+
+test('zero and negative are treated as unspecified, never as instant', () => {
+  // A caller passing 0 means "I did not choose", not "abort immediately".
+  assert.strictEqual(effectiveTimeoutMs(0), 60_000);
+  assert.strictEqual(effectiveTimeoutMs(-1), 60_000);
 });

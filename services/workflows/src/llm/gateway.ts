@@ -149,6 +149,39 @@ async function resolveRouting(orgId: string): Promise<{ model: string; allowed: 
   return { model, allowed: entry.allowed, degraded: entry.degraded };
 }
 
+/**
+ * No call may be given less time than the slowest tier that can serve it.
+ *
+ * Callers pick a timeout from what the work is worth: the critic gets 12s, a
+ * research synthesis gets 40s. Every one of those numbers was chosen against a
+ * fast paid model.
+ *
+ * Measured 3 September 2026, inside the worker, twenty-token reply:
+ *
+ *   atomic-agent-fallback  gpt-4o-mini, paid          2 s
+ *   atomic-agent           nvidia nemotron, FREE   28-38 s
+ *
+ * The free tier is the zero-cost floor of the failover chain, so it serves
+ * whenever the paid tiers are exhausted, throttled or unfunded — the state this
+ * deployment is in right now. Against it, a 12-second timeout is not a timeout.
+ * It does not fail fast; it fails ALWAYS. The critic never runs, the reply skips
+ * the gate it was supposed to pass, and nothing anywhere says so — every layer
+ * is behaving exactly as written.
+ *
+ * So a floor, not a rewrite of every call site. A caller may still ask for MORE
+ * than the floor when the work deserves it; it may not ask for less than the
+ * serving tier can physically deliver.
+ *
+ * LLM_MIN_TIMEOUT_MS lowers it for a deployment that only ever uses fast paid
+ * models, where failing fast is genuinely better.
+ */
+const MIN_TIMEOUT_MS = parseInt(process.env.LLM_MIN_TIMEOUT_MS || '60000', 10);
+
+export function effectiveTimeoutMs(requested?: number): number {
+  const asked = typeof requested === 'number' && requested > 0 ? requested : 30_000;
+  return Math.max(asked, MIN_TIMEOUT_MS);
+}
+
 function chatUrl(): string | null {
   const isProd = process.env.NODE_ENV === 'production';
   const raw = process.env.LITELLM_BASE_URL || (isProd ? '' : 'http://localhost:4000/v1');
@@ -206,7 +239,7 @@ export async function llmChat(params: LlmChatParams): Promise<LlmChatResult> {
   if (tally) tally.dispatched += 1;
 
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), params.timeoutMs ?? 30_000);
+  const timer = setTimeout(() => controller.abort(), effectiveTimeoutMs(params.timeoutMs));
   try {
     const res = await fetch(url, {
       method: 'POST',
