@@ -24,6 +24,7 @@ const BASE = process.env.DASHBOARD_URL || 'http://127.0.0.1:3000';
 const SECRET = process.env.CHATWOOT_WEBHOOK_SECRET || 'darex-chatwoot-webhook-secret-dev';
 const sign = (b) => `sha256=${crypto.createHmac('sha256', SECRET).update(b).digest('hex')}`;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const { awaitSubstantiveReply, explainNoReply } = require('./lib/await-reply');
 
 const db = new Client({
   host: process.env.DB_HOST || '127.0.0.1',
@@ -132,17 +133,19 @@ const no = (m, d = '') => { fail++; console.log(`  [FAIL] ${m}${d ? ` — ${d}` 
   });
   hook.status === 200 ? ok('inbound webhook accepted') : no('inbound webhook accepted', `HTTP ${hook.status}`);
 
-  let reply = null;
-  const t0 = Date.now();
-  while (Date.now() - t0 < 180000) {
-    const r = await db.query(
-      `SELECT content FROM messages WHERE org_id=$1 AND role='assistant' ORDER BY created_at DESC LIMIT 1`, [orgId]);
-    const c = await db.query(
-      `SELECT COUNT(*)::int AS n FROM messages WHERE org_id=$1 AND role='assistant'`, [orgId]);
-    if (c.rows[0].n > before.rows[0].n && r.rows.length) { reply = r.rows[0].content; break; }
-    await sleep(500);
-  }
-  reply ? ok('agent replied', `${((Date.now() - t0) / 1000).toFixed(1)}s`) : no('agent replied', 'timeout');
+  // Waits for the ANSWER, not for the first thing the agent says. The agent
+  // sends an interim acknowledgement before a slow reply; reading that as the
+  // answer reported "the answer does not contain the uploaded fact" when the
+  // answer had simply not arrived. See lib/await-reply.js.
+  const outcome = await awaitSubstantiveReply({
+    query: (sql, params) => db.query(sql, params),
+    orgId,
+  });
+  const reply = outcome.reply;
+  reply
+    ? ok('agent replied', `${(outcome.waitedMs / 1000).toFixed(1)}s`
+        + (outcome.sawAck ? ', after an interim ack' : ''))
+    : no('agent replied', explainNoReply(outcome));
 
   if (reply) {
     console.log(`\n  Q: ${question}`);

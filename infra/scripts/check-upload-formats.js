@@ -23,6 +23,7 @@ const BASE = process.env.DASHBOARD_URL || 'http://127.0.0.1:3000';
 const SECRET = process.env.CHATWOOT_WEBHOOK_SECRET || 'darex-chatwoot-webhook-secret-dev';
 const sign = (b) => `sha256=${crypto.createHmac('sha256', SECRET).update(b).digest('hex')}`;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const { awaitSubstantiveReply, explainNoReply } = require('./lib/await-reply');
 
 const db = new Client({
   host: process.env.DB_HOST || '127.0.0.1',
@@ -117,16 +118,15 @@ async function askAgent(t, question) {
     headers: { 'Content-Type': 'application/json', 'x-chatwoot-signature': sign(payload) },
     body: payload,
   });
-  const t0 = Date.now();
-  while (Date.now() - t0 < 180000) {
-    const r = await db.query(
-      `SELECT content FROM messages WHERE org_id=$1 AND role='assistant' ORDER BY created_at DESC LIMIT 1`, [t.orgId]);
-    const c = await db.query(
-      `SELECT COUNT(*)::int AS n FROM messages WHERE org_id=$1 AND role='assistant'`, [t.orgId]);
-    if (c.rows[0].n > before.rows[0].n && r.rows.length) return r.rows[0].content;
-    await sleep(500);
-  }
-  return null;
+  // The ANSWER, not the first thing the agent says: it sends an interim
+  // acknowledgement before a slow reply, and asserting on that reported the
+  // uploaded fact as missing when the answer had not arrived yet.
+  const outcome = await awaitSubstantiveReply({
+    query: (sql, params) => db.query(sql, params),
+    orgId: t.orgId,
+  });
+  if (!outcome.reply) console.log(`      ${explainNoReply(outcome)}`);
+  return outcome.reply;
 }
 
 async function runFormat(label, filename, mime, bytes, marker, question) {

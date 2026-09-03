@@ -21,6 +21,7 @@
 // curl hides this by falling back to IPv4 — Node's fetch and pg do not.
 const crypto = require('crypto');
 const path = require('path');
+const { awaitSubstantiveReply, explainNoReply } = require('./lib/await-reply');
 
 let Client;
 try {
@@ -113,23 +114,21 @@ async function main() {
 
   // ── 4. Wait for the AGENT to answer ─────────────────────────────────────
   console.log(`\n4. Agent reply (polling up to ${Math.round(REPLY_TIMEOUT_MS / 1000)}s)`);
-  const started = Date.now();
-  let assistant = null;
-  while (Date.now() - started < REPLY_TIMEOUT_MS) {
-    const r = await db.query(
-      `SELECT content, created_at FROM messages
-        WHERE org_id = $1 AND role = 'assistant' ORDER BY created_at DESC LIMIT 1`,
-      [orgId]
-    );
-    if (r.rows.length > 0) { assistant = r.rows[0]; break; }
-    await sleep(5000);
-  }
-  const waited = Math.round((Date.now() - started) / 1000);
+  // Waits for a substantive answer. Taking the first assistant row read the
+  // agent's interim acknowledgement instead, which carries no facts by design,
+  // and then judged the whole reply on it.
+  const outcome = await awaitSubstantiveReply({
+    query: (sql, params) => db.query(sql, params),
+    orgId,
+    timeoutMs: REPLY_TIMEOUT_MS,
+  });
+  const assistant = outcome.reply ? { content: outcome.reply } : null;
+  const waited = Math.round(outcome.waitedMs / 1000);
   if (assistant) {
-    ok('agent produced a reply', `${waited}s`);
+    ok('agent produced a reply', `${waited}s${outcome.sawAck ? ', after an interim ack' : ''}`);
     console.log(`         reply: ${JSON.stringify(assistant.content.slice(0, 140))}`);
   } else {
-    no('agent produced a reply', `no assistant message after ${waited}s`);
+    no('agent produced a reply', explainNoReply(outcome));
   }
 
   // ── 5. Did it go through the workflow (not a raw passthrough)? ──────────
