@@ -398,6 +398,14 @@ const SUITES = [
     needsDocker: true,
   },
   {
+    name: 'bug triage',
+    what: 'a red gate is read correctly — a missing tool is never reported as a '
+      + 'code defect, and an unrecognised failure is never reported as clear. '
+      + 'Only --self-test runs here: the full script invokes this gate.',
+    cmd: [process.execPath, [path.join(__dirname, 'self-repair.js'), '--self-test']],
+    needsDocker: false,
+  },
+  {
     name: 'check coverage',
     what: 'every checker is in this list or carries a written reason it is not — '
       + 'three real defects hid behind checks nobody was running',
