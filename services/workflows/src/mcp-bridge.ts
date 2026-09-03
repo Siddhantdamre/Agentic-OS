@@ -2,20 +2,33 @@ import http from 'http';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js';
 import { z } from 'zod';
-import { executeAutonomousToolAction, resolveToolRisk } from './tool-executor.js';
+import { executeAutonomousToolAction } from './tool-executor.js';
 
 const PORT = parseInt(process.env.ATOMIC_BRIDGE_PORT || '8790', 10);
 const SSE_ENDPOINT = '/sse';
 const MESSAGE_ENDPOINT = '/messages';
 
+/**
+ * One tool as the model sees it.
+ *
+ * There were `risk` and `confirm` fields here, assigned at registration from
+ * `resolveToolRisk` and then read by nothing — `TOOLS` is module-private and
+ * neither field was referenced anywhere in the repo. Dead fields that look like
+ * a permission control are worse than no fields, because a reader assumes the
+ * bridge classifies risk and stops looking for where it actually happens.
+ *
+ * Risk is enforced in two live places, and both see the REAL action rather than
+ * this declaration:
+ *   tools/index.ts    `mod.risk(action)`, at execution time
+ *   plan-steps.ts     `planRequiresDurableExecute`, choosing Temporal over HTTP
+ */
 interface ToolDef {
   name: string;
   description: string;
   schema: Record<string, z.ZodTypeAny>;
   tool: string;
+  /** Must be an action the target module implements — see check-tool-declarations.js. */
   action: string;
-  risk?: string;
-  confirm?: boolean;
 }
 
 const TOOLS: ToolDef[] = [
@@ -363,7 +376,12 @@ const TOOLS: ToolDef[] = [
       content: z.string().optional(),
     },
     tool: 'file_ops',
-    action: 'auto_execute',
+    // The only tool whose action comes from the CALLER rather than from this
+    // declaration — its schema exposes `action` and the handler below reads it.
+    // So this value is the fallback for a call that omits one, and it must be a
+    // real action: it said `auto_execute`, which the module does not implement,
+    // and `check-tool-declarations.js` now fails the build on that.
+    action: 'read_file',
   },
   {
     name: 'drive_search',
@@ -987,9 +1005,6 @@ function createServer(): McpServer {
 
   for (const toolDef of TOOLS) {
     const { name, description, schema, tool, action } = toolDef;
-    const riskMeta = resolveToolRisk(tool, action);
-    toolDef.risk = riskMeta?.risk;
-    toolDef.confirm = riskMeta?.confirm;
     server.registerTool(name, {
       description,
       inputSchema: schema as any,

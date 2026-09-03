@@ -398,6 +398,14 @@ const SUITES = [
     needsDocker: true,
   },
   {
+    name: 'tool declarations',
+    what: 'the agent is told about nothing it cannot actually call — tool and '
+      + 'action are plain strings, so a wrong one typechecks and fails only in '
+      + 'front of a customer',
+    cmd: [process.execPath, [path.join(__dirname, 'check-tool-declarations.js')]],
+    needsDocker: false,
+  },
+  {
     name: 'bug triage',
     what: 'a red gate is read correctly — a missing tool is never reported as a '
       + 'code defect, and an unrecognised failure is never reported as clear. '
