@@ -23,7 +23,7 @@ const BASE = process.env.DASHBOARD_URL || 'http://127.0.0.1:3000';
 const SECRET = process.env.CHATWOOT_WEBHOOK_SECRET || 'darex-chatwoot-webhook-secret-dev';
 const sign = (b) => `sha256=${crypto.createHmac('sha256', SECRET).update(b).digest('hex')}`;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-const { awaitSubstantiveReply, explainNoReply } = require('./lib/await-reply');
+const { awaitSubstantiveReply, explainNoReply, LATENCY_MARKER } = require('./lib/await-reply');
 
 const db = new Client({
   host: process.env.DB_HOST || '127.0.0.1',
@@ -34,8 +34,19 @@ const db = new Client({
 });
 
 let pass = 0, fail = 0;
+/**
+ * Failures caused by the model tier being too slow, counted apart, so the suite
+ * can exit 3 ("blocked on model capacity") rather than 1. A saturated free tier
+ * is a credential problem; calling the product unsound for it is the same
+ * conflation as blaming the code for a missing PATH entry.
+ */
+let latencyFailures = 0;
 const ok = (m, d = '') => { pass++; console.log(`  [PASS] ${m}${d ? ` — ${d}` : ''}`); };
-const no = (m, d = '') => { fail++; console.log(`  [FAIL] ${m}${d ? ` — ${d}` : ''}`); };
+const no = (m, d = '') => {
+  fail++;
+  if (String(d).includes(LATENCY_MARKER)) latencyFailures++;
+  console.log(`  [FAIL] ${m}${d ? ` — ${d}` : ''}`);
+};
 
 /**
  * A valid PDF, produced by pdfkit.
@@ -194,5 +205,11 @@ async function runFormat(label, filename, mime, bytes, marker, question) {
 
   console.log(`\n  passed ${pass} / ${pass + fail}`);
   await db.end();
+  // Exit 3 = blocked on model capacity; verify.js reports it as COULD NOT RUN
+  // rather than accusing the product. Any other failure still exits 1.
+  if (fail > 0 && latencyFailures === fail) {
+    console.log('  BLOCKED ON MODEL CAPACITY — the agent timed out holding an interim ack.');
+    process.exit(3);
+  }
   process.exit(fail ? 1 : 0);
 })();

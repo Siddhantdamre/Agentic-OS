@@ -24,7 +24,7 @@ const BASE = process.env.DASHBOARD_URL || 'http://127.0.0.1:3000';
 const SECRET = process.env.CHATWOOT_WEBHOOK_SECRET || 'darex-chatwoot-webhook-secret-dev';
 const sign = (b) => `sha256=${crypto.createHmac('sha256', SECRET).update(b).digest('hex')}`;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-const { awaitSubstantiveReply, explainNoReply } = require('./lib/await-reply');
+const { awaitSubstantiveReply, explainNoReply, LATENCY_MARKER } = require('./lib/await-reply');
 
 const db = new Client({
   host: process.env.DB_HOST || '127.0.0.1',
@@ -47,8 +47,23 @@ The loading bay is for deliveries only and must be kept clear at all times.`;
 
 let pass = 0;
 let fail = 0;
+/**
+ * Failures caused by the model tier being too slow, counted apart.
+ *
+ * This suite passes 8/8 in 88s on its own. Inside the full gate, behind sixty
+ * other suites drawing on the same free model tier, it saturates and 181s is
+ * not enough — the agent holds its interim acknowledgement and the answer lands
+ * after the window. Reported as a hard failure the gate printed "NOT SOUND",
+ * which blames the code for a credential problem. Measured: free tier 28-38s
+ * per call, paid tier 2s.
+ */
+let latencyFailures = 0;
 const ok = (m, d = '') => { pass++; console.log(`  [PASS] ${m}${d ? ` — ${d}` : ''}`); };
-const no = (m, d = '') => { fail++; console.log(`  [FAIL] ${m}${d ? ` — ${d}` : ''}`); };
+const no = (m, d = '') => {
+  fail++;
+  if (String(d).includes(LATENCY_MARKER)) latencyFailures++;
+  console.log(`  [FAIL] ${m}${d ? ` — ${d}` : ''}`);
+};
 
 (async () => {
   await db.connect();
@@ -161,5 +176,11 @@ const no = (m, d = '') => { fail++; console.log(`  [FAIL] ${m}${d ? ` — ${d}` 
   await db.query(`DELETE FROM orgs WHERE id=$1`, [orgId]);
   console.log(`\n  passed ${pass} / ${pass + fail}`);
   await db.end();
+  // Exit 3 = blocked on model capacity, which verify.js reports as COULD NOT
+  // RUN instead of accusing the product. Any other failure still exits 1.
+  if (fail > 0 && latencyFailures === fail) {
+    console.log('  BLOCKED ON MODEL CAPACITY — the agent timed out holding an interim ack.');
+    process.exit(3);
+  }
   process.exit(fail ? 1 : 0);
 })();
