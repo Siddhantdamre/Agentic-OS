@@ -36,6 +36,37 @@ const ROOT = path.join(__dirname, '..', '..');
 const FAST = process.argv.includes('--fast');
 
 /**
+ * Is pnpm on PATH?
+ *
+ * Two suites here run exactly what CI runs, and CI runs it through pnpm. When
+ * pnpm is not installed both reported `'pnpm' is not recognized` and the gate
+ * announced "NOT SOUND", accusing the code of a failure that belonged to the
+ * machine.
+ *
+ * Routing around it does not work and was tried: `typecheck:ci` invokes
+ * `pnpm --filter` internally for each workspace, and turbo shells out to the
+ * package manager itself ("Unable to find package manager binary"). Driving the
+ * outer command through corepack leaves every nested call still broken, so the
+ * only honest options are "pnpm is here" or "pnpm is not here".
+ *
+ * Checked once, at startup, so the answer is one clear line with the fix rather
+ * than the same cryptic cmd.exe message twice.
+ */
+const PNPM_AVAILABLE = spawnSync('pnpm', ['--version'], {
+  encoding: 'utf8',
+  shell: process.platform === 'win32',
+}).status === 0;
+
+const PNPM_MISSING_WHY =
+  'pnpm is not installed on this machine. Install it and re-run: '
+  + '`corepack enable pnpm` (ships with node), or `npm i -g pnpm`. '
+  + 'Nothing about the code is implicated.';
+
+function pnpmCmd(args, cwd) {
+  return ['pnpm', args, { cwd }];
+}
+
+/**
  * needsDocker: the suite talks to Postgres/Temporal/LiteLLM containers.
  * A pure-logic suite runs anywhere, which is what --fast keeps.
  */
@@ -43,7 +74,16 @@ const SUITES = [
   {
     name: 'workflow unit tests',
     what: 'reply gates, grounding, claim extraction, tenant helpers',
-    cmd: ['npm', ['test', '--silent'], { cwd: path.join(ROOT, 'services', 'workflows') }],
+    // Runs the test runner directly rather than through `npm test`.
+    //
+    // `npm test` here maps to exactly this command, so the package manager was
+    // a hop that added nothing and could fail on its own. It did: npm's
+    // launcher on this machine resolves a doubled path and dies with
+    // "Cannot find module .../npm/bin/node_modules/npm/bin/npm-cli.js", so the
+    // unit tests were reported as a product failure when they had never
+    // started. One fewer moving part, and it is faster.
+    cmd: [process.execPath, ['--test', 'dist/**/*.test.js'],
+      { cwd: path.join(ROOT, 'services', 'workflows') }],
     needsDocker: false,
   },
   {
@@ -427,14 +467,16 @@ const SUITES = [
   // verification suite; it is a second opinion nobody asked for.
   {
     name: 'typecheck (all workspaces)',
+    needsPnpm: true,
     what: 'what CI typechecks — shared-types, connectors, workflows, dashboard',
-    cmd: ['pnpm', ['-s', 'run', 'typecheck:ci'], { cwd: ROOT }],
+    cmd: pnpmCmd(['-s', 'run', 'typecheck:ci'], ROOT),
     needsDocker: false,
   },
   {
     name: 'lint',
+    needsPnpm: true,
     what: 'what CI lints',
-    cmd: ['pnpm', ['-s', 'lint'], { cwd: ROOT }],
+    cmd: pnpmCmd(['-s', 'lint'], ROOT),
     needsDocker: false,
   },
   {
@@ -491,16 +533,65 @@ for (const suite of SUITES) {
     results.push({ ...suite, skipped: true });
     continue;
   }
+  if (suite.needsPnpm && !PNPM_AVAILABLE) {
+    console.log(`  [ ????? ]  ${suite.name}  — COULD NOT RUN`);
+    console.log(`            ${PNPM_MISSING_WHY}`);
+    results.push({ ...suite, passed: false, couldNotRun: true, out: '', why: PNPM_MISSING_WHY });
+    continue;
+  }
   process.stdout.write(`  running   ${suite.name} ...`);
   const [bin, args, opts] = suite.cmd;
   const r = spawnSync(bin, args, {
     encoding: 'utf8',
-    shell: process.platform === 'win32',
+    // Shell ONLY for a bare command name that needs PATH resolution — on
+    // Windows `npm` and `pnpm` are .cmd files and cannot be executed directly.
+    //
+    // It must NOT be used for an absolute path. With shell:true, Node joins the
+    // binary and its arguments into a single string for cmd.exe with no
+    // quoting, so node's default Windows install location — the "Program Files"
+    // path, which contains a space — arrives as the command "C:/Program" and
+    // cmd.exe answers "is not recognized as an internal or external command".
+    //
+    // Every suite in this file is launched with process.execPath. So on any
+    // Windows machine with node installed in its default location THE ENTIRE
+    // GATE FAILED: 23 of 23 suites, not one of them for a code reason, all of
+    // them passing when run by hand. The verdict it printed was
+    // "NOT SOUND — 23 of 23 suites failed".
+    shell: process.platform === 'win32' && !path.isAbsolute(bin),
     env: process.env,
     ...(opts || {}),
   });
   const out = `${r.stdout || ''}${r.stderr || ''}`;
   const passed = r.status === 0;
+
+  /**
+   * Did this suite fail, or did it never run?
+   *
+   * Different findings needing opposite responses — fix the code versus fix the
+   * machine — and reporting them identically is how the quoting bug above
+   * survived. A broken toolchain presented as a broken product, in the loudest
+   * possible terms, on every single suite.
+   */
+  const couldNotRun = !passed && (
+    Boolean(r.error)
+    || /is not recognized as an internal or external command/i.test(out)
+    || /command not found/i.test(out)
+    || /ENOENT/.test(String(r.error && r.error.code))
+    // A package manager whose own launcher cannot find itself. Measured here:
+    // "Cannot find module '...\npm\bin\node_modules\npm\bin\npm-cli.js'" — a
+    // doubled path segment, from a machine with two node installations. The
+    // suite never started, so it must never be reported as a code failure.
+    || /Cannot find module '[^']*[\\/](?:npm|pnpm|yarn)[\\/]/i.test(out)
+  );
+  if (couldNotRun) {
+    const why = r.error
+      ? r.error.message
+      : (out.split('\n').map((l) => l.trim()).find(Boolean) || `exit ${r.status}`);
+    console.log(`\r  [ ????? ]  ${suite.name}  — COULD NOT RUN      `);
+    console.log(`            ${why.slice(0, 140)}`);
+    results.push({ ...suite, passed: false, couldNotRun: true, out, why });
+    continue;
+  }
 
   // Pull the suite's own count out of its output rather than inventing one, so
   // the summary can never claim more than a suite actually ran. Each pattern
@@ -528,8 +619,18 @@ for (const suite of SUITES) {
 
 // ── Verdict ────────────────────────────────────────────────────────────────
 const ran = results.filter((r) => !r.skipped);
-const hardFailures = ran.filter((r) => !r.passed && !r.advisory);
-const advisoryFailures = ran.filter((r) => !r.passed && r.advisory);
+/**
+ * A suite that never ran is not a suite that failed.
+ *
+ * Kept out of `hardFailures` so the verdict cannot say the product is unsound
+ * because a tool is missing from someone's PATH. It is still reported, still
+ * exits non-zero, and is still nobody's excuse — but it names the machine, not
+ * the code. Conflating the two printed "NOT SOUND — 23 of 23 suites failed" for
+ * a repo in which every one of those suites passed when run by hand.
+ */
+const blocked = ran.filter((r) => r.couldNotRun);
+const hardFailures = ran.filter((r) => !r.passed && !r.advisory && !r.couldNotRun);
+const advisoryFailures = ran.filter((r) => !r.passed && r.advisory && !r.couldNotRun);
 
 console.log('\n' + '─'.repeat(64));
 
@@ -566,10 +667,26 @@ console.log('    • multi-turn conversations           node infra/scripts/multi
 console.log('    • reliability over repeated runs     node infra/scripts/reliability-completion.js');
 console.log('    • latency under load                 node infra/scripts/latency-probe.js');
 
+if (blocked.length) {
+  console.log('\n  COULD NOT RUN — this is the machine, not the code. Each of these');
+  console.log('  passes when its command is available:\n');
+  for (const b of blocked) {
+    console.log(`    ${b.name}`);
+    console.log(`      ${String(b.why).slice(0, 120)}`);
+  }
+}
+
 const skipped = results.filter((r) => r.skipped).length;
 console.log('\n' + '─'.repeat(64));
 if (hardFailures.length) {
   console.log(`\n  NOT SOUND — ${hardFailures.length} of ${ran.length} suites failed.\n`);
+  process.exit(1);
+}
+if (blocked.length) {
+  // Non-zero, because an unrun suite proves nothing. But the wording must not
+  // accuse the code of a failure that belongs to the toolchain.
+  console.log(`\n  INCOMPLETE — ${ran.length - blocked.length} of ${ran.length} suites passed;`
+    + ` ${blocked.length} could not run (see above). Nothing failed.\n`);
   process.exit(1);
 }
 // Count only what actually passed. Reporting all nine as "passed" alongside
