@@ -237,10 +237,43 @@ export function sanitiseCustomerReply(draft: string): SanitisedReply {
     text = labelled;
   }
 
+  /**
+   * CITATION IDS ARE INTERNAL IDENTIFIERS, and this function already redacts
+   * those — it just did not know about these ones.
+   *
+   * `[M-1]` is how retrieved memory is labelled so the agent can ground a
+   * claim. It is for the grounding check, never for a customer, and
+   * `stripPlaceholders` removes it. But `stripPlaceholders` is not what the
+   * product calls: `sanitiseCustomerReply` is, and it passed the marker
+   * straight through.
+   *
+   * Measured. The reliability suite asked an unanswerable question and the
+   * agent shipped this to a customer, verbatim:
+   *
+   *   "The memory record [M-1] shows this question was asked yesterday but no
+   *    answer was stored. Which system should I check?"
+   *
+   * Two leaks in one sentence, which is why the mechanism vocabulary grew as
+   * well. And worse than either: that tenant's memory held only six seeded
+   * product facts, so there was no such record — the citation was FABRICATED.
+   * Stripping the marker does not fix the fabrication. It stops a customer
+   * being shown an internal id as though it were evidence.
+   *
+   * Replace-and-compare rather than `.test()`, following the UUID pass above:
+   * these are /g regexes on a module-scoped object shared by every workflow
+   * replay, and `.test()` would leave `lastIndex` set.
+   */
+  const decited = text.replace(CITATION_RE, '');
+  if (decited !== text) {
+    violations.push('internal memory citation');
+    text = decited;
+  }
+
   // Redaction can leave doubled spaces or "your organisation your organisation".
   text = text
     .replace(/(your organisation)(\s+\1)+/gi, '$1')
     .replace(/[ \t]{2,}/g, ' ')
+    .replace(/\s+([.,;:!?])/g, '$1')
     .trim();
 
   return {
@@ -503,7 +536,7 @@ const SYSTEMS_CONNECTOR_RE = new RegExp(
 );
 
 const MECHANISM_RE =
-  /\b(?:quer(?:y|ying|ied)(?:\s+\w+)?\s*databases?|quer(?:y|ying|ied)\s+the\s+\w+|the\s+database|our\s+database|channel\s+data|is\s+connected\s+for|only\s+\w+\s+is\s+connected|connected\s+services|connected\s+systems?|available\s+tools|via\s+the\s+\w+\s+tools?|integration\s+(?:is|isn'?t|only\s+supports)|\w+\s+table\b|API\b|endpoint|webhook|sync(?:ed|ing)?\s+from|logged\s+in\s+your\b|in\s+your\s+(?:records|system\s+records)\b|tool\s+call|internal\s+system)/i;
+  /\b(?:quer(?:y|ying|ied)(?:\s+\w+)?\s*databases?|quer(?:y|ying|ied)\s+the\s+\w+|the\s+database|our\s+database|channel\s+data|is\s+connected\s+for|only\s+\w+\s+is\s+connected|connected\s+services|connected\s+systems?|available\s+tools|via\s+the\s+\w+\s+tools?|integration\s+(?:is|isn'?t|only\s+supports)|\w+\s+table\b|API\b|endpoint|webhook|sync(?:ed|ing)?\s+from|logged\s+in\s+your\b|in\s+your\s+(?:records|system\s+records)\b|tool\s+call|internal\s+system|memory\s+record|the\s+memory\b|no\s+answer\s+was\s+stored|was\s+(?:asked|stored|logged)\s+(?:yesterday|earlier|before)|which\s+system|what\s+system|which\s+(?:source|record|database)|knowledge\s+base|retrieved\s+facts?|stored\s+memory)/i;
 
 /**
  * Drop sentences that describe how the answer was obtained.

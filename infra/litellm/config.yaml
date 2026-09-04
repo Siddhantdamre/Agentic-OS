@@ -96,6 +96,27 @@ model_list:
   # and put it back in the `fallbacks` chain below. DEEPSEEK_API_KEY is still
   # passed to the container, so only these lines are needed.
 
+  # TIER 5 — KEPT, ON EVIDENCE, after a request to remove tiers 4 and 5.
+  #
+  # Tier 4 was removed and deserved it: the DeepSeek direct account held no
+  # balance, so every call that reached it bought a retry and a cooldown and
+  # nothing else. The request assumed tier 5 was the same kind of padding.
+  # It measurably is not. Every remaining tier was called directly with
+  # `17 * 4`, 300 max_tokens, and asked for the number alone:
+  #
+  #   atomic-agent           10s   "68"
+  #   atomic-agent-fallback   6s   "68"
+  #   atomic-agent-deepseek   2s   "68"
+  #   atomic-agent-groq       1s   "68"   <- this tier, the FASTEST of the four
+  #
+  # A first pass with max_tokens=16 showed groq and fallback returning empty
+  # content and looked like evidence they were broken. They were not: both are
+  # reasoning models, and 16 tokens is consumed before any visible content is
+  # emitted. Worth remembering before condemning a tier on a short probe.
+  #
+  # So this is a working, sub-second, zero-cost floor. Deleting it would cost
+  # availability and buy nothing. To remove it anyway, delete this block and
+  # every `- atomic-agent-groq` line in `fallbacks` below.
   - model_name: atomic-agent-groq
     litellm_params:
       # Verified against the live /models list for this account, with a tool
@@ -167,11 +188,33 @@ router_settings:
   # because it is over budget must not fail over onto a paid one. So the
   # zero-cost floor falls through to the OTHER zero-cost tier — different
   # provider, separate balance — and stops there.
+  #
+  # ORDERED SO THE FIRST FAILOVER CROSSES PROVIDERS.
+  #
+  # The chain was four deep and one provider wide. Tiers 1, 2 and 3 all route
+  # through OpenRouter, so when OpenRouter's upstream had trouble, three of the
+  # four tiers shared the failure. Measured, reliability run 1:
+  #
+  #   OpenrouterException - Upstream error from Nvidia: Service temporarily
+  #   overloaded, {'error_type': 'provider_unavailable'}
+  #   Received Model Group=atomic-agent-deepseek
+  #
+  # Depth is not redundancy when every link has the same single point of
+  # failure. Groq now sits directly under tier 1, which makes the first hop a
+  # different company on different hardware.
+  #
+  # It costs nothing to do this and it is not a downgrade. Tier 1 is
+  # `openai/gpt-oss-120b` THROUGH OpenRouter; the Groq tier is the SAME MODEL
+  # served directly. So the first failover keeps the model identical, changes
+  # only the provider, and measured 1s against tier 1's 10s at zero cost.
+  #
+  # The OpenRouter tiers stay beneath it rather than being removed: if Groq is
+  # the side that is down, the chain still has somewhere to go.
   fallbacks:
     - atomic-agent:
+        - atomic-agent-groq
         - atomic-agent-fallback
         - atomic-agent-deepseek
-        - atomic-agent-groq
     # Zero-cost floor → zero-cost floor. Never onto a paid tier: that would bill
     # exactly the workspace the budget gate was protecting the account from.
     - atomic-agent-deepseek:

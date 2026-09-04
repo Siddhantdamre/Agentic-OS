@@ -421,6 +421,14 @@ const SUITES = [
     needsDocker: true,
   },
   {
+    name: 'never silent',
+    what: 'a customer who was told "I will have an answer shortly" always gets '
+      + 'something — a child agent that THREW sent a service apology, but one '
+      + 'that RETURNED a failure sent nothing at all and reported it as saved',
+    cmd: [process.execPath, [path.join(__dirname, 'check-never-silent.js')]],
+    needsDocker: false,
+  },
+  {
     name: 'duty allowlist enforced',
     what: 'a duty is confined to the tool it was granted — the allowlist was '
       + 'computed, asserted, and then discarded at the process boundary, so a '

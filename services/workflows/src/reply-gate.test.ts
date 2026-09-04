@@ -6,7 +6,14 @@
 import test from 'node:test';
 import assert from 'node:assert';
 
-import { buildReplyCritique, buildReplyReviser, buildEvidence } from './reply-gate';
+import {
+  buildReplyCritique,
+  buildReplyReviser,
+  buildEvidence,
+  sanitiseCustomerReply,
+  stripMechanismTalk,
+  HUMAN_REVIEW_REPLY,
+} from './reply-gate';
 import { reviseUntilAllowed } from './activities/critic-revise';
 import { evaluateCriticDraft, KNOWN_BAD_FAIR_HOUSING_DRAFT } from './activities/critic-check';
 import type { CriticCheckResult, CriticIntent } from './activities/critic-check';
@@ -175,4 +182,56 @@ test('SAFETY: missing or empty steps yield empty evidence, not a crash', () => {
   assert.strictEqual(buildEvidence(undefined), '');
   assert.strictEqual(buildEvidence([]), '');
   assert.doesNotThrow(() => buildEvidence([{}]));
+});
+
+/**
+ * THE LEAK THAT PROMPTED THE CITATION STRIP, PINNED VERBATIM.
+ *
+ * Produced by the reliability suite, shipped to a customer, and caught only
+ * because the run scored it. Kept word-for-word rather than paraphrased: a
+ * paraphrase would pass a narrower gate than the one the product needs.
+ */
+const LEAKED_REPLY =
+  'The memory record [M-1] shows this question was asked yesterday but no '
+  + 'answer was stored. Which system should I check?';
+
+test('sanitiseCustomerReply strips memory citation ids', () => {
+  const out = sanitiseCustomerReply(LEAKED_REPLY);
+  assert.ok(!out.text.includes('[M-1]'), `citation survived: ${out.text}`);
+  assert.ok(out.violations.includes('internal memory citation'));
+  // No orphaned space before the full stop where the marker was.
+  assert.ok(!/ \./.test(out.text), `stray space before punctuation: ${out.text}`);
+});
+
+test('sanitiseCustomerReply strips citations anywhere, not just the first', () => {
+  const out = sanitiseCustomerReply('Per [M-1] the price is 45 lakh, and [M-12] confirms it.');
+  assert.ok(!/\[M-\d+\]/.test(out.text), out.text);
+});
+
+test('stripMechanismTalk removes the leaked sentence entirely', () => {
+  const { text } = stripMechanismTalk(sanitiseCustomerReply(LEAKED_REPLY).text);
+  assert.equal(text.trim(), '');
+  // WorkItemWorkflow substitutes HUMAN_REVIEW_REPLY below 20 chars, so an
+  // empty result here is a handoff, never silence.
+  assert.ok(HUMAN_REVIEW_REPLY.length >= 20);
+});
+
+test('stripMechanismTalk catches asking the customer which system to check', () => {
+  const { removed } = stripMechanismTalk('Happy to help. Which system should I check?');
+  assert.ok(removed.length > 0);
+});
+
+test('a normal business reply passes both gates untouched', () => {
+  const good = 'Our viewings are 45-minute slots on Saturday mornings at 10am, 11am and 12pm.';
+  const out = sanitiseCustomerReply(good);
+  assert.equal(out.text, good);
+  assert.deepEqual(out.violations, []);
+  assert.equal(stripMechanismTalk(good).text, good);
+});
+
+test('prices and ranges keep their punctuation through the tidy pass', () => {
+  // The tidy pass collapses " ." after a stripped citation. It must not eat
+  // spacing that belongs to the sentence.
+  const good = 'The 2 BHK is 1,250 sq ft; the 3 BHK is 1,780 sq ft.';
+  assert.equal(sanitiseCustomerReply(good).text, good);
 });

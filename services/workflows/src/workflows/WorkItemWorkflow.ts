@@ -826,10 +826,63 @@ async function runWorkItem(
       payload: { reason: childResult.error || 'empty_reply' },
       businessKey: `${businessKey}:needs_attention_event`,
     });
+    /**
+     * THE OTHER HALF OF "NEVER GO SILENT".
+     *
+     * The catch block above sends SERVICE_FALLBACK_REPLY when the child
+     * THROWS. This branch handles the child RETURNING a failure — same
+     * outcome for the customer, and it used to return here having saved no
+     * message at all. Worse, it returns `savedByWorkflow: true`, which tells
+     * the caller the reply was handled, so the caller does not save one
+     * either. Nobody sends anything and nobody notices.
+     *
+     * That is only a logged incident until you look at what the customer saw.
+     * Measured, conversation 28f8fa06, reliability run 1:
+     *
+     *   23:18:16  customer   What was your total revenue last financial year?
+     *   23:18:47  assistant  Just checking that for you - I will have an
+     *                        answer shortly.
+     *             (nothing, ever)
+     *
+     * The interim ack is a PROMISE. Thirty seconds earlier this workflow told
+     * the customer an answer was coming. Breaking that is worse than never
+     * having spoken: they are now waiting.
+     *
+     * The trigger was an upstream provider outage - OpenRouter returned 502
+     * "Upstream error from Nvidia: Service temporarily overloaded" mid-stream,
+     * which LiteLLM cannot fail over because the stream had already begun. The
+     * child caught it, returned success:false, and this branch went quiet.
+     *
+     * Same idempotency key as the catch branch on purpose. The two paths are
+     * mutually exclusive within one execution, but a workflow retry can take
+     * the other branch on a second pass, and the customer must get exactly one
+     * apology, not two.
+     */
+    const emptyReplyFallback = formatForChannel(SERVICE_FALLBACK_REPLY, input.channel);
+    if (input.conversationId) {
+      await saveMessageActivity({
+        orgId: input.orgId,
+        conversationId: input.conversationId,
+        role: 'assistant',
+        content: emptyReplyFallback,
+        idempotencyKey: `${businessKey}:save-service-fallback`,
+      });
+    }
+    // The question still deserves an answer. Same as the catch branch: without
+    // this, an outage silently erases the questions it swallowed.
+    await recordKnowledgeGapActivity({
+      orgId: input.orgId,
+      question: input.userMessage,
+      agentReply: emptyReplyFallback,
+      detectedVia: 'no_reply',
+      conversationId: input.conversationId,
+      workItemId,
+    });
+
     return {
       workItemId,
       status: nextStatus('fail'),
-      replyMessage: reply || undefined,
+      replyMessage: emptyReplyFallback,
       executedSteps: childResult.executedSteps,
       savedByWorkflow: true,
       success: false,
