@@ -1,0 +1,39 @@
+diff --git a/src/mcp/mcp-tool-adapter.ts b/src/mcp/mcp-tool-adapter.ts
+index 6a27f17..28f2cd3 100644
+--- a/src/mcp/mcp-tool-adapter.ts
++++ b/src/mcp/mcp-tool-adapter.ts
+@@ -67,7 +67,33 @@ export function createMcpToolDefinition(
+       meta.annotations?.destructiveHint === false,
+     run: async (args, ctx): Promise<CompressedToolResult> => {
+       try {
+-        const res = await client.callTool(meta.rawName, args, ctx.signal);
++        /**
++         * WHICH TURN IS CALLING, told by the host rather than by the model.
++         *
++         * An MCP server that serves several tenants and several agents cannot
++         * apply per-turn authorisation, because every value it receives comes
++         * from the model's own tool call. `org_id` included: a host that trusts
++         * it is trusting the thing it is trying to constrain.
++         *
++         * `ctx.sessionId` is different. The host sets it when it opens the
++         * session and the model never sees it, so it is the one identifier that
++         * crosses this boundary with the host's authority. It is already how
++         * the host carries the tenant and the model choice.
++         *
++         * Measured on the deployment this patch was written for: an employee's
++         * scheduled duty is granted exactly one tool, and reached three others,
++         * because the server had no way to tell which turn was asking and fell
++         * back to the union of everything the workspace owns.
++         *
++         * Sent under a namespaced key so it cannot collide with a real tool
++         * parameter, and additive: a server that does not know the field ignores
++         * it, and this adapter behaves exactly as before.
++         */
++        const withSession =
++          typeof ctx.sessionId === "string" && ctx.sessionId.length > 0
++            ? { ...args, _host_session_id: ctx.sessionId }
++            : args;
++        const res = await client.callTool(meta.rawName, withSession, ctx.signal);
+         return compressToolResult(
+           {
+             tool: meta.qualifiedName,

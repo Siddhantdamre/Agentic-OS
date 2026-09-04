@@ -287,7 +287,15 @@ export function sessionModelSuffix(modelOverride: string | undefined): string {
   return /^[A-Za-z0-9._/-]{1,64}$/.test(alias) ? `:m=${alias}` : '';
 }
 
-function buildSessionId(input: AgentTaskInput): string {
+/**
+ * Exported so the turn-grant writer keys on the SAME string this client sends.
+ *
+ * A second copy of this format would drift, and the drift would be silent: the
+ * grant would be stored under one session id and looked up under another, so
+ * every duty would quietly fall back to the org-wide union — the exact bug the
+ * grant exists to fix, with a table making it look fixed.
+ */
+export function buildSessionId(input: AgentTaskInput): string {
   const m = sessionModelSuffix(input.modelOverride);
   if (input.sessionKey) return `darex:${input.orgId}:${input.sessionKey}${m}`;
   if (input.conversationId) return `darex:${input.orgId}:${input.conversationId}${m}`;

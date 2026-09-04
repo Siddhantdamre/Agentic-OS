@@ -11,6 +11,8 @@ export { confirmForRisk, resolveToolRisk, getToolModule, TOOL_MODULES } from './
 // These are the agent's own atomic capabilities (web search/extract, scoped SQL,
 // workspace files, sandboxed code execution, and public-key geocoding) — not
 // external OAuth connectors. maps still returns honest notConnected without a key.
+import { readTurnGrant, takeHostSessionId } from './tools/turn-grant.js';
+
 export const ALWAYS_ALLOWED_CORE_TOOLS = [
   'web_search', 'search', 'google_search',
   'deep_research', 'research', 'deep_think',
@@ -119,9 +121,37 @@ export async function executeAutonomousToolAction(
   // not on the list is rejected here. If the caller didn't pass one, fall back
   // to the org's active-employee allowlist (cached).
   const namedEmployee = Array.isArray(params.toolAllowlist) && params.toolAllowlist.length > 0;
+
+  /**
+   * A SELF-DIRECTED TURN'S OWN GRANT, when the call carried one.
+   *
+   * `duties.ts` promises a duty runs with the minimum tool and never the
+   * employee's full authority. That was computed by `planDuty`, asserted by
+   * `duties.test.ts`, and then discarded here: this function is reached from
+   * the MCP bridge, a separate process that receives only what the model puts
+   * in a tool call, so it fell back to the org-wide union.
+   *
+   * Measured. Emma's duty, allowlist `["database_query"]`, reached
+   * `metrics_list`, `metrics_query` and `intercom_fetch_conversations` —
+   * intercom being neither in her employee allowlist nor connected in that
+   * workspace, admitted because another employee holds it and the call reads.
+   *
+   * Patch 0003 forwards the host's session id on every MCP tool call; the
+   * grant is looked up by it. Read BEFORE the org fallback so a duty is
+   * constrained by its own allowlist rather than its workspace's.
+   *
+   * Narrowing only. No grant, an expired grant, or a call without a session id
+   * leaves the behaviour exactly as it was — because treating a missing grant
+   * as "deny" would turn one stale row into an outage on live conversations.
+   */
+  const hostSessionId = takeHostSessionId(params.payload as Record<string, unknown>);
+  const turnGrant = !namedEmployee && hostSessionId
+    ? await readTurnGrant(params.orgId, hostSessionId)
+    : null;
+
   const effectiveAllowlist = namedEmployee
     ? params.toolAllowlist!
-    : await resolveOrgToolAllowlist(params.orgId);
+    : turnGrant ?? await resolveOrgToolAllowlist(params.orgId);
 
   // FAIL SAFE WHEN NOBODY IS NAMED.
   //

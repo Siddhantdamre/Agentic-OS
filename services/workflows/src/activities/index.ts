@@ -2,7 +2,8 @@ import { llmChat, countLlmCalls } from '../llm/gateway.js';
 import { ApplicationFailure, Context } from '@temporalio/activity';
 import { Pool, PoolClient } from 'pg';
 import type { AgentTaskInput, AgentTaskResult } from '../agent-engine.js';
-import { runAutonomousAgentDirect } from '../atomic-agent-client.js';
+import { runAutonomousAgentDirect, buildSessionId } from '../atomic-agent-client.js';
+import { recordTurnGrant, clearTurnGrant } from '../tools/turn-grant.js';
 import { retrieveMemory, toRetrieveActivityResult } from '../memory/retrieve.js';
 import type { RetrieveMemoryActivityResult } from '../memory/retrieve.js';
 import { enqueueEmbedJobFromWorker } from './embed.js';
@@ -159,6 +160,35 @@ function requireOrgId(orgId: string | undefined): string {
 }
 
 export async function runAgentTurnActivity(input: AgentTaskInput): Promise<AgentTaskResult> {
+  /**
+   * A SELF-DIRECTED TURN RECORDS ITS OWN GRANT FIRST.
+   *
+   * `duties.ts` promises a duty runs with the minimum tool, never the
+   * employee's full authority. That was computed and then lost: the tool calls
+   * arrive at the MCP bridge, a separate process, which saw only what the model
+   * put in the call and fell back to the org-wide union. Emma's duty, granted
+   * `database_query` alone, reached metrics and intercom.
+   *
+   * The grant is keyed by the same session id the client builds, so the bridge
+   * can look it up. Only for self-directed turns: a customer conversation is
+   * meant to have the employee's full allowlist, and narrowing that would break
+   * the product rather than protect it.
+   *
+   * Not awaited for correctness of the turn — a grant that fails to write leaves
+   * today's behaviour, and refusing to run a duty because a narrowing could not
+   * be recorded trades a small privilege problem for no work at all. Awaited for
+   * ORDERING: it must land before the first tool call, or the first call runs
+   * unconstrained.
+   */
+  if (input.skipPersist && input.orgId && Array.isArray(input.toolAllowlist) && input.toolAllowlist.length > 0) {
+    await recordTurnGrant({
+      orgId: input.orgId,
+      sessionId: buildSessionId(input),
+      employeeId: input.employeeId ?? null,
+      allowlist: input.toolAllowlist,
+    });
+  }
+
   try {
     let priorMessages: { role: string; content: string }[] = [];
     if (input.conversationId) {
@@ -205,6 +235,18 @@ export async function runAgentTurnActivity(input: AgentTaskInput): Promise<Agent
       retryable: /timeout|timed out|abort/i.test(String(err.message || '')),
       isDone: true,
     };
+  } finally {
+    /**
+     * The grant lives no longer than the turn.
+     *
+     * In `finally` so it is dropped on the failure path too — an aborted duty
+     * must not leave a narrowing behind that a later call could inherit. The
+     * TTL in the table is the backstop for a worker that dies before reaching
+     * here, not the primary mechanism.
+     */
+    if (input.skipPersist && input.orgId) {
+      await clearTurnGrant(input.orgId, buildSessionId(input));
+    }
   }
 }
 

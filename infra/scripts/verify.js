@@ -421,6 +421,14 @@ const SUITES = [
     needsDocker: true,
   },
   {
+    name: 'duty allowlist enforced',
+    what: 'a duty is confined to the tool it was granted — the allowlist was '
+      + 'computed, asserted, and then discarded at the process boundary, so a '
+      + 'duty granted one tool reached three',
+    cmd: [process.execPath, [path.join(__dirname, 'check-duty-allowlist.js')]],
+    needsDocker: true,
+  },
+  {
     name: 'duty coverage',
     what: 'every role this product can create has a job it does unprompted — '
       + 'three of the five roles a new workspace is seeded with matched no duty '
