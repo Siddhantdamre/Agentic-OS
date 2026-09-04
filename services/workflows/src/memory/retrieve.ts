@@ -28,6 +28,24 @@ const DEFAULT_TIMEOUT_MS = parseInt(process.env.MEMORY_RETRIEVE_TIMEOUT_MS || '1
 const EMBED_TIMEOUT_MS = parseInt(process.env.MEMORY_EMBED_TIMEOUT_MS || '400', 10);
 const STALE_AFTER_DAYS = parseInt(process.env.MEMORY_STALE_AFTER_DAYS || '21', 10);
 const PER_TIER_LIMIT = 12;
+/**
+ * How much of a memory row the model actually gets to read.
+ *
+ * The snippet used to be `concat_ws(' — ', title, body)` unconditionally. For
+ * every ingested chunk the title IS the body's own header, so each snippet
+ * carried its header twice and spent ~120 of these characters saying nothing:
+ *
+ *   [path: upload:site-visit-booking-policy.txt | chunk: 1/1] — [path: upload:
+ *   site-visit-booking-policy.txt | chunk: 1/1] Sharma Properties - Site Visit...
+ *
+ * Measured consequence, not a tidiness complaint: asked for a RERA registration
+ * number sitting at character ~400 of a 524-character policy document, the
+ * model received the header twice and the body cut off just before the number,
+ * and told the customer it could not find it. A fact late in a chunk was
+ * unreachable, and which facts those were depended on how long the title was.
+ *
+ * The title is now prepended only when the body does not already start with it.
+ */
 const SNIPPET_CHARS = 480;
 const EMBEDDING_DIM = parseInt(process.env.EMBEDDING_DIM || '1536', 10);
 
@@ -193,7 +211,13 @@ function hybridSql(hasEmployee: boolean): string {
   SELECT
     em.id::text AS id,
     'employee'::text AS tier,
-    left(trim(both FROM concat_ws(' — ', NULLIF(em.title, ''), em.body)), ${SNIPPET_CHARS}) AS snippet,
+    left(trim(both FROM
+      CASE
+        WHEN em.title IS NULL OR em.title = '' THEN em.body
+        WHEN position(em.title in em.body) = 1 THEN em.body
+        ELSE concat_ws(' — ', em.title, em.body)
+      END
+    ), ${SNIPPET_CHARS}) AS snippet,
     em.source,
     em.source_ref,
     em.updated_at,
@@ -274,7 +298,13 @@ SELECT * FROM (
   SELECT
     om.id::text AS id,
     'org'::text AS tier,
-    left(trim(both FROM concat_ws(' — ', NULLIF(om.title, ''), om.body)), ${SNIPPET_CHARS}) AS snippet,
+    left(trim(both FROM
+      CASE
+        WHEN om.title IS NULL OR om.title = '' THEN om.body
+        WHEN position(om.title in om.body) = 1 THEN om.body
+        ELSE concat_ws(' — ', om.title, om.body)
+      END
+    ), ${SNIPPET_CHARS}) AS snippet,
     om.source,
     om.source_ref,
     om.updated_at,
@@ -290,6 +320,22 @@ SELECT * FROM (
   FROM org_memory om
   WHERE om.org_id = $1::uuid
     AND (om.expires_at IS NULL OR om.expires_at > NOW())
+    -- AN UNANSWERED QUESTION IS NOT AN ANSWER.
+    --
+    -- memory-writeback records what the agent could not answer as an
+    -- open_question: row, so a human can answer it once and the agent has it
+    -- forever. That is the right thing to do, and THIS pool is the wrong place
+    -- to read it back from: the row contains the question's own words, so on
+    -- that question it outranks the document holding the real answer.
+    --
+    -- Measured on a live workspace. Asked for a RERA registration number that
+    -- was sitting in an uploaded policy document, the model was handed:
+    --   [M-1] open_question: What is the RERA registration number ...  (x3)
+    --   [M-2] The RERA registration number ... is not available in our records.
+    --   [M-3] <the document, truncated before the number>
+    -- and told the customer it could not find it. The gap list was answering
+    -- the customer, and each failure wrote another row reinforcing it.
+    AND om.body NOT LIKE 'open$_question:%' ESCAPE '$'
     AND NOT EXISTS (
       SELECT 1 FROM knowledge_sources ks
       WHERE ks.org_id = om.org_id
@@ -306,7 +352,13 @@ SELECT * FROM (
   SELECT
     en.id::text AS id,
     'entity'::text AS tier,
-    left(trim(both FROM concat_ws(' — ', NULLIF(en.title, ''), en.body)), ${SNIPPET_CHARS}) AS snippet,
+    left(trim(both FROM
+      CASE
+        WHEN en.title IS NULL OR en.title = '' THEN en.body
+        WHEN position(en.title in en.body) = 1 THEN en.body
+        ELSE concat_ws(' — ', en.title, en.body)
+      END
+    ), ${SNIPPET_CHARS}) AS snippet,
     en.source,
     en.source_ref,
     en.updated_at,

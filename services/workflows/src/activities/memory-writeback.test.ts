@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { decideFieldUpdate, hashFactText, parseWriteBackExtract } from './memory-writeback.js';
+import { decideFieldUpdate, hashFactText, parseWriteBackExtract, recordsOnlyOurIgnorance } from './memory-writeback.js';
 
 test('hashFactText is stable for duplicate wants-3BHK wording', () => {
   const a = hashFactText('Contact wants 3BHK Andheri West');
@@ -64,4 +64,61 @@ test('parseWriteBackExtract reads snake_case LiteLLM JSON', () => {
   assert.equal(parsed.fieldUpdates.length, 1);
   assert.equal(parsed.fieldUpdates[0].field, 'list_price');
   assert.equal(parsed.openQuestions.length, 1);
+});
+
+// -- A wrong answer must never become a permanent fact ----------------------
+//
+// Measured on a live workspace. The agent could not find a RERA registration
+// number that was sitting in an uploaded policy document, and the extraction
+// wrote its failure back as a durable business fact:
+//
+//   "The RERA registration number for the Ghodbunder Road project is not
+//    available in our records."
+//
+// Retrieval then ranked that FIRST for the same question - it repeats the
+// question's own words - so the next customer was answered with the agent's
+// earlier failure, and every repeat wrote another row reinforcing it.
+//
+// The worst failure a memory system has is not forgetting. It is confidently
+// remembering something untrue.
+
+test('the exact sentence that poisoned the live workspace is dropped', () => {
+  assert.strictEqual(recordsOnlyOurIgnorance(
+    'The RERA registration number for the Ghodbunder Road project is not available in our records.'
+  ), true);
+});
+
+test('an agent narrating its own failure is not a fact', () => {
+  for (const s of [
+    "I couldn't find the RERA registration number for the Ghodbunder Road project in our records.",
+    'We do not have the booking policy on file.',
+    'Unable to locate the buyer contact details.',
+    'No information on the Thane project timeline.',
+    'The price is not listed in our documents.',
+    'I was not able to confirm the site visit timings.',
+  ]) {
+    assert.strictEqual(recordsOnlyOurIgnorance(s), true, `should drop: ${s}`);
+  }
+});
+
+test('a real business fact that happens to be negative is KEPT', () => {
+  // This is the half that matters. A filter that eats genuine policy is worse
+  // than the bug it fixes: negation is extremely common in real terms.
+  for (const s of [
+    'Sunday site visits are not available.',
+    'The booking amount is not refundable after 7 days.',
+    'The loading bay is for deliveries only and must be kept clear.',
+    'Home loan assistance is not offered on resale properties.',
+    'Site visit pickup is free for buyers who confirm 24 hours ahead.',
+    'The booking amount to hold a unit is Rs 51,000, fully refundable within 7 days.',
+    'Our RERA registration number for the Ghodbunder Road project is P51700NEXUS42.',
+  ]) {
+    assert.strictEqual(recordsOnlyOurIgnorance(s), false, `should keep: ${s}`);
+  }
+});
+
+test('empty and junk input is not treated as ignorance', () => {
+  assert.strictEqual(recordsOnlyOurIgnorance(''), false);
+  assert.strictEqual(recordsOnlyOurIgnorance('   '), false);
+  assert.strictEqual(recordsOnlyOurIgnorance(undefined as unknown as string), false);
 });

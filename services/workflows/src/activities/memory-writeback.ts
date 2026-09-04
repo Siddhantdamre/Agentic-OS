@@ -196,6 +196,59 @@ function asString(value: unknown): string {
   return typeof value === 'string' ? value : value == null ? '' : String(value);
 }
 
+/**
+ * DOES THIS "FACT" MERELY RECORD THAT WE COULD NOT ANSWER?
+ *
+ * The extraction prompt asks for durable facts grounded in the transcript, and
+ * guards hard against inventing prices or legal ids. It never said that the
+ * AGENT'S OWN INABILITY TO ANSWER is not a fact about the business — so the
+ * model, correctly following its instructions, produced this from a failed turn:
+ *
+ *   "The RERA registration number for the Ghodbunder Road project is not
+ *    available in our records."
+ *
+ * That sentence is grounded in the transcript and completely false: the number
+ * was sitting in an uploaded document the whole time. Retrieval then ranked it
+ * FIRST for the same question, because it repeats the question's own words, and
+ * the agent answered the next customer by citing its own earlier failure.
+ *
+ * A WRONG ANSWER HAD BECOME A PERMANENT FACT, and every repeat of the question
+ * reinforced it. That is the worst failure mode a memory system has: not
+ * forgetting, but confidently remembering something untrue.
+ *
+ * A prompt line alone cannot fix this. Telling a model "do not do X" is a
+ * request, not a guarantee, and the cost of one leak here is a false fact that
+ * outranks the truth forever. So the prompt says it AND this drops it.
+ *
+ * Deliberately narrow. It matches only the shape "we do not have / cannot find
+ * <thing>" — an assertion about our own records. It must NOT match a real
+ * business fact that happens to be negative, because those are genuine
+ * knowledge:
+ *
+ *   "Sunday site visits are not available."          <- a real policy
+ *   "The booking amount is not refundable after 7 days."  <- a real term
+ *
+ * The distinguishing feature is a first-person reference to our own records or
+ * knowledge, not the mere presence of a negation.
+ */
+export function recordsOnlyOurIgnorance(text: string): boolean {
+  const t = String(text || '').toLowerCase().replace(/\s+/g, ' ').trim();
+  if (!t) return false;
+
+  // "in our records", "on file with us", "in the system" - the tell that the
+  // sentence is about our own bookkeeping rather than about the business.
+  const aboutOurRecords = /(in|from|on)\s+(our|the)\s+(record|records|file|files|system|database|documents?|knowledge base)\b/.test(t)
+    || /\bwe (do not|don't) (have|hold|keep)\b/.test(t)
+    || /\b(is|are|was|were) not (available|present|found|listed|recorded) (in|on|with)\b/.test(t);
+
+  // The agent narrating its own failure.
+  const narratesFailure = /\b(could ?n[o']?t|cannot|can't|unable to|failed to|was not able to)\s+(find|locate|retrieve|determine|identify|confirm|access)\b/.test(t)
+    || /\bno (information|record|records|details|data) (on|about|for|regarding)\b/.test(t)
+    || /\b(not|no) (information|answer) available\b/.test(t);
+
+  return aboutOurRecords || narratesFailure;
+}
+
 export function parseWriteBackExtract(raw: unknown): MemoryWriteBackPayload {
   const empty: MemoryWriteBackPayload = { facts: [], fieldUpdates: [], openQuestions: [], relations: [] };
   if (!raw || typeof raw !== 'object') return empty;
@@ -298,6 +351,12 @@ async function extractWithLiteLLM(params: {
     'Prices, legal ids, and payments: copy ONLY from tool_results, never from world knowledge or user guesses.',
     'Never invent listings, list_price, rents, or contact names that are not in the transcript or tool_results.',
     'If unsure, put an open_question instead of a field_update. Low confidence < 0.75 should not assert list_price.',
+    // The agent not knowing something is not knowledge ABOUT the business. Say
+    // so here, and drop it deterministically below, because a prompt is a
+    // request and one leak becomes a false fact that outranks the truth.
+    'NEVER record that something is missing, unavailable, or not in our records. '
+    + 'The assistant failing to find an answer is NOT a durable fact - put it in '
+    + 'open_questions instead. Only record what the business IS or DOES.',
     'Do not extract KYC / PAN / Aadhaar numbers.',
     'relations[] only when both ids are real UUIDs from the transcript; otherwise omit.',
   ].join(' ');
@@ -606,6 +665,7 @@ export async function memoryWriteBackActivity(input: MemoryWriteBackInput): Prom
   const extracted = await extractWithLiteLLM({ orgId, transcript, toolResults, closed });
   let factCount = 0;
   let skippedDuplicates = 0;
+  let droppedIgnoranceFacts = 0;
   let fieldUpdatesApplied = 0;
   let needsAttention = false;
   const attentionReasons: string[] = [];
@@ -629,6 +689,13 @@ export async function memoryWriteBackActivity(input: MemoryWriteBackInput): Prom
     }
 
     for (const fact of extracted.facts) {
+      // A fact that only records our own ignorance is not a fact. Dropped here
+      // rather than filtered at read time: once written it outranks the truth
+      // for the very question it fails to answer, and it never expires.
+      if (recordsOnlyOurIgnorance(fact.text)) {
+        droppedIgnoranceFacts += 1;
+        continue;
+      }
       const hash = fact.contentHash || hashFactText(fact.text);
       const result = await upsertConversationFact(client, {
         orgId,
