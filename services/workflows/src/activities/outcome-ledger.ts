@@ -168,7 +168,14 @@ async function ingestActions(
        jsonb_build_object(
          'employeeName', cl.payload->>'employeeName',
          'usedTools',    COALESCE(cl.payload->'usedTools', '[]'::jsonb),
-         'stepsCount',   COALESCE(cl.payload->>'stepsCount', '0')
+         'stepsCount',   COALESCE(cl.payload->>'stepsCount', '0'),
+         -- What the duty actually FOUND, not just that it ran.
+         --
+         -- Without this the employee page could show "Emma, 8 steps,
+         -- succeeded" and nothing else: the report the duty exists to produce
+         -- was discarded, which is indistinguishable from the duty not having
+         -- run, and costs the tokens either way.
+         'report',       COALESCE(cl.payload->>'report', '')
        )
      FROM channel_logs cl
      WHERE cl.org_id = $1

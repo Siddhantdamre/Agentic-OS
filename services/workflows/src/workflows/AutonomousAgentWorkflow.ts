@@ -170,6 +170,25 @@ export async function AutonomousAgentWorkflow(input: AgentTaskInput): Promise<Ag
         turnBudgetReason: budget.reason,
         turnsUsed,
         stoppedEarlyForNoProgress,
+        /**
+         * THE REPORT THE DUTY WAS RUN TO PRODUCE.
+         *
+         * A duty sets `skipPersist` because it is not a customer conversation
+         * and must never be written into `messages`. That was read as "discard
+         * the output", so the reply was thrown away and only telemetry
+         * survived: four employees ran 3-8 tool steps each and the record of it
+         * was "Emma, 8 steps, succeeded". The employee page, whose whole job is
+         * showing what an employee did, could show a count and nothing else.
+         *
+         * The work happened. Nobody could read it. That is indistinguishable
+         * from the work not happening, and worse, because it costs the tokens
+         * either way.
+         *
+         * Kept here rather than in `messages` — a morning report addressed to
+         * the owner is not a message to a customer — and capped, because a
+         * runaway reply must not bloat every log row.
+         */
+        report: input.skipPersist ? String(resultToSave.replyMessage || '').slice(0, 4000) : undefined,
       },
       idempotencyKey: input.idempotencyKey ? `${input.idempotencyKey}:log` : undefined,
     });

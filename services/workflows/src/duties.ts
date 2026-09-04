@@ -180,25 +180,45 @@ export const DUTIES: Duty[] = [
     summary: 'Read the watchlist pages and report what changed.',
     needs: 'web_extract',
     /**
-     * Carries its own pages.
+     * Carries its own pages, and asks a QUESTION rather than for a description.
      *
-     * This said "read each page on the research watchlist" and nothing supplied
-     * one, so on the first real shift the agent replied — correctly — "I don't
-     * see a research watchlist in your message. Could you share the list of
-     * pages?" An instruction that depends on context the caller never provides
-     * is not an instruction; the agent behaved better than the duty did.
+     * Two rewrites, and the second is the interesting one.
      *
-     * Until a per-workspace watchlist exists, the duty names public sources
-     * that are true for every Indian brokerage. These are read keyless through
-     * the reader endpoint, so this duty costs nothing to run. Replace with the
-     * tenant's own competitor list when there is somewhere to store one.
+     * First it said "read each page on the research watchlist" and nothing
+     * supplied one, so the agent replied — correctly — "I don't see a research
+     * watchlist in your message." An instruction depending on context the
+     * caller never provides is not an instruction.
+     *
+     * Then it said "report what they currently state", which is a DESCRIPTION
+     * task, and the agent did exactly that. Measured on a real shift:
+     *
+     *   "maharera.maharashtra.gov.in is a navigation portal listing About Us
+     *    (Introduction, Organogram, Leadership, Contact, Facilities, Gallery,
+     *    Careers), Home Buyers (Guidance, Grievance Redressal, ...)"
+     *
+     * Faithful, sourced, and worthless — it described a navigation menu. The
+     * agent was not the problem either time.
+     *
+     * The two duties that DO produce work are both phrased as a question with
+     * an actionable answer: "which conversations have had no activity in over
+     * 48 hours" and "which metric moved materially, with both values". Emma's
+     * run named a specific stale thread and its timestamp; Marcus's named four
+     * metrics and their directions. So this one now asks for the thing a
+     * brokerage would actually act on — a project it must stop selling — and
+     * says plainly that no change is a valid answer, because otherwise the
+     * model will summarise the menu again to have something to say.
      */
     instruction:
-      'Read these pages and report what they currently state: '
-      + 'https://maharera.maharashtra.gov.in and https://igrmaharashtra.gov.in . '
-      + 'Report only claims the retrieved text supports, each with the page it came from. '
-      + 'Where two sources disagree, say so rather than choosing. If a page could not be read, '
-      + 'name it. Never cite a page you did not read.',
+      'Check the MahaRERA site for projects a broker must stop selling: '
+      + 'https://maharera.maharashtra.gov.in — look for de-registered projects, '
+      + 'lapsed or revoked registrations, the abeyance list, and non-compliance '
+      + 'notices. Report ONLY project names or registration numbers you actually '
+      + 'found in the retrieved text, with the page each came from. '
+      + 'If there are none, say exactly that and stop — do not '
+      + 'describe the site, its sections or its navigation. '
+      + 'Also report the current IGR Maharashtra helpline number from '
+      + 'https://igrmaharashtra.gov.in if it differs from 8888007777. '
+      + 'Never name a project you did not read.',
   },
   {
     id: 'finance.outstanding',
