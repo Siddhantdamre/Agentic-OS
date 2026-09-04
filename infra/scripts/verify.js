@@ -398,6 +398,14 @@ const SUITES = [
     needsDocker: true,
   },
   {
+    name: 'router credentials',
+    what: 'the container gets the keys the router asks for — two tiers of the '
+      + 'failover chain were never passed their credentials, so supplying them '
+      + 'changed nothing and the chain ended in a 401',
+    cmd: [process.execPath, [path.join(__dirname, 'check-router-credentials.js')]],
+    needsDocker: false,
+  },
+  {
     name: 'migrations applied',
     what: 'the ledger matches the files — 044 and 045 were applied by hand and '
       + 'never recorded, so the record a deploy reads said they had never run',

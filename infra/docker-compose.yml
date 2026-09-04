@@ -519,6 +519,19 @@ services:
       - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
       # Gemini key used by the text-embedding-3-small route (see config.yaml)
       - GEMINI_API_KEY=${GEMINI_API_KEY}
+      # Tiers 4 and 5 of the fallback chain: a SECOND PAYMENT RAIL, so an empty
+      # OpenRouter balance cannot take every tier down at once.
+      #
+      # These two lines were missing while config.yaml already referenced
+      # os.environ/DEEPSEEK_API_KEY and os.environ/GROQ_API_KEY. So both tiers
+      # resolved to an empty key, returned 401 after two retries, and entered
+      # cooldown on every call that reached them - and atomic-agent-groq is LAST
+      # in the chain, so its failure was the chain's failure. Supplying the keys
+      # changed nothing, because the container never saw them. A tier whose
+      # credential is not plumbed is worse than no tier: it costs retries and
+      # ends in an error while the config claims five-deep redundancy.
+      - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY}
+      - GROQ_API_KEY=${GROQ_API_KEY}
       - LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY:-pk-lf-darex-dev-public}
       - LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY:-sk-lf-darex-dev-secret}
       - LANGFUSE_HOST=http://darex-langfuse-server:3000

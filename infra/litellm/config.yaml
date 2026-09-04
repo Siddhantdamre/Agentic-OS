@@ -81,7 +81,13 @@ model_list:
   # with no payment method configured at all — the floor beneath the floor.
   - model_name: atomic-agent-groq
     litellm_params:
-      model: groq/llama-3.3-70b-versatile
+      # Verified against the live /models list for this account, with a tool
+      # call in the request. `llama-3.3-70b-versatile` was configured here and
+      # Groq answers "does not exist or you do not have access to it" — the
+      # model was retired. A tier naming a dead model is worse than no tier: it
+      # 401/404s after retries and cooldowns on every call that reaches it, and
+      # this one is LAST in the chain, so its failure is the chain's failure.
+      model: groq/openai/gpt-oss-120b
       api_key: os.environ/GROQ_API_KEY
     model_info:
       mode: chat
@@ -94,6 +100,18 @@ model_list:
     litellm_params:
       model: gemini/gemini-embedding-001
       api_key: os.environ/GEMINI_API_KEY
+      # PINNED, and it must stay pinned.
+      #
+      # gemini-embedding-001 returns 3072 dimensions by default. The
+      # org_memory.embedding column is vector(1536), and retrieve.ts discards
+      # any vector whose length is not EMBEDDING_DIM (1536) -- silently,
+      # returning null. So without this line the key is present, every call
+      # succeeds, every vector is thrown away, and semantic search stays off
+      # with nothing anywhere reporting a problem.
+      #
+      # 1536 is also pgvector-index-friendly: ivfflat and hnsw cap at 2000
+      # dimensions, so widening the column to 3072 would cost the index.
+      dimensions: 1536
     model_info:
       mode: embedding
 
