@@ -239,6 +239,15 @@ const NON_CAPABILITY = {
     '_migrations', 'idempotency_keys', 'work_events', 'work_items', 'messages',
     'channel_logs', 'sync_cursors', 'provider_spend_snapshots', 'password_reset_tokens',
   ],
+  // EMPTY IS THE CORRECT STEADY STATE for this one, which is the opposite of
+  // every other entry here. A grant is written just before an agent turn and
+  // deleted in its `finally`, so a row exists only for the seconds a turn is
+  // running. Rows found at rest are turns that died without cleaning up — the
+  // TTL removes them, and a table with many of them is a signal, not a
+  // capability that never shipped.
+  'per-turn tool grants — written and deleted inside one agent turn, so at rest it is empty by design': [
+    'duty_turn_grants',
+  ],
   'vertical pack tables — empty unless that pack is installed for a workspace': [
     'packs', 'pack_entity_schemas', 're_inquiries', 're_listings', 're_showings',
     'rera_cache', 'pm_charges', 'pm_leases',
