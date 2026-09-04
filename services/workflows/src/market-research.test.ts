@@ -177,3 +177,68 @@ test('the prompt forbids citing anything not retrieved', () => {
   assert.match(p, /Never cite a URL that is not listed/i);
   assert.match(p, /report that as a separate finding/i, 'disagreement must not be flattened');
 });
+
+// -- Comparable figures --------------------------------------------------------
+//
+// `subject` + `value` are what let decision-brief.ts pair a market figure
+// against the business's own figure for the same thing. Before they existed the
+// pairing logic was correct and unreachable: "Stamp duty is 7 percent" from the
+// workspace and "stamp duty ... 7 to 8 percent" from two publishers sat in
+// different sections of one brief, reported as "nothing comparable".
+//
+// A number that reaches the brief is compared against the owner's own records
+// and a mismatch is reported to them as a DISAGREEMENT. So a hallucinated
+// figure here does not weaken an answer, it manufactures a conflict.
+
+function srcWith(url, snippet) {
+  return { url, title: '', snippet, publisher: '', retrievedAt: '' };
+}
+
+test('a figure present in the cited excerpt is kept as comparable', () => {
+  const out = validateFindings(
+    'stamp duty in Thane',
+    [{ claim: 'Stamp duty is 7 percent.', sources: ['https://a.com'], subject: 'stamp duty', value: 7, unit: 'percent' }],
+    [srcWith('https://a.com', 'Stamp duty in Thane is 7% of agreement value.')]
+  );
+  assert.strictEqual(out.findings.length, 1);
+  assert.strictEqual(out.findings[0].subject, 'stamp duty');
+  assert.strictEqual(out.findings[0].value, 7);
+  assert.strictEqual(out.findings[0].unit, 'percent');
+});
+
+test('a figure NOT in the excerpt is dropped as a number but kept as prose', () => {
+  const out = validateFindings(
+    'stamp duty in Thane',
+    [{ claim: 'Stamp duty is about seven percent.', sources: ['https://a.com'], subject: 'stamp duty', value: 42 }],
+    [srcWith('https://a.com', 'Stamp duty in Thane is 7% of agreement value.')]
+  );
+  // The claim survives - it is sourced. The invented figure does not.
+  assert.strictEqual(out.findings.length, 1);
+  assert.strictEqual(out.findings[0].value, undefined);
+  assert.strictEqual(out.findings[0].subject, undefined);
+  assert.ok(out.rejected.some((r) => /not in the cited excerpt/.test(r.reason)),
+    'and the drop is reported, never silent');
+});
+
+test('a subject without a value, or a value without a subject, is not comparable', () => {
+  const noValue = validateFindings('t',
+    [{ claim: 'c', sources: ['https://a.com'], subject: 'stamp duty' }],
+    [srcWith('https://a.com', 'stamp duty is 7%')]);
+  assert.strictEqual(noValue.findings[0].subject, undefined);
+
+  const noSubject = validateFindings('t',
+    [{ claim: 'c', sources: ['https://a.com'], value: 7 }],
+    [srcWith('https://a.com', 'stamp duty is 7%')]);
+  assert.strictEqual(noSubject.findings[0].value, undefined);
+});
+
+test('digit matching tolerates formatting in the source', () => {
+  // 7 must match "7%", "7 percent" and "7-8%" alike, without trusting how the
+  // model chose to write it.
+  for (const snippet of ['charges are 7% of value', 'charges are 7 percent', 'adds 7-8% to cost']) {
+    const out = validateFindings('t',
+      [{ claim: 'c', sources: ['https://a.com'], subject: 'stamp duty', value: 7 }],
+      [srcWith('https://a.com', snippet)]);
+    assert.strictEqual(out.findings[0].value, 7, snippet);
+  }
+});

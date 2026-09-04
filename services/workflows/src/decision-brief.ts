@@ -135,14 +135,13 @@ export function materiallyDiffers(a: number, b: number, tolerance = 0.15): boole
 /**
  * Pull a number and its subject out of a research finding, when it has one.
  *
- * Deliberately narrow: it reads `value`/`unit`/`subject` only when the caller
- * supplied them. It does NOT parse figures out of prose. A regex that finds
- * "7%" in a sentence cannot tell whether that is the rate for this buyer, last
- * year's rate, or a competitor's — and a wrong pairing produces a fabricated
- * conflict, which is worse than a missed one.
+ * Deliberately narrow: it reads the `subject`/`value` that `validateFindings`
+ * already checked against the cited excerpt. It does NOT parse figures out of
+ * prose here. A regex that finds "7%" in a sentence cannot tell whether that is
+ * the rate for this buyer, last year's rate, or a competitor's — and a wrong
+ * pairing produces a fabricated conflict, which is worse than a missed one.
  */
-function externalNumber(f: ResearchFinding & { value?: number; subject?: string }):
-{ value: number; subject: string } | null {
+function externalNumber(f: ResearchFinding): { value: number; subject: string } | null {
   return comparable(f) ? { value: f.value as number, subject: f.subject as string } : null;
 }
 
@@ -253,7 +252,7 @@ export function buildDecisionBrief(input: BuildBriefInput): DecisionBrief {
     const subj = normSubject(int.subject);
     for (const ext of external) {
       if (pairedExternal.has(ext)) continue;
-      const extNum = externalNumber(ext as ResearchFinding & { value?: number; subject?: string });
+      const extNum = externalNumber(ext);
       if (!extNum || normSubject(extNum.subject) !== subj) continue;
 
       pairedExternal.add(ext);

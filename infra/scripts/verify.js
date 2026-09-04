@@ -398,6 +398,14 @@ const SUITES = [
     needsDocker: true,
   },
   {
+    name: 'connector wiring',
+    what: 'catalogue, broker and compose agree — Gmail looked for a key Nango '
+      + 'had registered under a different name, and the browser was never '
+      + 'passed the public key its OAuth popup needs',
+    cmd: [process.execPath, [path.join(__dirname, 'check-connector-wiring.js')]],
+    needsDocker: true,
+  },
+  {
     name: 'router credentials',
     what: 'the container gets the keys the router asks for — two tiers of the '
       + 'failover chain were never passed their credentials, so supplying them '

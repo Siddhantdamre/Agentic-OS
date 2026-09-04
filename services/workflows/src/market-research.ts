@@ -46,6 +46,25 @@ export interface ResearchFinding {
   confidence: FindingConfidence;
   /** Plain-language caveat shown alongside the claim. */
   caveat: string;
+  /**
+   * The measurable thing this finding is about, when it is quantitative — a
+   * short noun phrase like "stamp duty" or "refund window".
+   *
+   * Exists so `decision-brief.ts` can pair a market figure against the
+   * business's own figure for the same thing. Without it the brief could only
+   * ever list the two sides separately: the pairing logic was correct and
+   * unreachable, because nothing populated this half. Measured before the fix:
+   * "Stamp duty is 7 percent" from the workspace and "stamp duty ... add 7 to 8
+   * percent" from two publishers sat in different sections of the same brief,
+   * reported as "nothing directly comparable".
+   *
+   * Both `subject` and `value` or neither — see `validateFindings`.
+   */
+  subject?: string;
+  /** The number, copied from the source. Never computed. */
+  value?: number;
+  /** What `value` is measured in: percent, INR, days. */
+  unit?: string;
 }
 
 export interface ResearchReport {
@@ -113,6 +132,10 @@ function caveatFor(confidence: FindingConfidence, sources: ResearchSource[]): st
 export interface RawFinding {
   claim?: unknown;
   sources?: unknown;
+  /** See `ResearchFinding.subject` — optional, and dropped unless both are present. */
+  subject?: unknown;
+  value?: unknown;
+  unit?: unknown;
 }
 
 function asString(v: unknown): string {
@@ -172,13 +195,50 @@ export function validateFindings(
     const independentSourceCount = domains.size;
     const confidence = confidenceFor(independentSourceCount);
 
-    findings.push({
+    const finding: ResearchFinding = {
       claim,
       sources,
       independentSourceCount,
       confidence,
       caveat: caveatFor(confidence, sources),
-    });
+    };
+
+    /**
+     * The comparison fields, kept only when BOTH arrive and the number is real.
+     *
+     * A `value` without a `subject` cannot be paired with anything; a `subject`
+     * without a `value` invites a pairing on the strength of a name alone. And
+     * the number must be verifiably in an excerpt the finding cites — the same
+     * rule as the URLs above, for the same reason.
+     *
+     * A figure that survives this becomes comparable against the business's own
+     * records in `decision-brief.ts`, where a mismatch is reported to the owner
+     * as a disagreement. So a hallucinated number here does not merely weaken
+     * an answer, it MANUFACTURES a conflict. Hence: present in the text, or
+     * dropped as a number and kept as prose.
+     */
+    const subject = asString(item?.subject);
+    const rawValue = typeof item?.value === 'number' ? item.value : Number(asString(item?.value));
+    if (subject && Number.isFinite(rawValue)) {
+      const cited = sources.map((s) => `${s.title || ''} ${s.snippet || ''}`).join(' ');
+      // Digits only, so 7 matches "7%", "7 percent" and "7-8%" alike without
+      // trusting the model's own formatting.
+      const digits = String(rawValue).replace(/[^0-9]/g, '');
+      if (digits && cited.replace(/[^0-9]/g, '').includes(digits)) {
+        finding.subject = subject;
+        finding.value = rawValue;
+        const unit = asString(item?.unit);
+        if (unit) finding.unit = unit;
+      } else {
+        rejected.push({
+          claim,
+          reason: `figure ${rawValue} for "${subject}" is not in the cited excerpt — `
+            + 'kept as prose, dropped as a comparable number',
+        });
+      }
+    }
+
+    findings.push(finding);
   }
 
   // Best-supported first: a reader stops after the top few.
@@ -252,8 +312,16 @@ export function buildResearchPrompt(topic: string, sources: ResearchSource[]): s
     '- Only state what the excerpts actually say. Do not add background knowledge.',
     '- If sources disagree, report that as a separate finding rather than picking one.',
     '',
+    '- When a finding states a NUMBER, add "subject", "value" and "unit".',
+    '  subject: a short noun phrase for the measurable thing, e.g. "stamp duty",',
+    '  "registration fee", "refund window". value: the number copied EXACTLY from',
+    '  the excerpt. unit: percent, INR, days. For a range, use the LOWER bound.',
+    '- Omit subject and value entirely unless the excerpt states the figure.',
+    '  A guessed number is compared against the business\'s own records and',
+    '  reported to its owner as a disagreement that does not exist.',
+    '',
     'Return ONLY JSON:',
-    '{"findings":[{"claim":"<one sentence>","sources":["<url>"]}],"openQuestions":["<what the sources did not answer>"]}',
+    '{"findings":[{"claim":"<one sentence>","sources":["<url>"],"subject":"<optional>","value":0,"unit":"<optional>"}],"openQuestions":["<what the sources did not answer>"]}',
     '',
     'SOURCES:',
     ...blocks,
