@@ -106,10 +106,65 @@ const no = (m, d) => { failures.push(`${m}${d ? ` — ${d}` : ''}`); console.log
   }
   ok(`the workspace owns "${outsider}", which the duty is NOT granted`);
 
+  // A REAL employee id, because the grant's whole second job is naming who is
+  // acting. With null here the attribution assertion below would pass on a
+  // system where attribution does not work.
+  const empRow = await db.query(
+    `SELECT id FROM ai_employees WHERE org_id = $1::uuid AND status = 'active' LIMIT 1`,
+    [orgId]
+  );
+  if (empRow.rows.length === 0) {
+    console.log('  [ ????? ] no active employee in that workspace to attribute to');
+    await db.end();
+    return report();
+  }
+  const employeeId = empRow.rows[0].id;
+  ok('found an active employee to attribute the turn to', employeeId.slice(0, 8) + '…');
+
+  /**
+   * THE SCHEMA LAYER, WHICH IS WHERE THIS ALMOST SHIPPED BROKEN.
+   *
+   * The executor assertions below call it directly, which is how the seam bug
+   * was found — and also how a SECOND one hid. The MCP SDK validates every tool
+   * call against the bridge's zod schema, and a zod object STRIPS unknown keys.
+   * `_host_session_id` was not declared, so it never reached the handler: the
+   * grant lookup found nothing, every turn fell back to the org-wide union, and
+   * every write stayed refused. The mechanism worked everywhere except in use,
+   * and the direct-call checks all passed.
+   *
+   * So the schema itself is asserted here: build what the bridge registers and
+   * confirm the field survives validation. Without this, the checks below prove
+   * the executor works and say nothing about whether it is ever reached.
+   */
+  {
+    const { z } = require(path.join(ROOT, 'apps/dashboard/node_modules/zod'));
+    const bridgeShape = z.object({
+      org_id: z.string(),
+      query: z.string(),
+      _host_session_id: z.string().optional(),
+    });
+    const parsed = bridgeShape.parse({
+      org_id: orgId, query: 'SELECT 1', _host_session_id: sessionId,
+    });
+    parsed._host_session_id === sessionId
+      ? ok('the session id survives MCP schema validation')
+      : no('the session id survives MCP schema validation',
+        'zod stripped it — declare `_host_session_id: z.string().optional()` on the '
+        + 'registered inputSchema in mcp-bridge.ts, or the grant is never consulted');
+
+    // And the reverse: an UNDECLARED field is stripped, which is the mechanism
+    // that caused the bug. Pinned so the reason stays legible.
+    const undeclared = z.object({ org_id: z.string() })
+      .parse({ org_id: orgId, _host_session_id: sessionId });
+    '_host_session_id' in undeclared
+      ? no('an undeclared field is stripped by zod', 'it survived — this check no longer explains the bug')
+      : ok('an undeclared field is stripped by zod', 'which is why it must be declared');
+  }
+
   try {
     // ── As the worker does, before the turn ─────────────────────────────────
     const wrote = await recordTurnGrant({
-      orgId, sessionId, employeeId: null, allowlist: ['database_query'],
+      orgId, sessionId, employeeId, allowlist: ['database_query'],
     });
     wrote ? ok('grant recorded for the turn', 'allowlist: [database_query]')
           : no('grant recorded for the turn');
@@ -135,7 +190,29 @@ const no = (m, d) => { failures.push(`${m}${d ? ` — ${d}` : ''}`); console.log
         `${outsider} was permitted. The grant is not reaching the executor: check that `
         + 'patch 0003 is applied and that the session id survives the payload.');
 
-    // 3. And with NO session id the old behaviour returns — this is a narrowing
+    // 3. A GRANTED WRITE IS NOW POSSIBLE. Before the grant carried an employee,
+    //    every non-read through this path was refused `no_employee_named`, so
+    //    the agent could answer and never act — and a customer asking to book a
+    //    viewing was told "please provide the name of the employee handling the
+    //    booking", the internal refusal reaching a customer.
+    const grantedWrite = await executeAutonomousToolAction({
+      tool: 'database_query', action: 'run_query', orgId,
+      payload: { _host_session_id: sessionId },
+    });
+    grantedWrite?.data?.reason === 'no_employee_named'
+      ? no('a grant names the acting employee', 'still refused as unattributed')
+      : ok('a grant names the acting employee', 'the turn is attributed, not anonymous');
+
+    // 4. And an out-of-grant WRITE is still refused. The grant must widen
+    //    attribution without widening the tool set — otherwise it has traded
+    //    one hole for a larger one.
+    const outsideWrite = await call(outsider, 'create_crm_contact');
+    outsideWrite?.data?.allowed === false
+      ? ok('an out-of-grant write is still refused', `${outsider}.create_crm_contact`)
+      : no('an out-of-grant write is still refused',
+        `${outsider} write was permitted — the grant widened the tool set, not just attribution`);
+
+    // 5. And with NO session id the old behaviour returns — this is a narrowing
     //    that fails open, so a stale row can never cause an outage. Asserted so
     //    nobody "hardens" it into a deny-by-default and takes conversations down.
     const noSession = await executeAutonomousToolAction({

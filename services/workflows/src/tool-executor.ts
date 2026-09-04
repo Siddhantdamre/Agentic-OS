@@ -149,9 +149,30 @@ export async function executeAutonomousToolAction(
     ? await readTurnGrant(params.orgId, hostSessionId)
     : null;
 
+  /**
+   * A GRANT NAMES THE EMPLOYEE, so the turn is attributed.
+   *
+   * The read-only floor below exists because an unattributed write is a write
+   * nobody can be held to. Nothing ever named an employee on this path, so
+   * EVERY write through the MCP bridge was refused — measured:
+   * google-calendar.create_event, gmail.draft_email and
+   * hubspot.create_crm_contact all `no_employee_named`. The agent could answer
+   * and could not act.
+   *
+   * It was customer-visible. Asked to book a Saturday viewing, the reply was
+   * "I couldn't check availability... please provide the name of the employee
+   * handling the booking" — the internal refusal, paraphrased to a customer.
+   *
+   * A grant IS the naming: written by the worker before the turn, keyed by a
+   * session id the model never sees. Honouring it satisfies the floor's own
+   * requirement rather than bypassing it. Risk class, confirm policy, the
+   * critic and durable execution for sends are all untouched.
+   */
+  const attributed = namedEmployee || Boolean(turnGrant?.employeeId);
+
   const effectiveAllowlist = namedEmployee
     ? params.toolAllowlist!
-    : turnGrant ?? await resolveOrgToolAllowlist(params.orgId);
+    : turnGrant?.allowlist ?? await resolveOrgToolAllowlist(params.orgId);
 
   // FAIL SAFE WHEN NOBODY IS NAMED.
   //
@@ -165,7 +186,7 @@ export async function executeAutonomousToolAction(
   // The union still decides whether the org owns a tool at all, but with no
   // employee named the call may only READ. Acting requires somebody to say
   // which employee is acting.
-  if (!namedEmployee) {
+  if (!attributed) {
     const risk = riskOf(baseTool, actionName);
     if (risk !== 'read') {
       return {

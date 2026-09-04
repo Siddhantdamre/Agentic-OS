@@ -161,30 +161,41 @@ function requireOrgId(orgId: string | undefined): string {
 
 export async function runAgentTurnActivity(input: AgentTaskInput): Promise<AgentTaskResult> {
   /**
-   * A SELF-DIRECTED TURN RECORDS ITS OWN GRANT FIRST.
+   * EVERY TURN WITH AN EMPLOYEE RECORDS ITS GRANT FIRST. Two problems, one row.
    *
-   * `duties.ts` promises a duty runs with the minimum tool, never the
-   * employee's full authority. That was computed and then lost: the tool calls
-   * arrive at the MCP bridge, a separate process, which saw only what the model
-   * put in the call and fell back to the org-wide union. Emma's duty, granted
-   * `database_query` alone, reached metrics and intercom.
+   * The tool calls of a turn arrive at the MCP bridge — a separate process that
+   * sees only what the model put in the call. So it knew neither the allowlist
+   * nor the employee, and both failures were live:
    *
-   * The grant is keyed by the same session id the client builds, so the bridge
-   * can look it up. Only for self-directed turns: a customer conversation is
-   * meant to have the employee's full allowlist, and narrowing that would break
-   * the product rather than protect it.
+   *   TOO MUCH. `duties.ts` promises a duty runs with the minimum tool and
+   *   never the employee's full authority. `planDuty` computed it; the bridge
+   *   fell back to the org-wide union. Emma's duty, granted `database_query`
+   *   alone, reached metrics_list, metrics_query and intercom.
    *
-   * Not awaited for correctness of the turn — a grant that fails to write leaves
-   * today's behaviour, and refusing to run a duty because a narrowing could not
-   * be recorded trades a small privilege problem for no work at all. Awaited for
-   * ORDERING: it must land before the first tool call, or the first call runs
-   * unconstrained.
+   *   TOO LITTLE. The executor refuses every non-read when no employee is
+   *   named. Nothing named one here, so EVERY write through the bridge was
+   *   refused: create_event, draft_email, create_crm_contact. The agent could
+   *   answer a question and could not book, draft or record anything — and a
+   *   customer asking to book a viewing was told "please provide the name of
+   *   the employee handling the booking".
+   *
+   * One grant fixes both, because it carries the allowlist AND the employee.
+   * Keyed by the same session id the client builds, which the host sets and the
+   * model never sees.
+   *
+   * Now for EVERY turn that has an employee, not just self-directed ones — a
+   * customer conversation needs to act, and it was the path most damaged by
+   * having no attribution.
+   *
+   * Awaited for ORDERING, not for correctness: it must land before the first
+   * tool call. A grant that fails to write leaves the previous behaviour rather
+   * than failing the turn.
    */
-  if (input.skipPersist && input.orgId && Array.isArray(input.toolAllowlist) && input.toolAllowlist.length > 0) {
+  if (input.orgId && input.employeeId && Array.isArray(input.toolAllowlist) && input.toolAllowlist.length > 0) {
     await recordTurnGrant({
       orgId: input.orgId,
       sessionId: buildSessionId(input),
-      employeeId: input.employeeId ?? null,
+      employeeId: input.employeeId,
       allowlist: input.toolAllowlist,
     });
   }
@@ -244,7 +255,7 @@ export async function runAgentTurnActivity(input: AgentTaskInput): Promise<Agent
      * TTL in the table is the backstop for a worker that dies before reaching
      * here, not the primary mechanism.
      */
-    if (input.skipPersist && input.orgId) {
+    if (input.orgId && input.employeeId) {
       await clearTurnGrant(input.orgId, buildSessionId(input));
     }
   }

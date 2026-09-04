@@ -86,21 +86,51 @@ export async function recordTurnGrant(input: TurnGrantInput): Promise<boolean> {
  * on every tool call and must not take a write lock. `clearTurnGrant` and the
  * sweep below do the removing.
  */
-export async function readTurnGrant(orgId: string, sessionId: string): Promise<string[] | null> {
+export interface TurnGrant {
+  allowlist: string[];
+  /**
+   * WHICH EMPLOYEE IS ACTING — and why that unlocks more than it restricts.
+   *
+   * The executor refuses every non-read when no employee is named, with good
+   * reason: an unattributed write is a write nobody can be held to. Its own
+   * comment says "Acting requires somebody to say which employee is acting."
+   *
+   * Nobody ever said. Tool calls reach the executor from the MCP bridge, which
+   * has no employee to name, so EVERY write through that path was refused —
+   * measured: google-calendar.create_event, gmail.draft_email and
+   * hubspot.create_crm_contact all `no_employee_named`. The agent could answer
+   * a question and could not book, draft or record anything. A customer asking
+   * to book a Saturday viewing was told "please provide the name of the
+   * employee handling the booking", which is the internal refusal reaching a
+   * customer through the model.
+   *
+   * A grant is the host saying it, authoritatively: the worker wrote this row
+   * before the turn started, keyed by a session id the model never sees. So
+   * honouring it SATISFIES the gate's requirement rather than bypassing it —
+   * the employee is named, just not in the function argument.
+   *
+   * Everything above stays: risk class, confirm policy, the critic, and durable
+   * execution for sends. This changes who is on the hook, not what is allowed
+   * without review.
+   */
+  employeeId: string | null;
+}
+
+export async function readTurnGrant(orgId: string, sessionId: string): Promise<TurnGrant | null> {
   const sid = String(sessionId || '').trim();
   const org = String(orgId || '').trim();
   if (!sid || !org) return null;
 
   try {
     return await withOrgScopedClient(org, async (client) => {
-      const res = await client.query<{ allowlist: string[] }>(
-        `SELECT allowlist FROM duty_turn_grants
+      const res = await client.query<{ allowlist: string[]; employee_id: string | null }>(
+        `SELECT allowlist, employee_id FROM duty_turn_grants
           WHERE session_id = $1 AND expires_at > NOW() LIMIT 1`,
         [sid]
       );
       const row = res.rows[0];
       if (!row || !Array.isArray(row.allowlist) || row.allowlist.length === 0) return null;
-      return row.allowlist;
+      return { allowlist: row.allowlist, employeeId: row.employee_id ?? null };
     });
   } catch {
     // A grant that cannot be read is a grant that does not apply. Same reason

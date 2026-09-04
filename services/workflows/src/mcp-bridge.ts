@@ -1007,7 +1007,31 @@ function createServer(): McpServer {
     const { name, description, schema, tool, action } = toolDef;
     server.registerTool(name, {
       description,
-      inputSchema: schema as any,
+      /**
+       * THE HOST'S SESSION ID HAS TO BE DECLARED OR IT IS THROWN AWAY.
+       *
+       * Patch 0003 forwards `_host_session_id` on every MCP tool call so this
+       * process can tell WHICH TURN is asking — which is what lets it apply
+       * that turn's tool grant and know which employee is acting. Neither is
+       * knowable otherwise: every other value here comes from the model's own
+       * tool call.
+       *
+       * The SDK validates arguments against this zod schema, and a zod object
+       * STRIPS unknown keys. So an undeclared field never reaches the handler:
+       * the grant lookup silently found nothing, every turn fell back to the
+       * org-wide union, and every write stayed refused as unattributed — while
+       * a check that called the executor directly passed, because it never went
+       * through validation. The mechanism worked everywhere except in use.
+       *
+       * Declared, therefore, and deliberately NOT described: it is not for the
+       * model. A model that supplies one anyway can only reach a grant in its
+       * own workspace — row-level security sees to that — and a grant only ever
+       * narrows the tool set. The residual is attribution: within one
+       * workspace, a turn could quote another turn's live session id and act
+       * under that employee's name. Worth knowing, bounded, and still strictly
+       * better than the state it replaces, where nothing could act at all.
+       */
+      inputSchema: { ...(schema as any), _host_session_id: z.string().optional() } as any,
     }, async (args: any) => {
       try {
         const orgId = String(args.org_id || '');
