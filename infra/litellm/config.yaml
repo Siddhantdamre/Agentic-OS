@@ -70,15 +70,32 @@ model_list:
   # To enable, add either (or both) to infra/.env:
   #   DEEPSEEK_API_KEY=...   from platform.deepseek.com
   #   GROQ_API_KEY=...       from console.groq.com  (has a real free tier)
-  - model_name: atomic-agent-direct
-    litellm_params:
-      model: deepseek/deepseek-chat
-      api_key: os.environ/DEEPSEEK_API_KEY
-    model_info:
-      mode: chat
+  # TIER 4 REMOVED — a second payment rail that had no money in it.
+  #
+  # `deepseek/deepseek-chat` on the DIRECT DeepSeek API (not via OpenRouter).
+  # The key is valid and the account balance is zero, so every call reaching
+  # this tier returned "Insufficient Balance" after two retries and a cooldown.
+  # Measured in one 25-minute window: 84 DeepseekException failures, all of
+  # them this tier, and one agent turn pushed past its 180-second ceiling by
+  # the accumulated retry tax. Reliability stopped on it.
+  #
+  # A tier with no balance is worse than no tier. It costs latency on every
+  # call that reaches it, it makes the chain look four deep when it is three,
+  # and the failure it produces looks like a provider outage rather than an
+  # unpaid invoice.
+  #
+  # To restore it: fund the account at platform.deepseek.com, then re-add
+  #
+  #   - model_name: atomic-agent-direct
+  #     litellm_params:
+  #       model: deepseek/deepseek-chat
+  #       api_key: os.environ/DEEPSEEK_API_KEY
+  #     model_info:
+  #       mode: chat
+  #
+  # and put it back in the `fallbacks` chain below. DEEPSEEK_API_KEY is still
+  # passed to the container, so only these lines are needed.
 
-  # Groq is last because its free tier is generous enough to keep a demo alive
-  # with no payment method configured at all — the floor beneath the floor.
   - model_name: atomic-agent-groq
     litellm_params:
       # Verified against the live /models list for this account, with a tool
@@ -154,7 +171,6 @@ router_settings:
     - atomic-agent:
         - atomic-agent-fallback
         - atomic-agent-deepseek
-        - atomic-agent-direct
         - atomic-agent-groq
     # Zero-cost floor → zero-cost floor. Never onto a paid tier: that would bill
     # exactly the workspace the budget gate was protecting the account from.
@@ -162,10 +178,6 @@ router_settings:
         - atomic-agent-groq
     # Paid tier 2 keeps the rest of the chain beneath it.
     - atomic-agent-fallback:
-        - atomic-agent-direct
-        - atomic-agent-groq
-    # Second payment rail, in case the gate or a caller pins it directly.
-    - atomic-agent-direct:
         - atomic-agent-groq
   retry_policy:
     timeout: 0

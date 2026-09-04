@@ -86,6 +86,10 @@ if (!svc) {
 // access to it" for a valid key: the model had been retired upstream. A model
 // id that is merely plausible fails at the exact moment failover is needed, so
 // the ones verified against a live catalogue are pinned here by name.
+// `deepseek/deepseek-chat` on the direct API was here too, and was removed
+// with tier 4: the account had no balance, so it failed on every call that
+// reached it. Pinning a model id we no longer configure would fail this
+// check for the wrong reason.
 const VERIFIED = ['openrouter/deepseek/deepseek-chat', 'openrouter/openai/gpt-4o-mini', 'groq/openai/gpt-oss-120b'];
 const stale = VERIFIED.filter((m) => !config.includes(m));
 stale.length === 0
