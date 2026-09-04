@@ -220,7 +220,12 @@ async function runFormat(label, filename, mime, bytes, marker, question, provena
   ]);
   await runFormat('PDF', 'warranty-terms.pdf', 'application/pdf', pdfBytes, pdfCode,
     'What is the warranty on your upholstered furniture?',
-    [/ten years|10 years/i, /three years|3 years/i]);
+    // Tolerant of how a model phrases a duration. Measured failures: the
+    // answer said "10-year coverage for frames and a 3-year coverage for
+    // fabric" and the first version of these patterns wanted "10 years", so a
+    // correct, grounded answer was reported as having no provenance. The fact
+    // is what must appear, not one particular spelling of it.
+    [/(ten|10)[\s-]*year/i, /(three|3)[\s-]*year/i]);
 
   const docCode = `SVC-${Math.floor(Math.random() * 9000) + 1000}`;
   const docxBytes = await buildDocx([
@@ -232,7 +237,7 @@ async function runFormat(label, filename, mime, bytes, marker, question, provena
   await runFormat('DOCX', 'aftercare.docx',
     'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
     docxBytes, docCode, 'Do you offer any aftercare once the furniture is delivered?',
-    [/cushion/i, /first two years|first 2 years/i, /tuesday/i]);
+    [/cushion/i, /first (two|2)[\s-]*year/i, /tuesday/i]);
 
   console.log(`\n  passed ${pass} / ${pass + fail}`);
   await db.end();
