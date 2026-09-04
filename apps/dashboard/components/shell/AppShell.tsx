@@ -20,6 +20,7 @@ import {
   Inbox,
   CreditCard,
   Wand2,
+  Scale,
 } from 'lucide-react';
 import { BottomTabs } from '@/components/a11y';
 
@@ -32,6 +33,7 @@ const NAV_ITEMS = [
   { href: '/listings', label: 'Listings', icon: Building2 },
   { href: '/inquiries', label: 'Inquiries', icon: Inbox },
   { href: '/employees', label: 'Employees', icon: Users },
+  { href: '/decide', label: 'Decide', icon: Scale },
   { href: '/insight', label: 'Insight', icon: Lightbulb },
   { href: '/analytics', label: 'Analytics', icon: BarChart3 },
   { href: '/integrations', label: 'Integrations', icon: Layers },

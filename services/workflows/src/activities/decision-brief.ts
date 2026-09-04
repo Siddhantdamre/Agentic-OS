@@ -41,6 +41,34 @@ export interface DecisionBriefResult {
 }
 
 /**
+ * A source label a person can read, not the snippet it came from.
+ *
+ * The facts block handed to the model contains whole retrieved snippets, so
+ * "copy the source from the text" gets you the snippet: one finding rendered as
+ * "From this workspace only (The booking amount is fully refundable within 7
+ * days... - ...repeated three times..., source=tool, stale=false, updated
+ * 2026-09-04)". True, and unreadable.
+ *
+ * So: prefer the `source=` marker the retrieval block already emits, fall back
+ * to a document path, and cap the length. A label is for finding the record
+ * again, not for restating it.
+ */
+function shortSource(raw: unknown): string {
+  const text = String(raw ?? '').replace(/\s+/g, ' ').trim();
+  if (!text) return '';
+
+  // `source=upload`, `source=conversation` — the retrieval block's own field.
+  const marker = /source=([a-z_-]+)/i.exec(text);
+  if (marker) return marker[1].toLowerCase();
+
+  // `path: upload:site-visit-booking-policy.txt` — keep the filename.
+  const path = /path:\s*[a-z]+:([^\s|\]]+)/i.exec(text);
+  if (path) return path[1];
+
+  return text.length > 60 ? `${text.slice(0, 57)}...` : text;
+}
+
+/**
  * Turn retrieved workspace text into claims that can be COMPARED.
  *
  * The market half arrives already structured. The internal half is prose —
@@ -64,7 +92,9 @@ async function extractInternalFacts(
     'You convert a business\'s OWN records into structured claims for a decision brief.',
     'Reply with ONLY JSON: {"facts":[{"claim":"","source":"","subject":"","value":0,"unit":""}]}.',
     'claim: one sentence, drawn only from the records below.',
-    'source: the document or record the claim came from, copied from the text. Never invent one.',
+    'source: a SHORT label for where it came from - the document filename, or the '
+    + 'value of the source= field on that line. A few words, never the whole snippet. '
+    + 'Never invent one.',
     'subject: a SHORT noun phrase naming the measurable thing, e.g. "booking amount",',
     '  "refund window", "response time". Omit subject and value when the claim is not numeric.',
     'value: the number, copied EXACTLY as written. Never compute, convert, round or estimate.',
@@ -109,7 +139,7 @@ async function extractInternalFacts(
   for (const r of raw) {
     const rec = r as Record<string, unknown>;
     const claim = String(rec.claim ?? '').trim();
-    const source = String(rec.source ?? '').trim();
+    const source = shortSource(rec.source);
     if (!claim || !source) continue; // buildDecisionBrief would reject it anyway
     const fact: InternalFact = { claim, source };
     const value = typeof rec.value === 'number' ? rec.value : Number(rec.value);

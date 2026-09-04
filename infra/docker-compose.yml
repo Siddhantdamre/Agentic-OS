@@ -600,6 +600,13 @@ services:
       - DB_USER=${APP_DB_USER:-darex_app}
       - DB_PASSWORD=${APP_DB_PASSWORD:-darex_app_dev_secret}
       - NANGO_HOST=http://nango-server:3003
+      # The OAuth popup runs in the BROWSER, which needs Nango's PUBLIC key —
+      # a different value from NANGO_SECRET_KEY, which is server-side only.
+      # Nothing supplied this, so `getNangoServerConfig()` returned undefined
+      # and every Connect click failed with "Nango public key is not
+      # configured" while the connector itself was correctly registered. Same
+      # shape as the LiteLLM tiers: the app read a variable no one passed.
+      - NEXT_PUBLIC_NANGO_PUBLIC_KEY=${NEXT_PUBLIC_NANGO_PUBLIC_KEY}
     env_file:
       - path: ../.env
         required: false
@@ -758,6 +765,13 @@ services:
       - DB_NAME=${DB_NAME:-darex}
       - DB_PASSWORD=${APP_DB_PASSWORD:-darex_app_dev_secret}
       - NANGO_HOST=http://nango-server:3003
+      # The OAuth popup runs in the BROWSER, which needs Nango's PUBLIC key —
+      # a different value from NANGO_SECRET_KEY, which is server-side only.
+      # Nothing supplied this, so `getNangoServerConfig()` returned undefined
+      # and every Connect click failed with "Nango public key is not
+      # configured" while the connector itself was correctly registered. Same
+      # shape as the LiteLLM tiers: the app read a variable no one passed.
+      - NEXT_PUBLIC_NANGO_PUBLIC_KEY=${NEXT_PUBLIC_NANGO_PUBLIC_KEY}
       - ATOMIC_AGENT_URL=http://atomic-agent:8787
       - ATOMIC_AGENT_API_KEY=${ATOMIC_AGENT_API_KEY:-darex-atomic-agent-dev-key}
       - ATOMIC_AGENT_ACTIVE_PROVIDER=${ATOMIC_AGENT_ACTIVE_PROVIDER:-darex-litellm}
@@ -849,6 +863,13 @@ services:
       # browser cannot resolve a compose service name. The OAuth popup and the
       # setup link both use the public one. Override for a real deployment.
       - NANGO_HOST=http://nango-server:3003
+      # The OAuth popup runs in the BROWSER, which needs Nango's PUBLIC key —
+      # a different value from NANGO_SECRET_KEY, which is server-side only.
+      # Nothing supplied this, so `getNangoServerConfig()` returned undefined
+      # and every Connect click failed with "Nango public key is not
+      # configured" while the connector itself was correctly registered. Same
+      # shape as the LiteLLM tiers: the app read a variable no one passed.
+      - NEXT_PUBLIC_NANGO_PUBLIC_KEY=${NEXT_PUBLIC_NANGO_PUBLIC_KEY}
       - NEXT_PUBLIC_NANGO_HOST=${NEXT_PUBLIC_NANGO_HOST:-http://127.0.0.1:3003}
       - TEMPORAL_ADDRESS=temporal:7233
       - SUPERTOKENS_CONNECTION_URI=http://supertokens:3567

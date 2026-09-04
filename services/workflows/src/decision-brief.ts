@@ -146,6 +146,56 @@ function externalNumber(f: ResearchFinding & { value?: number; subject?: string 
   return comparable(f) ? { value: f.value as number, subject: f.subject as string } : null;
 }
 
+/**
+ * Collapse the same fact retrieved from several places.
+ *
+ * Memory holds a fact once per row it appears in: an upload, the conversation
+ * that quoted it, the write-back summary. Extraction faithfully returns all of
+ * them, so one live brief listed the booking amount FOUR times:
+ *
+ *   The booking amount is fully refundable within 7 days...
+ *   The booking amount to hold a flat is Rs 51,000, and it is fully refundable...
+ *   The booking amount to hold a unit is Rs 51,000, fully refundable within...
+ *   The booking amount to hold a flat is Rs 51,000.
+ *
+ * All true, all one fact. Repetition also reads as corroboration, which it is
+ * not — the same document quoted three times is still one document.
+ *
+ * Keeps the LONGEST wording of each duplicate group, because that is the one
+ * carrying the most detail, and merges the sources so provenance is not lost.
+ * Matching is on the numeric claim signature when there is one, and on
+ * normalised words otherwise. Deliberately conservative: two facts about the
+ * same subject with DIFFERENT numbers are not duplicates, they are a genuine
+ * inconsistency in the records and must both survive.
+ */
+export function dedupeInternalFacts(facts: InternalFact[]): InternalFact[] {
+  const groups = new Map<string, InternalFact[]>();
+  const order: string[] = [];
+
+  for (const f of facts) {
+    const words = String(f.claim || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+    // A number in the claim makes the signature; same subject + same number is
+    // the same fact however it is worded.
+    const nums = words.match(/\d+/g);
+    const key = typeof f.value === 'number' && f.subject
+      ? `v:${normSubject(f.subject)}:${f.value}`
+      : nums && nums.length > 0
+        ? `n:${nums.sort().join('-')}`
+        : `w:${words}`;
+    if (!groups.has(key)) { groups.set(key, []); order.push(key); }
+    (groups.get(key) as InternalFact[]).push(f);
+  }
+
+  const out: InternalFact[] = [];
+  for (const key of order) {
+    const group = groups.get(key) as InternalFact[];
+    const best = group.reduce((a, b) => (String(b.claim).length > String(a.claim).length ? b : a));
+    const sources = [...new Set(group.map((g) => g.source).filter(Boolean))];
+    out.push({ ...best, source: sources.join(', ') });
+  }
+  return out;
+}
+
 export interface BuildBriefInput {
   question: string;
   internal: InternalFact[];
@@ -172,8 +222,8 @@ export function buildDecisionBrief(input: BuildBriefInput): DecisionBrief {
     ...((input.research?.rejected) || []),
   ];
 
-  // ── 1. Provenance or nothing ──────────────────────────────────────────────
-  const internal: InternalFact[] = [];
+  // ── 1. Provenance or nothing, then collapse duplicates ────────────────────
+  const kept: InternalFact[] = [];
   for (const f of input.internal || []) {
     const claim = String(f?.claim || '').trim();
     const source = String(f?.source || '').trim();
@@ -184,8 +234,11 @@ export function buildDecisionBrief(input: BuildBriefInput): DecisionBrief {
       rejected.push({ claim, reason: 'no source in this workspace — internal facts must cite a record' });
       continue;
     }
-    internal.push({ ...f, claim, source });
+    kept.push({ ...f, claim, source });
   }
+  // Memory holds one fact once per row it appears in. Four copies of the
+  // booking amount is not four pieces of evidence.
+  const internal = dedupeInternalFacts(kept);
 
   const external = (input.research?.findings || []).filter((f) => (f.sources || []).length > 0);
 

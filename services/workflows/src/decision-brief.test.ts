@@ -5,6 +5,7 @@ import {
   renderDecisionBrief,
   materiallyDiffers,
   type InternalFact,
+  dedupeInternalFacts,
 } from './decision-brief';
 import type { ResearchReport, ResearchSource } from './market-research';
 
@@ -247,4 +248,59 @@ test('the evidence base is counted, not claimed', () => {
   });
   assert.equal(brief.internalSourceCount, 2, 'policy.txt twice is one record');
   assert.equal(brief.externalDomainCount, 2, 'two pages on a.com is one publisher');
+});
+
+// -- Duplicates ------------------------------------------------------------
+//
+// Memory holds a fact once per row it appears in: the upload, the conversation
+// that quoted it, the write-back summary. One live brief listed the booking
+// amount four times. All true, all one fact - and repetition reads as
+// corroboration, which it is not.
+
+test('the same fact from several rows collapses to one', () => {
+  const out = dedupeInternalFacts([
+    { claim: 'The booking amount to hold a flat is 51000.', source: 'upload', subject: 'booking amount', value: 51000 },
+    { claim: 'The booking amount to hold a unit is 51000, fully refundable within 7 days.', source: 'conversation', subject: 'booking amount', value: 51000 },
+    { claim: 'Booking is 51000.', source: 'tool', subject: 'booking amount', value: 51000 },
+  ]);
+  assert.equal(out.length, 1);
+  // The longest wording survives, because it carries the most detail.
+  assert.match(out[0].claim, /fully refundable/);
+  // Provenance is merged, never lost.
+  assert.match(out[0].source, /upload/);
+  assert.match(out[0].source, /conversation/);
+});
+
+test('the same subject with DIFFERENT numbers is not a duplicate', () => {
+  // That is a real inconsistency in the records. Collapsing it would hide the
+  // fact that the business contradicts itself.
+  const out = dedupeInternalFacts([
+    { claim: 'Booking is 51000.', source: 'upload', subject: 'booking amount', value: 51000 },
+    { claim: 'Booking is 25000.', source: 'old-policy', subject: 'booking amount', value: 25000 },
+  ]);
+  assert.equal(out.length, 2);
+});
+
+test('unrelated non-numeric facts are all kept', () => {
+  const out = dedupeInternalFacts([
+    { claim: 'Site visits run Monday to Saturday.', source: 'upload' },
+    { claim: 'Sunday visits are by appointment.', source: 'upload' },
+    { claim: 'Station pickup is free.', source: 'upload' },
+  ]);
+  assert.equal(out.length, 3);
+});
+
+test('deduping runs inside the brief, so four rows are one finding', () => {
+  const brief = buildDecisionBrief({
+    question: 'What is our booking amount?',
+    internal: [
+      { claim: 'Booking is 51000.', source: 'upload', subject: 'booking amount', value: 51000 },
+      { claim: 'The booking amount to hold a flat is 51000 and is refundable.', source: 'conversation', subject: 'booking amount', value: 51000 },
+      { claim: 'Booking 51000.', source: 'tool', subject: 'booking amount', value: 51000 },
+      { claim: 'Booking is 51000.', source: 'upload', subject: 'booking amount', value: 51000 },
+    ],
+    research: null,
+  });
+  assert.equal(brief.findings.filter((f) => f.basis === 'internal').length, 1,
+    'one fact, however many rows hold it');
 });
