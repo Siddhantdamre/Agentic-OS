@@ -187,27 +187,35 @@ function signed(body) {
       : no('an over-budget workspace spent ZERO paid tokens',
         `${paidTokens} paid token(s) on ` + paidAttempts.map((c) => c.model).join(', '));
 
-    // NAMED LIMITATION, reported every run so it cannot quietly become "solved".
+    // CLOSED, and worth recording how, because this line used to say the
+    // opposite and that stale note is the reason the leak survived so long.
     //
     // The worker's own paid calls -- critic, reviser, memory write-back, crew
-    // planning, research, briefing -- all go through llm/gateway.ts and take
-    // their model from this workspace's budget. lint-llm-gateway.js fails the
-    // build if a seventh appears.
+    // planning, research, briefing -- go through llm/gateway.ts and take their
+    // model from this workspace's budget. lint-llm-gateway.js fails the build
+    // if a seventh appears.
     //
-    // The AGENT TURN is different. It runs inside the vendored atomic-agent
-    // container, which builds its request body from `this.defaultChatModel`,
-    // set once at provider construction from its own config. Proven directly:
-    // sending model="atomic-agent-deepseek" to the container produced
-    // "openrouter/deepseek/deepseek-chat" at the proxy. Making that per-request
-    // means patching the container's HTTP boundary, agent loop and provider
-    // interface -- a far larger vendored surface than the 25-line attribution
-    // patch, and one that would break on every upstream bump.
+    // THE AGENT TURN used to be exempt, and it is the largest call the agent
+    // makes: ~48,000 tokens of system prompt, tool grammar and JSON formats.
+    // It runs inside the vendored atomic-agent container, which built its
+    // request body from `this.defaultChatModel`, set once at provider
+    // construction. Proven at the time by probe: sending
+    // model="atomic-agent-deepseek" to the container produced
+    // "openrouter/deepseek/deepseek-chat" at the proxy. So a workspace over
+    // its cap -- correctly detected, correctly degraded, correctly RECORDED as
+    // degraded -- still spent ~48,000 paid tokens. The cap held everywhere
+    // except the one call that dominates the bill.
     //
-    // So today the agent turn's tier is a DEPLOYMENT setting, not a per-request
-    // one. It is stated here rather than hidden, because a limitation nobody
-    // prints is a limitation somebody will later mistake for a guarantee.
-    console.log('      NOTE: the agent turn model is a DEPLOYMENT setting, not per-request.');
-    console.log('            Worker-side paid calls are budget-routed; the vendored container is not.');
+    // `patches/0002-per-request-model.patch` closes it. The override rides the
+    // namespaced session id, the same channel patch 0001 already uses for the
+    // tenant id, because `CompletionRequest` inside the agent carries no model
+    // field and the session id is the only host-controlled value that reaches
+    // the provider. 20 lines against the vendored tree, and the image build
+    // FAILS if it ever stops applying.
+    //
+    // Verified: an over-budget workspace now attempts no paid tier at all.
+    console.log('      NOTE: the agent turn is now budget-routed too, via');
+    console.log('            patches/0002-per-request-model.patch (session-id channel).');
 
     // ── And it is still attributed ───────────────────────────────────────────
     console.log('\n5. A degraded turn is still billed to the right workspace');

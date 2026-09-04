@@ -257,14 +257,45 @@ export function buildGroundedUserMessage(
   return facts.join('\n');
 }
 
+/**
+ * The budget's model choice, in the one channel that reaches the container.
+ *
+ * The vendored agent's model is a DEPLOYMENT setting — one model per container
+ * — so the `model` field this client sends in the request body is echoed back
+ * in the response and then ignored upstream. Measured: a workspace already over
+ * budget, correctly detected and correctly recorded as degraded, still spent
+ * ~48,000 PAID tokens on its agent turn. The cap held everywhere except the one
+ * call that dominates the bill.
+ *
+ * `CompletionRequest` inside the agent has no model field, so the override
+ * rides the session id — the same channel patch 0001 uses for the tenant, and
+ * for the same reason: it already crosses the HTTP boundary, the agent loop and
+ * the provider interface. `patches/0002-per-request-model.patch` reads it.
+ *
+ * Appended ONLY when the budget actually chose a different model, so a normal
+ * turn's session id is byte-identical to before. A degraded workspace does get
+ * a session distinct from its own normal turns; that is the cost of the only
+ * available channel, and losing agent-side continuity at the moment a workspace
+ * crosses its cap is far cheaper than ignoring the cap.
+ */
+export function sessionModelSuffix(modelOverride: string | undefined): string {
+  const alias = String(modelOverride || '').trim();
+  if (!alias) return '';
+  // The same charset the patch accepts. A value it would reject must never be
+  // appended: the patch would fall back to the deployment default and the
+  // session id would have changed for nothing.
+  return /^[A-Za-z0-9._/-]{1,64}$/.test(alias) ? `:m=${alias}` : '';
+}
+
 function buildSessionId(input: AgentTaskInput): string {
-  if (input.sessionKey) return `darex:${input.orgId}:${input.sessionKey}`;
-  if (input.conversationId) return `darex:${input.orgId}:${input.conversationId}`;
+  const m = sessionModelSuffix(input.modelOverride);
+  if (input.sessionKey) return `darex:${input.orgId}:${input.sessionKey}${m}`;
+  if (input.conversationId) return `darex:${input.orgId}:${input.conversationId}${m}`;
   // Rotate the shared fallback daily so an unbounded session can never
   // accumulate forever (an accumulating session is what made Ask AI hang).
-  if (input.employeeId) return `darex:${input.orgId}:${input.employeeId}`;
+  if (input.employeeId) return `darex:${input.orgId}:${input.employeeId}${m}`;
   const day = new Date().toISOString().slice(0, 10).replace(/-/g, '');
-  return `darex:${input.orgId}:chat-${day}`;
+  return `darex:${input.orgId}:chat-${day}${m}`;
 }
 
 interface SseState {

@@ -29,6 +29,13 @@ RUN git clone --depth 1 --branch "${ATOMIC_AGENT_TAG}" \
 # session id) as the OpenAI `user` field, so the LiteLLM proxy can attribute
 # spend per customer. Without it every call from every tenant is logged against
 # the API key's owner and per-org budgets are impossible.
+#
+# 0002-per-request-model: lets the host choose the model PER REQUEST, read from
+# the same namespaced session id. Upstream treats the model as a deployment
+# setting - one per container - so a per-workspace spend cap could not bind the
+# agent turn, the largest call the agent makes. Measured: a workspace over its
+# cap, correctly detected and correctly recorded as degraded, still spent
+# ~48,000 paid tokens because the container ignored the requested model.
 COPY patches ./patches
 RUN for p in patches/*.patch; do       echo "applying $p";       git apply --verbose "$p" || { echo "PATCH FAILED: $p does not apply to ${ATOMIC_AGENT_TAG} — reconcile it before bumping the tag"; exit 1; };     done
 

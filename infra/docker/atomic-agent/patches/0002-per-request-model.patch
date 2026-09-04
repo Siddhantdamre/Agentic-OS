@@ -1,0 +1,60 @@
+diff --git a/src/llm/provider/openai/openai-build-body.ts b/src/llm/provider/openai/openai-build-body.ts
+index 3f02d7f..5d5157c 100644
+--- a/src/llm/provider/openai/openai-build-body.ts
++++ b/src/llm/provider/openai/openai-build-body.ts
+@@ -2,6 +2,46 @@ import { getConfig } from "../../../config/index.js";
+ import type { CompletionRequest } from "../completion-types.js";
+ import { filterCloudCompletionRequest } from "./sampling-filter.js";
+ 
++/**
++ * A per-request model override, carried in the namespaced session id.
++ *
++ * `defaultChatModel` is a DEPLOYMENT setting: one model for the whole
++ * container. For a single-tenant CLI that is right. For a multi-tenant host it
++ * means the model cannot vary per request, and a per-workspace spend cap
++ * therefore cannot bind the agent turn — which is the single largest call the
++ * agent makes.
++ *
++ * Measured on one deployment: a workspace already over its budget, correctly
++ * detected, correctly degraded, and recorded as degraded, still spent ~48,000
++ * PAID tokens on this call because the container ignored the model the host
++ * asked for and used its own. The cap held everywhere except the one place
++ * that mattered.
++ *
++ * `CompletionRequest` carries no model field, and adding one would mean
++ * threading it through the HTTP boundary, the agent loop and the provider
++ * interface. The session id already crosses every one of those layers and is
++ * already namespaced by the host, so the override rides there — the same
++ * channel, and for the same reason, as the tenant id in patch 0001.
++ *
++ * Shape: `<host>:<tenant>:<rest>[:m=<model>]`. Absent for a normal turn.
++ *
++ * Deliberately conservative:
++ *   - only a trailing `m=` segment is read, so an ordinary session id with
++ *     colons in it cannot be mistaken for an override
++ *   - the value is charset-restricted to a model alias, so nothing from a
++ *     session id can inject anything else into the request body
++ *   - anything unparseable yields undefined and the deployment default stands
++ */
++function modelOverrideFromSessionId(sessionId: unknown): string | undefined {
++  if (typeof sessionId !== "string") return undefined;
++  const parts = sessionId.split(":");
++  const last = parts.length > 0 ? parts[parts.length - 1] : undefined;
++  if (typeof last !== "string" || !last.startsWith("m=")) return undefined;
++  const alias = last.slice(2);
++  if (alias.length === 0 || alias.length > 64) return undefined;
++  return /^[A-Za-z0-9._\/-]+$/.test(alias) ? alias : undefined;
++}
++
+ export function buildOpenAiChatBody(
+   request: CompletionRequest,
+   defaultChatModel: string,
+@@ -9,7 +49,7 @@ export function buildOpenAiChatBody(
+ ): Record<string, unknown> {
+   const filtered = filterCloudCompletionRequest(request);
+   const body: Record<string, unknown> = {
+-    model: defaultChatModel,
++    model: modelOverrideFromSessionId(filtered.sessionId) ?? defaultChatModel,
+     messages: [{ role: "user", content: filtered.prompt }],
+     temperature: filtered.temperature ?? 0.2,
+     max_tokens: filtered.maxTokens ?? getConfig().localModels.completionMaxTokens,
