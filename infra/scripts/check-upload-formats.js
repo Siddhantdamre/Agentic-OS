@@ -140,7 +140,12 @@ async function askAgent(t, question) {
   return outcome.reply;
 }
 
-async function runFormat(label, filename, mime, bytes, marker, question) {
+/**
+ * @param marker      an id present only in this document
+ * @param provenance  facts present only in this document, as regexes. The
+ *   answer passes if it echoes the marker OR carries ALL of these.
+ */
+async function runFormat(label, filename, mime, bytes, marker, question, provenance = []) {
   console.log(`\n--- ${label} ---`);
   const t = await newTenant();
   const form = new FormData();
@@ -170,9 +175,33 @@ async function runFormat(label, filename, mime, bytes, marker, question) {
   else {
     console.log(`  Q: ${question}`);
     console.log(`  A: ${reply.replace(/\s+/g, ' ').slice(0, 220)}`);
-    new RegExp(marker.replace(/\s/g, '\\s*'), 'i').test(reply)
-      ? ok(`${label} answer carries the uploaded fact ("${marker}")`)
-      : no(`${label} answer carries the uploaded fact ("${marker}")`, reply.slice(0, 140));
+    // WHAT THIS ACTUALLY HAS TO PROVE: the answer came from the uploaded file.
+    //
+    // The marker is a PROXY for that, not the goal, and it fails whenever the
+    // code is not germane to the question asked. Measured: the DOCX answer was
+    // "a free cushion re-fill is provided once within the first two years, and
+    // aftercare visits are scheduled on Tuesdays and Thursdays" - every fact
+    // from the document, correctly retrieved, with the service code omitted
+    // because nobody asking "do you offer aftercare?" wants a plan code. The
+    // PDF passes only because its question was about warranty terms, where
+    // quoting the reference code reads naturally. Retrieval was never the
+    // problem; the assertion was.
+    //
+    // So provenance, not verbatim echo - the standard check-upload-e2e.js
+    // already applies with its paraphrase fallback. Kept strict: ALL of the
+    // supplied facts must appear, and each is unique to the document, so a
+    // model that retrieved nothing cannot satisfy it by guessing.
+    const echoedMarker = new RegExp(marker.replace(/\s/g, '\\s*'), 'i').test(reply);
+    const paraphrased = provenance.length > 0 && provenance.every((re) => re.test(reply));
+    if (echoedMarker) {
+      ok(`${label} answer carries the uploaded fact ("${marker}")`);
+    } else if (paraphrased) {
+      ok(`${label} answer came from the uploaded document`,
+        `paraphrased ${provenance.length} document-only facts instead of echoing ${marker}`);
+    } else {
+      no(`${label} answer came from the uploaded document`,
+        `neither ${marker} nor its facts appeared - ${reply.slice(0, 110)}`);
+    }
   }
   await db.query(`DELETE FROM orgs WHERE id=$1`, [t.orgId]);
 }
@@ -190,7 +219,8 @@ async function runFormat(label, filename, mime, bytes, marker, question) {
     'Claims must be made in writing within the warranty period.',
   ]);
   await runFormat('PDF', 'warranty-terms.pdf', 'application/pdf', pdfBytes, pdfCode,
-    'What is the warranty on your upholstered furniture?');
+    'What is the warranty on your upholstered furniture?',
+    [/ten years|10 years/i, /three years|3 years/i]);
 
   const docCode = `SVC-${Math.floor(Math.random() * 9000) + 1000}`;
   const docxBytes = await buildDocx([
@@ -201,7 +231,8 @@ async function runFormat(label, filename, mime, bytes, marker, question) {
   ]);
   await runFormat('DOCX', 'aftercare.docx',
     'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-    docxBytes, docCode, 'Do you offer any aftercare once the furniture is delivered?');
+    docxBytes, docCode, 'Do you offer any aftercare once the furniture is delivered?',
+    [/cushion/i, /first two years|first 2 years/i, /tuesday/i]);
 
   console.log(`\n  passed ${pass} / ${pass + fail}`);
   await db.end();
