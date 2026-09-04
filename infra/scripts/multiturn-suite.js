@@ -111,9 +111,33 @@ const SCENARIOS = [
       { say: 'Saturday would suit me.', mustNotRepeat: [/which day|what day/i] },
       {
         say: '11am please.',
-        expect: [/11\s*am/i, /confirm|booked|book/i],
-        // Both facts were given. Asking for either again is the failure.
-        mustNotRepeat: [/which day|what day/i, /what time would you like|which time slot/i],
+        // `/confirm|booked|book/` was the assertion here, and it passed on
+        // "I couldn't BOOK the 11am slot for Saturday" — the word appears
+        // inside the negation of the thing being tested. Measured verbatim:
+        //
+        //   C3: 11am please.
+        //   A3: I couldn't book the 11am slot for Saturday. Could you provide
+        //       the showroom address or location you'd like to visit?
+        //   [PASS] booking_thread turn 3 carried the right fact
+        //
+        // Exactly the failure the old quality suite had, where an agent that
+        // politely declined everything scored 15/15 because the assertion was
+        // `acknowledges_limit_or_escalates`. An assertion that its own negation
+        // satisfies measures nothing.
+        //
+        // So: the slot, and an AFFIRMATIVE — and `mustNotRepeat` carries the
+        // negations, because that is the mechanism this file already has for
+        // "this phrasing is a failure".
+        expect: [/11\s*am/i, /confirmed|is booked|have booked|reserved|all set/i],
+        // Both facts were given. Asking for either again is the failure — and
+        // so is reporting that it could not do the thing, or asking the CUSTOMER
+        // for the business's own showroom address, which is what it did.
+        mustNotRepeat: [
+          /which day|what day/i,
+          /what time would you like|which time slot/i,
+          /could ?n[o']?t (?:book|check|find)/i,
+          /provide the (?:showroom )?address|which (?:showroom|location)/i,
+        ],
       },
     ],
   },

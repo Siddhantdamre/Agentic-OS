@@ -66,8 +66,67 @@ function buildSystemPrompt(input: AgentTaskInput): string {
     `When calling any mcp.darex.* tool that needs org_id or conversation_id, you MUST pass org_id = "${input.orgId}" directly.`,
     `NEVER ask the user for an org_id. NEVER search memory, profile, notes, MCP resources or MCP prompts to find an org_id. If you are about to do that, stop, and instead call the mcp.darex tool with org_id = "${input.orgId}".`,
     `Use the available mcp.darex tools when they help accomplish the user's request. Keep replies professional, warm and natural, and integrate any tool results smoothly.`,
+    ...buildCapabilityLines(input),
   ];
   return lines.join('\n');
+}
+
+/**
+ * WHAT THIS TURN MAY ACTUALLY DO — because being shown a tool is not permission.
+ *
+ * The MCP bridge advertises all 95 tools to every turn. The allowlist is
+ * enforced when a call arrives, and was never VISIBLE to the thing choosing
+ * what to call. So an employee holding `database_query` alone is shown a
+ * calendar tool, reaches for it, is refused, and finds out by failing.
+ *
+ * Measured in the multi-turn suite, and it is not a cosmetic problem:
+ *
+ *   C: I'd like to visit your showroom.
+ *   C: Saturday would suit me.
+ *   C: 11am please.
+ *   A: I couldn't book a showroom viewing for Saturday, 12 September 2026 at
+ *      11am. Please provide the showroom address or let me know if you'd like
+ *      assistance with something else.
+ *
+ * The threading is right — it resolved the date and carried the time across
+ * three turns. Then it asked the CUSTOMER for the business's own showroom
+ * address, because a tool failed and it had no better move. To a customer that
+ * reads as an assistant that does not know where it works.
+ *
+ * Two lines fix the cause rather than the symptom: name the tools this turn
+ * holds, and say what to do when the answer is not reachable. Enforcement below
+ * is unchanged — this makes permission legible to the decision, instead of only
+ * auditable after it.
+ */
+function buildCapabilityLines(input: AgentTaskInput): string[] {
+  const held = (input.toolAllowlist || []).map((t) => String(t || '').trim()).filter(Boolean);
+  const lines: string[] = ['WHAT YOU CAN DO IN THIS CONVERSATION:'];
+
+  if (held.length > 0) {
+    lines.push(
+      `- You may ONLY use these tools: ${held.join(', ')}. Other mcp.darex tools are`
+      + ` advertised to you but WILL be refused — do not attempt them.`
+    );
+  } else {
+    lines.push('- You have no tools for this turn. Answer from the retrieved facts alone.');
+  }
+
+  lines.push(
+    // The rule that matters most to a customer. A business's own details are
+    // the business's to know; asking the customer for them is worse than
+    // admitting the gap, because it also wastes their time.
+    `- NEVER ask the customer for information about ${input.employeeName ? 'this business' : 'the business'}`
+    + ` — its address, hours, prices, policies or availability. If a fact about the`
+    + ` business is not in the retrieved facts and you cannot look it up, say plainly`
+    + ` that you will confirm it and have someone follow up. Do not ask the customer to supply it.`,
+    // And never narrate the mechanism. The gate strips most of this, but the
+    // model should not be producing it in the first place.
+    `- If a tool is unavailable or refused, do NOT describe that to the customer.`
+    + ` Never mention tools, permissions, allowlists, employees being "named", systems,`
+    + ` records or configuration. Say what happens next in business terms.`,
+  );
+
+  return lines;
 }
 
 /**

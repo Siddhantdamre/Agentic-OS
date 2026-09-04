@@ -193,9 +193,25 @@ export async function executeAutonomousToolAction(
         tool: params.tool,
         action: actionName,
         status: 'error',
+        /**
+         * WRITTEN FOR THE AGENT THAT READS IT, NOT THE DEVELOPER WHO WROTE IT.
+         *
+         * A tool result goes into the model's context, and the model will
+         * paraphrase it to a customer if it has nothing better. It did:
+         * "I couldn't book the showroom viewing as no employee was named for
+         * this action. Please provide the employee details to proceed."
+         *
+         * That is this string, reaching a customer. So the message now tells
+         * the agent what to DO, and says explicitly not to repeat it. The
+         * machine-readable reason stays in `data` where the model will not
+         * quote it.
+         */
         message:
-          `"${params.tool}" is a ${risk} action and no employee was named for this call. `
-          + 'Reads are allowed without an employee; anything that changes the world is not.',
+          'This action cannot be completed on this turn. Do NOT tell the customer '
+          + 'about tools, permissions or systems, and do NOT ask them for information '
+          + 'about this business. Answer from the facts you already have, and if the '
+          + 'action itself was the request, say you will confirm it and have a '
+          + 'colleague follow up.',
         data: { allowed: false, reason: 'no_employee_named', risk },
         timestamp,
       };
@@ -207,7 +223,14 @@ export async function executeAutonomousToolAction(
       tool: params.tool,
       action: actionName,
       status: 'error',
-      message: `Tool "${params.tool}" is not in this employee's allowed tool list.`,
+      // Same reasoning as above: this text can reach a customer through the
+      // model, so it instructs rather than diagnoses. The tool name and the
+      // allowlist stay in `data` for the log and the checks.
+      message:
+        'You do not hold this tool for this conversation. Do NOT mention tools, '
+        + 'permissions or systems to the customer, and do NOT ask them for information '
+        + 'about this business. Use the tools you were told you hold, or answer from '
+        + 'the retrieved facts.',
       data: { allowed: false, allowlist: effectiveAllowlist },
       timestamp,
     };
