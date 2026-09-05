@@ -104,6 +104,11 @@ export interface DecisionBrief {
   internalSourceCount: number;
   externalDomainCount: number;
   /**
+   * Which half could not be read, if either. Distinct from that half being
+   * empty — see `BuildBriefInput.degraded`.
+   */
+  unavailable?: { internal?: string; external?: string };
+  /**
    * How old the workspace records behind this brief are. Undefined when the
    * caller did not supply dates — absent, never guessed.
    */
@@ -354,6 +359,28 @@ export function dedupeInternalFacts(facts: InternalFact[]): InternalFact[] {
 
 export interface BuildBriefInput {
   /**
+   * "WE FOUND NOTHING" AND "WE COULD NOT LOOK" ARE DIFFERENT SENTENCES.
+   *
+   * The caller wraps each half in a try/catch and, on failure, carried on with
+   * an empty list:
+   *
+   *   } catch {
+   *     internal = [];
+   *   }
+   *
+   * So a database timeout produced a brief that told the owner "this workspace
+   * holds no data of its own on the question". That is not a degraded answer,
+   * it is a FALSE one — their records may be complete, and they were told their
+   * business knows nothing about its own pricing. Then it advised them to
+   * "upload the relevant records and ask again", which is work they did not need
+   * to do, in response to an outage nobody mentioned.
+   *
+   * Naming the failed side lets the verdict say what actually happened. An
+   * absent value means the side genuinely returned nothing, which is a real
+   * finding and stays worded as one.
+   */
+  degraded?: { internal?: string; external?: string };
+  /**
    * Ages of the workspace records this brief was built from, straight off the
    * retrieval rows. Optional: a caller that cannot supply real dates supplies
    * none, and the brief simply says nothing about freshness rather than
@@ -406,6 +433,10 @@ export function buildDecisionBrief(input: BuildBriefInput): DecisionBrief {
   const external = (input.research?.findings || []).filter((f) => (f.sources || []).length > 0);
 
   // ── 2 & 3 & 4. Pair on subject, detect conflict ───────────────────────────
+  // Named once; both the verdict and the rendered output need them.
+  const deadInternal = input.degraded?.internal;
+  const deadExternal = input.degraded?.external;
+
   const findings: BriefFinding[] = [];
   const conflicts: BriefFinding[] = [];
   const pairedExternal = new Set<ResearchFinding>();
@@ -508,14 +539,28 @@ export function buildDecisionBrief(input: BuildBriefInput): DecisionBrief {
       conflicts,
     };
   } else if (!hasInternal && !hasExternal) {
-    verdict = { kind: 'withheld', reason: 'Nothing was found on either side.', missing: 'both' };
+    verdict = {
+      kind: 'withheld',
+      missing: 'both',
+      reason: (deadInternal || deadExternal)
+        ? `Neither side could be read: ${[deadInternal, deadExternal].filter(Boolean).join('; ')}. `
+          + 'This is not a finding about your business — nothing was searched. Retry, and '
+          + 'if it persists the records are fine and the service is not.'
+        : 'Nothing was found on either side.',
+    };
   } else if (!hasInternal) {
     verdict = {
       kind: 'withheld',
       missing: 'internal',
-      reason: 'The market view is below, but this workspace holds no data of its '
-        + 'own on the question, so no recommendation is made. Upload the relevant '
-        + 'policy or records and ask again.',
+      // Never tell an owner their records are empty when we simply could not
+      // open them, and never send them off to upload data they already have.
+      reason: deadInternal
+        ? `The market view is below. Your own records could NOT BE READ (${deadInternal}), `
+          + 'so no recommendation is made. This says nothing about what your records '
+          + 'contain — they were never searched. Retry before acting on the market half alone.'
+        : 'The market view is below, but this workspace holds no data of its '
+          + 'own on the question, so no recommendation is made. Upload the relevant '
+          + 'policy or records and ask again.',
     };
   } else if (!hasExternal) {
     verdict = {
@@ -562,6 +607,9 @@ export function buildDecisionBrief(input: BuildBriefInput): DecisionBrief {
     // on it. Listed with what research could not establish.
     openQuestions: [...(input.research?.openQuestions || []), ...unitMismatches],
     freshness: buildFreshness(input.internalAsOf),
+    unavailable: (deadInternal || deadExternal)
+      ? { internal: deadInternal, external: deadExternal }
+      : undefined,
     internalSourceCount,
     externalDomainCount,
   };
@@ -633,6 +681,16 @@ export function renderDecisionBrief(brief: DecisionBrief): string {
   out.push('');
   // Directly under the verdict, not in a footnote. Someone who reads only the
   // first four lines of this brief should still know how old the evidence is.
+  // Before anything else. A reader who takes only the first lines must not
+  // walk away thinking a half was empty when it was unreachable.
+  if (brief.unavailable) {
+    const sides: string[] = [];
+    if (brief.unavailable.internal) sides.push(`your own records (${brief.unavailable.internal})`);
+    if (brief.unavailable.external) sides.push(`outside sources (${brief.unavailable.external})`);
+    out.push(`INCOMPLETE — ${sides.join(' and ')} could not be read for this brief. `
+      + 'That is a service problem, not a fact about your business.');
+    out.push('');
+  }
   if (brief.freshness) {
     out.push(brief.freshness.note);
     out.push('');

@@ -373,3 +373,48 @@ test('no dates supplied means the brief claims nothing about freshness', () => {
   });
   assert.equal(brief.freshness, undefined);
 });
+
+test('unreadable records are never reported as empty records', () => {
+  // The caller used to do `catch { internal = []; }`, so a database timeout
+  // produced a brief telling the owner "this workspace holds no data of its
+  // own on the question" — false, and it sent them off to upload records they
+  // already had, in response to an outage nobody mentioned.
+  const research = {
+    findings: [{ claim: 'Market rate is 50000 INR.', subject: 'rate', value: 50000,
+      unit: 'INR', confidence: 'medium', sources: [src('https://x.test/a', 'A')] }],
+    openQuestions: [], sources: [src('https://x.test/a', 'A')],
+  } as unknown as ResearchReport;
+
+  const dead = buildDecisionBrief({
+    question: 'What should we charge?', internal: [], research,
+    degraded: { internal: 'connection timeout' },
+  });
+  assert.equal(dead.verdict.kind, 'withheld');
+  const deadReason = dead.verdict.kind === 'withheld' ? dead.verdict.reason : '';
+  assert.ok(!/holds no data of its own|upload the relevant/i.test(deadReason), deadReason);
+  assert.match(deadReason, /could NOT BE READ/i);
+  assert.equal(dead.unavailable?.internal, 'connection timeout');
+  // And the reader is told before anything else.
+  assert.match(renderDecisionBrief(dead), /INCOMPLETE —/);
+
+  // A side that genuinely returned nothing keeps its original wording: that is
+  // a real finding about the business and must not be softened into an outage.
+  const empty = buildDecisionBrief({ question: 'What should we charge?', internal: [], research });
+  const emptyReason = empty.verdict.kind === 'withheld' ? empty.verdict.reason : '';
+  assert.match(emptyReason, /holds no data of its own/i);
+  assert.equal(empty.unavailable, undefined);
+  assert.ok(!/INCOMPLETE/.test(renderDecisionBrief(empty)));
+});
+
+test('both halves unreadable does not claim nothing was found', () => {
+  const brief = buildDecisionBrief({
+    question: 'q', internal: [], research: null,
+    degraded: { internal: 'db down', external: 'search failed' },
+  });
+  assert.equal(brief.verdict.kind, 'withheld');
+  const reason = brief.verdict.kind === 'withheld' ? brief.verdict.reason : '';
+  assert.ok(!/nothing was found on either side/i.test(reason), reason);
+  // "Neither side could be read" carries its negation in "Neither".
+  assert.match(reason, /neither side could be read/i);
+  assert.match(reason, /nothing was searched/i);
+});

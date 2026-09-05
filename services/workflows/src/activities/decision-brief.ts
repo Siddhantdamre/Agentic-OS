@@ -187,6 +187,8 @@ export async function decisionBriefActivity(
    * creates a way for it to be wrong.
    */
   let internalAsOf: { newest?: string; oldest?: string; stale?: number; total?: number } | undefined;
+  /** Which half failed outright, so the verdict never mistakes it for absence. */
+  const degraded: { internal?: string; external?: string } = {};
   try {
     const memory = await retrieveMemory({ orgId, query: question, tokenBudget: 3000 });
     internal = await extractInternalFacts(orgId, question, formatRetrievedFactsBlock(memory));
@@ -203,8 +205,14 @@ export async function decisionBriefActivity(
         total: (memory.citations || []).length,
       };
     }
-  } catch {
+  } catch (err: unknown) {
+    // Record WHY, rather than degrading into "your business has no data on
+    // this" — which is what an empty list makes the brief say, and which is
+    // false when the truth is that retrieval threw.
     internal = [];
+    degraded.internal = err instanceof Error
+      ? err.message.slice(0, 120)
+      : 'memory retrieval failed';
   }
 
   // ── The world's half ──────────────────────────────────────────────────────
@@ -220,12 +228,21 @@ export async function decisionBriefActivity(
       });
       research = r.report;
       stopReason = r.stopReason;
-    } catch {
+    } catch (err: unknown) {
       research = null;
+      degraded.external = err instanceof Error
+        ? err.message.slice(0, 120)
+        : 'research failed';
     }
   }
 
-  const brief = buildDecisionBrief({ question, internal, research, internalAsOf });
+  const brief = buildDecisionBrief({
+    question,
+    internal,
+    research,
+    internalAsOf,
+    degraded: (degraded.internal || degraded.external) ? degraded : undefined,
+  });
 
   return {
     brief,
