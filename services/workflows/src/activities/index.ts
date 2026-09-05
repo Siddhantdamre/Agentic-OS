@@ -597,6 +597,8 @@ export async function routeEmployeeActivity(params: {
   employeeRole: string;
   employeePersona: string;
   toolAllowlist: string[];
+  businessName?: string;
+  businessType?: string;
   passthrough: boolean;
   destination: 'employee' | 'human' | 'dispatch';
   confidence: number;
@@ -611,6 +613,8 @@ export async function routeEmployeeActivity(params: {
     employeeRole: string;
     employeePersona: string;
     toolAllowlist: string[];
+    businessName?: string;
+    businessType?: string;
     passthrough: boolean;
     destination: 'employee' | 'human' | 'dispatch';
     confidence: number;
@@ -618,6 +622,35 @@ export async function routeEmployeeActivity(params: {
     locked: boolean;
   }>(orgId, key);
   if (cached?.employeeName || cached?.destination) return cached;
+
+  /**
+   * Loaded here rather than in a new activity: this function already opens a
+   * tenant-scoped client for the roster, so the business identity costs one
+   * more query on a connection that is already open, and no extra workflow
+   * step to replay.
+   *
+   * LEFT JOIN, not JOIN. A workspace that never finished the onboarding wizard
+   * still has an org row and still has to answer its customers.
+   */
+  const business = await withOrgClient(orgId, async (client) => {
+    const res = await client.query(
+      `SELECT o.name AS org_name,
+              ob.business_name,
+              ob.business_type
+         FROM orgs o
+         LEFT JOIN org_onboarding ob ON ob.org_id = o.id
+        WHERE o.id = $1
+        LIMIT 1`,
+      [orgId]
+    );
+    const row = res.rows[0] as
+      { org_name?: string; business_name?: string; business_type?: string } | undefined;
+    if (!row) return {};
+    return {
+      businessName: String(row.business_name || row.org_name || '').trim() || undefined,
+      businessType: String(row.business_type || '').trim() || undefined,
+    };
+  });
 
   const roster = await withOrgClient(orgId, async (client) => {
     const res = await client.query(
@@ -657,6 +690,8 @@ export async function routeEmployeeActivity(params: {
     employeeRole: routed.employeeRole || params.employeeRole,
     employeePersona: routed.employeePersona || params.employeePersona,
     toolAllowlist: routed.toolAllowlist.length > 0 ? routed.toolAllowlist : fallbackAllowlist,
+    businessName: business.businessName,
+    businessType: business.businessType,
     passthrough: false,
     destination: routed.destination,
     confidence: routed.confidence,

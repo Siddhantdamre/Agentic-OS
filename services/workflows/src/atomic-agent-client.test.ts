@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert';
-import { sessionModelSuffix } from './atomic-agent-client';
+import { sessionModelSuffix,
+  buildBusinessIdentity,
+} from './atomic-agent-client';
 
 /**
  * THE BUDGET CAP MUST BIND THE BIGGEST CALL THE AGENT MAKES.
@@ -59,4 +61,49 @@ test('the tenant patch can still read the tenant with the suffix present', () =>
   assert.ok(parts.length >= 3);
   assert.strictEqual(parts[1], '11111111-2222-3333-4444-555555555555');
   assert.strictEqual(parts[parts.length - 1], 'm=atomic-agent-deepseek');
+});
+
+test('the agent is told which business it works for, not a UUID', () => {
+  const lines = buildBusinessIdentity({
+    orgId: '00dc55bd-4063-47e2-8aa1-5350202f6863',
+    employeeName: 'Kabir',
+    employeeRole: 'Showing coordinator',
+    employeePersona: 'x',
+    businessName: 'Bright Leaf Interiors',
+    businessType: 'furniture retail',
+    toolAllowlist: [],
+    userMessage: 'hi',
+  } as never).join(' ');
+  assert.match(lines, /Bright Leaf Interiors/);
+  assert.match(lines, /furniture retail/);
+  // The UUID must never be presented as the employer.
+  assert.ok(!lines.includes('00dc55bd'), lines);
+  // Speak AS the business, and never ask the customer for its own details -
+  // the multi-turn suite caught the agent asking a customer for the showroom
+  // address, because it did not know where it worked.
+  assert.match(lines, /Speak as Bright Leaf Interiors/);
+  assert.match(lines, /Never ask a customer for this business/i);
+});
+
+test('an unnamed workspace gets no invented identity', () => {
+  const lines = buildBusinessIdentity({
+    orgId: '00dc55bd-4063-47e2-8aa1-5350202f6863',
+    employeeName: 'Kabir',
+    employeeRole: 'r',
+    employeePersona: 'p',
+    toolAllowlist: [],
+    userMessage: 'hi',
+  } as never).join(' ');
+  assert.match(lines, /on behalf of this business/);
+  assert.ok(!lines.includes('00dc55bd'), lines);
+  assert.ok(!/undefined|null/.test(lines), lines);
+});
+
+test('a named business with no type states the name and skips the type', () => {
+  const lines = buildBusinessIdentity({
+    orgId: 'o', employeeName: 'Sarah', employeeRole: 'r', employeePersona: 'p',
+    businessName: 'Sharma Properties', toolAllowlist: [], userMessage: 'hi',
+  } as never).join(' ');
+  assert.match(lines, /Sharma Properties/);
+  assert.ok(!/ a  business|a undefined/.test(lines), lines);
 });

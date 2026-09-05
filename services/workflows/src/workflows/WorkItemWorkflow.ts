@@ -677,6 +677,11 @@ async function runWorkItem(
     employeeName: routed.employeeName,
     employeeRole: routed.employeeRole,
     employeePersona: routed.employeePersona,
+    // Who the business actually is. Without this the agent's own opening line
+    // called its employer "the DarEX organisation <uuid>", which is why it once
+    // asked a customer for the showroom's address.
+    businessName: routed.businessName,
+    businessType: routed.businessType,
     toolAllowlist: routed.toolAllowlist,
     connectedChannels: input.connectedChannels,
     userMessage: input.userMessage,

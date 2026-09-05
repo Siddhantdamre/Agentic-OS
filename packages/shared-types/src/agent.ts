@@ -16,6 +16,29 @@ export interface AgentTaskInput {
   employeeName: string;
   employeeRole: string;
   employeePersona: string;
+  /**
+   * WHO THE AGENT ACTUALLY WORKS FOR.
+   *
+   * The system prompt's opening line was "an AI employee of the DarEX
+   * organisation ${orgId}" — a UUID. Every agent in every workspace believed it
+   * worked for "the DarEX organisation 00dc55bd-4063-47e2-...", and nothing
+   * anywhere told it the business was a furniture retailer, or an estate agent,
+   * or what it was called.
+   *
+   * The workspace knows all of this: `orgs.name` and `org_onboarding` hold the
+   * business name and type from the setup wizard. It was collected, stored, and
+   * never shown to the thing answering the customers.
+   *
+   * That is the cause behind a symptom already measured in the multi-turn
+   * suite, where the agent asked a CUSTOMER for the business's own showroom
+   * address. It was not being evasive. It genuinely did not know where it
+   * worked.
+   *
+   * Optional on purpose: a workspace that skipped the wizard has no business
+   * type, and the prompt says nothing rather than inventing one.
+   */
+  businessName?: string;
+  businessType?: string;
   toolAllowlist: string[];
   connectedChannels?: string[];
   userMessage: string;

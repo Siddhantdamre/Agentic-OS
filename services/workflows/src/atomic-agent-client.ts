@@ -57,7 +57,7 @@ function sleepMs(ms: number): Promise<void> {
 
 function buildSystemPrompt(input: AgentTaskInput): string {
   const lines = [
-    `You are ${input.employeeName}, an AI employee of the DarEX organisation ${input.orgId}.`,
+    ...buildBusinessIdentity(input),
     `Your role: ${input.employeeRole}`,
     `Your persona: ${input.employeePersona}`,
     `FIXED LEASEHOLD FACTS — these are TRUE and KNOWN, never re-derive them:`,
@@ -70,6 +70,61 @@ function buildSystemPrompt(input: AgentTaskInput): string {
     ...buildCapabilityLines(input),
   ];
   return lines.join('\n');
+}
+
+/**
+ * THE AGENT HAS TO KNOW WHOSE BUSINESS IT IS ANSWERING FOR.
+ *
+ * This line used to read, literally:
+ *
+ *   You are Kabir, an AI employee of the DarEX organisation
+ *   00dc55bd-4063-47e2-8aa1-5350202f6863.
+ *
+ * A UUID. Every agent in every workspace was told its employer was a hex
+ * string. Nothing in the prompt said the business sells furniture, or houses,
+ * or what it is called — even though the onboarding wizard collected exactly
+ * that and `orgs` / `org_onboarding` have held it the whole time.
+ *
+ * It is the cause behind a symptom the multi-turn suite already caught, where
+ * the agent asked a CUSTOMER for the business's own showroom address. That
+ * looked like a tool failure and was partly one, but underneath it the agent
+ * had no idea where it worked, so asking was the only move it had.
+ *
+ * Identity goes FIRST, before role, persona, tools or rules. Everything after
+ * it is interpreted in its light: "our delivery area" and "our Saturday slots"
+ * mean nothing until you know whose they are.
+ *
+ * Degrades honestly. A workspace that skipped the wizard has no business type,
+ * and the line is simply omitted — an invented industry would be worse than an
+ * unstated one, because the agent would confidently answer as the wrong kind of
+ * business.
+ */
+export function buildBusinessIdentity(input: AgentTaskInput): string[] {
+  const name = String(input.businessName || '').trim();
+  const type = String(input.businessType || '').trim();
+
+  if (!name) {
+    // No identity known. Say nothing about the business rather than naming a
+    // UUID at the agent, which taught it that its employer was a hex string.
+    return [`You are ${input.employeeName}, an AI employee answering on behalf of this business.`];
+  }
+
+  const lines = [
+    type
+      ? `You are ${input.employeeName}, and you work for ${name}, a ${type} business. `
+        + `You are answering ${name}'s own customers.`
+      : `You are ${input.employeeName}, and you work for ${name}. `
+        + `You are answering ${name}'s own customers.`,
+    // The rule this identity exists to make possible.
+    `Speak as ${name} — "we", "our showroom", "our delivery area". You are not a `
+    + `third party describing ${name} from the outside.`,
+    // And the failure it was measured to cause.
+    `You are expected to KNOW ${name}'s own details. Never ask a customer for this `
+    + `business's address, opening hours, prices, policies or availability. If such a `
+    + `fact is not in the retrieved facts and you cannot look it up, say you will `
+    + `confirm it and have a colleague follow up.`,
+  ];
+  return lines;
 }
 
 /**
