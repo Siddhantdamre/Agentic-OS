@@ -235,3 +235,23 @@ test('prices and ranges keep their punctuation through the tidy pass', () => {
   const good = 'The 2 BHK is 1,250 sq ft; the 3 BHK is 1,780 sq ft.';
   assert.equal(sanitiseCustomerReply(good).text, good);
 });
+
+test('stripMechanismTalk removes a schema description but keeps the refusal', () => {
+  const leaked =
+    "I don't have access to revenue data for this organisation. The available "
+    + 'database tables are focused on platform operations (organisations, users, '
+    + 'AI employees, automation, usage tracking) rather than financial records '
+    + 'like invoices or revenue.';
+  const { text, removed } = stripMechanismTalk(leaked);
+  assert.ok(removed.length > 0, 'schema sentence should have been removed');
+  assert.ok(!/database/i.test(text), `schema survived: ${text}`);
+  assert.ok(/don't have access/i.test(text), `refusal was lost: ${text}`);
+});
+
+test('the mechanism gate does not eat furniture that happens to be a table', () => {
+  // This tenant sells dining tables. A gate that strips correct answers is
+  // worse than the leak it prevents.
+  const good = 'Our solid oak dining table seats six and is priced at 45,000 rupees.';
+  assert.equal(stripMechanismTalk(good).text, good);
+  assert.equal(sanitiseCustomerReply(good).text, good);
+});

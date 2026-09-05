@@ -535,8 +535,36 @@ const SYSTEMS_CONNECTOR_RE = new RegExp(
   'i',
 );
 
+/**
+ * `\w+\s+table` USED TO BE IN HERE, AND IT ATE THE PRODUCT.
+ *
+ * The clause was meant for a leaked database identifier, as in the canonical
+ * example "I checked the billing_invoices table in your organisation's
+ * database." It matches any word before "table" — so for a FURNITURE RETAILER
+ * it also matched:
+ *
+ *   "Our solid oak dining table seats six and is priced at 45,000 rupees."
+ *
+ * Stripping is sentence-level, so that entire correct answer became the empty
+ * string. Coffee table, console table, side table, dressing table: every one of
+ * them silently deleted, on the tenant whose whole catalogue is furniture.
+ *
+ * The completion suite never caught it because none of the six seeded facts
+ * name a table product — the run was green while the gate was eating answers.
+ * Found by a test written to prove the OPPOSITE point, that a newly added rule
+ * would not do this.
+ *
+ * Now requires a snake_case identifier (`billing_invoices table`), which is
+ * what real table names look like and what furniture never looks like. The
+ * canonical leak is caught twice over anyway, since `\bdatabase\b` below
+ * matches that same sentence.
+ *
+ * The lesson generalises past this one word: a gate that deletes correct
+ * answers is worse than the leak it was added to prevent, because the leak is
+ * visible in a transcript and the deletion is not.
+ */
 const MECHANISM_RE =
-  /\b(?:quer(?:y|ying|ied)(?:\s+\w+)?\s*databases?|quer(?:y|ying|ied)\s+the\s+\w+|the\s+database|our\s+database|channel\s+data|is\s+connected\s+for|only\s+\w+\s+is\s+connected|connected\s+services|connected\s+systems?|available\s+tools|via\s+the\s+\w+\s+tools?|integration\s+(?:is|isn'?t|only\s+supports)|\w+\s+table\b|API\b|endpoint|webhook|sync(?:ed|ing)?\s+from|logged\s+in\s+your\b|in\s+your\s+(?:records|system\s+records)\b|tool\s+call|internal\s+system|memory\s+record|the\s+memory\b|no\s+answer\s+was\s+stored|was\s+(?:asked|stored|logged)\s+(?:yesterday|earlier|before)|which\s+system|what\s+system|which\s+(?:source|record|database)|knowledge\s+base|retrieved\s+facts?|stored\s+memory)/i;
+  /\b(?:quer(?:y|ying|ied)(?:\s+\w+)?\s*databases?|quer(?:y|ying|ied)\s+the\s+\w+|the\s+database|our\s+database|channel\s+data|is\s+connected\s+for|only\s+\w+\s+is\s+connected|connected\s+services|connected\s+systems?|available\s+tools|via\s+the\s+\w+\s+tools?|integration\s+(?:is|isn'?t|only\s+supports)|\w*_\w+\s+table\b|API\b|endpoint|webhook|sync(?:ed|ing)?\s+from|logged\s+in\s+your\b|in\s+your\s+(?:records|system\s+records)\b|tool\s+call|internal\s+system|memory\s+record|the\s+memory\b|no\s+answer\s+was\s+stored|was\s+(?:asked|stored|logged)\s+(?:yesterday|earlier|before)|which\s+system|what\s+system|which\s+(?:source|record|database)|knowledge\s+base|retrieved\s+facts?|stored\s+memory|\bdatabase\b|\bschema\b|\bsql\b|platform\s+operations)/i;
 
 /**
  * Drop sentences that describe how the answer was obtained.
