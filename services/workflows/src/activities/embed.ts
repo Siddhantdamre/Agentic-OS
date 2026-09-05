@@ -547,6 +547,52 @@ export class EmbeddingsUnconfiguredError extends Error {
   }
 }
 
+/**
+ * A VENDOR OUTAGE DEGRADES SEARCH. IT DOES NOT DISCARD THE DOCUMENT.
+ *
+ * Retrieval is hybrid - tsvector keyword AND cosine similarity - and it already
+ * handles a missing vector: `WHEN em.embedding IS NULL THEN 0::float8`, with
+ * the keyword half carrying the query on its own. `org_memory.embedding` is
+ * nullable, 858 of the 1227 rows in this database have no vector, and
+ * `backfill-embeddings.js` exists to fill them in later.
+ *
+ * Every layer was built for this except ingestion, which computed the vectors
+ * BEFORE writing any row. So when the embedding provider was out, the throw
+ * happened first and nothing was stored at all - the customer's uploaded file
+ * simply never became knowledge, on a schema where it could have been keyword
+ * searchable immediately. Measured: uploads failed the gate with "landed in
+ * org_memory — not found within 60s" while Gemini answered
+ *
+ *   429 You exceeded your current quota
+ *
+ * to every embedding call.
+ *
+ * Degrading on ANY embedding failure rather than only on quota exhaustion is
+ * deliberate. The distinction matters for whether to RETRY; it does not matter
+ * for whether to keep the document, and losing it is the worse outcome in
+ * every case.
+ *
+ * NOTE what is deliberately not done here: fall back to a different embedding
+ * provider. Vectors from another model live in a different space and are not
+ * comparable to the ones already indexed, so a "failover tier" would leave
+ * cosine similarity quietly returning nonsense. Chat can fail over between
+ * vendors; an embedding index cannot, unless every row is re-embedded together.
+ */
+async function createEmbeddingsOrDegrade(texts: string[]): Promise<number[][]> {
+  try {
+    return await createEmbeddings(texts);
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.warn(
+      `[embed] storing ${texts.length} row(s) without vectors — search degrades to `
+      + `keyword until backfill-embeddings.js runs: ${redactErrorMessage(message).slice(0, 200)}`
+    );
+    // An empty array is written as SQL NULL by the insert, which is what the
+    // backfill query looks for.
+    return texts.map(() => []);
+  }
+}
+
 async function createEmbeddings(texts: string[]): Promise<number[][]> {
   if (texts.length === 0) return [];
   // Do not attempt a call that cannot succeed — this is what stops an
@@ -847,7 +893,7 @@ async function processLoadedJob(params: {
     return { status: 'skipped', skipReason: 'hash', memoryId: pre.existingId, processed: 1 };
   }
 
-  const [embedding] = await createEmbeddings([redacted.text]);
+  const [embedding] = await createEmbeddingsOrDegrade([redacted.text]);
 
   const memoryId = await withOrgClient(params.orgId, async (client) => {
     const id = await insertMemoryRow(client, {
@@ -1089,7 +1135,7 @@ export async function embedQueuedJobsActivity(params: {
     return last;
   }
 
-  const vectors = await createEmbeddings(stillEmbed.map((job) => job.payload.pendingText));
+  const vectors = await createEmbeddingsOrDegrade(stillEmbed.map((job) => job.payload.pendingText));
 
   for (let i = 0; i < stillEmbed.length; i++) {
     const job = stillEmbed[i];
