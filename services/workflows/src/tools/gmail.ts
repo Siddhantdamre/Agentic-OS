@@ -147,22 +147,79 @@ async function fetchGmailMessageFull(accessToken: string, msgId: string): Promis
   }
 }
 
-async function fetchRealGmailMessagesFull(accessToken: string, count: number = 10): Promise<any[]> {
+/**
+ * AN EMPTY INBOX AND A BROKEN INBOX ARE NOT THE SAME ANSWER.
+ *
+ * This returned `[]` both when Gmail said there were no messages and when the
+ * call failed — an expired token, a 429, Google having a bad morning. Every
+ * caller then built a result that said, in full:
+ *
+ *   status: 'executed'
+ *   message: "Fetched 0 real live emails from connected Gmail account"
+ *
+ * So on an outage the tool reported SUCCESS and zero email, and the agent told
+ * the owner their inbox was empty. That is the worst shape a failure can take:
+ * confident, wrong, and indistinguishable from the truth. An owner who acts on
+ * "you have no new enquiries" loses real business, and nothing anywhere would
+ * ever show that Gmail had been down.
+ *
+ * The failure is now named and carried out. `failure` non-null means we do not
+ * know what is in the inbox; an empty `emails` with `failure: null` means we
+ * looked and it really was empty.
+ */
+interface GmailFetch {
+  emails: any[];
+  /** Non-null when the inbox could not be read. Never set merely because it was empty. */
+  failure: string | null;
+}
+
+async function fetchRealGmailMessagesFull(accessToken: string, count: number = 10): Promise<GmailFetch> {
   try {
     const listRes = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages?maxResults=${count}`, {
       headers: { Authorization: `Bearer ${accessToken}` },
     });
-    if (!listRes.ok) return [];
+    if (!listRes.ok) {
+      // 401/403 is almost always an expired or revoked token, which is
+      // actionable by the owner in a way "Gmail error" is not.
+      const why = listRes.status === 401 || listRes.status === 403
+        ? 'the Gmail connection has expired or been revoked — reconnect it'
+        : `Gmail returned HTTP ${listRes.status}`;
+      return { emails: [], failure: why };
+    }
     const listData = await listRes.json();
     const messageList = listData.messages || [];
     const results = await Promise.all(
       messageList.map(async (m: any) => fetchGmailMessageFull(accessToken, m.id))
     );
-    return results.filter(Boolean);
+    return { emails: results.filter(Boolean), failure: null };
   } catch (err) {
     console.error('Gmail Full Fetch Error:', err);
-    return [];
+    return {
+      emails: [],
+      failure: err instanceof Error ? err.message.slice(0, 120) : 'Gmail could not be reached',
+    };
   }
+}
+
+/**
+ * What the agent is told when the inbox could not be read.
+ *
+ * Written as an instruction, for the same reason the tool-executor refusals
+ * are: a tool result goes into the model's context and gets paraphrased to
+ * whoever asked. It must never become "you have no emails".
+ */
+function gmailUnavailable(action: string, reason: string, timestamp: string) {
+  return {
+    tool: 'gmail',
+    action,
+    status: 'error' as const,
+    message:
+      'The mailbox could not be read, so the number of emails is UNKNOWN — it is not zero. '
+      + 'Do NOT tell anyone their inbox is empty or that they have no new mail. Say the '
+      + 'mailbox could not be checked just now and that you will confirm shortly.',
+    data: { reason, emails: [], inboxUnknown: true },
+    timestamp,
+  };
 }
 
 async function downloadGmailAttachment(accessToken: string, messageId: string, attachmentId: string): Promise<Buffer | null> {
@@ -231,7 +288,9 @@ async function execute(ctx: ToolActionContext) {
 
     if (accessToken) {
       console.log(`[Gmail Tool] Fetching real live emails using OAuth access token for connection ${gmailConnId}...`);
-      const realEmails = await fetchRealGmailMessagesFull(accessToken, count);
+      const fetched = await fetchRealGmailMessagesFull(accessToken, count);
+      if (fetched.failure) return gmailUnavailable('fetch_latest_emails', fetched.failure, timestamp);
+      const realEmails = fetched.emails;
 
       return {
         tool: 'gmail',
@@ -254,7 +313,9 @@ async function execute(ctx: ToolActionContext) {
     const count = payload.count || 10;
     if (accessToken) {
       console.log('[Gmail Tool] Triaging inbox...');
-      const emails = await fetchRealGmailMessagesFull(accessToken, count);
+      const triaged = await fetchRealGmailMessagesFull(accessToken, count);
+      if (triaged.failure) return gmailUnavailable('triage_emails', triaged.failure, timestamp);
+      const emails = triaged.emails;
       const categorized = emails.map((e) => ({ ...e, category: classifyEmail(e) }));
       const summary: Record<string, number> = {};
       for (const em of categorized) summary[em.category] = (summary[em.category] || 0) + 1;
@@ -285,7 +346,9 @@ async function execute(ctx: ToolActionContext) {
     const count = payload.count || 10;
     if (accessToken) {
       console.log('[Gmail Tool] Scanning mail for OTP / verification codes...');
-      const emails = await fetchRealGmailMessagesFull(accessToken, count);
+      const otpFetch = await fetchRealGmailMessagesFull(accessToken, count);
+      if (otpFetch.failure) return gmailUnavailable('extract_otp', otpFetch.failure, timestamp);
+      const emails = otpFetch.emails;
       const found: Array<{ code: string; context: string; from: string; subject: string; date: string; messageId: string }> = [];
       for (const em of emails) {
         for (const hit of extractOtpsFromText(`${em.body}\n${em.subject}`)) {
@@ -310,7 +373,9 @@ async function execute(ctx: ToolActionContext) {
     const count = payload.count || 10;
     if (accessToken) {
       console.log('[Gmail Tool] Locating and parsing attachments...');
-      const emails = await fetchRealGmailMessagesFull(accessToken, count);
+      const attFetch = await fetchRealGmailMessagesFull(accessToken, count);
+      if (attFetch.failure) return gmailUnavailable('find_attachment', attFetch.failure, timestamp);
+      const emails = attFetch.emails;
       const targetSubject = (payload.subject || '').toLowerCase();
       const targetFilename = (payload.filename || '').toLowerCase();
 
