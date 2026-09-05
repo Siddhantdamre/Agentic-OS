@@ -208,7 +208,30 @@ const config = {
     maxImagesPerCall: 3,
   },
   skills: {
-    disabled: [],
+    // EVERY SKILL LOADED IS PROMPT TOKENS PAID ON EVERY TURN.
+    //
+    // 46 skills ship by default and their SKILL.md files total 116,732
+    // characters - roughly 32,000 tokens. A measured agent turn asking
+    // "3 seater sofa price?" sent a prompt of 30,022 tokens, of which the 35
+    // advertised MCP tools accounted for only ~3,600. The skills were the bulk.
+    //
+    // That is paid on every message, it is slower, and it is why turns hit the
+    // provider ceiling: "Prompt tokens limit exceeded: 30022 > 8356".
+    //
+    // Disabled below: skills that cannot apply to a business helpline running
+    // in a Linux container. macOS-only integrations (apple-*), desktop tooling
+    // (obsidian), media and document converters (ffmpeg, imagemagick, pandoc,
+    // pdf, xlsx, audio-transcribe), a weather lookup, and skill-creator, which
+    // exists to author more skills.
+    //
+    // Every business playbook is KEPT - sales-crm, support-tickets, the
+    // gmail/calendar/drive/sheets/docs playbooks, ecommerce, payments and the
+    // three real-estate roles - because those are the work.
+    disabled: [
+      'apple-calendar', 'apple-notes', 'apple-reminders',
+      'audio-transcribe', 'ffmpeg', 'imagemagick', 'pandoc', 'pdf', 'xlsx',
+      'docker', 'obsidian', 'skill-creator', 'wttr-weather', 'currency',
+    ],
     taps: [],
     clawhub: {
       enabled: true,

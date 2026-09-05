@@ -30,6 +30,11 @@ try {
   Client = require(path.join(__dirname, '../../apps/dashboard/node_modules/pg')).Client;
 }
 
+// The canned replies, from the module that defines them — recognised by
+// identity rather than by pattern, so a reworded constant cannot drift
+// away from this check.
+const gate = require(path.join(__dirname, '../../services/workflows/dist/reply-gate.js'));
+
 const BASE = process.env.DASHBOARD_URL || 'http://127.0.0.1:3000';
 const SECRET = process.env.CHATWOOT_WEBHOOK_SECRET || 'darex-chatwoot-webhook-secret-dev';
 /** Agent runs are multi-turn LLM calls; free-tier models are slow. */
@@ -166,14 +171,58 @@ async function main() {
     ? ok('reply passed through the critic/grounding gate')
     : no('reply passed through the critic/grounding gate', kinds.join(',') || 'no events');
 
-  // ── 6. Tenant isolation still holds under agent load ────────────────────
+  /**
+   * ── 6. Tenant isolation still holds under agent load ────────────────────
+   *
+   * Content equality is the right test for a LEAK and the wrong test for a
+   * CANNED REPLY, and the product now has several of the latter.
+   *
+   * This asked whether this reply's exact text appears in any other workspace's
+   * messages. That is a sound leak detector for an answer built from a tenant's
+   * own records — two workspaces cannot independently produce the same sentence
+   * about their own pricing. It is nonsense for a constant. When the model tier
+   * is exhausted every failing turn emits the identical
+   *
+   *   "Sorry — I'm having trouble getting to that right now..."
+   *
+   * so the same string legitimately appears in dozens of workspaces, and the
+   * check reported a tenant isolation breach. That is the most alarming thing
+   * this gate can say, and it was wrong — which is worse than saying nothing,
+   * because an operator who chases it once and finds a false alarm will not
+   * chase it the second time.
+   *
+   * The canned replies are exported constants precisely so they can be
+   * recognised here rather than pattern-matched. They contain no tenant data by
+   * construction: that is why they are safe to send when nothing else can be.
+   *
+   * Real isolation of stored facts is covered separately and thoroughly by
+   * `memory phase 6` and `tenant registry isolation`.
+   */
   console.log('\n6. Isolation');
-  const leak = await db.query(
-    `SELECT COUNT(*)::int AS n FROM messages WHERE org_id <> $1 AND created_at > NOW() - INTERVAL '5 minutes'
-       AND content = $2`,
-    [orgId, assistant ? assistant.content : '___none___']
-  );
-  leak.rows[0].n === 0 ? ok('reply not visible to other tenants') : no('reply not visible to other tenants');
+  const CANNED = new Set([
+    gate.SERVICE_FALLBACK_REPLY,
+    gate.INTERIM_ACK_REPLY,
+    gate.HUMAN_REVIEW_REPLY,
+    gate.PRIVACY_REFUSAL,
+    gate.DISCLOSURE_SAFE_REPLY,
+  ].filter(Boolean).map((t) => String(t).trim()));
+
+  const replyText = assistant ? String(assistant.content || '').trim() : '';
+  if (CANNED.has(replyText)) {
+    ok('reply not visible to other tenants',
+      'skipped — this turn produced a canned reply, which is shared by design and '
+      + 'carries no tenant data. Stored-fact isolation is covered by memory phase 6.');
+  } else {
+    const leak = await db.query(
+      `SELECT COUNT(*)::int AS n FROM messages WHERE org_id <> $1 AND created_at > NOW() - INTERVAL '5 minutes'
+         AND content = $2`,
+      [orgId, replyText || '___none___']
+    );
+    leak.rows[0].n === 0
+      ? ok('reply not visible to other tenants')
+      : no('reply not visible to other tenants',
+        `the same reply text appears in ${leak.rows[0].n} other workspace(s)`);
+  }
 
   // ── 7. Cleanup ──────────────────────────────────────────────────────────
   console.log('\n7. Cleanup');
