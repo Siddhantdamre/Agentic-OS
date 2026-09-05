@@ -37,6 +37,11 @@ const { embedIngestionJobActivity, embedQueuedJobsActivity } = proxyActivities<t
       'InvalidArgumentError',
       'ConfigurationError',
       'EmbeddingDimMismatch',
+      // A spent daily quota will not clear inside five attempts, and each one
+      // costs a request the router has to carry alongside customer replies.
+      // The job is requeued rather than failed, so the sweep picks it up once
+      // the quota resets.
+      'QuotaExhausted',
     ],
   },
 });

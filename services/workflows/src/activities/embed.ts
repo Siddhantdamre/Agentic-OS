@@ -12,6 +12,35 @@ const EMBED_BATCH_SIZE = 64;
 const MAX_EMBED_CHARS = 32000;
 const RETRYABLE_STATUSES = new Set([429, 500, 502, 503, 504]);
 
+/**
+ * A SPENT DAILY QUOTA IS NOT A THROTTLE, AND RETRYING IT IS PURE WASTE.
+ *
+ * Both arrive as HTTP 429, and the difference decides whether backing off is
+ * clever or pointless. A per-minute rate limit clears in seconds. A daily quota
+ * does not clear today, so every retry against it is a request that CANNOT
+ * succeed - and there are three retry layers stacked here: this function's own
+ * loop, Temporal's maximumAttempts of 5, and LiteLLM's internal 2. They
+ * multiply.
+ *
+ * Measured in one 15-minute window with the Gemini embedding quota spent:
+ *
+ *   732 RateLimitError    <- of which 212 name text-embedding-3-small
+ *   275 geminiException
+ *
+ * That traffic is not free. It occupies the same worker and router that
+ * customer replies go through, and agent turns in that window took four
+ * minutes.
+ *
+ * Gemini says "You exceeded your current quota, please check your plan and
+ * billing details" for exhaustion and something else for a throttle, so the
+ * body is the signal. Anything ambiguous stays retryable: a throttle wrongly
+ * treated as exhaustion loses work that a two-second wait would have saved.
+ */
+export function isQuotaExhausted(body: string): boolean {
+  return /exceeded\s+your\s+current\s+quota|check\s+your\s+plan\s+and\s+billing|insufficient[_\s]quota|quota[_\s]exceeded/i
+    .test(body || '');
+}
+
 const pool = new Pool({
   host: process.env.DB_HOST || 'localhost',
   port: parseInt(process.env.DB_PORT || '5432', 10),
@@ -598,6 +627,11 @@ async function embedBatchWithRetry(
 
       const body = await res.text().catch(() => '');
       const err = new Error(`LiteLLM embeddings HTTP ${res.status}: ${body.slice(0, 300)}`);
+      // Checked BEFORE the retryable-status test, because 429 is in that set
+      // and an exhausted quota is the one 429 that will not clear by waiting.
+      if (res.status === 429 && isQuotaExhausted(body)) {
+        throw ApplicationFailure.nonRetryable(err.message, 'QuotaExhausted');
+      }
       if (!RETRYABLE_STATUSES.has(res.status) || attempt >= maxRetries) {
         if (res.status === 401 || res.status === 403) {
           throw ApplicationFailure.nonRetryable(err.message, 'AuthorizationError');
@@ -914,12 +948,21 @@ export async function embedIngestionJobActivity(params: {
     });
   } catch (err: unknown) {
     const message = redactErrorMessage(err instanceof Error ? err.message : String(err));
+    /**
+     * A VENDOR'S DAILY QUOTA MUST NOT PERMANENTLY DELETE A CUSTOMER'S DOCUMENT.
+     *
+     * Marking the job `failed` takes it out of the queued sweep for good, so a
+     * file uploaded on the day the embedding quota ran out would never be
+     * searchable - and nothing would say so. Requeued instead, which is what
+     * `embedQueuedJobsActivity` exists to drain once the quota resets.
+     */
+    const requeue = isQuotaExhausted(message);
     await withOrgClient(params.orgId, (client) =>
       markJob(client, {
         orgId: params.orgId,
         jobId: params.jobId,
         sourceId: loaded.sourceRow!.id,
-        state: 'failed',
+        state: requeue ? 'queued' : 'failed',
         error: message,
       })
     );
@@ -1089,12 +1132,15 @@ export async function embedQueuedJobsActivity(params: {
       last = { status: 'embedded', memoryId, processed };
     } catch (err: unknown) {
       const message = redactErrorMessage(err instanceof Error ? err.message : String(err));
+      // Same reasoning as the single-job path: a spent quota requeues, it does
+      // not discard the document.
+      const requeue = isQuotaExhausted(message);
       await withOrgClient(params.orgId, (client) =>
         markJob(client, {
           orgId: params.orgId,
           jobId: job.jobId,
           sourceId: job.sourceId,
-          state: 'failed',
+          state: requeue ? 'queued' : 'failed',
           error: message,
         })
       );
