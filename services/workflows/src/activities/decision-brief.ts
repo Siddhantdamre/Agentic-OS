@@ -173,9 +173,36 @@ export async function decisionBriefActivity(
 
   // ── The workspace's own half ───────────────────────────────────────────────
   let internal: InternalFact[] = [];
+  /**
+   * The ages of the records this brief rests on.
+   *
+   * Retrieval has always returned `updatedAt` and a `stale` flag on every
+   * citation, and nothing carried them any further. So a brief compared a price
+   * list uploaded eighteen months ago against a figure scraped this morning,
+   * presented both undated, and reported the gap as a market finding — when the
+   * gap may simply have been the eighteen months.
+   *
+   * Taken straight off the citations rather than asked of the model: a date is
+   * a fact the database already knows, and inviting an LLM to restate it only
+   * creates a way for it to be wrong.
+   */
+  let internalAsOf: { newest?: string; oldest?: string; stale?: number; total?: number } | undefined;
   try {
     const memory = await retrieveMemory({ orgId, query: question, tokenBudget: 3000 });
     internal = await extractInternalFacts(orgId, question, formatRetrievedFactsBlock(memory));
+
+    const dates = (memory.citations || [])
+      .map((c) => String(c.updatedAt || ''))
+      .filter((d) => d && !Number.isNaN(new Date(d).getTime()))
+      .sort();
+    if ((memory.citations || []).length > 0) {
+      internalAsOf = {
+        newest: dates[dates.length - 1],
+        oldest: dates[0],
+        stale: (memory.citations || []).filter((c) => c.stale).length,
+        total: (memory.citations || []).length,
+      };
+    }
   } catch {
     internal = [];
   }
@@ -198,7 +225,7 @@ export async function decisionBriefActivity(
     }
   }
 
-  const brief = buildDecisionBrief({ question, internal, research });
+  const brief = buildDecisionBrief({ question, internal, research, internalAsOf });
 
   return {
     brief,

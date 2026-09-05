@@ -1,6 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert';
 import {
+  canonicalUnit,
+  sameUnit,
+  toBase,
   buildDecisionBrief,
   renderDecisionBrief,
   materiallyDiffers,
@@ -303,4 +306,70 @@ test('deduping runs inside the brief, so four rows are one finding', () => {
   });
   assert.equal(brief.findings.filter((f) => f.basis === 'internal').length, 1,
     'one fact, however many rows hold it');
+});
+
+test('a percent is never compared against a currency', () => {
+  // Before: rendered as "your records say 2 percent, the market says 150000
+  // percent" - a number nobody wrote, in a unit nobody used, shown to an owner
+  // as a disagreement to act on.
+  const brief = buildDecisionBrief({
+    question: 'What should our commission be?',
+    internal: [{ claim: 'Our commission is 2 percent.', source: 'policy.pdf', subject: 'commission', value: 2, unit: 'percent' }],
+    research: {
+      findings: [{ claim: 'Market fee is 150000 INR.', subject: 'commission', value: 150000, unit: 'INR', confidence: 'medium', sources: [src('https://x.test/a', 'A')] }],
+      openQuestions: [], sources: [src('https://x.test/a', 'A')],
+    } as unknown as ResearchReport,
+  });
+  assert.equal(brief.findings.filter((f) => f.basis === 'conflict').length, 0);
+  assert.ok(!JSON.stringify(brief).includes('150000 percent'));
+  // Not silently dropped either - the reader is told they were not compared.
+  assert.ok(brief.openQuestions.some((q) => /NOT compared/i.test(q)), JSON.stringify(brief.openQuestions));
+});
+
+test('lakh and rupees are the same money', () => {
+  const brief = buildDecisionBrief({
+    question: 'Is our booking amount right?',
+    internal: [{ claim: 'Booking is Rs 51,000.', source: 'terms.pdf', subject: 'booking amount', value: 51000, unit: 'INR' }],
+    research: {
+      findings: [{ claim: 'Typical booking 0.51 lakh.', subject: 'booking amount', value: 0.51, unit: 'lakh', confidence: 'medium', sources: [src('https://x.test/b', 'B')] }],
+      openQuestions: [], sources: [src('https://x.test/b', 'B')],
+    } as unknown as ResearchReport,
+  });
+  assert.ok(brief.findings.some((f) => f.basis === 'both'), JSON.stringify(brief.findings.map((f) => f.basis)));
+});
+
+test('unit canonicalisation and scale conversion', () => {
+  assert.equal(canonicalUnit('Rs').unit, 'inr');
+  assert.equal(canonicalUnit('%').unit, 'percent');
+  assert.equal(canonicalUnit('sq ft').unit, 'sqft');
+  assert.equal(toBase(0.51, 'lakh'), 51000);
+  assert.equal(toBase(2, 'crore'), 2e7);
+  // An unlabelled figure cannot prove a mismatch, so it stays comparable.
+  assert.equal(sameUnit('INR', undefined), true);
+  assert.equal(sameUnit('percent', 'INR'), false);
+  assert.equal(sameUnit('lakh', 'INR'), true);
+});
+
+test('the brief tells the reader how old its own records are', () => {
+  const stale = new Date(Date.now() - 400 * 86400000).toISOString();
+  const brief = buildDecisionBrief({
+    question: 'Are our prices competitive?',
+    internal: [{ claim: 'List price is 45000.', source: 'pricelist.pdf' }],
+    internalAsOf: { newest: stale, oldest: stale, stale: 1, total: 1 },
+    research: null,
+  });
+  assert.ok(brief.freshness, 'freshness missing');
+  assert.match(brief.freshness!.note, /months ago/);
+  // And it must be visible near the top, not buried at the end.
+  const head = renderDecisionBrief(brief).slice(0, 400);
+  assert.match(head, /months ago/);
+});
+
+test('no dates supplied means the brief claims nothing about freshness', () => {
+  const brief = buildDecisionBrief({
+    question: 'Are our prices competitive?',
+    internal: [{ claim: 'List price is 45000.', source: 'pricelist.pdf' }],
+    research: null,
+  });
+  assert.equal(brief.freshness, undefined);
 });

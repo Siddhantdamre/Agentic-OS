@@ -6,9 +6,28 @@
 # File: infra/litellm/config.yaml
 
 model_list:
+  # OUTPUT CEILING — RESERVED BUDGET IS CHARGED BEFORE IT IS SPENT.
+  #
+  # The vendored agent asks for max_tokens 8192 on every call. OpenRouter checks
+  # affordability against the RESERVED amount, not the amount actually used, and
+  # refused outright:
+  #
+  #   "This request requires more credits, or fewer max_tokens. You requested up
+  #    to 8192 tokens, but can only afford 4445."
+  #
+  # So a turn that would have produced a two-sentence reply was rejected for a
+  # budget it was never going to spend, and the chain fell through to the free
+  # tier and then to Groq, both of which were also out. The visible symptom was
+  # "Sorry - I'm having trouble getting to that right now."
+  #
+  # 2048 is above every explicit maxTokens in this codebase - the largest is
+  # 1400, for a research report - and far above a customer reply, which is two
+  # or three sentences by policy. Nothing legitimate is truncated by it, and
+  # requests stop being rejected for headroom they do not need.
   - model_name: atomic-agent
     litellm_params:
       model: openrouter/deepseek/deepseek-chat
+      max_tokens: 2048
       api_key: os.environ/OPENROUTER_API_KEY
     model_info:
       mode: chat
@@ -26,6 +45,7 @@ model_list:
   - model_name: atomic-agent-fallback
     litellm_params:
       model: openrouter/openai/gpt-4o-mini
+      max_tokens: 2048
       api_key: os.environ/OPENROUTER_API_KEY
     model_info:
       mode: chat
