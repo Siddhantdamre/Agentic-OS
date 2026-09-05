@@ -66,9 +66,82 @@ function buildSystemPrompt(input: AgentTaskInput): string {
     `When calling any mcp.darex.* tool that needs org_id or conversation_id, you MUST pass org_id = "${input.orgId}" directly.`,
     `NEVER ask the user for an org_id. NEVER search memory, profile, notes, MCP resources or MCP prompts to find an org_id. If you are about to do that, stop, and instead call the mcp.darex tool with org_id = "${input.orgId}".`,
     `Use the available mcp.darex tools when they help accomplish the user's request. Keep replies professional, warm and natural, and integrate any tool results smoothly.`,
+    ...buildOutputStandard(),
     ...buildCapabilityLines(input),
   ];
   return lines.join('\n');
+}
+
+/**
+ * WHAT AN OUTSTANDING REPLY LOOKS LIKE — WHICH NOBODY HAD EVER TOLD THE AGENT.
+ *
+ * The whole of this prompt's guidance on quality was one line: "Keep replies
+ * professional, warm and natural." Three adjectives. Meanwhile
+ * `infra/scripts/quality-rules.js` scores every reply against ten specific,
+ * mechanical rules, and every agent persona in `packs/manifests.ts` is a list
+ * of prohibitions - six roles, six variants of "never invent X", not one word
+ * about what a good answer contains.
+ *
+ * So the standard existed only in the marking scheme. The agent was graded
+ * against rules it had never been shown, and corrected after the fact by a gate
+ * that strips and rewrites. That is a strange way to run anything: the model is
+ * perfectly capable of writing "₹2,500" instead of "2500 rupees" if told once.
+ *
+ * It also explains a failure mode prohibitions alone guarantee. An agent told
+ * only what not to say optimises toward saying little - safe, vague, empty -
+ * which is exactly the GAVE UP column the completion suite counts, where the
+ * data was present and the agent declined anyway. A floor with no ceiling
+ * produces answers that clear the floor.
+ *
+ * Each line below corresponds to a rule in quality-rules.js by name, and
+ * `check-output-standard.js` fails the build if a rule is ever added there
+ * without being taught here. The marking scheme and the instructions cannot
+ * drift apart again.
+ */
+function buildOutputStandard(): string[] {
+  return [
+    'YOUR OUTPUT STANDARD — an outstanding reply, not merely an acceptable one:',
+    // answer_first
+    '- Lead with the answer. No "I\'d be happy to help", no restating the question.'
+    + ' The first sentence carries the fact they asked for.',
+    // The positive counterpart to "never invent": vagueness is not safety.
+    '- Be SPECIFIC. Give the actual number, date, name or duration from the records.'
+    + ' "We deliver quickly" is a worse answer than "3 to 5 working days" and is not'
+    + ' safer. If the records hold the figure, state it.',
+    // no_hedging
+    '- Never hedge a figure you retrieved exactly. Write "₹2,500", never'
+    + ' "approximately ₹2,500" - hedging a number you are sure of makes every other'
+    + ' number you give look uncertain.',
+    // money_symbol + money_separators
+    '- Money always carries its symbol and thousands separators: "₹2,500", never'
+    + ' "2500 rupees" and never "₹2500". A bare number is not a price.'
+    + ' Every other quantity carries its unit too - days, weeks, sq ft, percent.',
+    // Completeness. Measured as the multi_fact case.
+    '- Answer EVERY part of what was asked. Two questions get two answers.',
+    // The thing that separates serving from answering.
+    '- Carry the next step. After the fact, say what happens now or offer the'
+    + ' obvious next action - "shall I hold 11am for you?" - so they never have to'
+    + ' ask a second time to make progress.',
+    // concise + plain_text
+    '- Two or three sentences. This is a chat message, not a document: no bullet'
+    + ' points, no markdown, no headings - they render as literal characters.',
+    // not_truncated
+    '- Finish your sentences. A reply cut off mid-thought reads as a crash.',
+    // no_internal_terms + no_internal_ids. Also enforced by the reply gate, but
+    // the gate STRIPS - which can leave a customer with less than they asked
+    // for. Better not to write it.
+    '- Do NOT mention tools, permissions, systems, databases, tables, connectors or '
+    + 'configuration, and never quote an internal id or reference code. The customer '
+    + 'does not know we have any of those, and being told reads as the assistant '
+    + 'thinking aloud about its own plumbing.',
+    // no_placeholder_text
+    '- Never ship a placeholder. If you would write [name] or [date], you do not have '
+    + 'the fact - say what you are confirming instead.',
+    // The GAVE UP column, stated as a positive duty.
+    '- If the records answer PART of the question, give that part and say plainly'
+    + ' what you are confirming separately. A partial answer with a clear next step'
+    + ' beats a refusal every time.',
+  ];
 }
 
 /**

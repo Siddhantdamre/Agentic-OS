@@ -421,6 +421,14 @@ const SUITES = [
     needsDocker: true,
   },
   {
+    name: 'output standard',
+    what: 'the agent is taught the standard it is marked against — the harness '
+      + 'scored ten quality rules the system prompt never mentioned, and every '
+      + 'persona was a list of prohibitions with no definition of a good answer',
+    cmd: [process.execPath, [path.join(__dirname, 'check-output-standard.js')]],
+    needsDocker: false,
+  },
+  {
     name: 'never silent',
     what: 'a customer who was told "I will have an answer shortly" always gets '
       + 'something — a child agent that THREW sent a service apology, but one '

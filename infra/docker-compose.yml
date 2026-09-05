@@ -595,13 +595,28 @@ services:
       # `environment` wins over env_file. Runtime role is darex_app (WS-02);
       # migrations still use superuser darex on postgres:5432.
       # App traffic goes through pgbouncer (session pool, I4).
-      # Connectors with no OAuth app registered in this deployment. Their
-      # tools can only ever answer notConnected, so advertising them costs
-      # prompt tokens and worse tool selection for nothing - and pushes the
-      # request past Groq's hard cap of 128 tools, which is what stopped the
-      # only provider still holding capacity from serving any agent turn.
-      # Unset this to advertise every tool again; nothing is deleted.
-      - MCP_DISABLED_MODULES=${MCP_DISABLED_MODULES:-slack,hubspot,github,stripe,notion,shopify,zendesk,intercom,meta-ads,salesforce,zoho-crm,quickbooks,twilio,razorpay,microsoft-outlook,microsoft-calendar,docusign,leegality}
+      # ADVERTISE ONLY WHAT SOME EMPLOYEE CAN ACTUALLY USE.
+      #
+      # The bridge defines 45 tool modules. The union of every seeded pack's
+      # toolAllowlist is ELEVEN, and duties add three more (file_ops, razorpay,
+      # web_extract). Everything else is advertised to a model that is not
+      # permitted to call it and, for the unconfigured connectors, could only
+      # ever receive notConnected if it did.
+      #
+      # The cost is not theoretical. Every tool ships its full JSON schema in
+      # the prompt of EVERY turn, and the prompt reached:
+      #
+      #   402 "Prompt tokens limit exceeded: 30368 > 16800"
+      #
+      # Thirty thousand tokens to answer "is there parking?". That is paid on
+      # every message, it is slower, and a model choosing among 50 tools it
+      # mostly cannot use chooses worse than one shown the handful it holds.
+      #
+      # Kept: the pack allowlists, the duty tools, and deep_research. Nothing is
+      # deleted - definitions, declarations and execution paths are untouched,
+      # so re-enabling a connector is one environment variable and a restart.
+      # A workspace that connects Slack adds slack here and it returns.
+      - MCP_DISABLED_MODULES=${MCP_DISABLED_MODULES:-code_execution,docusign,github,google-ads,google-analytics,google-business-profile,google-chat,google-cloud,google-contacts,google-forms,google-meet,google-search-console,google-slides,google-tasks,intercom,leegality,maps,meta-ads,microsoft-calendar,microsoft-outlook,notion,quickbooks,rera,salesforce,shopify,slack,stripe,twilio,zendesk,zoho-crm}
       - DB_HOST=pgbouncer
       - DB_PORT=5432
       - DB_USER=${APP_DB_USER:-darex_app}
@@ -656,6 +671,25 @@ services:
       - OPENROUTER_MODEL=${ATOMIC_AGENT_OPENROUTER_MODEL:-deepseek/deepseek-v4-flash-0731}
       - LITELLM_BASE_URL=http://litellm:4000/v1
       - LITELLM_MODEL=atomic-agent
+      # OUTPUT CEILING FOR EVERY MODEL CALL THE AGENT MAKES.
+      #
+      # dist/llm/provider/openai/openai-build-body.js line 51:
+      #   max_tokens: filtered.maxTokens ?? getConfig().localModels.completionMaxTokens
+      #
+      # Despite the localModels name that default governs REMOTE calls too, and it
+      # is 8192. So every customer reply reserved 8192 output tokens, and OpenRouter
+      # charges against the RESERVED amount rather than the amount used:
+      #
+      #   402 "You requested up to 8192 tokens, but can only afford 4340"
+      #
+      # A two-sentence reply was refused for budget it was never going to spend,
+      # then fell through the chain to tiers that were also out. Capping it at the
+      # router did nothing: litellm treats litellm_params.max_tokens as a DEFAULT,
+      # and an explicit 8192 in the request wins. It has to be fixed at the source.
+      #
+      # 2048 is above every explicit maxTokens in this codebase (largest is 1400)
+      # and far above a customer reply, which is two or three sentences by policy.
+      - ATOMIC_AGENT_LLAMA_MAX_TOKENS=${ATOMIC_AGENT_LLAMA_MAX_TOKENS:-2048}
       - ATOMIC_AGENT_ACTIVE_PROVIDER=${ATOMIC_AGENT_ACTIVE_PROVIDER:-darex-litellm}
     env_file:
       - path: ../.env
