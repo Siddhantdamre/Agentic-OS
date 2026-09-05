@@ -189,32 +189,44 @@ router_settings:
   # zero-cost floor falls through to the OTHER zero-cost tier — different
   # provider, separate balance — and stops there.
   #
-  # ORDERED SO THE FIRST FAILOVER CROSSES PROVIDERS.
+  # GROQ CANNOT SERVE AN AGENT TURN, SO IT STAYS AT THE BOTTOM.
   #
-  # The chain was four deep and one provider wide. Tiers 1, 2 and 3 all route
-  # through OpenRouter, so when OpenRouter's upstream had trouble, three of the
-  # four tiers shared the failure. Measured, reliability run 1:
+  # This chain is four deep and one provider wide - tiers 1, 2 and 3 all route
+  # through OpenRouter - so a single upstream problem takes out three of the
+  # four. Measured:
   #
   #   OpenrouterException - Upstream error from Nvidia: Service temporarily
   #   overloaded, {'error_type': 'provider_unavailable'}
   #   Received Model Group=atomic-agent-deepseek
   #
-  # Depth is not redundancy when every link has the same single point of
-  # failure. Groq now sits directly under tier 1, which makes the first hop a
-  # different company on different hardware.
+  # The obvious fix is to put Groq directly under tier 1: same model
+  # (openai/gpt-oss-120b, served direct instead of through OpenRouter), 1s
+  # against tier 1's 10s, zero cost, different company. That was tried, and it
+  # does not work, for a reason no plain-chat probe can see:
   #
-  # It costs nothing to do this and it is not a downgrade. Tier 1 is
-  # `openai/gpt-oss-120b` THROUGH OpenRouter; the Groq tier is the SAME MODEL
-  # served directly. So the first failover keeps the model identical, changes
-  # only the provider, and measured 1s against tier 1's 10s at zero cost.
+  #   GroqException - {'tools' : maximum number of items is 128}
   #
-  # The OpenRouter tiers stay beneath it rather than being removed: if Groq is
-  # the side that is down, the chain still has somewhere to go.
+  # Groq caps a request at 128 tools. The MCP bridge advertises 95 mcp.darex
+  # tools and the agent adds its own on top, so every AGENT turn is over the
+  # line while every plain chat call sails through. Promoting Groq would put a
+  # guaranteed 400 in front of the tiers that actually work - the same "costs a
+  # round trip and buys nothing" property that got tier 4 deleted.
+  #
+  # So Groq stays last, where it is a real floor for the non-tool calls the
+  # product makes (critic, reviser, writeback, briefs) and never intercepts a
+  # tool-calling turn.
+  #
+  # THE REAL FIX IS UPSTREAM OF THE ROUTER: advertise only the tools the turn is
+  # allowed to use. The allowlist already exists and is already enforced at
+  # execution; the bridge just does not use it to filter what it advertises. An
+  # employee typically holds a handful of tools, not 95. That would cut prompt
+  # tokens, improve tool selection, and drop under Groq's limit as a side
+  # effect - at which point this ordering should be revisited.
   fallbacks:
     - atomic-agent:
-        - atomic-agent-groq
         - atomic-agent-fallback
         - atomic-agent-deepseek
+        - atomic-agent-groq
     # Zero-cost floor → zero-cost floor. Never onto a paid tier: that would bill
     # exactly the workspace the budget gate was protecting the account from.
     - atomic-agent-deepseek:
