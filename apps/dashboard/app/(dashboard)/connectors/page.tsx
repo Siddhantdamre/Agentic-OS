@@ -301,7 +301,7 @@ export default function ConnectorsPage() {
         <div className="bg-cream-200/70 border border-cream-300 p-5 rounded-2xl space-y-2 shadow-sm">
           <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">OAuth Gateway</span>
           <div className="text-3xl font-bold text-heading">Port 3003</div>
-          <span className="text-xs text-emerald-600 font-medium">Nango Live Server</span>
+          <span className="text-xs text-emerald-600 font-medium">Connection service</span>
         </div>
 
         <div className="bg-cream-200/70 border border-cream-300 p-5 rounded-2xl space-y-2 shadow-sm">

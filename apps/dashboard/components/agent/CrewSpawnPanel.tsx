@@ -117,7 +117,7 @@ export const CrewSpawnPanel: React.FC = () => {
             </span>
             {result.reason && <span className="text-slate-500">— {result.reason}</span>}
             {result.usedTemporal && (
-              <span className="text-[10px] font-bold text-emerald-700">Temporal</span>
+              <span className="text-[10px] font-bold text-emerald-700">Durable</span>
             )}
           </div>
 

@@ -517,7 +517,7 @@ export default function ConnectorDetailPage() {
             <div className="flex items-center justify-between border-b border-cream-200 pb-3">
               <div className="flex items-center space-x-2">
                 <Terminal className="w-4 h-4 text-amber-700" />
-                <h3 className="font-bold text-heading text-sm">Execute `@darex/connectors` Proxy Function</h3>
+                <h3 className="font-bold text-heading text-sm">Try an action</h3>
               </div>
               <span className="text-[10px] font-mono bg-cream-200 text-amber-800 font-bold px-2 py-0.5 rounded">
                 Live Nango Execution
@@ -582,7 +582,7 @@ export default function ConnectorDetailPage() {
             </div>
 
             <div className="p-4 bg-cream-100 border border-cream-300 rounded-2xl text-xs text-slate-600 space-y-1">
-              <span className="font-bold text-heading block">Idempotent Temporal Activity</span>
+              <span className="font-bold text-heading block">Safe to run more than once</span>
               <p className="text-[11px] leading-relaxed">
                 When an AI employee calls this connector during a customer conversation workflow, the call is wrapped in a retry-safe Temporal Activity with RLS tenant context.
               </p>
@@ -595,7 +595,7 @@ export default function ConnectorDetailPage() {
       {activeTab === 'specs' && (
         <div className="bg-white border border-cream-300 rounded-3xl p-8 space-y-6 shadow-sm">
           <div className="space-y-1">
-            <h3 className="text-lg font-bold text-heading">Nango Tenant Isolation Credentials</h3>
+            <h3 className="text-lg font-bold text-heading">Credentials for this workspace</h3>
             <p className="text-xs text-slate-500">
               Connection tokens are stored in self-hosted Nango database schema and isolated per tenant org.
             </p>
@@ -603,7 +603,7 @@ export default function ConnectorDetailPage() {
 
           <div className="grid grid-cols-2 gap-6">
             <div className="p-5 bg-cream-50 border border-cream-300 rounded-2xl space-y-2">
-              <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider block">Nango Provider Key</span>
+              <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider block">Provider key</span>
               <code className="text-sm font-bold font-mono text-amber-800 bg-cream-200 px-2 py-1 rounded">{display.nangoKey}</code>
             </div>
 
@@ -644,14 +644,17 @@ export default function ConnectorDetailPage() {
       {activeTab === 'webhooks' && (
         <div className="bg-white border border-cream-300 rounded-3xl p-8 space-y-6 shadow-sm">
           <div className="space-y-1">
-            <h3 className="text-lg font-bold text-heading">Webhook Ingestion Endpoint</h3>
+            <h3 className="text-lg font-bold text-heading">Webhook URL</h3>
             <p className="text-xs text-slate-500">
               Inbound webhooks from {display.name} are ingested into Postgres <code className="font-mono text-amber-800">channel_logs</code> and processed under &lt;500ms.
             </p>
           </div>
 
           <div className="p-4 bg-slate-950 text-slate-200 rounded-2xl font-mono text-xs flex items-center justify-between border border-slate-800">
-            <span>http://localhost:3000/api/integrations/webhooks</span>
+            {/* The URL the user must paste into their provider. Hardcoding
+                localhost printed a dead address on every deployment that is
+                not a developer laptop - and this field exists to be copied. */}
+            <span>{(typeof window !== 'undefined' ? window.location.origin : '')}/api/integrations/webhooks</span>
             <span className="text-emerald-400 font-bold">POST Listener</span>
           </div>
 

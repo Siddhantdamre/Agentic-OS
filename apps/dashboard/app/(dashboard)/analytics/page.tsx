@@ -105,7 +105,7 @@ export default function AnalyticsPage() {
         </div>
 
         <div className="bg-cream-200/70 border border-cream-300 p-5 rounded-2xl space-y-2 shadow-sm">
-          <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">CSAT (proxy)</span>
+          <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">CSAT (estimated)</span>
           <div className="text-3xl font-bold text-amber-600">{loading || !metrics ? '—' : metrics.csatScore}</div>
           <span className="text-xs text-slate-500 font-medium">Resolved conversations mapped to a 5-point scale — not a survey</span>
         </div>

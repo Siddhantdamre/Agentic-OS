@@ -118,7 +118,7 @@ export default function InsightPage() {
             <div className="bg-white border border-cream-300 rounded-2xl p-4">
               <p className="text-[11px] font-bold uppercase tracking-wider text-slate-500">Weekly LLM cost</p>
               <p className="text-2xl font-serif font-bold text-heading mt-1">${weeklyCost.toFixed(4)}</p>
-              <p className="text-xs text-slate-500 mt-1">From Langfuse traces for this org. Failed/notConnected actions are not counted as success.</p>
+              <p className="text-xs text-slate-500 mt-1">From this workspace’s own activity. Failed/notConnected actions are not counted as success.</p>
             </div>
           )}
           {confirmReject?.highRejectFlag && (

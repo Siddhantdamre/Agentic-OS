@@ -421,6 +421,14 @@ const SUITES = [
     needsDocker: true,
   },
   {
+    name: 'ui vocabulary',
+    what: "the owner's screen is not our architecture diagram — the login page "
+      + 'announced "Postgres RLS", the integrations page named our OAuth broker '
+      + 'nine times, and a webhook field printed localhost on every deployment',
+    cmd: [process.execPath, [path.join(__dirname, 'check-ui-vocabulary.js')]],
+    needsDocker: false,
+  },
+  {
     name: 'output standard',
     what: 'the agent is taught the standard it is marked against — the harness '
       + 'scored ten quality rules the system prompt never mentioned, and every '

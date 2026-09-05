@@ -72,7 +72,7 @@ export default function AuthLayout({
           {/* Footer Badge */}
           <div className="flex items-center gap-2 text-[11px] text-emerald-500 font-mono pt-2 border-t border-emerald-950">
             <CheckCircle className="w-3.5 h-3.5 text-emerald-400" />
-            <span>Phase 3 Ready • Postgres RLS • Self-Hosted Stack</span>
+            <span>Secure • Private to your business</span>
           </div>
         </div>
 
