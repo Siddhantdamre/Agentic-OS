@@ -595,6 +595,13 @@ services:
       # `environment` wins over env_file. Runtime role is darex_app (WS-02);
       # migrations still use superuser darex on postgres:5432.
       # App traffic goes through pgbouncer (session pool, I4).
+      # Connectors with no OAuth app registered in this deployment. Their
+      # tools can only ever answer notConnected, so advertising them costs
+      # prompt tokens and worse tool selection for nothing - and pushes the
+      # request past Groq's hard cap of 128 tools, which is what stopped the
+      # only provider still holding capacity from serving any agent turn.
+      # Unset this to advertise every tool again; nothing is deleted.
+      - MCP_DISABLED_MODULES=${MCP_DISABLED_MODULES:-slack,hubspot,github,stripe,notion,shopify,zendesk,intercom,meta-ads,salesforce,zoho-crm,quickbooks,twilio,razorpay,microsoft-outlook,microsoft-calendar,docusign,leegality}
       - DB_HOST=pgbouncer
       - DB_PORT=5432
       - DB_USER=${APP_DB_USER:-darex_app}

@@ -997,13 +997,61 @@ const TOOLS: ToolDef[] = [
   },
 ];
 
+/**
+ * A TOOL FOR A CONNECTOR NOBODY CONFIGURED IS WORSE THAN NO TOOL.
+ *
+ * The bridge advertises all 95 mcp.darex tools to every turn regardless of
+ * whether the connector behind them exists in this deployment. Most cannot do
+ * anything: with no OAuth app registered for Slack, HubSpot, GitHub, Stripe,
+ * Notion, Shopify, Zendesk, Intercom or Meta, every one of those tools can only
+ * ever answer `notConnected`. They are pure cost - prompt tokens on every call,
+ * and worse tool selection, because the model reaches for them.
+ *
+ * They also cost the failover chain. Groq caps a request at 128 tools:
+ *
+ *   GroqException - {'tools' : maximum number of items is 128}
+ *
+ * 95 advertised tools plus the agent's own built-ins clears that line, so the
+ * ONE provider still holding capacity could not serve a single agent turn. It
+ * answers plain chat instantly and rejects every tool-calling request, which is
+ * why a direct probe made it look healthy. Measured with every other provider
+ * exhausted - both OpenRouter keys out of funds ("Rate limit exceeded:
+ * free-models-per-day", 402 "This request requires more credits"), DeepSeek
+ * direct at zero balance, Gemini's embedding quota spent - Groq was the only
+ * way to answer anything, and this limit was the only thing in the way.
+ *
+ * Configuration, not code: the default is empty, so a deployment that sets
+ * nothing advertises exactly what it advertised before. Nothing is deleted -
+ * the tool definitions, their declarations and their execution paths are
+ * untouched, so re-enabling a connector is one environment variable and a
+ * restart, with no rebuild.
+ */
+const DISABLED_MODULES = new Set(
+  (process.env.MCP_DISABLED_MODULES || '')
+    .split(',')
+    .map((m) => m.trim().toLowerCase())
+    .filter(Boolean)
+);
+
+const ADVERTISED_TOOLS = DISABLED_MODULES.size
+  ? TOOLS.filter((t) => !DISABLED_MODULES.has(String(t.tool || '').toLowerCase()))
+  : TOOLS;
+
+if (DISABLED_MODULES.size) {
+  console.log(
+    `[atomic-bridge] advertising ${ADVERTISED_TOOLS.length} of ${TOOLS.length} tools — `
+    + `${TOOLS.length - ADVERTISED_TOOLS.length} hidden for unconfigured connector(s): `
+    + `${[...DISABLED_MODULES].sort().join(', ')}`
+  );
+}
+
 function createServer(): McpServer {
   const server = new McpServer({
     name: 'darex',
     version: '0.1.0',
   });
 
-  for (const toolDef of TOOLS) {
+  for (const toolDef of ADVERTISED_TOOLS) {
     const { name, description, schema, tool, action } = toolDef;
     server.registerTool(name, {
       description,
@@ -1107,7 +1155,13 @@ const httpServer = http.createServer(async (req, res) => {
 
   if (req.method === 'GET' && (url.pathname === '/health' || url.pathname === '/')) {
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ ok: true, server: 'darex', tools: TOOLS.length, sse: SSE_ENDPOINT }));
+    res.end(JSON.stringify({
+      ok: true,
+      server: 'darex',
+      tools: ADVERTISED_TOOLS.length,
+      toolsDefined: TOOLS.length,
+      sse: SSE_ENDPOINT,
+    }));
     return;
   }
 
@@ -1142,7 +1196,7 @@ const httpServer = http.createServer(async (req, res) => {
 
 httpServer.listen(PORT, '0.0.0.0', () => {
   console.log(
-    `[atomic-bridge] MCP SSE server 'darex' listening on http://0.0.0.0:${PORT}${SSE_ENDPOINT} (${TOOLS.length} mcp.darex.* tools)`
+    `[atomic-bridge] MCP SSE server 'darex' listening on http://0.0.0.0:${PORT}${SSE_ENDPOINT} (${ADVERTISED_TOOLS.length} of ${TOOLS.length} mcp.darex.* tools)`
   );
 });
 

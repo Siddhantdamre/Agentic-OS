@@ -222,6 +222,59 @@ router_settings:
   # employee typically holds a handful of tools, not 95. That would cut prompt
   # tokens, improve tool selection, and drop under Groq's limit as a side
   # effect - at which point this ordering should be revisited.
+  #
+  # UPDATE - GROQ IS FIRST NOW, BECAUSE THE REASON IT COULD NOT BE IS FIXED.
+  #
+  # The note above says Groq cannot serve an agent turn because 95 advertised
+  # tools plus the agent's built-ins clear its cap of 128. That was true. The
+  # bridge now hides tools for connectors this deployment has never configured
+  # (MCP_DISABLED_MODULES), advertising 50 of 95, and the error is gone:
+  #
+  #   before   25 x "'tools' : maximum number of items is 128"
+  #   after     0
+  #
+  # So the cross-provider argument stands on its own again, and it is now the
+  # only argument that matters: BOTH OpenRouter keys are out of funds. Key one
+  # hit its 2 dollar cap; key two has an empty account balance and falls back to
+  # free models whose daily quota is also spent -
+  #
+  #   429 "Rate limit exceeded: free-models-per-day. Add 10 credits to unlock"
+  #   402 "This request requires more credits"
+  #
+  # Leaving Groq last meant every turn walked three dead OpenRouter tiers, with
+  # two retries each, before reaching the one provider that could answer - and
+  # spent its time budget getting there. Measured: 70.8s, then the service
+  # fallback.
+  #
+  # The OpenRouter tiers stay beneath it rather than being deleted: they are
+  # one payment away from working, and if Groq is the side that is down the
+  # chain still has somewhere to go.
+  # FINAL ANSWER ON THE ORDER, WITH THE NUMBER THAT SETTLES IT.
+  #
+  # Groq was promoted once the tool cap was fixed, and that was still wrong -
+  # for a different limit that only shows up once you get past the first:
+  #
+  #   Request too large for `openai/gpt-oss-120b`, service tier `on_demand`
+  #   tokens per minute (TPM): Limit 8000, Requested 24256
+  #
+  # Groq's free tier allows 8,000 tokens per minute. An agent turn here is
+  # 24,000-26,000: system prompt, retrieved memory, conversation, and the tool
+  # schemas. Three times over, and trimming cannot close it - removing EVERY
+  # tool still leaves more than 8,000. The free tier cannot run this agent at
+  # all, so Groq goes back to last, where it serves the small non-tool calls
+  # and never intercepts a turn.
+  #
+  # This is the honest state of the whole chain, all four measured:
+  #
+  #   atomic-agent / fallback / deepseek   OpenRouter, both keys out of funds
+  #                                        (2 dollar cap hit; second account
+  #                                        empty, free-model daily quota spent)
+  #   groq                                 8,000 TPM against a 24,000 request
+  #
+  # No ordering fixes an empty account. Roughly 10 dollars of OpenRouter credit
+  # restores tiers 1-3 immediately and unlocks 1000 free requests a day; Groq's
+  # Dev tier raises the TPM if it is ever wanted as a real tier rather than a
+  # floor. The code is not the thing that is missing.
   fallbacks:
     - atomic-agent:
         - atomic-agent-fallback
