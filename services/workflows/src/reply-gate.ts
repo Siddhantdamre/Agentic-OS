@@ -531,6 +531,10 @@ const SYSTEMS_CONNECTOR_RE = new RegExp(
     '\\bconnect(?:ing|ed)?\\s+(?:a|an|the|your)?\\s*\\w*\\s*connectors?\\b',
     // "connectors like Gmail", "connectors are connected"
     '\\bconnectors?\\s+(?:like|such\\s+as|are\\s+connected|is\\s+connected|configured|available)\\b',
+    // "just let me know which connector to use" - asking a furniture buyer
+    // to pick one of OUR integrations. They do not know we have any.
+    '\\b(?:which|what)\\s+connectors?\\b',
+    '\\blet\\s+me\\s+know\\s+which\\s+\\w+\\s+to\\s+use\\b',
   ].join('|'),
   'i',
 );
@@ -564,7 +568,7 @@ const SYSTEMS_CONNECTOR_RE = new RegExp(
  * visible in a transcript and the deletion is not.
  */
 const MECHANISM_RE =
-  /\b(?:quer(?:y|ying|ied)(?:\s+\w+)?\s*databases?|quer(?:y|ying|ied)\s+the\s+\w+|the\s+database|our\s+database|channel\s+data|is\s+connected\s+for|only\s+\w+\s+is\s+connected|connected\s+services|connected\s+systems?|available\s+tools|via\s+the\s+\w+\s+tools?|integration\s+(?:is|isn'?t|only\s+supports)|\w*_\w+\s+table\b|API\b|endpoint|webhook|sync(?:ed|ing)?\s+from|logged\s+in\s+your\b|in\s+your\s+(?:records|system\s+records)\b|tool\s+call|internal\s+system|memory\s+record|the\s+memory\b|no\s+answer\s+was\s+stored|was\s+(?:asked|stored|logged)\s+(?:yesterday|earlier|before)|which\s+system|what\s+system|which\s+(?:source|record|database)|knowledge\s+base|retrieved\s+facts?|stored\s+memory|\bdatabase\b|\bschema\b|\bsql\b|platform\s+operations)/i;
+  /\b(?:quer(?:y|ying|ied)(?:\s+\w+)?\s*databases?|quer(?:y|ying|ied)\s+the\s+\w+|the\s+database|our\s+database|channel\s+data|is\s+connected\s+for|only\s+\w+\s+is\s+connected|connected\s+services|connected\s+systems?|available\s+tools|via\s+the\s+\w+\s+tools?|integration\s+(?:is|isn'?t|only\s+supports)|\w*_\w+\s+table\b|API\b|endpoint|webhook|sync(?:ed|ing)?\s+from|logged\s+in\s+your\b|in\s+your\s+(?:records|system\s+records)\b|tool\s+call|internal\s+system|memory\s+record|the\s+memory\b|no\s+answer\s+was\s+stored|was\s+(?:asked|stored|logged)\s+(?:yesterday|earlier|before)|which\s+system|what\s+system|which\s+(?:source|record|database)|knowledge\s+base|retrieved\s+facts?|stored\s+memory|\bdatabase\b|\bschema\b|\bsql\b|platform\s+operations|financial\s+tables?)/i;
 
 /**
  * Drop sentences that describe how the answer was obtained.
@@ -586,7 +590,37 @@ export function stripMechanismTalk(reply: string): { text: string; removed: stri
   }
   if (!removed.length) return { text: original, removed: [] };
 
-  const text = kept.join(' ').replace(/\s{2,}/g, ' ').trim();
+  /**
+   * STRIPPING A SENTENCE CAN CUT INSIDE A PARENTHESIS.
+   *
+   * Sentences are split on . ! ?, so a parenthetical spanning a boundary is
+   * split with it. Remove the opening half and the closing bracket is left
+   * stranded at the front of the next kept fragment. Measured, shipped to a
+   * customer:
+   *
+   *   "I don't have access to revenue data for your organisation. ) but no
+   *    invoices, orders, or financial tables that would hold revenue figures."
+   *
+   * That leading ") but" is worse than the leak the strip was preventing: a
+   * customer cannot tell it from the product being broken. So a kept fragment
+   * drops any bracket it does not open, and a fragment left with no letters at
+   * all is not a sentence and is discarded.
+   */
+  const repaired = kept
+    .map((k) => {
+      let t = k;
+      // Drop closing brackets with no opener in this fragment.
+      for (const [open, close] of [['(', ')'], ['[', ']'], ['{', '}']]) {
+        while (t.split(close).length - 1 > t.split(open).length - 1) {
+          t = t.replace(close, '');
+        }
+      }
+      // A fragment that starts mid-clause after the cut reads as debris.
+      return t.replace(/^[\s,;:.)\]}\-]+/, '').trim();
+    })
+    .filter((k) => /[A-Za-z\u0900-\u097F]/.test(k));
+
+  const text = repaired.join(' ').replace(/\s{2,}/g, ' ').replace(/\s+([.,;:!?])/g, '$1').trim();
   return { text, removed };
 }
 

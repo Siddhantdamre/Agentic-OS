@@ -255,3 +255,24 @@ test('the mechanism gate does not eat furniture that happens to be a table', () 
   assert.equal(stripMechanismTalk(good).text, good);
   assert.equal(sanitiseCustomerReply(good).text, good);
 });
+
+test('a strip that cuts inside a parenthesis never ships the orphaned bracket', () => {
+  // Shipped to a customer verbatim before this was fixed:
+  //   "...for your organisation. ) but no invoices, orders, or financial
+  //    tables that would hold revenue figures."
+  // A leading ") but" is worse than the leak: it reads as a broken product.
+  const leaked =
+    "I don't have access to revenue data for your organisation. I can see the org "
+    + 'tables (organisations, users) but no invoices, orders, or financial tables '
+    + 'that would hold revenue figures. If you have revenue data in another system, '
+    + 'just let me know which connector to use.';
+  const out = stripMechanismTalk(sanitiseCustomerReply(leaked).text).text;
+  assert.ok(!/(^|\s)[)\]}]/.test(out), `orphaned bracket shipped: ${out}`);
+  assert.ok(!/which connector/i.test(out), `connector ask survived: ${out}`);
+  assert.ok(/don't have access/i.test(out), `the refusal was lost: ${out}`);
+});
+
+test('legitimate parentheses in a correct answer are left alone', () => {
+  const good = 'Delivery is free within the city (up to 15 km). Beyond that a charge of 1,200 rupees applies.';
+  assert.equal(stripMechanismTalk(good).text, good);
+});
