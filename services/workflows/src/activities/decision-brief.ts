@@ -236,6 +236,24 @@ export async function decisionBriefActivity(
     }
   }
 
+  /**
+   * A SEARCH THAT RAN OUT OF BUDGET DID NOT FINISH LOOKING.
+   *
+   * deep-research fails soft and names why it stopped, which is right. But the
+   * reason was only ever recorded in the result metadata, never handed to the
+   * brief - so a run cut short at the spend limit with nothing found produced
+   * the same verdict as a search that genuinely looked and found nothing:
+   * "the market gave nothing".
+   *
+   * Only 'budget' qualifies. 'answered', 'exhausted' and 'no-progress' all mean
+   * the search DID happen and came back empty-handed, which is a real finding
+   * about the market and must keep its plain wording.
+   */
+  if (!degraded.external && stopReason === 'budget'
+      && (research?.findings?.length ?? 0) === 0) {
+    degraded.external = 'research stopped at the spend limit before it finished looking';
+  }
+
   const brief = buildDecisionBrief({
     question,
     internal,
