@@ -497,6 +497,22 @@ export function buildDecisionBrief(input: BuildBriefInput): DecisionBrief {
     }
   }
 
+  /**
+   * Internal-versus-internal, before the one-sided pass below.
+   *
+   * Ordered first deliberately: a fact that contradicts another of the
+   * workspace's own records must not also be reported as a plain one-sided
+   * finding, or the same number appears twice in one brief with two different
+   * meanings.
+   */
+  const internalConflicts = detectInternalConflicts(internal, tolerance);
+  for (const c of internalConflicts) {
+    findings.push(c);
+    conflicts.push(c);
+  }
+  const inInternalConflict = new Set<string>();
+  for (const c of internalConflicts) for (const src of c.internalSources) inInternalConflict.add(src);
+
   // ── 5. Unpaired: reported as one-sided, never promoted ────────────────────
   for (const int of internal) {
     if (pairedInternal.has(int)) continue;
@@ -629,6 +645,84 @@ const BASIS_LABEL: Record<EvidenceBasis, string> = {
  * after one paragraph must not come away with a recommendation the evidence
  * does not support, and people do stop after one paragraph.
  */
+/**
+ * A BUSINESS'S OWN RECORDS CONTRADICTING EACH OTHER IS THE COMMONEST CASE,
+ * AND IT WAS THE ONE CASE NOT DETECTED.
+ *
+ * Conflict detection compared INTERNAL against EXTERNAL only. So when a
+ * workspace held a January policy handbook saying installation takes 7-10 days
+ * and a March price list saying 3-4, the brief reported them as two unrelated
+ * facts, side by side, with no indication that they cannot both be true:
+ *
+ *   [YOUR RECORDS ONLY] Interior installation normally takes 7 to 10 working days.
+ *   [YOUR RECORDS ONLY] Installation is completed in 3 to 4 working days.
+ *
+ * A reader skimming that takes whichever they saw first. An agent quoting from
+ * it promises a customer four days on a ten-day job, and the business finds out
+ * when the customer is standing in an unfinished kitchen.
+ *
+ * Internal disagreement is more common than internal-versus-market, not less:
+ * every business has a policy PDF, a website, a price list and a sales email
+ * that were last reconciled at different times. It is also the easier case to
+ * ACT on, because both sides belong to the owner — they can simply decide which
+ * governs, which is exactly what the brief should ask them to do.
+ *
+ * Treated identically to a market conflict: both figures shown, both sources
+ * named, no recommendation, never averaged. The one addition is that each side
+ * names its document, because "which of my own files is right" is unanswerable
+ * without knowing which files they were.
+ */
+export function detectInternalConflicts(
+  facts: InternalFact[],
+  tolerance = 0.15
+): BriefFinding[] {
+  const bySubject = new Map<string, InternalFact[]>();
+  for (const f of facts) {
+    if (!comparable(f)) continue;
+    const key = normSubject(f.subject);
+    if (!key) continue;
+    const list = bySubject.get(key) || [];
+    list.push(f);
+    bySubject.set(key, list);
+  }
+
+  const out: BriefFinding[] = [];
+  for (const [, group] of bySubject) {
+    if (group.length < 2) continue;
+    // Compare each pair once. Groups are tiny — a subject with more than a
+    // handful of figures is a data problem of its own, and reporting every
+    // pair is more honest than picking a representative.
+    for (let i = 0; i < group.length; i += 1) {
+      for (let j = i + 1; j < group.length; j += 1) {
+        const a = group[i];
+        const b = group[j];
+        // Same rule as the market comparison: units that cannot be reconciled
+        // are not a disagreement, they are not a comparison at all.
+        if (!sameUnit(a.unit, b.unit)) continue;
+        if (!materiallyDiffers(
+          toBase(a.value as number, a.unit),
+          toBase(b.value as number, b.unit),
+          tolerance
+        )) continue;
+
+        out.push({
+          claim: `${a.subject}: your own records disagree — `
+            + `${a.source} says ${renderQuantity(a.value as number, a.unit)}, `
+            + `${b.source} says ${renderQuantity(b.value as number, b.unit)}.`,
+          basis: 'conflict',
+          confidence: 'internal_disagreement',
+          caveat: 'Both of these are your own records, so no outside source can settle it. '
+            + 'Decide which document governs and correct the other — until then an agent '
+            + 'answering this question will be right only by luck.',
+          internalSources: [a.source, b.source],
+          externalSources: [],
+        });
+      }
+    }
+  }
+  return out;
+}
+
 /** Turn raw retrieval dates into something a non-technical reader can act on. */
 function buildFreshness(
   asOf: BuildBriefInput['internalAsOf']

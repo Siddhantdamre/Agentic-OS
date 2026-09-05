@@ -81,12 +81,41 @@ function shortSource(raw: unknown): string {
  * figures verbatim or omit them, and every claim must name the source it came
  * from.
  */
+/**
+ * RETURNING [] FOR A FAILED EXTRACTION MADE THE BRIEF CONTRADICT ITSELF.
+ *
+ * This returned an empty list for two completely different situations: the
+ * records genuinely contain no facts about the question, and the extraction
+ * call did not work. The caller could not tell them apart, so a failed model
+ * call produced this — from a real run, both lines in the same brief:
+ *
+ *   NO RECOMMENDATION — Nothing was found on either side.
+ *   Based on 4 of your records, most recently updated today.
+ *
+ * Four records were retrieved and the brief said nothing was found. The
+ * freshness line is what gives it away, and without that line nobody would
+ * ever have noticed: the owner is simply told their business holds no
+ * information about its own installation lead time.
+ *
+ * `failure` is the distinction. Non-null means we could not read what the
+ * records say; an empty `facts` with `failure: null` means we read them and
+ * they were silent on the question, which is a real answer.
+ */
+interface ExtractedFacts {
+  facts: InternalFact[];
+  /** Non-null when extraction could not be completed. Never set merely because nothing matched. */
+  failure: string | null;
+}
+
 async function extractInternalFacts(
   orgId: string,
   question: string,
   factsBlock: string
-): Promise<InternalFact[]> {
-  if (!factsBlock.trim() || /no stored memory/i.test(factsBlock)) return [];
+): Promise<ExtractedFacts> {
+  // Genuinely nothing to read. Not a failure.
+  if (!factsBlock.trim() || /no stored memory/i.test(factsBlock)) {
+    return { facts: [], failure: null };
+  }
 
   const system = [
     'You convert a business\'s OWN records into structured claims for a decision brief.',
@@ -122,18 +151,24 @@ async function extractInternalFacts(
     ],
   });
 
-  if (out.error || !out.content) return [];
+  // The model call itself did not work. That is not "the records say nothing".
+  if (out.error || !out.content) {
+    return { facts: [], failure: out.error ? String(out.error).slice(0, 120) : 'no response from the model' };
+  }
 
   let parsed: unknown;
   try {
     const m = /\{[\s\S]*\}/.exec(out.content);
     parsed = m ? JSON.parse(m[0]) : null;
   } catch {
-    return [];
+    // Unparseable output is a failure to read, not an empty set of records.
+    return { facts: [], failure: 'the extraction step returned output that could not be parsed' };
   }
 
   const raw = (parsed as { facts?: unknown })?.facts;
-  if (!Array.isArray(raw)) return [];
+  if (!Array.isArray(raw)) {
+    return { facts: [], failure: 'the extraction step returned no usable facts array' };
+  }
 
   const facts: InternalFact[] = [];
   for (const r of raw) {
@@ -154,7 +189,9 @@ async function extractInternalFacts(
     }
     facts.push(fact);
   }
-  return facts;
+  // Read successfully. An empty list here genuinely means the records were
+  // silent on the question.
+  return { facts, failure: null };
 }
 
 /**
@@ -191,7 +228,11 @@ export async function decisionBriefActivity(
   const degraded: { internal?: string; external?: string } = {};
   try {
     const memory = await retrieveMemory({ orgId, query: question, tokenBudget: 3000 });
-    internal = await extractInternalFacts(orgId, question, formatRetrievedFactsBlock(memory));
+    const extracted = await extractInternalFacts(orgId, question, formatRetrievedFactsBlock(memory));
+    internal = extracted.facts;
+    // Retrieval worked and extraction did not: the records were never read, so
+    // the verdict must not claim they are empty.
+    if (extracted.failure) degraded.internal = extracted.failure;
 
     const dates = (memory.citations || [])
       .map((c) => String(c.updatedAt || ''))

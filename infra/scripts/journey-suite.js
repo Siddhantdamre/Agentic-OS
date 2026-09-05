@@ -283,6 +283,9 @@ async function makeTenant() {
   if (!body.orgId) throw new Error(`register failed: HTTP ${res.status}`);
 
   const token = `orgsecret-${stamp}`;
+  // RLS refuses every tenant-scoped write until the tenant is named. `false`
+  // rather than `true`: this is a session-wide seed, not one transaction.
+  await db.query(`SELECT set_config('app.current_org_id', $1, false)`, [body.orgId]);
   await db.query(
     `UPDATE orgs SET name='Bright Leaf Interiors',
        meta = COALESCE(meta,'{}'::jsonb) || jsonb_build_object('webhook_secret',$2::text)

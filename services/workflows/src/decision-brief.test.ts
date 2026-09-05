@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert';
 import {
+  detectInternalConflicts,
   canonicalUnit,
   sameUnit,
   toBase,
@@ -417,4 +418,49 @@ test('both halves unreadable does not claim nothing was found', () => {
   // "Neither side could be read" carries its negation in "Neither".
   assert.match(reason, /neither side could be read/i);
   assert.match(reason, /nothing was searched/i);
+});
+
+test("a business's own records contradicting each other is a conflict", () => {
+  // The commonest real case and the one that was not detected: conflict
+  // detection compared internal against EXTERNAL only, so a January policy
+  // handbook and a March price list disagreeing were reported as two
+  // unrelated facts side by side, with nothing saying they cannot both be
+  // true. An agent quoting from that promises four days on a ten-day job.
+  const brief = buildDecisionBrief({
+    question: 'How long does installation take?',
+    research: null,
+    internal: [
+      { claim: 'Installation takes 7 to 10 working days.', source: 'policy-handbook-january.pdf',
+        subject: 'installation lead time', value: 8.5, unit: 'days' },
+      { claim: 'Installation is completed in 3 to 4 working days.', source: 'price-list-march.xlsx',
+        subject: 'installation lead time', value: 3.5, unit: 'days' },
+    ],
+  });
+  assert.equal(brief.verdict.kind, 'conflict');
+  const c = brief.findings.find((f) => f.basis === 'conflict');
+  assert.ok(c, 'no conflict finding');
+  // Both documents must be named — "which of my own files is right" is
+  // unanswerable without knowing which files they were.
+  assert.deepEqual(c!.internalSources.sort(),
+    ['policy-handbook-january.pdf', 'price-list-march.xlsx']);
+  assert.match(c!.claim, /8\.5 days/);
+  assert.match(c!.claim, /3\.5 days/);
+});
+
+test('own records that agree are not reported as a conflict', () => {
+  const findings = detectInternalConflicts([
+    { claim: 'Delivery 3 to 5 days.', source: 'a.pdf', subject: 'delivery time', value: 4, unit: 'days' },
+    { claim: 'Delivery about 4 days.', source: 'b.pdf', subject: 'delivery time', value: 4.2, unit: 'days' },
+  ]);
+  assert.equal(findings.length, 0);
+});
+
+test('own records in different units are not compared', () => {
+  // A radius in km and a charge in rupees share a subject label and measure
+  // nothing in common. Same rule as the market comparison.
+  const findings = detectInternalConflicts([
+    { claim: 'Radius 15 km.', source: 'a.pdf', subject: 'delivery radius', value: 15, unit: 'km' },
+    { claim: 'Charge 1200 rupees.', source: 'b.pdf', subject: 'delivery radius', value: 1200, unit: 'INR' },
+  ]);
+  assert.equal(findings.length, 0);
 });
