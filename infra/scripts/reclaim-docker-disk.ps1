@@ -59,12 +59,40 @@ Write-Host ""
 # Build cache and unused images only. `volume prune` is deliberately NOT here:
 # that is where the database lives.
 Write-Host "  [1/4] pruning build cache and unused images (no volumes)..." -ForegroundColor Cyan
-try {
-  docker builder prune -a -f    2>&1 | Select-Object -Last 1
-  docker image prune -a -f      2>&1 | Select-Object -Last 1
-  docker container prune -f     2>&1 | Select-Object -Last 1
-} catch {
-  Write-Host "        docker was not responding; continuing to the compaction step anyway."
+
+# A BOUNDED CHECK, BECAUSE THE DOCKER CLI DOES NOT TIME OUT.
+#
+# The first version wrapped the prune calls in try/catch, which is useless
+# here: with the daemon stopped, `docker builder prune` does not fail, it
+# HANGS - and a hang is not an exception, so the catch never fires. Run
+# elevated after Docker had already been stopped, the script sat on that line
+# for over ten minutes and never reached the compaction it exists to perform.
+#
+# `docker version` in a job with a hard timeout answers the only question that
+# matters - is anything listening - and can be abandoned if it hangs too.
+$daemonUp = $false
+$probe = Start-Job { docker version --format '{{.Server.Version}}' 2>$null }
+if (Wait-Job $probe -Timeout 20) {
+  $ver = Receive-Job $probe -ErrorAction SilentlyContinue
+  if ($ver) { $daemonUp = $true }
+}
+Remove-Job $probe -Force -ErrorAction SilentlyContinue
+
+if ($daemonUp) {
+  foreach ($args in @(
+    @('builder','prune','-a','-f'),
+    @('image','prune','-a','-f'),
+    @('container','prune','-f')
+  )) {
+    $j = Start-Job -ArgumentList (,$args) { param($a) & docker @a 2>&1 }
+    if (Wait-Job $j -Timeout 300) { Receive-Job $j | Select-Object -Last 1 }
+    else { Write-Host "        $($args[0]) prune took too long; moving on." }
+    Remove-Job $j -Force -ErrorAction SilentlyContinue
+  }
+} else {
+  Write-Host "        Docker is not running, so there is nothing to prune from"
+  Write-Host "        inside. Compaction below still reclaims everything already"
+  Write-Host "        freed, which is the part that needs Administrator."
 }
 
 # ── 2. Stop Docker and the WSL VM that holds the disk open ───────────────────
