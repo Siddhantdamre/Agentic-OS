@@ -23,3 +23,34 @@
 ::-webkit-scrollbar-thumb:hover {
   background: #CBD5E1;
 }
+
+/* Keyboard focus.
+ *
+ * 39 places set `outline-none` without putting anything back, so a keyboard
+ * user tabbing through the dashboard could not see where they were. That is
+ * not a styling nit: without a visible focus ring the app is unusable without
+ * a mouse, which locks out motor-impaired users and anyone on keyboard-only
+ * navigation.
+ *
+ * One rule here rather than 39 edits. `:focus-visible` fires for keyboard
+ * focus and not for mouse clicks, so this restores keyboard affordance
+ * without putting a ring around every clicked button. Declared last so it
+ * wins over the utility classes that cleared it.
+ */
+:where(a, button, input, select, textarea, summary, [tabindex]):focus-visible {
+  outline: 2px solid #B45309;
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* Respect a user's reduced-motion setting. Vestibular disorders make large
+ * transitions genuinely painful; this is an OS-level preference the browser
+ * already knows, so honouring it costs nothing. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

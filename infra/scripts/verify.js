@@ -437,6 +437,14 @@ const SUITES = [
     needsDocker: false,
   },
   {
+    name: 'accessibility floor',
+    what: 'the dashboard is usable without a mouse — 39 components cleared the '
+      + 'focus outline with outline-none and put nothing back, so a keyboard '
+      + 'user could not see where they were on the page',
+    cmd: [process.execPath, [path.join(__dirname, 'check-accessibility.js')]],
+    needsDocker: false,
+  },
+  {
     name: 'never silent',
     what: 'a customer who was told "I will have an answer shortly" always gets '
       + 'something — a child agent that THREW sent a service apology, but one '
