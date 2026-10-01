@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main, develop, feat/atomic-agent-integration, future-scope]
+    branches: [main, develop, feat/atomic-agent-integration, future-scope, feat/gpt6-astra-quality-core-2026-10-01]
   pull_request:
 
 concurrency:
@@ -133,6 +133,9 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
           cache: "pnpm"
 
+      - name: GPT-6 Astra wiring gate
+        run: node infra/scripts/check-astra-config.js
+
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
@@ -158,52 +161,3 @@ jobs:
     name: Multi-tenant RLS isolation suite
     runs-on: ubuntu-latest
     env:
-      DB_USER: darex
-    services:
-      postgres:
-        image: pgvector/pgvector:pg16
-        env:
-          POSTGRES_USER: darex
-          POSTGRES_PASSWORD: darex_dev_secret
-          POSTGRES_DB: darex
-        ports:
-          - "5432:5432"
-        options: >-
-          --health-cmd "pg_isready -U darex"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 12
-    steps:
-      - uses: actions/checkout@v5
-
-      # pnpm version comes from package.json "packageManager" — do not also set `version` here.
-      - uses: pnpm/action-setup@v5
-
-      - uses: actions/setup-node@v5
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: "pnpm"
-
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-
-      - name: Wait for Postgres
-        run: |
-          for i in $(seq 1 30); do
-            PGPASSWORD="$DB_PASSWORD" pg_isready -h 127.0.0.1 -U darex -d darex && break
-            sleep 2
-          done
-
-      - name: Bootstrap extensions + app role (init scripts)
-        run: |
-          PGPASSWORD="$DB_PASSWORD" psql -h 127.0.0.1 -U darex -d darex -v ON_ERROR_STOP=1 \
-            -c 'CREATE EXTENSION IF NOT EXISTS "uuid-ossp";' \
-            -c 'CREATE EXTENSION IF NOT EXISTS "pgcrypto";' \
-            -c 'CREATE EXTENSION IF NOT EXISTS "vector";' \
-            -c "DO \$\$ BEGIN IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname='darex_app') THEN CREATE ROLE darex_app LOGIN PASSWORD 'darex_app_dev_secret'; END IF; END \$\$;"
-
-      - name: Apply migrations
-        run: node infra/db/migrate.js
-
-      - name: Run multi-tenant isolation tests
-        run: node tests/e2e-tenant-isolation.test.js

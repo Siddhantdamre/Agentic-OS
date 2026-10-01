@@ -1,11 +1,33 @@
 # LiteLLM Proxy Config — DareX model router
-# Routes the atomic-agent through LiteLLM using DeepSeek via OpenRouter:
-#   1) deepseek/deepseek-v4-flash-0731              (primary model via OpenRouter)
-#   2) deepseek/deepseek-v4-flash-0731              (fallback model via OpenRouter)
-# The atomic-agent always calls model "atomic-agent"; LiteLLM owns failover.
+# Darex uses a split intelligence architecture:
+#   - darex-astra     -> OpenAI GPT-6 Astra for planning, classification, critique,
+#                        decision briefs and other high-reasoning non-tool calls.
+#   - atomic-agent     -> the established tool-calling runtime path; kept on its
+#                        proven compatibility chain until the runtime is migrated
+#                        to the GPT-6 Responses API for native Astra tool calls.
+# LiteLLM owns fallback so an Astra outage degrades instead of becoming downtime.
 # File: infra/litellm/config.yaml
 
 model_list:
+  # HIGH-REASONING DECISION LAYER
+  #
+  # GPT-6 Astra is the quality path for requests that do not need the legacy
+  # agent's native tool loop: classification, planning, revision, critique,
+  # decision briefs, synthesis and other structured reasoning. OpenAI currently
+  # recommends the Responses API for Astra tool calling; Darex therefore does
+  # NOT pretend the existing Chat-Completions tool loop is equivalent.
+  #
+  # reasoning_effort=high is deliberate: these calls decide WHAT should happen,
+  # while the execution runtime decides HOW to call tools.
+  - model_name: darex-astra
+    litellm_params:
+      model: openai/gpt-6-astra
+      max_tokens: 4096
+      api_key: os.environ/OPENAI_API_KEY
+      reasoning_effort: high
+    model_info:
+      mode: chat
+
   # OUTPUT CEILING — RESERVED BUDGET IS CHARGED BEFORE IT IS SPENT.
   #
   # The vendored agent asks for max_tokens 8192 on every call. OpenRouter checks
@@ -296,6 +318,11 @@ router_settings:
   # Dev tier raises the TPM if it is ever wanted as a real tier rather than a
   # floor. The code is not the thing that is missing.
   fallbacks:
+    # Astra is preferred for high-reasoning planning/synthesis. If its direct
+    # OpenAI credential is unavailable, fall back to the already-proven
+    # compatibility path instead of making the feature unavailable.
+    - darex-astra:
+        - atomic-agent
     - atomic-agent:
         - atomic-agent-fallback
         - atomic-agent-deepseek

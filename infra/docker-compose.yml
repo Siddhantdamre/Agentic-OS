@@ -517,6 +517,8 @@ services:
       - DATABASE_URL=postgresql://darex:${DB_PASSWORD:-darex_dev_secret}@postgres:5432/litellm
       # OpenRouter key used by the model fallback chain in config.yaml
       - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
+      # GPT-6 Astra high-reasoning path. Supplied only through the operator environment.
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
       # Gemini key used by the text-embedding-3-small route (see config.yaml)
       - GEMINI_API_KEY=${GEMINI_API_KEY}
       # Tiers 4 and 5 of the fallback chain: a SECOND PAYMENT RAIL, so an empty
@@ -931,6 +933,10 @@ services:
       - EMBEDDING_MODEL=${EMBEDDING_MODEL-text-embedding-3-small}
       - EMBEDDING_DIM=${EMBEDDING_DIM:-1536}
       - LITELLM_BASE_URL=${LITELLM_BASE_URL:-http://litellm:4000/v1}
+      # Dashboard planning/classification/revision use Astra; the worker's
+      # customer-facing tool loop remains on its established agent alias.
+      - LITELLM_MODEL=${LITELLM_MODEL:-darex-astra}
+      - DAREX_ASTRA_REASONING_EFFORT=${DAREX_ASTRA_REASONING_EFFORT:-high}
     env_file:
       - path: ../.env
         required: false
@@ -946,4 +952,3 @@ services:
       timeout: 10s
       retries: 20
       start_period: 45s
-
