@@ -1,0 +1,10 @@
+# Optional remote state. Copy to backend.hcl (gitignored) and:
+#   terraform init -backend-config=backend.hcl
+#
+# bucket         = "your-tfstate-bucket"
+# key            = "darex/staging/terraform.tfstate"
+# region         = "ap-south-1"
+# dynamodb_table = "darex-tf-locks"
+# encrypt        = true
+#
+# Do not put AWS access keys in this file. Use the standard AWS credential chain.

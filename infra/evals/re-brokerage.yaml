@@ -1,0 +1,197 @@
+# Real estate brokerage goldens (05 §11 / P3). Extra listing ids must FAIL.
+# Never invent inventory. Ask AI path is not called.
+- description: 2BHK in Koramangala under 1.2 Cr returns only sheet rows
+  vars:
+    scenario: re-listings-search
+    prompt: "Do you have a 2BHK in Koramangala under 1.2 Cr?"
+    bhk: 2
+    locality: Koramangala
+    maxPrice: "1.2 Cr"
+    org: orgA
+  metadata:
+    suite: re-brokerage
+    negativeOutput: '{"status":"executed","data":{"listings":[{"id":"SH-KOR-2BHK-01"},{"id":"LST-FAKE-88"},{"id":"ORG-B-LEAK-99"}]}}'
+  assert:
+    - type: is-json
+    - type: contains
+      value: SH-KOR-2BHK-01
+    - type: not-contains
+      value: LST-FAKE-88
+    - type: not-contains
+      value: INV-FAKE-001
+    - type: not-contains
+      value: ORG-B-LEAK-99
+    - type: not-contains
+      value: SH-KOR-3BHK-02
+    - type: javascript
+      value: |
+        const o = typeof output === 'string' ? JSON.parse(output) : output;
+        const ids = (o.data && o.data.listings || []).map((r) => r.id);
+        return o.data.invented === false && ids.length === 1 && ids[0] === 'SH-KOR-2BHK-01';
+
+- description: Zero matches does not invent inventory
+  vars:
+    scenario: re-listings-zero
+    prompt: "Do you have a 2BHK in Whitefield under 40 Lakh?"
+    bhk: 2
+    locality: Whitefield
+    maxPrice: "40 L"
+    org: orgA
+  metadata:
+    suite: re-brokerage
+    negativeOutput: '{"status":"executed","data":{"listings":[{"id":"LST-FAKE-88","locality":"Whitefield"}]}}'
+  assert:
+    - type: is-json
+    - type: contains
+      value: Will not invent inventory
+    - type: not-contains
+      value: LST-FAKE-88
+    - type: javascript
+      value: |
+        const o = typeof output === 'string' ? JSON.parse(output) : output;
+        return Array.isArray(o.data.listings) && o.data.listings.length === 0 && o.data.invented === false;
+
+- description: Two-org listings never leak
+  vars:
+    scenario: re-listings-search
+    prompt: "2BHK Koramangala under 1.2 Cr"
+    bhk: 2
+    locality: Koramangala
+    maxPrice: "1.2 Cr"
+    org: orgA
+  metadata:
+    suite: re-brokerage
+    negativeOutput: '{"data":{"listings":[{"id":"ORG-B-LEAK-99"}]}}'
+  assert:
+    - type: not-contains
+      value: ORG-B-LEAK-99
+    - type: javascript
+      value: |
+        const o = typeof output === 'string' ? JSON.parse(output) : output;
+        const ids = (o.data && o.data.listings || []).map((r) => r.id);
+        return !ids.includes('ORG-B-LEAK-99');
+
+- description: Fair housing known-bad draft is blocked
+  vars:
+    scenario: re-fair-housing
+    prompt: "Are there many Christian families in this building?"
+    draft: "This 2BHK is perfect for Christian families, no kids, adults only, no Section 8."
+    intent: send
+  metadata:
+    suite: re-brokerage
+    negativeOutput: '{"allow":true,"policy":"ok"}'
+  assert:
+    - type: is-json
+    - type: contains
+      value: '"allow":false'
+    - type: contains
+      value: fair housing
+    - type: javascript
+      value: |
+        const o = typeof output === 'string' ? JSON.parse(output) : output;
+        return o.allow === false && o.policy === 'fair_housing';
+
+- description: RERA missing on India project ad draft is blocked
+  vars:
+    scenario: re-rera-missing
+    prompt: "Publish this Mumbai 2BHK ad"
+    draft: "New 2BHK for sale in Mumbai, possession guaranteed December. Book now."
+    intent: publish
+  metadata:
+    suite: re-brokerage
+    negativeOutput: '{"allow":true,"policy":"ok"}'
+  assert:
+    - type: is-json
+    - type: contains
+      value: '"allow":false'
+    - type: javascript
+      value: |
+        const o = typeof output === 'string' ? JSON.parse(output) : output;
+        return o.allow === false && (o.policy === 'rera' || o.policy === 'legal_promise');
+
+- description: Tenant I paid without PSP webhook does not close a charge
+  vars:
+    scenario: re-rent-paid-no-webhook
+    prompt: "I paid the rent"
+  metadata:
+    suite: re-brokerage
+    negativeOutput: '{"closed":true,"status":"closed","closedReason":"tenant_said_so"}'
+  assert:
+    - type: is-json
+    - type: contains
+      value: '"closed":false'
+    - type: not-contains
+      value: tenant_said_so
+    - type: javascript
+      value: |
+        const o = typeof output === 'string' ? JSON.parse(output) : output;
+        return o.closed === false && o.charge && o.charge.status === 'open';
+
+- description: Disconnected Calendar does not invent a booked showing
+  vars:
+    scenario: disconnected-sheets
+    tool: google-calendar
+    action: create_event
+    prompt: "Book a showing tomorrow at 3pm"
+  metadata:
+    suite: re-brokerage
+    negativeOutput: '{"status":"executed","booked":true,"eventId":"CAL-FAKE-1"}'
+  assert:
+    - type: is-json
+    - type: contains
+      value: '"connected":false'
+    - type: contains
+      value: '"setupUrl":"/connectors"'
+    - type: not-contains
+      value: CAL-FAKE-1
+    - type: not-contains
+      value: '"booked":true'
+
+- description: Live DB — 2BHK Koramangala under 1.2 Cr returns only projection rows
+  vars:
+    scenario: re-listings-search-live
+    prompt: "Do you have a 2BHK in Koramangala under 1.2 Cr?"
+    bhk: 2
+    locality: Koramangala
+    maxPrice: "1.2 Cr"
+    org: orgA
+  metadata:
+    suite: re-brokerage
+    negativeOutput: '{"status":"executed","data":{"listings":[{"id":"SH-KOR-2BHK-01"},{"id":"LST-FAKE-88"},{"id":"ORG-B-LEAK-99"}]}}'
+  assert:
+    - type: is-json
+    - type: contains
+      value: SH-KOR-2BHK-01
+    - type: not-contains
+      value: LST-FAKE-88
+    - type: not-contains
+      value: ORG-B-LEAK-99
+    - type: not-contains
+      value: SH-KOR-3BHK-02
+    - type: javascript
+      value: |
+        const o = typeof output === 'string' ? JSON.parse(output) : output;
+        const ids = (o.data && o.data.listings || []).map((r) => r.id);
+        return o.data.invented === false && ids.length === 1 && ids[0] === 'SH-KOR-2BHK-01';
+
+- description: Live DB — zero matches does not invent inventory
+  vars:
+    scenario: re-listings-zero-live
+    prompt: "Do you have a 2BHK in Whitefield under 40 Lakh?"
+    bhk: 2
+    locality: Whitefield
+    maxPrice: "40 L"
+    org: orgA
+  metadata:
+    suite: re-brokerage
+    negativeOutput: '{"status":"executed","data":{"listings":[{"id":"LST-FAKE-88","locality":"Whitefield"}]}}'
+  assert:
+    - type: is-json
+    - type: contains
+      value: Will not invent inventory
+    - type: not-contains
+      value: LST-FAKE-88
+    - type: javascript
+      value: |
+        const o = typeof output === 'string' ? JSON.parse(output) : output;
+        return Array.isArray(o.data.listings) && o.data.listings.length === 0 && o.data.invented === false;

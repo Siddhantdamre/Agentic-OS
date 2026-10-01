@@ -1,0 +1,1141 @@
+##############################################################################
+# Darex — Local Development Infrastructure (compose KERNEL)
+# Phase 0: Postgres (pgvector) + Temporal + Nango + Langfuse
+#
+# Kernel: 21 services (20 + pgbouncer). Do not add a second compose kernel.
+#   postgres, pgbouncer, temporal, temporal-ui, redis, langfuse-redis, nango-server,
+#   langfuse-clickhouse, langfuse-minio, langfuse-minio-createbuckets,
+#   langfuse-server, langfuse-worker, supertokens, litellm, mcp-bridge,
+#   sandbox, inbox, worker, dashboard, trueforge, cognee
+# Agent turns run in TrueForge, now IN compose (service `trueforge`, port 8790).
+# Override with TRUEFORGE_URL=http://host.docker.internal:8791 to use a host
+# TrueForge during migration.
+# Memory: Cognee knowledge-graph server, now IN compose (service `cognee`,
+# port 8000). Override with COGNEE_URL=http://host.docker.internal:8000 for host mode.
+#
+# Other workstreams add overlays at infra/compose-snippets/WS-XX.yml.
+# WS-23 merges those into this file. infra/scripts/compose-cmd.sh also
+# passes any unmerged snippets as extra -f files (kernel first).
+# Merged this pass: WS-02 (darex_app on dashboard/worker/mcp-bridge),
+# WS-12 (Langfuse Redis keepalive / ClickHouse ulimits / ingest batch),
+# WS-11 (dashboard REDIS_URL → Nango redis:6379 for SSE; never langfuse-redis),
+# WS-04 (worker embed env via LiteLLM; no new broker; webhook path must not fail-fast).
+# langfuse-redis is Langfuse-only — never the SSE bus (use `redis` / I3).
+# Wave 3: pgbouncer (session pool, darex_app only). Migrations still hit postgres:5432.
+#
+# Usage:
+#   pnpm infra:up                 # compose-cmd.sh (kernel + snippets)
+#   docker compose -f infra/docker-compose.yml up -d
+#   docker compose logs -f
+#   docker compose down           # stop (preserve data volumes)
+#   docker compose down -v        # stop + wipe all data volumes (reset)
+##############################################################################
+
+networks:
+  darex-net:
+    driver: bridge
+  # Sandbox only. Internal so untrusted code cannot reach Postgres, Nango, or the internet.
+  # Worker and mcp-bridge join this network to call POST /execute. network_mode: none
+  # would also block that call, so isolation is a dedicated network instead.
+  sandbox-net:
+    driver: bridge
+    internal: true
+
+volumes:
+  postgres-data:
+  temporal-data:
+  langfuse-clickhouse-data:
+  langfuse-minio-data:
+  nango-data:
+  trueforge-data:
+  cognee-data:
+  evolution-data:
+
+##############################################################################
+# Services
+##############################################################################
+services:
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # Postgres 16 + pgvector
+  # Single DB instance; every service gets its own schema/database.
+  # RLS is enabled at the cluster level from the first migration.
+  # ─────────────────────────────────────────────────────────────────────────
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: darex-postgres
+    restart: unless-stopped
+    # 8GB-box budget: hard caps keep one runaway from OOM-killing the host.
+    # Limits are ceilings (overcommit is intentional single-node); reservations
+    # reflect steady-state RSS. Node heaps (NODE_OPTIONS) must stay ~128m below limits.
+    mem_limit: 768m
+    mem_reservation: 512m
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-darex}
+      POSTGRES_PASSWORD: ${SUPERUSER_DB_PASSWORD:-darex_dev_secret}
+      POSTGRES_DB: ${POSTGRES_DB:-darex}
+    # Default max_connections is 100. Temporal (~50) + Langfuse (~20) +
+    # SuperTokens, Nango, LiteLLM, and PgBouncer exceed that and new
+    # logins die with "sorry, too many clients already".
+    command: ["postgres", "-c", "max_connections=200"]
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      # Init scripts run in alphabetical order on first boot
+      - ./db/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U darex -d darex"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - darex-net
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # PgBouncer (I4) — session pooling in front of the darex DB only.
+  # pool_mode=session so SET app.current_org_id (RLS) still holds.
+  # Dashboard/worker/bridge pool max remains 10 in app code.
+  # Temporal / Nango / Langfuse / SuperTokens / LiteLLM stay on postgres:5432.
+  # Migrations still connect to postgres:5432 as superuser darex.
+  # ─────────────────────────────────────────────────────────────────────────
+  pgbouncer:
+    image: edoburu/pgbouncer:v1.23.1-p1
+    container_name: darex-pgbouncer
+    restart: unless-stopped
+    mem_limit: 128m
+    mem_reservation: 64m
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "6432:5432"
+    environment:
+      DATABASE_URL: postgres://darex_app:${APP_DB_PASSWORD:-darex_app_dev_secret}@postgres:5432/darex
+      AUTH_TYPE: scram-sha-256
+      POOL_MODE: session
+      MAX_CLIENT_CONN: "200"
+      DEFAULT_POOL_SIZE: "25"
+      LISTEN_PORT: "5432"
+      ADMIN_USERS: darex_app
+    networks:
+      - darex-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -p 5432 -U darex_app -d darex"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # Temporal (auto-setup image bundles server + frontend + Cassandra-free)
+  # Uses PostgreSQL as its persistence store (same Postgres instance).
+  # ─────────────────────────────────────────────────────────────────────────
+  temporal:
+    image: temporalio/auto-setup:1.24.2
+    container_name: darex-temporal
+    restart: unless-stopped
+    mem_limit: 512m
+    mem_reservation: 256m
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "7233:7233"   # gRPC frontend
+    environment:
+      - DB=postgres12
+      - DB_PORT=5432
+      - POSTGRES_USER=darex
+      - POSTGRES_PWD=${SUPERUSER_DB_PASSWORD:-darex_dev_secret}
+      - POSTGRES_SEEDS=postgres
+      - DYNAMIC_CONFIG_FILE_PATH=config/dynamicconfig/development-sql.yaml
+      - ENABLE_ES=false
+      - TEMPORAL_CLI_ADDRESS=temporal:7233
+    volumes:
+      - ./temporal/dynamicconfig:/etc/temporal/config/dynamicconfig:ro
+    networks:
+      - darex-net
+    healthcheck:
+      test: ["CMD", "temporal", "workflow", "list", "--namespace", "default", "--address", "temporal:7233"]
+      interval: 10s
+      timeout: 10s
+      retries: 20
+      start_period: 30s
+
+  # Temporal Web UI
+  temporal-ui:
+    image: temporalio/ui:2.26.2
+    container_name: darex-temporal-ui
+    restart: unless-stopped
+    mem_limit: 128m
+    mem_reservation: 64m
+    depends_on:
+      - temporal
+    ports:
+      - "8233:8080"
+    environment:
+      - TEMPORAL_ADDRESS=temporal:7233
+      - TEMPORAL_CORS_ORIGINS=http://localhost:3000
+    networks:
+      - darex-net
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # Redis — Nango job queues. Future SSE / needs_attention bus (I3 / WS-11)
+  # must use THIS instance (or a dedicated bus Redis). Never langfuse-redis.
+  # ─────────────────────────────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: darex-redis
+    restart: unless-stopped
+    mem_limit: 256m
+    mem_reservation: 128m
+    ports:
+      - "6379:6379"
+    networks:
+      - darex-net
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # Dedicated Langfuse BullMQ Redis (WS-12 / A1). Isolated from Nango and
+  # from the dashboard SSE bus — do not point REDIS_URL / realtime-hub here.
+  langfuse-redis:
+    image: redis:7-alpine
+    container_name: darex-langfuse-redis
+    restart: unless-stopped
+    mem_limit: 300m
+    mem_reservation: 128m
+    command:
+      - redis-server
+      - --appendonly
+      - "no"
+      - --save
+      - ""
+      - --maxmemory
+      - 256mb
+      - --maxmemory-policy
+      - noeviction
+      - --tcp-keepalive
+      - "60"
+      - --timeout
+      - "0"
+      - --tcp-backlog
+      - "511"
+    networks:
+      - darex-net
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # Nango — self-hosted OAuth / connector platform
+  # Uses the same Postgres instance (nango schema) + Redis for queues.
+  # ─────────────────────────────────────────────────────────────────────────
+  nango-server:
+    image: nangohq/nango-server:latest
+    container_name: darex-nango
+    restart: unless-stopped
+    # Cgroup-OOM-killed at ~476 MB RSS under 768m once page cache counted.
+    mem_limit: 1024m
+    mem_reservation: 512m
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    ports:
+      - "3003:3003"   # Nango API + Dashboard
+    environment:
+      - NANGO_DB_USER=darex
+      - NANGO_DB_PASSWORD=${SUPERUSER_DB_PASSWORD:-darex_dev_secret}
+      - NANGO_DB_HOST=postgres
+      - NANGO_DB_PORT=5432
+      - NANGO_DB_NAME=nango
+      - NANGO_DB_SSL=false
+      - NANGO_REDIS_URL=redis://redis:6379
+      - SERVER_RUN_MODE=PROD
+      - NANGO_SECRET_KEY=${NANGO_SECRET_KEY:-cc462f97-125a-4508-bd47-7951c8213b5f}
+      - NANGO_SERVER_URL=${NANGO_SERVER_URL:-https://nango.135-235-136-6.sslip.io}
+      - WEBHOOK_TRACER_URL=${NANGO_SERVER_URL:-https://nango.135-235-136-6.sslip.io}
+      - LOG_LEVEL=info
+    volumes:
+      - nango-data:/nango
+    networks:
+      - darex-net
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"require('http').get('http://localhost:3003/health', r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))\""]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # Langfuse — LLM tracing & observability
+  # Uses ClickHouse for trace storage + Postgres for metadata.
+  # ─────────────────────────────────────────────────────────────────────────
+  langfuse-clickhouse:
+    image: clickhouse/clickhouse-server:24.3
+    container_name: darex-langfuse-clickhouse
+    restart: unless-stopped
+    ports:
+      - "8123:8123"   # HTTP
+      - "9000:9000"   # Native
+    # Cgroup-OOM-killed at ~600 MB RSS on a 650m cap.
+    mem_limit: 896m
+    mem_reservation: 450m
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
+    volumes:
+      - langfuse-clickhouse-data:/var/lib/clickhouse
+    environment:
+      - CLICKHOUSE_DB=langfuse
+      - CLICKHOUSE_USER=langfuse
+      - CLICKHOUSE_PASSWORD=langfuse_dev_secret
+      - CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT=1
+    healthcheck:
+      test: ["CMD-SHELL", "clickhouse-client --user langfuse --password langfuse_dev_secret --query 'SELECT 1'"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+      - darex-net
+
+  langfuse-minio:
+    # Docker Hub removed minio/minio. This legacy image still speaks the
+    # same S3 API Langfuse expects.
+    image: bitnamilegacy/minio:latest
+    container_name: darex-langfuse-minio
+    restart: unless-stopped
+    mem_limit: 256m
+    mem_reservation: 128m
+    ports:
+      - "9090:9000"   # S3 API
+      - "9091:9001"   # Console
+    volumes:
+      - langfuse-minio-data:/bitnami/minio/data
+    environment:
+      - MINIO_ROOT_USER=langfuse
+      - MINIO_ROOT_PASSWORD=langfuse_dev_secret
+      - MINIO_ACCESS_KEY=langfuse
+      - MINIO_SECRET_KEY=langfuse_dev_secret
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:9000/minio/health/live"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - darex-net
+
+  langfuse-minio-createbuckets:
+    image: bitnamilegacy/minio-client:latest
+    container_name: darex-langfuse-minio-init
+    depends_on:
+      - langfuse-minio
+    entrypoint: >
+      /bin/sh -c "
+      until (mc alias set myminio http://darex-langfuse-minio:9000 langfuse langfuse_dev_secret); do echo 'Waiting for MinIO...'; sleep 1; done;
+      mc mb --ignore-existing myminio/langfuse-events;
+      mc mb --ignore-existing myminio/langfuse-media;
+      mc anonymous set public myminio/langfuse-events;
+      mc anonymous set public myminio/langfuse-media;
+      exit 0;
+      "
+    networks:
+      - darex-net
+
+  langfuse-server:
+    image: langfuse/langfuse:3
+    container_name: darex-langfuse-server
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      langfuse-clickhouse:
+        condition: service_healthy
+      langfuse-redis:
+        condition: service_healthy
+      langfuse-minio-createbuckets:
+        condition: service_completed_successfully
+    ports:
+      - "3002:3000"   # Langfuse UI + API
+    mem_limit: 1024m
+    mem_reservation: 400m
+    environment:
+      NODE_OPTIONS: "--max-old-space-size=768"
+      DATABASE_URL: postgresql://darex:${SUPERUSER_DB_PASSWORD:-darex_dev_secret}@postgres:5432/langfuse
+      REDIS_HOST: langfuse-redis
+      REDIS_PORT: "6379"
+      REDIS_URL: redis://langfuse-redis:6379
+      REDIS_CONNECTION_STRING: redis://langfuse-redis:6379
+      # Do not set REDIS_SOCKET_TIMEOUT_MS. BullMQ blocks on Redis longer than
+      # that on idle queues and ioredis then errors data-retention-queue every
+      # two minutes ("Expecting data, but didn't receive any in 120000ms").
+      LANGFUSE_INGESTION_QUEUE_DELAY_MS: "5000"
+      NEXTAUTH_URL: http://localhost:3002
+      NEXTAUTH_SECRET: darex-langfuse-nextauth-secret-dev
+      SALT: darex-langfuse-salt-dev-change-in-prod
+      LANGFUSE_DEFAULT_PROJECT_ID: darex-default
+      LANGFUSE_DEFAULT_PROJECT_ROLE: MEMBER
+      LANGFUSE_DEFAULT_ORG_ID: darex-org
+      LANGFUSE_DEFAULT_ORG_NAME: Darex
+      LANGFUSE_INIT_ORG_ID: darex-org
+      LANGFUSE_INIT_ORG_NAME: Darex
+      LANGFUSE_INIT_PROJECT_ID: darex-default
+      LANGFUSE_INIT_PROJECT_NAME: Darex Default
+      LANGFUSE_INIT_PROJECT_PUBLIC_KEY: pk-lf-darex-dev-public
+      LANGFUSE_INIT_PROJECT_SECRET_KEY: sk-lf-darex-dev-secret
+      LANGFUSE_INIT_USER_EMAIL: admin@darex.dev
+      LANGFUSE_INIT_USER_NAME: Darex Admin
+      LANGFUSE_INIT_USER_PASSWORD: darex_admin_dev
+      CLICKHOUSE_URL: http://darex-langfuse-clickhouse:8123
+      CLICKHOUSE_MIGRATION_URL: clickhouse://langfuse:langfuse_dev_secret@darex-langfuse-clickhouse:9000/langfuse
+      CLICKHOUSE_CLUSTER_ENABLED: "false"
+      CLICKHOUSE_USER: langfuse
+      CLICKHOUSE_PASSWORD: langfuse_dev_secret
+      LANGFUSE_S3_EVENT_UPLOAD_BUCKET: langfuse-events
+      LANGFUSE_S3_EVENT_UPLOAD_REGION: us-east-1
+      LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT: http://darex-langfuse-minio:9000
+      LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID: langfuse
+      LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY: langfuse_dev_secret
+      LANGFUSE_S3_EVENT_UPLOAD_FORCE_PATH_STYLE: "true"
+      LANGFUSE_S3_MEDIA_UPLOAD_BUCKET: langfuse-media
+      LANGFUSE_S3_MEDIA_UPLOAD_REGION: us-east-1
+      LANGFUSE_S3_MEDIA_UPLOAD_ENDPOINT: http://darex-langfuse-minio:9000
+      LANGFUSE_S3_MEDIA_UPLOAD_ACCESS_KEY_ID: langfuse
+      LANGFUSE_S3_MEDIA_UPLOAD_SECRET_ACCESS_KEY: langfuse_dev_secret
+      LANGFUSE_S3_MEDIA_UPLOAD_FORCE_PATH_STYLE: "true"
+    networks:
+      - darex-net
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://darex-langfuse-server:3000/api/public/health', r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))"]
+      interval: 15s
+      timeout: 10s
+      retries: 20
+      start_period: 45s
+
+  langfuse-worker:
+    image: langfuse/langfuse-worker:3
+    container_name: darex-langfuse-worker
+    restart: unless-stopped
+    depends_on:
+      langfuse-server:
+        condition: service_healthy
+      langfuse-redis:
+        condition: service_healthy
+      langfuse-minio-createbuckets:
+        condition: service_completed_successfully
+    mem_limit: 450m
+    mem_reservation: 200m
+    environment:
+      DATABASE_URL: postgresql://darex:${SUPERUSER_DB_PASSWORD:-darex_dev_secret}@postgres:5432/langfuse
+      REDIS_HOST: langfuse-redis
+      REDIS_PORT: "6379"
+      REDIS_URL: redis://langfuse-redis:6379
+      REDIS_CONNECTION_STRING: redis://langfuse-redis:6379
+      # Do not set REDIS_SOCKET_TIMEOUT_MS. BullMQ blocks on Redis longer than
+      # that on idle queues and ioredis then errors data-retention-queue every
+      # two minutes ("Expecting data, but didn't receive any in 120000ms").
+      LANGFUSE_INGESTION_QUEUE_DELAY_MS: "5000"
+      LANGFUSE_INGESTION_CLICKHOUSE_WRITE_INTERVAL_MS: "1000"
+      LANGFUSE_INGESTION_CLICKHOUSE_WRITE_BATCH_SIZE: "1000"
+      SALT: darex-langfuse-salt-dev-change-in-prod
+      CLICKHOUSE_URL: http://darex-langfuse-clickhouse:8123
+      CLICKHOUSE_MIGRATION_URL: clickhouse://langfuse:langfuse_dev_secret@darex-langfuse-clickhouse:9000/langfuse
+      CLICKHOUSE_CLUSTER_ENABLED: "false"
+      CLICKHOUSE_USER: langfuse
+      CLICKHOUSE_PASSWORD: langfuse_dev_secret
+      LANGFUSE_S3_EVENT_UPLOAD_BUCKET: langfuse-events
+      LANGFUSE_S3_EVENT_UPLOAD_REGION: us-east-1
+      LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT: http://darex-langfuse-minio:9000
+      LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID: langfuse
+      LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY: langfuse_dev_secret
+      LANGFUSE_S3_EVENT_UPLOAD_FORCE_PATH_STYLE: "true"
+      LANGFUSE_S3_MEDIA_UPLOAD_BUCKET: langfuse-media
+      LANGFUSE_S3_MEDIA_UPLOAD_REGION: us-east-1
+      LANGFUSE_S3_MEDIA_UPLOAD_ENDPOINT: http://darex-langfuse-minio:9000
+      LANGFUSE_S3_MEDIA_UPLOAD_ACCESS_KEY_ID: langfuse
+      LANGFUSE_S3_MEDIA_UPLOAD_SECRET_ACCESS_KEY: langfuse_dev_secret
+      LANGFUSE_S3_MEDIA_UPLOAD_FORCE_PATH_STYLE: "true"
+    networks:
+      - darex-net
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # SuperTokens — Authentication & Multi-tenant Identity Core
+  # ─────────────────────────────────────────────────────────────────────────
+  supertokens:
+    image: registry.supertokens.io/supertokens/supertokens-postgresql:9.2.1
+    container_name: darex-supertokens
+    restart: unless-stopped
+    mem_limit: 384m
+    mem_reservation: 192m
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "3567:3567"   # SuperTokens API
+    environment:
+      POSTGRESQL_USER: darex
+      POSTGRESQL_PASSWORD: ${SUPERUSER_DB_PASSWORD:-darex_dev_secret}
+      POSTGRESQL_HOST: postgres
+      POSTGRESQL_PORT: 5432
+      POSTGRESQL_DATABASE_NAME: supertokens
+      API_KEYS: ${SUPERTOKENS_API_KEY:-darex-supertokens-api-key-dev}
+    networks:
+      - darex-net
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c '</dev/tcp/127.0.0.1/3567' || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # LiteLLM — Unified LLM gateway (placeholder; wired fully in Phase 4)
+  # ─────────────────────────────────────────────────────────────────────────
+  litellm:
+    image: litellm/litellm:main-latest
+    container_name: darex-litellm
+    restart: unless-stopped
+    # 512m OOM-killed the proxy in a loop while Prisma prepared its toolchain.
+    mem_limit: 1024m
+    mem_reservation: 512m
+    ports:
+      - "4000:4000"
+    volumes:
+      - ./litellm/config.yaml:/app/config.yaml:ro
+    command: ["--config", "/app/config.yaml", "--host", "0.0.0.0", "--port", "4000", "--num_workers", "1"]
+    environment:
+      - LITELLM_MASTER_KEY=${LITELLM_MASTER_KEY:-sk-darex-litellm-dev-key}
+      # NOTE: must NOT use ${DB_PASSWORD} here. Root .env's DB_PASSWORD is the
+      # APP-role password (darex_app) for host-side dev; the live superuser
+      # password is darex_dev_secret. Interpolating DB_PASSWORD via the wrapper
+      # injects the app password and Prisma fails P1000 forever (2026-09-14).
+      - DATABASE_URL=postgresql://darex:${SUPERUSER_DB_PASSWORD:-darex_dev_secret}@postgres:5432/litellm
+      # OpenRouter key used by the model fallback chain in config.yaml
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
+      # Gemini key used by the text-embedding-3-small route (see config.yaml)
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - GROQ_API_KEY=${GROQ_API_KEY}
+      - LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY:-pk-lf-darex-dev-public}
+      - LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY:-sk-lf-darex-dev-secret}
+      - LANGFUSE_HOST=http://darex-langfuse-server:3000
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - darex-net
+    healthcheck:
+      test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:4000/health/readiness')\""]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 20s
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # Atomic Bridge — MCP SSE connector bridge for the TrueForge agent loop.
+  # Exposes the DareX business connectors (WhatsApp, Gmail, Calendar, HubSpot,
+  # Meta/Google Ads, Slack, Notion, Stripe, Shopify, Zendesk, Intercom,
+  # Razorpay, web, DB) as MCP tools (mcp.darex-connectors.*). Built from the
+  # @darex/workflows workspace so it can reuse executeAutonomousToolAction.
+  # ─────────────────────────────────────────────────────────────────────────
+  mcp-bridge:
+    build:
+      context: ../
+      dockerfile: infra/docker/mcp-bridge/Dockerfile
+    container_name: darex-mcp-bridge
+    restart: unless-stopped
+    mem_limit: 256m
+    mem_reservation: 128m
+    depends_on:
+      postgres:
+        condition: service_healthy
+      nango-server:
+        condition: service_healthy
+      pgbouncer:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:8790:8790"   # MCP SSE endpoint (localhost only)
+    environment:
+      # Inside Docker the DB and Nango are reachable by service name.
+      # `environment` wins over env_file. Runtime role is darex_app (WS-02);
+      # migrations still use superuser darex on postgres:5432.
+      # App traffic goes through pgbouncer (session pool, I4).
+      - DB_HOST=pgbouncer
+      - DB_PORT=5432
+      - DB_USER=${APP_DB_USER:-darex_app}
+      - DB_PASSWORD=${APP_DB_PASSWORD:-darex_app_dev_secret}
+      - NANGO_HOST=http://nango-server:3003
+      # Decrypts stored WhatsApp tokens for the whatsapp tool. Same value as the dashboard/worker.
+      - CHANNEL_SECRETS_KEY=${CHANNEL_SECRETS_KEY:-0000000000000000000000000000000000000000000000000000000000000000}
+      - COGNEE_URL=${COGNEE_URL:-http://cognee:8000}
+      - COGNEE_API_KEY=${COGNEE_API_KEY:-}
+      - HINDSIGHT_URL=${HINDSIGHT_URL_DOCKER:-http://hindsight:8888}
+      - HINDSIGHT_API_KEY=${HINDSIGHT_API_KEY:-darex-hindsight-dev-key}
+      - SANDBOX_API_URL=http://sandbox:8080
+      - NODE_OPTIONS=--max-old-space-size=192
+      # Signs/verifies MCP tenant headers (x-tfg-mcp-headers). Must match the
+      # signer (worker/dashboard TRUEFORGE turn path). Unset = dev-only
+      # unsigned mode; production bridge refuses unsigned traffic.
+      - MCP_BRIDGE_SECRET=${MCP_BRIDGE_SECRET:-}
+    env_file:
+      - path: ../.env
+        required: false
+      - path: ../apps/dashboard/.env.local
+        required: false
+      - path: ./.env
+        required: false
+      - path: ../services/connectors/.env
+        required: false
+    networks:
+      - darex-net
+      - sandbox-net
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"fetch('http://localhost:8790/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 20s
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # TrueForge — agent harness (turn loop, sessions, compaction, subagents).
+  # In-compose replacement for the former host process on :8791. Pinned to the
+  # locally-built truefoundry-server image (2026-09-07) whose dist/ was verified
+  # to contain the full per-request x-tfg-mcp-headers forwarding
+  # (dist/main.js + McpServerWithAuthStore merge) that multi-tenancy depends on.
+  # Darex's own derivation of that delta lives on branch `darex/tenant-headers`
+  # in the sibling checkout (32bc86cb + a3706017 on upstream 4b1aa554);
+  # canonical copy: infra/patches/trueforge/darex-tenant-headers.patch.
+  # NEVER float this to latest blindly — re-verify the forwarding first.
+  # Session store is the `trueforge` database on the shared postgres (see
+  # db/init/00_create_databases.sql — existing volumes need one manual
+  # `CREATE DATABASE trueforge;`). STANDALONE=true keeps it single-process.
+  # In-compose it reaches the MCP bridge via service DNS:
+  # configure its MCP server URL as http://mcp-bridge:8790/sse
+  # (the old http://127.0.0.1:8790/sse note applied to host mode only).
+  # No host ports — worker/dashboard reach it as http://trueforge:8790.
+  # ─────────────────────────────────────────────────────────────────────────
+  trueforge:
+    image: truefoundry-server:latest
+    # Local-only image (no registry): never attempt a pull.
+    pull_policy: never
+    user: "0:0"
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        mkdir -p /app/data
+        chown -R 10001:10001 /app/data
+        exec setpriv --reuid=10001 --regid=10001 --init-groups --inh-caps=-all node dist/main.js
+    container_name: darex-trueforge
+    restart: unless-stopped
+    mem_limit: 768m
+    mem_reservation: 384m
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mcp-bridge:
+        condition: service_healthy
+    expose:
+      - "8790"
+    environment:
+      - NODE_ENV=production
+      - PORT=8790
+      - HOST=0.0.0.0
+      # Image runs as uid 10001. The wrapper below starts as root, chowns
+      # the named volume, then drops to 10001. HOME must stay on that volume.
+      - HOME=/app/data
+      - XDG_DATA_HOME=/app/data
+      - STANDALONE=true
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_USER=${TF_POSTGRES_USER:-darex}
+      - POSTGRES_PASSWORD=${SUPERUSER_DB_PASSWORD:-darex_dev_secret}
+      - POSTGRES_DB=${TF_POSTGRES_DB:-trueforge}
+      - APP_DATA_DIR_SUFFIX=${TF_APP_DATA_DIR_SUFFIX:-darex-compose}
+      - PUBLIC_BASE_URL=${TF_PUBLIC_BASE_URL:-http://localhost:8791}
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY:-}
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+      - GROQ_API_KEY=${GROQ_API_KEY:-}
+      - MISTRAL_API_KEY=${MISTRAL_API_KEY:-}
+    env_file:
+      - path: ../.env
+        required: false
+      - path: ./.env
+        required: false
+    volumes:
+      - trueforge-data:/app/data
+    networks:
+      - darex-net
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8790/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
+    stop_grace_period: 35s
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # Cognee — knowledge-graph memory server (ECL + GRAPH_COMPLETION).
+  # In-compose replacement for the former host process on :8000. Built from
+  # the sibling cognee checkout (v1.5.4); LLM/embedding defaults mirror the
+  # verified host setup (OpenRouter gemini-2.5-flash + local FastEmbed
+  # BAAI/bge-small-en-v1.5). Graph data persists in cognee-data.
+  # VOLUME PERMS: the image's entrypoint runs as uid 1000, but a fresh named
+  # volume is root-owned and mkdir /data/system fails. The service starts as
+  # root, creates the dirs, then setpriv drops to cognee before entrypoint.sh.
+  # No host ports — worker/dashboard reach it as http://cognee:8000.
+  # ─────────────────────────────────────────────────────────────────────────
+  cognee:
+    build:
+      context: ../../cognee
+      dockerfile: Dockerfile
+    image: darex-cognee:1.5.4
+    user: "0:0"
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - |
+        mkdir -p /data/cognee /data/system/databases
+        chown -R cognee:cognee /data
+        exec setpriv --reuid=1000 --regid=1000 --init-groups --inh-caps=-all /app/entrypoint.sh
+    container_name: darex-cognee
+    restart: unless-stopped
+    # Cognify peaked at ~1.04 GB in a live check, so 1 GB was too tight.
+    mem_limit: 2048m
+    mem_reservation: 768m
+    expose:
+      - "8000"
+    environment:
+      - HOST=0.0.0.0
+      - PORT=8000
+      - LLM_PROVIDER=${COGNEE_LLM_PROVIDER:-custom}
+      - LLM_ENDPOINT=${COGNEE_LLM_ENDPOINT:-https://openrouter.ai/api/v1}
+      - LLM_API_KEY=${OPENROUTER_API_KEY:-}
+      - LLM_MODEL=${COGNEE_LLM_MODEL:-openrouter/google/gemini-2.5-flash}
+      - EMBEDDING_PROVIDER=${COGNEE_EMBEDDING_PROVIDER:-fastembed}
+      - EMBEDDING_MODEL=${COGNEE_EMBEDDING_MODEL:-BAAI/bge-small-en-v1.5}
+      - DATA_ROOT_DIRECTORY=/data/cognee
+      - SYSTEM_ROOT_DIRECTORY=/data/system
+      - ENABLE_BACKEND_ACCESS_CONTROL=false
+      # Kuzu defaults to a 32 GB buffer pool, which the 2 GB cgroup OOM-kills
+      # on the first /health call. Power of 2 required; 256 MB is ample here.
+      - KUZU_BUFFER_POOL_SIZE=${COGNEE_KUZU_BUFFER_POOL_SIZE:-268435456}
+      # Server-side auth (MEM-S03). Off by default because Cognee keys are
+      # minted per user via POST /api/v1/auth/api-keys, not set from env.
+      # Mint one, put it in COGNEE_API_KEY (worker + dashboard send it as
+      # X-Api-Key), then set COGNEE_REQUIRE_AUTHENTICATION=true.
+      - REQUIRE_AUTHENTICATION=${COGNEE_REQUIRE_AUTHENTICATION:-false}
+    volumes:
+      - cognee-data:/data
+    networks:
+      - darex-net
+    healthcheck:
+      test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/health')\""]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 60s
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # Hindsight (vectorize-io/hindsight, MIT) — agent memory: retain extracts
+  # facts/entities, recall runs semantic+BM25+graph+temporal. Runs beside
+  # Cognee; one bank per org (`org_<uuid>`). Slim image: no local models, so
+  # LLM + embeddings go through LiteLLM and the reranker is RRF (no model).
+  # Own database `hindsight` in the shared Postgres (existing volumes: run
+  # `CREATE DATABASE hindsight;` once — init scripts run on first boot only).
+  # Embedding dim is fixed at first migration; changing the embedding model
+  # needs a fresh database.
+  # ─────────────────────────────────────────────────────────────────────────
+  hindsight:
+    image: ghcr.io/vectorize-io/hindsight-api:0.10.2-slim
+    container_name: darex-hindsight
+    restart: unless-stopped
+    mem_limit: 1024m
+    mem_reservation: 512m
+    depends_on:
+      postgres:
+        condition: service_healthy
+      litellm:
+        condition: service_healthy
+    expose:
+      - "8888"
+    environment:
+      - HINDSIGHT_API_DATABASE_URL=postgresql://darex:${SUPERUSER_DB_PASSWORD:-darex_dev_secret}@postgres:5432/hindsight
+      - HINDSIGHT_API_WORKER_ID=darex-hindsight
+      - HINDSIGHT_API_LLM_PROVIDER=openai
+      - HINDSIGHT_API_LLM_BASE_URL=http://litellm:4000/v1
+      - HINDSIGHT_API_LLM_API_KEY=${LITELLM_MASTER_KEY:-sk-darex-litellm-dev-key}
+      - HINDSIGHT_API_LLM_MODEL=${HINDSIGHT_LLM_MODEL:-darex-default}
+      - HINDSIGHT_API_EMBEDDINGS_PROVIDER=openai
+      - HINDSIGHT_API_EMBEDDINGS_OPENAI_BASE_URL=http://litellm:4000/v1
+      - HINDSIGHT_API_EMBEDDINGS_OPENAI_API_KEY=${LITELLM_MASTER_KEY:-sk-darex-litellm-dev-key}
+      - HINDSIGHT_API_EMBEDDINGS_OPENAI_MODEL=text-embedding-3-small
+      - HINDSIGHT_API_RERANKER_PROVIDER=rrf
+      # Shared-secret auth; worker/dashboard send it as Authorization: Bearer.
+      - HINDSIGHT_API_TENANT_EXTENSION=hindsight_api.extensions.builtin.tenant:ApiKeyTenantExtension
+      - HINDSIGHT_API_TENANT_API_KEY=${HINDSIGHT_API_KEY:-darex-hindsight-dev-key}
+    networks:
+      - darex-net
+    healthcheck:
+      test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:8888/health')\""]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 90s
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # Evolution API — self-hosted WhatsApp gateway for "scan a QR" linking
+  # (packages/whatsapp-gateway provider `evolution`). Apache-2.0 with an
+  # attribution condition (shown in the connect modal). One instance per org,
+  # created by the dashboard. Own schema `evolution_api` in the darex DB;
+  # message bodies are NOT stored here (the dashboard stores them).
+  # Unofficial WhatsApp-Web transport: the official path is Meta Cloud API.
+  # ─────────────────────────────────────────────────────────────────────────
+  evolution:
+    image: evoapicloud/evolution-api:v2.3.7
+    container_name: darex-evolution
+    restart: unless-stopped
+    mem_limit: 768m
+    mem_reservation: 384m
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      # Loopback only: host-run `pnpm dev` reaches it here; containers use evolution:8080.
+      - "127.0.0.1:${EVOLUTION_PORT:-8085}:8080"
+    environment:
+      - SERVER_TYPE=http
+      - SERVER_PORT=8080
+      - SERVER_URL=http://evolution:8080
+      - LANGUAGE=en
+      - TELEMETRY_ENABLED=false
+      - AUTHENTICATION_API_KEY=${EVOLUTION_API_KEY:-darex-evolution-dev-key}
+      - AUTHENTICATION_EXPOSE_IN_FETCH_INSTANCES=false
+      - DATABASE_PROVIDER=postgresql
+      - DATABASE_CONNECTION_URI=postgresql://${POSTGRES_USER:-darex}:${SUPERUSER_DB_PASSWORD:-darex_dev_secret}@postgres:5432/${POSTGRES_DB:-darex}?schema=evolution_api
+      - DATABASE_CONNECTION_CLIENT_NAME=darex_evolution
+      - DATABASE_SAVE_DATA_INSTANCE=true
+      - DATABASE_SAVE_DATA_NEW_MESSAGE=false
+      - DATABASE_SAVE_MESSAGE_UPDATE=false
+      - DATABASE_SAVE_DATA_CONTACTS=false
+      - DATABASE_SAVE_DATA_CHATS=false
+      - DATABASE_SAVE_DATA_HISTORIC=false
+      - DATABASE_SAVE_DATA_LABELS=false
+      - DATABASE_SAVE_IS_ON_WHATSAPP=false
+      - CACHE_REDIS_ENABLED=false
+      - CACHE_LOCAL_ENABLED=true
+      - DEL_INSTANCE=false
+      - QRCODE_LIMIT=30
+      - CONFIG_SESSION_PHONE_CLIENT=Darex
+      - CONFIG_SESSION_PHONE_NAME=Chrome
+      - WEBHOOK_GLOBAL_ENABLED=false
+    volumes:
+      - evolution-data:/evolution/instances
+    networks:
+      - darex-net
+    healthcheck:
+      # Runtime image has no curl/wget; node 24 has fetch.
+      test: ["CMD", "node", "-e", "fetch('http://localhost:8080/').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 60s
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # Hindsight Control Plane — web UI to browse every org bank: memories,
+  # entities, documents, the knowledge graph, operations. Loopback only
+  # (127.0.0.1:9999); it holds the API key, so never publish it on 0.0.0.0.
+  # Banks are `org_<uuid>`. Open http://localhost:9999
+  # ─────────────────────────────────────────────────────────────────────────
+  hindsight-ui:
+    image: ghcr.io/vectorize-io/hindsight-control-plane:0.10.2
+    container_name: darex-hindsight-ui
+    restart: unless-stopped
+    mem_limit: 256m
+    depends_on:
+      hindsight:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:9999:9999"
+    environment:
+      - HINDSIGHT_CP_DATAPLANE_API_URL=http://hindsight:8888
+      - HINDSIGHT_CP_DATAPLANE_API_KEY=${HINDSIGHT_API_KEY:-darex-hindsight-dev-key}
+    networks:
+      - darex-net
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # Code Sandbox — self-hosted, network-isolated code execution for the
+  # `code_execution` / `sandbox` / `execute_code` agent tools. Runs untrusted
+  # code as an unprivileged user with a hard timeout, fully isolated from the
+  # rest of the stack (no DB, no other services, no host).
+  # ─────────────────────────────────────────────────────────────────────────
+  sandbox:
+    build:
+      context: ./docker/sandbox
+      dockerfile: Dockerfile
+    container_name: darex-sandbox
+    restart: unless-stopped
+    # Untrusted code runs here — the cap is a security boundary, not just budget.
+    mem_limit: 512m
+    mem_reservation: 128m
+    read_only: true
+    # Reap exited children so they never count against pids_limit.
+    init: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 64
+    tmpfs:
+      - /tmp:size=64m
+    environment:
+      - SANDBOX_PORT=8080
+      - SANDBOX_MAX_CONCURRENT=10
+      - SANDBOX_PER_TENANT_CONCURRENT=2
+      - SANDBOX_DEFAULT_TIMEOUT_MS=10000
+    networks:
+      - sandbox-net
+    ports:
+      - "127.0.0.1:8080:8080"
+    healthcheck:
+      # curl, not `node -e fetch`: a node probe starts V8 (5-11 threads) and, on a
+      # loaded host, outlived its timeout so probes stacked up to pids_limit=64
+      # and every exec failed with "Cannot fork". -m bounds curl itself.
+      test: ["CMD-SHELL", "curl -fsS -m 5 -o /dev/null http://localhost:8080/health"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 10s
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # Inbox — Chatwoot Fork / Multi-Channel Inbox Gateway (Phase 3)
+  # Runs in separate container on port 3004
+  # ─────────────────────────────────────────────────────────────────────────
+  inbox:
+    build:
+      context: ../apps/inbox
+      dockerfile: Dockerfile
+    container_name: darex-inbox
+    restart: unless-stopped
+    mem_limit: 256m
+    mem_reservation: 128m
+    ports:
+      - "3004:3004"
+    environment:
+      - PORT=3004
+      - DASHBOARD_URL=http://dashboard:3000
+      - CHATWOOT_WEBHOOK_SECRET=${CHATWOOT_WEBHOOK_SECRET:-darex-chatwoot-webhook-secret-dev}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - darex-net
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"require('http').get('http://localhost:3004/health', r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))\""]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # Worker — Temporal Autonomous Agent Worker (runs on the same tasks)
+  # Executes runAgentTurnActivity -> TrueForge (in-compose, TRUEFORGE_URL) + persist activities.
+  # Replaces the host-launched `node infra/scripts/worker-launcher.js`.
+  # ─────────────────────────────────────────────────────────────────────────
+  worker:
+    build:
+      context: ../
+      dockerfile: infra/docker/worker/Dockerfile
+    container_name: darex-worker
+    restart: unless-stopped
+    # Heap 256m + headroom; raise toward 768m when DAREX_INPROCESS_TURNS=true
+    # graduates (in-process turns hold model stream + compaction state here).
+    mem_limit: 384m
+    mem_reservation: 192m
+    depends_on:
+      postgres:
+        condition: service_healthy
+      temporal:
+        condition: service_healthy
+      pgbouncer:
+        condition: service_healthy
+      trueforge:
+        condition: service_healthy
+      cognee:
+        condition: service_started
+      hindsight:
+        condition: service_started
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      # `environment` wins over env_file. Runtime role is darex_app (WS-02).
+      - TEMPORAL_ADDRESS=temporal:7233
+      - DB_HOST=pgbouncer
+      - DB_USER=${APP_DB_USER:-darex_app}
+      - DB_PORT=5432
+      - DB_NAME=${DB_NAME:-darex}
+      - DB_PASSWORD=${APP_DB_PASSWORD:-darex_app_dev_secret}
+      - NANGO_HOST=http://nango-server:3003
+      - EVOLUTION_API_URL=http://evolution:8080
+      - EVOLUTION_API_KEY=${EVOLUTION_API_KEY:-darex-evolution-dev-key}
+      - CHANNEL_SECRETS_KEY=${CHANNEL_SECRETS_KEY:-0000000000000000000000000000000000000000000000000000000000000000}
+      - USE_TRUEFORGE=true
+      # In-compose harness (cut over 2026-09-15, verified live). Deliberately
+      # NOT ${TRUEFORGE_URL}: root .env holds the HOST-dev value (127.0.0.1)
+      # which is a black hole inside containers. Host fallback if ever needed:
+      # TRUEFORGE_URL=http://host.docker.internal:8791 (recreate to apply).
+      - TRUEFORGE_URL=http://trueforge:8790
+      - TRUEFORGE_MODEL=${TRUEFORGE_MODEL:-openrouter/deepseek-v4-1-flash}
+      # Same two-runtime trap as above: root .env holds the host-dev value.
+      # Flip to http://cognee:8000 at cutover.
+      - COGNEE_URL=${COGNEE_URL:-http://cognee:8000}
+      - COGNEE_API_KEY=${COGNEE_API_KEY:-}
+      - HINDSIGHT_URL=${HINDSIGHT_URL_DOCKER:-http://hindsight:8888}
+      - HINDSIGHT_API_KEY=${HINDSIGHT_API_KEY:-darex-hindsight-dev-key}
+      - NODE_OPTIONS=--max-old-space-size=256
+      - SANDBOX_API_URL=http://sandbox:8080
+      - LANGFUSE_HOST=http://langfuse-server:3000
+      - LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY:-pk-lf-darex-dev-public}
+      - LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY:-sk-lf-darex-dev-secret}
+      - JINA_API_KEY=${JINA_API_KEY:-}
+      # WS-04 / M2: embed activity on this worker (not a new broker).
+      # Production fail if EMBEDDING_MODEL unset is this process, not webhooks.
+      - EMBEDDING_MODEL=${EMBEDDING_MODEL:-text-embedding-3-small}
+      - EMBEDDING_DIM=${EMBEDDING_DIM:-1536}
+      - LITELLM_BASE_URL=http://litellm:4000/v1
+      - LITELLM_API_KEY=${LITELLM_API_KEY:-}
+      - LITELLM_MASTER_KEY=${LITELLM_MASTER_KEY:-}
+      # memory-writeback's extractWithLiteLLM requires this (no vendor
+      # default in app code) — must name a model_name from litellm config.yaml.
+      - LITELLM_MODEL=${LITELLM_MODEL:-darex-default}
+      # Signs MCP tenant headers for the mcp-bridge. Must match the bridge's
+      # MCP_BRIDGE_SECRET. In-compose TrueForge reaches the bridge at
+      # http://mcp-bridge:8790/sse (host-mode override: http://127.0.0.1:8790/sse).
+      - MCP_BRIDGE_SECRET=${MCP_BRIDGE_SECRET:-}
+    env_file:
+      - path: ../.env
+        required: false
+      - path: ../apps/dashboard/.env.local
+        required: false
+      - path: ./.env
+        required: false
+    networks:
+      - darex-net
+      - sandbox-net
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"fetch('http://127.0.0.1:8788/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 40s
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # Dashboard — Next.js app (port 3000), supertokens auth, TrueForge direct
+  # (agent turns via TRUEFORGE_URL; plain completions via LiteLLM darex-default).
+  # ─────────────────────────────────────────────────────────────────────────
+  dashboard:
+    image: darex-dashboard:local
+    build:
+      context: ../
+      dockerfile: infra/docker/dashboard/Dockerfile
+    container_name: darex-dashboard
+    restart: unless-stopped
+    # Heap 384m + Next SSR overhead.
+    mem_limit: 640m
+    mem_reservation: 320m
+    depends_on:
+      postgres:
+        condition: service_healthy
+      supertokens:
+        condition: service_healthy
+      temporal:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      pgbouncer:
+        condition: service_healthy
+      trueforge:
+        condition: service_healthy
+      cognee:
+        condition: service_started
+      hindsight:
+        condition: service_started
+      evolution:
+        condition: service_started
+    ports:
+      - "${DASHBOARD_PORT:-3000}:3000"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      # `environment` wins over env_file. Runtime role is darex_app (WS-02).
+      # SSE bus (WS-11 / I3): Nango redis — NEVER langfuse-redis.
+      - DB_HOST=pgbouncer
+      - DB_USER=${APP_DB_USER:-darex_app}
+      - DB_PORT=5432
+      - DB_NAME=${DB_NAME:-darex}
+      - DB_PASSWORD=${APP_DB_PASSWORD:-darex_app_dev_secret}
+      - REDIS_URL=redis://redis:6379
+      - NANGO_HOST=http://nango-server:3003
+      - TEMPORAL_ADDRESS=temporal:7233
+      - SUPERTOKENS_CONNECTION_URI=http://supertokens:3567
+      - USE_TRUEFORGE=true
+      # In-compose harness (cut over 2026-09-15, verified live). Deliberately
+      # NOT ${TRUEFORGE_URL}: root .env holds the HOST-dev value (127.0.0.1)
+      # which is a black hole inside containers. Host fallback if ever needed:
+      # TRUEFORGE_URL=http://host.docker.internal:8791 (recreate to apply).
+      - TRUEFORGE_URL=http://trueforge:8790
+      - TRUEFORGE_MODEL=${TRUEFORGE_MODEL:-openrouter/deepseek-v4-1-flash}
+      # Same two-runtime trap as above: root .env holds the host-dev value.
+      # Flip to http://cognee:8000 at cutover.
+      - COGNEE_URL=${COGNEE_URL:-http://cognee:8000}
+      - COGNEE_API_KEY=${COGNEE_API_KEY:-}
+      - HINDSIGHT_URL=${HINDSIGHT_URL_DOCKER:-http://hindsight:8888}
+      - HINDSIGHT_API_KEY=${HINDSIGHT_API_KEY:-darex-hindsight-dev-key}
+      # Evolution API (QR WhatsApp). Container-to-container URLs; root .env holds host-dev values.
+      - EVOLUTION_API_URL=http://evolution:8080
+      - EVOLUTION_API_KEY=${EVOLUTION_API_KEY:-darex-evolution-dev-key}
+      - EVOLUTION_WEBHOOK_URL=http://dashboard:3000/api/webhooks/whatsapp-evolution
+      - EVOLUTION_WEBHOOK_SECRET=${EVOLUTION_WEBHOOK_SECRET:-darex-evolution-webhook-dev-secret}
+      # Encrypts stored WhatsApp tokens. The all-zero default is dev only; prod-failfast rejects it.
+      - CHANNEL_SECRETS_KEY=${CHANNEL_SECRETS_KEY:-0000000000000000000000000000000000000000000000000000000000000000}
+      - NODE_OPTIONS=--max-old-space-size=384
+      - JINA_API_KEY=${JINA_API_KEY:-}
+      - SANDBOX_API_URL=http://sandbox:8080
+      - WORKER_HEALTH_URL=http://worker:8788/health
+      - LANGFUSE_HOST=http://langfuse-server:3000
+      - LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY:-pk-lf-darex-dev-public}
+      - LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY:-sk-lf-darex-dev-secret}
+      - CHATWOOT_WEBHOOK_SECRET=${CHATWOOT_WEBHOOK_SECRET:-darex-chatwoot-webhook-secret-dev}
+      # WS-04: enqueue may pass model/dim; webhook/request path must not fail
+      # if EMBEDDING_MODEL is unset (worker owns that fail-fast).
+      - EMBEDDING_MODEL=${EMBEDDING_MODEL:-text-embedding-3-small}
+      - EMBEDDING_DIM=${EMBEDDING_DIM:-1536}
+      - LITELLM_BASE_URL=http://litellm:4000/v1
+      - LITELLM_MASTER_KEY=${LITELLM_MASTER_KEY:-sk-darex-litellm-dev-key}
+      - LITELLM_MODEL=${LITELLM_MODEL:-darex-default}
+      - NEXT_PUBLIC_APP_URL=${NEXT_PUBLIC_APP_URL:-https://darex.135-235-136-6.sslip.io}
+      # Signs MCP tenant headers (see worker block). Must match bridge secret.
+      - MCP_BRIDGE_SECRET=${MCP_BRIDGE_SECRET:-}
+      - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID:-${GOOGLE_WORKSPACE_CLIENT_ID:-}}
+      - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET:-${GOOGLE_WORKSPACE_CLIENT_SECRET:-}}
+    env_file:
+      - path: ../.env
+        required: false
+      - path: ../apps/dashboard/.env.local
+        required: false
+      - path: ./.env
+        required: false
+    networks:
+      - darex-net
+      - sandbox-net
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"require('http').get('http://localhost:3000/api/health', r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))\""]
+      interval: 15s
+      timeout: 10s
+      retries: 20
+      start_period: 45s
+

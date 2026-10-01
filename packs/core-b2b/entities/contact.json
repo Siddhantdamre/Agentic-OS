@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "darex.core.contact",
+  "title": "contact",
+  "type": "object",
+  "required": ["org_id"],
+  "properties": {
+    "org_id": { "type": "string", "format": "uuid" },
+    "name": { "type": ["string", "null"] },
+    "email": { "type": ["string", "null"] },
+    "phone": { "type": ["string", "null"] },
+    "source": { "type": "string" },
+    "source_ref": { "type": "string" }
+  }
+}

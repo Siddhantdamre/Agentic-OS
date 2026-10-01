@@ -1,0 +1,18 @@
+.terraform/
+.terraform.lock.hcl
+*.tfstate
+*.tfstate.*
+crash.log
+crash.*.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+terraform.tfvars
+*.auto.tfvars
+*.auto.tfvars.json
+# Keep examples; they must not contain real secrets.
+!terraform.tfvars.example
+!*.tfvars.example
+backend.hcl
+!backend.hcl.example

@@ -1,0 +1,19 @@
+{
+  "name": "@darex/connectors",
+  "version": "0.1.0",
+  "private": true,
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch"
+  },
+  "dependencies": {
+    "@nangohq/node": "^0.38.0",
+    "axios": "^1.6.8"
+  },
+  "devDependencies": {
+    "@types/node": "^20.12.0",
+    "typescript": "^5.4.5"
+  }
+}

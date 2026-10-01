@@ -1,0 +1,140 @@
+@import '@openuidev/react-ui/defaults.css';
+@import '@openuidev/react-ui/styles/index.css';
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    @apply bg-cream-100 text-heading font-sans antialiased selection:bg-amber-500 selection:text-heading;
+  }
+}
+
+/* Custom scrollbar for calm brand aesthetic */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: #E2DFD0;
+  border-radius: 9999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #CBD5E1;
+}
+
+/* OpenUI Generative Widget Scoping */
+.aui-openui,
+.markdown-openui-scope {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+}
+
+.aui-openui *,
+.markdown-openui-scope * {
+  box-sizing: border-box;
+}
+
+.aui-openui [class*='openui-card'],
+.aui-openui [class*='openui-chart'],
+.aui-openui [class*='openui-table'],
+.aui-openui [class*='openui-scrollable'] {
+  max-width: 100%;
+}
+
+.markdown-openui-scope .openui-table-container {
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+/* OpenUI Light & Dark Mode Contrast Safeguards */
+.markdown-openui-scope.openui-light {
+  color: #0f172a;
+}
+.markdown-openui-scope.openui-light [class*='openui-'],
+.markdown-openui-scope.openui-light .openui-card,
+.markdown-openui-scope.openui-light .text-content,
+.markdown-openui-scope.openui-light .openui-label,
+.markdown-openui-scope.openui-light .openui-table-cell,
+.markdown-openui-scope.openui-light .openui-table-head,
+.markdown-openui-scope.openui-light .openui-markdown-renderer {
+  color: #0f172a;
+}
+.markdown-openui-scope.openui-light .openui-table-head .openui-table-head-label {
+  color: #475569;
+}
+.markdown-openui-scope.openui-light .openui-table-container {
+  border-color: #ECE7C2;
+  background-color: #ffffff;
+}
+
+.markdown-openui-scope.openui-dark {
+  color: #f8fafc;
+}
+.markdown-openui-scope.openui-dark [class*='openui-'],
+.markdown-openui-scope.openui-dark .openui-card,
+.markdown-openui-scope.openui-dark .text-content,
+.markdown-openui-scope.openui-dark .openui-label,
+.markdown-openui-scope.openui-dark .openui-table-cell,
+.markdown-openui-scope.openui-dark .openui-table-head,
+.markdown-openui-scope.openui-dark .openui-markdown-renderer {
+  color: #f8fafc;
+}
+.markdown-openui-scope.openui-dark .openui-table-head .openui-table-head-label {
+  color: #94a3b8;
+}
+.markdown-openui-scope.openui-dark .openui-table-container {
+  border-color: #334155;
+  background-color: #0f172a;
+}
+.markdown-openui-scope.openui-dark .openui-table-row:nth-child(even) {
+  background-color: rgba(255, 255, 255, 0.04);
+}
+
+/* Claude-style streaming cursor */
+@keyframes blink-cursor {
+  0%, 50% { opacity: 1; }
+  51%, 100% { opacity: 0; }
+}
+.streaming-cursor::after {
+  content: '▌';
+  animation: blink-cursor 1s infinite;
+  color: #D9A53D;
+  font-weight: 400;
+}
+
+/* Thinking shimmer */
+@keyframes thinking-shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+.thinking-shimmer {
+  background: linear-gradient(90deg, transparent 0%, #F0C05A20 50%, transparent 100%);
+  background-size: 200% 100%;
+  animation: thinking-shimmer 2s ease-in-out infinite;
+}
+
+/* Hover-reveal toolbar */
+.msg-hover-toolbar {
+  opacity: 0;
+  transition: opacity 150ms ease;
+}
+.msg-group:hover .msg-hover-toolbar,
+.msg-group:focus-within .msg-hover-toolbar {
+  opacity: 1;
+}
+
+/* Auto-resize textarea */
+.chat-textarea {
+  field-sizing: content;
+  min-height: 52px;
+  max-height: 200px;
+  resize: none;
+}
+

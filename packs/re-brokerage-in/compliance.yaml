@@ -1,0 +1,18 @@
+extraConfirmClasses: [send, publish, sign, price_change]
+bannedPhrases:
+  - perfect for families
+  - perfect for singles
+  - perfect for Christians
+  - adults only
+  - no kids
+  - no children
+  - no Section 8
+  - guaranteed returns
+  - assured returns
+requiredDisclosures:
+  - Darex is not the broker of record.
+  - New-build ads in India must include the RERA registration number from source.
+blockedDataClasses: [kyc, pan, aadhaar]
+retentionNotes: Listing inquiries are personal data (DPDP). Uninstall does not delete conversations.
+marketModules: [IN-RERA, US-FairHousing, DPDP]
+knownBadDraft: "This 2BHK is perfect for Christian families, no kids, adults only, no Section 8."

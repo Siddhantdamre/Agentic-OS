@@ -1,0 +1,42 @@
+# Obligation classifier + extractor goldens (gap 13 §6).
+# Model produces candidates; code decides. Keyword pre-filter is never the only gate.
+- description: Explicit us-promise is a commitment
+  vars:
+    id: us-explicit-friday
+    message: "I'll send the revised quote by Friday."
+  metadata:
+    suite: obligation
+    expected:
+      hasCommitment: true
+      keyword: true
+      promptVersion: obligation-extractor.v1
+
+- description: Checking-in greeting is not a commitment
+  vars:
+    id: none-greeting
+    message: "Hi, just checking in."
+  metadata:
+    suite: obligation
+    expected:
+      hasCommitment: false
+      keyword: false
+
+- description: Signature-block I'll must not become a loop
+  vars:
+    id: signature-ill
+    message: "Best regards,\nI'll be in the office Monday.\nAda"
+  metadata:
+    suite: obligation
+    expected:
+      keyword: true
+      extractorCount: 0
+
+- description: Indirect phrasing missed by keywords still needs the classifier
+  vars:
+    id: indirect-no-keyword
+    message: "The samples are going out this afternoon."
+  metadata:
+    suite: obligation
+    expected:
+      hasCommitment: true
+      keyword: false

@@ -1,0 +1,44 @@
+id: core-b2b
+name: Core B2B
+version: 1.0.0
+markets: [IN, US, AE, GB]
+live: true
+entities: [contact, company, deal, ticket, document, event, invoice]
+connectors:
+  required: []
+  recommended: [gmail, whatsapp, google-calendar]
+  optional: [hubspot, google-sheets, google-drive, slack, stripe, razorpay, web_search]
+employees:
+  - name: Sarah
+    role: Sales / front-of-house
+    personaTemplate: Enthusiastic sales specialist. Qualify leads, draft follow-ups, never invent pipeline amounts.
+    toolAllowlist: [gmail, whatsapp, hubspot, google-calendar, web_search]
+  - name: Emma
+    role: Support / success
+    personaTemplate: Empathetic support agent. Answer from memory and tickets. Never invent order status.
+    toolAllowlist: [gmail, whatsapp, google-calendar]
+  - name: Marcus
+    role: Ops / analyst
+    personaTemplate: Ops analyst. Sheets, Drive, and metrics.query only. Never invent KPIs.
+    toolAllowlist: [google-sheets, google-drive, metrics, web_search]
+workflows:
+  - temporalWorkflowName: OwnerBriefingWorkflow
+    triggers: [daily]
+  - temporalWorkflowName: StaleChaseWorkflow
+    triggers: [scheduled]
+kpis:
+  - id: core.inquiries_unworked
+    insightCopy: Unworked inquiries waiting more than 2 hours.
+    recommendedAction: Chase threads with no assistant reply.
+  - id: core.needs_attention
+    insightCopy: Threads marked needs_attention.
+compliance:
+  extraConfirmClasses: [send, pay, sign]
+  bannedPhrases: [guaranteed returns, assured returns]
+  requiredDisclosures: []
+  blockedDataClasses: [kyc, pan, aadhaar]
+  marketModules: [GDPR, DPDP]
+onboardingCopy: >
+  Default pack for every org. Recommended connectors stay disconnected until
+  you finish OAuth at /connectors. Darex will not invent CRM rows, invoices,
+  or payments.

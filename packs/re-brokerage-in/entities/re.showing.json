@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "darex.re.showing",
+  "title": "re.showing",
+  "type": "object",
+  "required": ["org_id"],
+  "properties": {
+    "org_id": { "type": "string", "format": "uuid" },
+    "listing_id": { "type": ["string", "null"], "format": "uuid" },
+    "inquiry_id": { "type": ["string", "null"], "format": "uuid" },
+    "status": { "type": "string", "enum": ["proposed", "booked", "completed", "cancelled", "no_show"] },
+    "starts_at": { "type": ["string", "null"], "format": "date-time" },
+    "ends_at": { "type": ["string", "null"], "format": "date-time" },
+    "calendar_event_id": { "type": ["string", "null"] },
+    "conflict": { "type": "boolean" }
+  }
+}
