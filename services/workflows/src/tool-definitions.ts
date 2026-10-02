@@ -296,9 +296,16 @@ export const TOOLS: ToolDef[] = [
   {
     name: 'notion_create_page',
     description: 'Create a page in the org-connected Notion workspace.',
-    schema: { org_id: z.string(), title: z.string(), parentPageId: z.string().optional() },
+    schema: { org_id: z.string(), title: z.string(), parentPageId: z.string().optional(), content: z.string().optional() },
     tool: 'notion',
     action: 'create_page',
+  },
+  {
+    name: 'notion_read_page',
+    description: 'Read page content, properties, and markdown text from an existing page in the org-connected Notion workspace.',
+    schema: { org_id: z.string(), pageId: z.string() },
+    tool: 'notion',
+    action: 'read_page',
   },
   {
     name: 'notion_append_page_content',
@@ -306,6 +313,13 @@ export const TOOLS: ToolDef[] = [
     schema: { org_id: z.string(), pageId: z.string(), content: z.string() },
     tool: 'notion',
     action: 'append_page_content',
+  },
+  {
+    name: 'notion_query_database',
+    description: 'Query records and properties from a database in the org-connected Notion workspace.',
+    schema: { org_id: z.string(), databaseId: z.string(), pageSize: z.number().optional() },
+    tool: 'notion',
+    action: 'query_database',
   },
   {
     name: 'notion_search',
