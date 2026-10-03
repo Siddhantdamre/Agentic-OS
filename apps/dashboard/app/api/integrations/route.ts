@@ -452,7 +452,9 @@ export async function POST(request: Request) {
         }
 
         // BYOK / API-key: clear local secrets; best-effort delete any Nango twin.
-        const nangoRes = qrUnlinked
+        // Direct channels (whatsapp, razorpay) are stored in Postgres only; they have no Nango twin.
+        const isDirectChannel = provider === 'whatsapp' || provider === 'razorpay';
+        const nangoRes = qrUnlinked || isDirectChannel
           ? { deleted: false, nothingExisted: true, error: undefined }
           : await deleteNangoConnection(orgId, provider);
         if (isNangoSecretConfigured() && nangoRes.error && !nangoRes.deleted && !nangoRes.nothingExisted) {
