@@ -538,6 +538,25 @@ services:
       start_period: 20s
 
   # ─────────────────────────────────────────────────────────────────────────
+  # SearXNG — Local open-source metasearch engine (Google, Bing, DDG, Wikipedia)
+  # Zero API key required; aggregates search results in clean JSON for AI agents.
+  # ─────────────────────────────────────────────────────────────────────────
+  searxng:
+    image: searxng/searxng:latest
+    container_name: darex-searxng
+    restart: unless-stopped
+    mem_limit: 256m
+    mem_reservation: 64m
+    ports:
+      - "127.0.0.1:8088:8080"
+    volumes:
+      - ./searxng:/etc/searxng:ro
+    environment:
+      - SEARXNG_BASE_URL=http://127.0.0.1:8088/
+    networks:
+      - darex-net
+
+  # ─────────────────────────────────────────────────────────────────────────
   # Atomic Bridge — MCP SSE connector bridge for the TrueForge agent loop.
   # Exposes the DareX business connectors (WhatsApp, Gmail, Calendar, HubSpot,
   # Meta/Google Ads, Slack, Notion, Stripe, Shopify, Zendesk, Intercom,
@@ -583,6 +602,7 @@ services:
       # signer (worker/dashboard TRUEFORGE turn path). Unset = dev-only
       # unsigned mode; production bridge refuses unsigned traffic.
       - MCP_BRIDGE_SECRET=${MCP_BRIDGE_SECRET:-}
+      - SEARXNG_URL=${SEARXNG_URL:-http://searxng:8080}
     env_file:
       - path: ../.env
         required: false
@@ -1016,6 +1036,7 @@ services:
       # MCP_BRIDGE_SECRET. In-compose TrueForge reaches the bridge at
       # http://mcp-bridge:8790/sse (host-mode override: http://127.0.0.1:8790/sse).
       - MCP_BRIDGE_SECRET=${MCP_BRIDGE_SECRET:-}
+      - SEARXNG_URL=${SEARXNG_URL:-http://searxng:8080}
     env_file:
       - path: ../.env
         required: false
@@ -1122,6 +1143,7 @@ services:
       - MCP_BRIDGE_SECRET=${MCP_BRIDGE_SECRET:-}
       - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID:-${GOOGLE_WORKSPACE_CLIENT_ID:-}}
       - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET:-${GOOGLE_WORKSPACE_CLIENT_SECRET:-}}
+      - SEARXNG_URL=${SEARXNG_URL:-http://searxng:8080}
     env_file:
       - path: ../.env
         required: false

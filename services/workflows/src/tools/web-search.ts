@@ -7,6 +7,7 @@ import {
   searchDuckDuckGo,
   searchGoogleNews,
   searchJina,
+  searchSearXNG,
   searchWikipedia,
   type ProviderResult,
   type SearchHit,
@@ -111,7 +112,7 @@ export async function searchLive(query: string, fetchImpl: typeof fetch = fetch)
   const founderQuery = /founder|who founded|co-founder/i.test(query) && brand ? `${brand} founder` : '';
   const lookups = [...new Set([plain, founderQuery].filter(Boolean))];
   const tiers: Array<() => Array<Promise<ProviderResult> | null>> = [
-    () => [searchJina(plain, fetchImpl), ...lookups.map((lookup) => searchDuckDuckGo(lookup, 6, fetchImpl))],
+    () => [searchSearXNG(plain, 6, fetchImpl), searchJina(plain, fetchImpl), ...lookups.map((lookup) => searchDuckDuckGo(lookup, 6, fetchImpl))],
     () => [searchGoogleNews(plain, 6, fetchImpl)],
     () => [searchWikipedia(plain, 5, fetchImpl)],
   ];

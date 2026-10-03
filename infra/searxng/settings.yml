@@ -1,0 +1,31 @@
+use_default_settings: true
+general:
+  debug: false
+  instance_name: "Darex Search"
+server:
+  port: 8080
+  bind_address: "0.0.0.0"
+  secret_key: "4304a87da177987865aa64a1576b4f85914c65a09f49fe725ce72c94084b9c33"
+  limiter: false
+  image_proxy: false
+search:
+  safe_search: 0
+  autocomplete: ""
+  default_lang: "en"
+  formats:
+    - html
+    - json
+engines:
+  - name: google
+    engine: google
+    shortcut: go
+    use_mobile_ui: false
+  - name: duckduckgo
+    engine: duckduckgo
+    shortcut: ddg
+  - name: bing
+    engine: bing
+    shortcut: bi
+  - name: wikipedia
+    engine: wikipedia
+    shortcut: wp

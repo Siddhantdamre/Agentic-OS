@@ -94,6 +94,32 @@ export function searchJina(query: string, fetchImpl: typeof fetch = fetch): Prom
   });
 }
 
+/** SearXNG search; null when no SEARXNG_URL is configured (not attempted, so not a failure). */
+export function searchSearXNG(query: string, limit = 6, fetchImpl: typeof fetch = fetch): Promise<ProviderResult> | null {
+  const searxUrl = process.env.SEARXNG_URL;
+  if (!searxUrl) return null;
+  return runProvider('searxng', 5000, async (signal) => {
+    const url = `${searxUrl.replace(/\/+$/, '')}/search?q=${encodeURIComponent(query)}&format=json&categories=general`;
+    const res = await okResponse(await fetchImpl(url, {
+      signal,
+      headers: {
+        'Accept': 'application/json',
+        'User-Agent': BROWSER_UA,
+      },
+    }), 'searxng');
+    const data = await res.json() as { results?: Array<{ title?: string; url?: string; content?: string }> };
+    const rows = Array.isArray(data.results) ? data.results : [];
+    return rows.slice(0, limit).map((row) => ({
+      title: String(row.title || query),
+      url: String(row.url || ''),
+      snippet: stripTags(String(row.content || '')).slice(0, 300),
+      source: 'searxng',
+      score: 1.0,
+      lang: 'en',
+    }));
+  });
+}
+
 export function searchDuckDuckGo(query: string, limit = 5, fetchImpl: typeof fetch = fetch): Promise<ProviderResult> {
   return runProvider('duckduckgo', 6000, async (signal) => {
     const res = await okResponse(await fetchImpl(`https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`, {
