@@ -557,6 +557,24 @@ services:
       - darex-net
 
   # ─────────────────────────────────────────────────────────────────────────
+  # Crawl4AI — Local open-source LLM-friendly web crawler & markdown extractor
+  # Zero API key required; renders JavaScript/SPA & extracts clean LLM markdown.
+  # ─────────────────────────────────────────────────────────────────────────
+  crawl4ai:
+    image: unclecode/crawl4ai:basic-amd64
+    container_name: darex-crawl4ai
+    restart: unless-stopped
+    shm_size: '512m'
+    mem_limit: 768m
+    mem_reservation: 256m
+    ports:
+      - "127.0.0.1:11235:11235"
+    environment:
+      - CRAWL4AI_API_TOKEN=darex-crawl4ai-token
+    networks:
+      - darex-net
+
+  # ─────────────────────────────────────────────────────────────────────────
   # Atomic Bridge — MCP SSE connector bridge for the TrueForge agent loop.
   # Exposes the DareX business connectors (WhatsApp, Gmail, Calendar, HubSpot,
   # Meta/Google Ads, Slack, Notion, Stripe, Shopify, Zendesk, Intercom,
@@ -603,6 +621,8 @@ services:
       # unsigned mode; production bridge refuses unsigned traffic.
       - MCP_BRIDGE_SECRET=${MCP_BRIDGE_SECRET:-}
       - SEARXNG_URL=${SEARXNG_URL:-http://searxng:8080}
+      - CRAWL4AI_URL=${CRAWL4AI_URL:-http://crawl4ai:11235}
+      - CRAWL4AI_API_TOKEN=${CRAWL4AI_API_TOKEN:-darex-crawl4ai-token}
     env_file:
       - path: ../.env
         required: false
@@ -1037,6 +1057,8 @@ services:
       # http://mcp-bridge:8790/sse (host-mode override: http://127.0.0.1:8790/sse).
       - MCP_BRIDGE_SECRET=${MCP_BRIDGE_SECRET:-}
       - SEARXNG_URL=${SEARXNG_URL:-http://searxng:8080}
+      - CRAWL4AI_URL=${CRAWL4AI_URL:-http://crawl4ai:11235}
+      - CRAWL4AI_API_TOKEN=${CRAWL4AI_API_TOKEN:-darex-crawl4ai-token}
     env_file:
       - path: ../.env
         required: false
@@ -1144,6 +1166,8 @@ services:
       - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID:-${GOOGLE_WORKSPACE_CLIENT_ID:-}}
       - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET:-${GOOGLE_WORKSPACE_CLIENT_SECRET:-}}
       - SEARXNG_URL=${SEARXNG_URL:-http://searxng:8080}
+      - CRAWL4AI_URL=${CRAWL4AI_URL:-http://crawl4ai:11235}
+      - CRAWL4AI_API_TOKEN=${CRAWL4AI_API_TOKEN:-darex-crawl4ai-token}
     env_file:
       - path: ../.env
         required: false
