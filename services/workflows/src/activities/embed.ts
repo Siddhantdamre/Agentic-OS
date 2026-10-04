@@ -425,6 +425,69 @@ async function insertMemoryRow(
   }
 }
 
+/**
+ * MEM-B01: a chunked file's own `knowledge_sources` row stays `syncing` while
+ * its `path#cN` chunk rows embed, and nothing moved it on. Once no current
+ * chunk is pending or syncing, the parent becomes `ready` (none failed) or
+ * `error`. `chunkCount` bounds the set so rows left from a longer earlier
+ * version of the file do not count. Each chunk's update commits before this
+ * runs, so the last chunk to finish always sees the others.
+ */
+export async function rollupChunkedSource(
+  client: PoolClient,
+  orgId: string,
+  ref: { parentId: string } | { chunkSourceId: string }
+): Promise<boolean> {
+  const parentId = 'parentId' in ref ? ref.parentId : null;
+  const chunkSourceId = 'chunkSourceId' in ref ? ref.chunkSourceId : null;
+  const res = await client.query(
+    `WITH parent AS (
+       SELECT p.id, p.path, (p.metadata->>'chunkCount')::int AS n
+         FROM knowledge_sources p
+        WHERE p.org_id = $1
+          AND p.status = 'syncing'
+          AND (p.metadata->>'chunkCount') ~ '^[0-9]+$'
+          AND (
+            p.id = $2::uuid
+            OR p.path = (SELECT regexp_replace(c.path, '#c[0-9]+$', '')
+                           FROM knowledge_sources c
+                          WHERE c.id = $3::uuid AND c.org_id = $1 AND c.path ~ '#c[0-9]+$')
+          )
+     ),
+     chunks AS (
+       SELECT parent.id AS parent_id, parent.n, k.status
+         FROM parent
+         JOIN knowledge_sources k
+           ON k.org_id = $1
+          AND left(k.path, length(parent.path) + 2) = parent.path || '#c'
+          AND (CASE WHEN substring(k.path FROM length(parent.path) + 3) ~ '^[0-9]+$'
+                    THEN substring(k.path FROM length(parent.path) + 3)::int END) < parent.n
+     ),
+     agg AS (
+       SELECT parent_id, n,
+              count(*) FILTER (WHERE status = 'error') AS failed,
+              count(*) FILTER (WHERE status IN ('pending', 'syncing')) AS inflight,
+              count(*) AS total
+         FROM chunks GROUP BY parent_id, n
+     )
+     UPDATE knowledge_sources s
+        SET status = CASE WHEN agg.failed = 0 THEN 'ready' ELSE 'error' END,
+            last_synced = CASE WHEN agg.failed = 0 THEN NOW() ELSE s.last_synced END,
+            metadata = s.metadata || jsonb_build_object(
+              'chunksFailed', agg.failed,
+              'last_error', CASE WHEN agg.failed = 0 THEN NULL
+                                 ELSE agg.failed || ' of ' || agg.n || ' parts failed to index' END
+            ),
+            updated_at = NOW()
+       FROM agg
+      WHERE s.id = agg.parent_id AND s.org_id = $1 AND s.status = 'syncing'
+        AND agg.total > 0 AND agg.inflight = 0
+      RETURNING s.id`,
+    [orgId, parentId, chunkSourceId]
+  );
+  return (res.rowCount ?? 0) > 0;
+}
+
 async function markJob(
   client: PoolClient,
   params: {
@@ -460,6 +523,9 @@ async function markJob(
         WHERE id = $4 AND org_id = $5`,
       [sourceStatus, params.contentHash ?? null, state === 'succeeded', params.sourceId, params.orgId]
     );
+    if (finished) {
+      await rollupChunkedSource(client, params.orgId, { chunkSourceId: params.sourceId });
+    }
   }
 }
 

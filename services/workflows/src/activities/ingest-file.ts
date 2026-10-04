@@ -2,7 +2,7 @@ import { createHash } from 'crypto';
 import { ApplicationFailure } from '@temporalio/activity';
 import { connectorSignInPath } from '@darex/shared-types';
 import type { PoolClient } from 'pg';
-import { enqueueEmbedJobFromWorker } from './embed.js';
+import { enqueueEmbedJobFromWorker, rollupChunkedSource } from './embed.js';
 import { redactErrorMessage, redactForEmbed } from './redact.js';
 import {
   fetchWithTimeout,
@@ -856,6 +856,9 @@ export async function ingestFileActivity(input: IngestFileActivityInput): Promis
             path: prepared.catalogPath,
           },
         });
+        // Every chunk may already be embedded (hash skip) or finished while
+        // this loop ran; settle the file's own status now if so (MEM-B01).
+        await rollupChunkedSource(client, prepared.orgId, { parentId: prepared.sourceId });
       });
 
       return {

@@ -198,7 +198,7 @@ Counts at audit time: **600 findings** (ASK 47 · EMP 50 · RT 62 · MEM 51 · C
 
 | ID | Sev | Issue | Where | Pkt | Status |
 |---|---|---|---|---|---|
-| MEM-B01 | P0 | Parent file row never `ready` | `ingest-file.ts:583,835` | 1.10 | 🔴 |
+| MEM-B01 | P0 | Parent file row never `ready` | `ingest-file.ts:583,835` | 1.10 | 🟢 2026-10-05 |
 | MEM-B02 | P0 | Disabling a file does not hide its chunks | `retrieve.ts:296-303` | 1.10 | 🟢 2026-10-05 |
 | MEM-B03 | P0 | `pendingText` lost-write race | `embed.ts:601-631` | 1.10 | 🔴 |
 | MEM-B04 | P1 | Write-back facts never embedded | `memory-writeback.ts:353-388` | 1.10 | 🔴 |

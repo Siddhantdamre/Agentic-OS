@@ -1,5 +1,11 @@
 # Darex Build State
 
+## A chunked file becomes ready once its chunks are indexed (2026-10-05)
+
+- Worker ingest stages a file, queues one embed job per chunk (`path#cN`, each with its own `knowledge_sources` row) and leaves the file's own row at `syncing`. `markJob` only updated the chunk rows, so every chunked Drive file showed "Syncing" forever and never got `last_synced` (27sept MEM-B01).
+- `rollupChunkedSource` (`activities/embed.ts`) runs after any chunk job finishes and once more right after staging (all chunks may already be embedded via the hash skip). When no current chunk (`#c0`..`#c<chunkCount-1>`) is pending or syncing, the file becomes `ready` with `last_synced`, or `error` with "N of M parts failed to index". Leftover chunk rows from a longer earlier version are ignored; a disabled file is left alone. Each chunk's update commits before the rollup runs, so the last chunk to finish sees the others.
+- Verified: typecheck, workflows suite; against the local Postgres: one of two chunks done left the file syncing, both done made it ready (a stale `#c2` error row ignored), one failed made it error with the reason. Rows deleted. Not verified: a real Drive file through EmbedWorkflow. Known gap: if every chunk is skipped before a row is written (all redacted away), the file stays syncing.
+
 ## DSR delete covers every org table, or names why it keeps it (2026-10-05)
 
 - The DSR delete job (`dsr/tables.ts`) listed 36 tables; the schema has 89 with `org_id`. It left customer data behind: CRM entities and identifiers, real-estate inquiries/showings/listings, leases and charges, growth leads and dossiers, intent signals, tool invocations (arguments), failed webhook payloads, notification log, sentiment, feedback, and earlier memory text in `memory_revisions` (27sept SEC-C01, MEM-E01).
