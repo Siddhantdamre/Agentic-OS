@@ -102,8 +102,23 @@ export async function startRealNangoOAuth(
       }
     }
 
+    const resolvedHost = (typeof nangoHost === 'string' && nangoHost.trim()) || 'http://localhost:3003';
+    // Container DNS (http://nango-server:3003) is server-to-server only —
+    // browsers cannot resolve it. Fail honestly instead of opening a popup
+    // that can never reach Nango. Set NEXT_PUBLIC_NANGO_HOST to the public URL.
+    if (/nango-server/i.test(resolvedHost)) {
+      return {
+        success: false,
+        provider: providerId,
+        oauthConfigured: false,
+        nangoUiUrl,
+        error:
+          `Nango host ${resolvedHost} is not browser-reachable (container DNS). Ask an admin to set NEXT_PUBLIC_NANGO_HOST to the public Nango URL.`,
+      };
+    }
+
     const nango = new Nango({
-      host: nangoHost || 'http://localhost:3003',
+      host: resolvedHost,
       publicKey: nangoPublicKey,
     });
 

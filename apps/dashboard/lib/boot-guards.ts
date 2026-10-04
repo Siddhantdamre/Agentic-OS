@@ -58,6 +58,7 @@ export function assertProductionBoot(): void {
 
   assertProductionBillingConfig();
   assertProductionSsoConfig();
+  assertProductionMcpBridgeConfig();
 }
 
 function envSet(name: string): boolean {
@@ -112,6 +113,20 @@ export function assertProductionBillingConfig(): void {
   ) {
     throw new Error(
       'DAREX_BILLING_REQUIRED=true but neither Stripe nor Razorpay is fully configured. See .env.example DAREX_STRIPE_* / DAREX_RAZORPAY_*.'
+    );
+  }
+}
+
+/**
+ * MCP bridge signs tenant headers with MCP_BRIDGE_SECRET. Unset in
+ * production means every TrueForge tool call is refused (unsigned traffic
+ * rejected) while /api/* looks healthy — refuse boot instead.
+ */
+export function assertProductionMcpBridgeConfig(): void {
+  if (!isProductionEnv() || isNextProductionBuild()) return;
+  if (!envSet('MCP_BRIDGE_SECRET')) {
+    throw new Error(
+      'MCP_BRIDGE_SECRET must be set in production. TrueForge tool calls are HMAC-signed; without it the bridge refuses unsigned traffic and all tools fail.'
     );
   }
 }

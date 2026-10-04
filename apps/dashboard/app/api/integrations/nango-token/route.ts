@@ -28,8 +28,10 @@ export async function GET(request: Request) {
     }
 
     const spec = getIntegration(provider);
-    const { publicKey, host } = getNangoServerConfig();
-    const nangoHost = process.env.NEXT_PUBLIC_NANGO_HOST || host;
+    const { publicKey } = getNangoServerConfig();
+    // Browser-reachable host for the Nango popup SDK — never container DNS.
+    // nangoUiUrl() prefers NEXT_PUBLIC_NANGO_HOST, then NANGO_SERVER_URL.
+    const nangoHost = nangoUiUrl();
     const connectionId = primaryConnectionId(orgId, provider);
     const keys = nangoKeysFor(provider);
     const config = spec?.authMode === 'oauth' ? await getNangoConfigStatus(provider) : null;
