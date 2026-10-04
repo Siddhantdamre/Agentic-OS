@@ -508,6 +508,7 @@ async function markJob(
             cursor = COALESCE($2, cursor),
             error = $3,
             finished_at = CASE WHEN $4 THEN NOW() ELSE finished_at END,
+            payload = CASE WHEN $4 THEN NULL ELSE payload END,
             started_at = COALESCE(started_at, NOW())
       WHERE id = $5 AND org_id = $6`,
     [state, params.cursor ?? null, params.error ?? null, finished, params.jobId, params.orgId]
@@ -624,9 +625,19 @@ async function embedBatchWithRetry(
   throw lastError ?? new Error('LiteLLM embeddings request failed');
 }
 
-function readPendingPayload(metadata: unknown, fallback: PendingEmbedPayload): PendingEmbedPayload {
-  if (!metadata || typeof metadata !== 'object') return fallback;
-  const rec = metadata as Record<string, unknown>;
+/**
+ * The job's own payload wins; the source row's `metadata.pendingText` is only
+ * read for jobs queued before 208 added `ingestion_jobs.payload` (MEM-B03).
+ */
+function readPendingPayload(
+  jobPayload: unknown,
+  metadata: unknown,
+  fallback: PendingEmbedPayload
+): PendingEmbedPayload {
+  const fromJob = jobPayload && typeof jobPayload === 'object' && typeof (jobPayload as Record<string, unknown>).pendingText === 'string';
+  const chosen = fromJob ? jobPayload : metadata;
+  if (!chosen || typeof chosen !== 'object') return fallback;
+  const rec = chosen as Record<string, unknown>;
   const pendingText = typeof rec.pendingText === 'string' ? rec.pendingText : fallback.pendingText;
   const sourceRaw = typeof rec.source === 'string' ? rec.source : fallback.source;
   const sourceRef = typeof rec.sourceRef === 'string' ? rec.sourceRef : fallback.sourceRef;
@@ -679,7 +690,6 @@ async function persistEmbedJobWithClient(
       sourceRef,
       contentHash,
       JSON.stringify({
-        pendingText: redacted.text,
         source,
         sourceRef,
         kind: params.kind ?? null,
@@ -689,11 +699,23 @@ async function persistEmbedJobWithClient(
   );
   const sourceId = sourceRow.rows[0].id as string;
 
+  // The text rides on this job, not the shared source row (MEM-B03).
   const jobRow = await client.query(
-    `INSERT INTO ingestion_jobs (org_id, source_id, state, cursor)
-     VALUES ($1, $2, 'queued', $3)
+    `INSERT INTO ingestion_jobs (org_id, source_id, state, cursor, payload)
+     VALUES ($1, $2, 'queued', $3, $4::jsonb)
      RETURNING id`,
-    [params.orgId, sourceId, contentHash]
+    [
+      params.orgId,
+      sourceId,
+      contentHash,
+      JSON.stringify({
+        pendingText: redacted.text,
+        source,
+        sourceRef,
+        kind: params.kind ?? null,
+        dataClass: params.dataClass ?? null,
+      }),
+    ]
   );
 
   return { enqueued: true, skipped: false, jobId: jobRow.rows[0].id as string };
@@ -813,7 +835,7 @@ export async function embedIngestionJobActivity(params: {
       `UPDATE ingestion_jobs
           SET state = 'running', started_at = COALESCE(started_at, NOW())
         WHERE id = $1 AND org_id = $2 AND state IN ('queued', 'running')
-        RETURNING id, source_id, state, cursor`,
+        RETURNING id, source_id, state, cursor, payload`,
       [params.jobId, params.orgId]
     );
     if (claimed.rows.length === 0) {
@@ -827,7 +849,7 @@ export async function embedIngestionJobActivity(params: {
         row: existing.rows[0] as { id: string; source_id: string; state: string } | undefined,
       };
     }
-    const job = claimed.rows[0] as { id: string; source_id: string; state: string; cursor: string | null };
+    const job = claimed.rows[0] as { id: string; source_id: string; state: string; cursor: string | null; payload: unknown };
     const source = await client.query(
       `SELECT id, connector, path, metadata FROM knowledge_sources WHERE id = $1 AND org_id = $2 LIMIT 1`,
       [job.source_id, params.orgId]
@@ -851,7 +873,7 @@ export async function embedIngestionJobActivity(params: {
     );
   }
 
-  const payload = readPendingPayload(loaded.sourceRow.metadata, {
+  const payload = readPendingPayload(loaded.job.payload, loaded.sourceRow.metadata, {
     pendingText: '',
     source: resolveMemorySourceKind(loaded.sourceRow.connector),
     sourceRef: loaded.sourceRow.path,
@@ -899,10 +921,10 @@ export async function embedQueuedJobsActivity(params: {
            LIMIT $2
            FOR UPDATE SKIP LOCKED
         )
-        RETURNING id, source_id`,
+        RETURNING id, source_id, payload`,
       [params.orgId, limit]
     );
-    const rows = claimed.rows as Array<{ id: string; source_id: string }>;
+    const rows = claimed.rows as Array<{ id: string; source_id: string; payload: unknown }>;
     const loaded: Array<{ jobId: string; sourceId: string; payload: PendingEmbedPayload }> = [];
     for (const row of rows) {
       const source = await client.query(
@@ -916,7 +938,7 @@ export async function embedQueuedJobsActivity(params: {
       loaded.push({
         jobId: row.id,
         sourceId: sourceRow.id,
-        payload: readPendingPayload(sourceRow.metadata, {
+        payload: readPendingPayload(row.payload, sourceRow.metadata, {
           pendingText: '',
           source: resolveMemorySourceKind(sourceRow.connector),
           sourceRef: sourceRow.path,

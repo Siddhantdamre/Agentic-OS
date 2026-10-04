@@ -309,7 +309,6 @@ export async function enqueueEmbedJob(input: EnqueueEmbedJobInput): Promise<Enqu
           sourceRef,
           contentHash,
           JSON.stringify({
-            pendingText: primaryText,
             source,
             sourceRef,
             kind: input.kind ?? null,
@@ -319,11 +318,23 @@ export async function enqueueEmbedJob(input: EnqueueEmbedJobInput): Promise<Enqu
           }),
         ]
       );
+      // The text rides on the job, not the shared source row (MEM-B03).
       const jobRow = await client.query(
-        `INSERT INTO ingestion_jobs (org_id, source_id, state, cursor)
-         VALUES ($1, $2, 'queued', $3)
+        `INSERT INTO ingestion_jobs (org_id, source_id, state, cursor, payload)
+         VALUES ($1, $2, 'queued', $3, $4::jsonb)
          RETURNING id`,
-        [orgId, sourceRow.rows[0].id, contentHash]
+        [
+          orgId,
+          sourceRow.rows[0].id,
+          contentHash,
+          JSON.stringify({
+            pendingText: primaryText,
+            source,
+            sourceRef,
+            kind: input.kind ?? null,
+            dataClass: input.dataClass ?? null,
+          }),
+        ]
       );
       result = { enqueued: true, skipped: false, jobId: jobRow.rows[0].id as string };
 
@@ -345,7 +356,6 @@ export async function enqueueEmbedJob(input: EnqueueEmbedJobInput): Promise<Enqu
             chunkRef,
             chunkHash,
             JSON.stringify({
-              pendingText: chunks[i],
               source,
               sourceRef: chunkRef,
               kind: input.kind ?? null,
@@ -356,10 +366,21 @@ export async function enqueueEmbedJob(input: EnqueueEmbedJobInput): Promise<Enqu
           ]
         );
         const chunkJob = await client.query(
-          `INSERT INTO ingestion_jobs (org_id, source_id, state, cursor)
-           VALUES ($1, $2, 'queued', $3)
+          `INSERT INTO ingestion_jobs (org_id, source_id, state, cursor, payload)
+           VALUES ($1, $2, 'queued', $3, $4::jsonb)
            RETURNING id`,
-          [orgId, chunkSource.rows[0].id, chunkHash]
+          [
+            orgId,
+            chunkSource.rows[0].id,
+            chunkHash,
+            JSON.stringify({
+              pendingText: chunks[i],
+              source,
+              sourceRef: chunkRef,
+              kind: input.kind ?? null,
+              dataClass: input.dataClass ?? null,
+            }),
+          ]
         );
         extraJobs.push(chunkJob.rows[0].id as string);
       }

@@ -26,8 +26,17 @@ export async function loadKnowledgeSourceForReindex(
   const row = src.rows[0];
   if (!row) return { ok: false, skipped: 'missing' };
 
+  // Text still waiting to embed lives on the newest queued job (208, MEM-B03);
+  // older rows kept it in metadata.pendingText.
+  const queued = await client.query<{ text: string | null }>(
+    `SELECT payload->>'pendingText' AS text FROM ingestion_jobs
+      WHERE org_id = $1 AND source_id = $2 AND payload ? 'pendingText'
+      ORDER BY created_at DESC LIMIT 1`,
+    [orgId, sourceId]
+  );
   const pending =
-    row.metadata && typeof row.metadata.pendingText === 'string' ? row.metadata.pendingText : '';
+    queued.rows[0]?.text ??
+    (row.metadata && typeof row.metadata.pendingText === 'string' ? row.metadata.pendingText : '');
   let text = pending.trim();
   if (!text) {
     const bodies = await client.query<{ body: string }>(

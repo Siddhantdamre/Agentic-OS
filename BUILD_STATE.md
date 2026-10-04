@@ -1,5 +1,11 @@
 # Darex Build State
 
+## Each embed job keeps its own text (2026-10-05)
+
+- The text an embed job was about to embed lived in `knowledge_sources.metadata.pendingText`, one row per source. Conversation write-back queues a job on every message for the same source, so the second write replaced the first and both jobs embedded the later text; the earlier message was never indexed (27sept MEM-B03).
+- Migration `208_ingestion_job_payload.sql` adds `ingestion_jobs.payload` (JSONB). The three places that queue text (worker `persistEmbedJobWithClient`, dashboard `enqueueEmbedJob` for the first part and for each `#chunk-N`) write the text on the job and no longer on the source row. Both worker claim paths read the job's payload first and fall back to `metadata.pendingText` only for jobs queued before 208. `markJob` clears the payload when a job finishes, so raw text is not kept. Brain re-index takes the newest queued job's text before the old metadata copy.
+- Verified: typechecks, workflows 454/454, dashboard 594/594. Migration 208 applied locally; through the real `enqueueEmbedJobFromWorker`, two jobs queued back to back for one conversation kept their own texts and the source row held none. Rows deleted. Not verified: EmbedWorkflow embedding them (no Temporal/LiteLLM run).
+
 ## Stripe writes carry an idempotency key (2026-10-05)
 
 - No provider write sent an idempotency key, so a Temporal retry of a plan step, or an approval executed twice, could create a second Stripe charge, refund, customer or payment link (27sept RT-B10).
