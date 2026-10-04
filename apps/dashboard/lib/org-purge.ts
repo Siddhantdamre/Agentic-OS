@@ -57,8 +57,14 @@ function knownPeriodicWorkflowIds(orgId: string): string[] {
   ];
 }
 
-/** Memory tables with org_id (013 / 022). Missing tables are skipped. */
+/**
+ * Memory tables with org_id (013 / 022), plus earlier memory text kept for
+ * restore (`memory_revisions`) and connector sync positions (`sync_cursors`).
+ * Missing tables are skipped.
+ */
 const MEMORY_PURGE_TABLES = [
+  'memory_revisions',
+  'sync_cursors',
   'memory_edges',
   'org_memory',
   'employee_memory',

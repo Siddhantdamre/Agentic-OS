@@ -239,7 +239,7 @@ Counts at audit time: **600 findings** (ASK 47 · EMP 50 · RT 62 · MEM 51 · C
 | MEM-G10 | P2 | No facets; keyword entity search | `brain/route.ts:279` | 2.7 | 🔴 |
 | MEM-G11 | P2 | No bulk forget / export | — | 2.7 | 🔴 |
 | MEM-G12 | P2 | Docs cite non-existent table | `brain.md:56,80` | 0.5 | 🔴 |
-| MEM-E01 | P0 | DSR delete: Cognee/revisions/cursors missing | — | 3.3 | 🔴 |
+| MEM-E01 | P0 | DSR delete: Cognee/revisions/cursors missing | — | 3.3 | 🟡 2026-10-05 |
 | MEM-E02 | P1 | Encryption at rest | — | 4.7 | 🔴 |
 | MEM-E03 | P1 | Retention | `expires_at` unused | 3.2 | 🔴 |
 | MEM-E04 | P1 | Audit of memory reads/writes | — | 1.9 | 🔴 |
@@ -347,7 +347,7 @@ Counts at audit time: **600 findings** (ASK 47 · EMP 50 · RT 62 · MEM 51 · C
 | SEC-T07 | P2 | `org/switch` UPDATE users likely 42501 | `org/switch:83-90` | 1.1 | 🔴 |
 | SEC-T08 | P2 | Edge quota on unsigned org cookie | `rate-limit-core.ts:236-249` | 3.1 | 🔴 |
 | SEC-T09 | P2 | Full prompts to Langfuse unscrubbed | `langfuse-trace.ts:146-170` | 3.2 | 🔴 |
-| SEC-C01 | P0 | DSR delete omits ~40 tables + external systems | `wf/dsr/tables.ts:7-53` | 3.3 | 🔴 |
+| SEC-C01 | P0 | DSR delete omits ~40 tables + external systems | `wf/dsr/tables.ts:7-53` | 3.3 | 🟡 2026-10-05: all org tables classified; retention policy open |
 | SEC-C02 | P1 | Isolation test re-grants blanket privileges | `e2e-tenant-isolation.test.js:38-49` | 0.2 | 🔴 |
 | SEC-C03 | P1 | 73 mutating routes emit no audit | — | 1.9 | 🟡 (2026-09-28: `connector.connect` and `plan.approve` now emit real `recordAuditEvent` calls; `password.reset` and `logout` still emit nothing) |
 | SEC-C04 | P1 | No CSP/HSTS/XFO/Referrer-Policy | `next.config.js` | 3.2 | 🔴 |

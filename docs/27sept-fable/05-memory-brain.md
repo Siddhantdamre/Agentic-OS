@@ -127,7 +127,7 @@ Audit date 2026-09-27, read-only against `services/workflows/src/{memory,activit
 
 | ID | Sev | Area | Reality | Evidence | Status |
 |---|---|---|---|---|---|
-| MEM-E01 | P0 | DSR delete coverage | SQL memory ✅; **Cognee ❌, `memory_revisions` ❌, `sync_cursors` ❌** | `tables.ts:31-48`; `org-purge.ts:61-66` | 🔴 |
+| MEM-E01 | P0 | DSR delete coverage | SQL memory ✅; **Cognee ❌, `memory_revisions` ❌, `sync_cursors` ❌** | `tables.ts:31-48`; `org-purge.ts:61-66` | 🟡 2026-10-05: SQL memory, `memory_revisions`, `sync_cursors`, Cognee and Hindsight deleted by DSR; org purge clears revisions/cursors. Org purge still skips Cognee/Hindsight |
 | MEM-E02 | P1 | Encryption at rest | Postgres + `cognee-data` volumes unencrypted; bodies plaintext | `docker-compose.yml:45,709` | 🔴 |
 | MEM-E03 | P1 | Retention | `expires_at` never populated; no policy per org/tier | — | 🔴 |
 | MEM-E04 | P1 | Audit of memory reads/writes | Reads: none. Writes: `memory_writeback` work_event only; Brain mutations unaudited | `WorkItemWorkflow.ts:627-634` | 🔴 |

@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict';
+import { readdirSync, readFileSync } from 'node:fs';
+import { join, resolve } from 'node:path';
 import { describe, it } from 'node:test';
 import {
   DSR_DELETE_TABLES,
+  DSR_RETAINED_TABLES,
   markTableDone,
   parseDsrDeleteProgress,
   remainingDeleteTables,
@@ -51,5 +54,42 @@ describe('DSR delete progress resume', () => {
     const p = parseDsrDeleteProgress({ doneTables: [1, 'ok'], deleted: 'nope' });
     assert.deepEqual(p.doneTables, ['ok']);
     assert.deepEqual(p.deleted, {});
+  });
+});
+
+/** Every table the migrations give an org_id column (checked equal to the live schema). */
+function orgScopedTables(): Set<string> {
+  const dir = resolve(__dirname, '../../../../infra/db/migrations');
+  const found = new Set<string>();
+  for (const file of readdirSync(dir).filter((f) => f.endsWith('.sql'))) {
+    const sql = readFileSync(join(dir, file), 'utf8').replace(/--[^\n]*/g, '');
+    for (const m of sql.matchAll(/CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?(?:public\.)?"?([a-z_0-9]+)"?\s*\(([\s\S]*?)\n\s*\)\s*;/gi)) {
+      if (/(^|[\s,(])org_id\s/i.test(m[2])) found.add(m[1].toLowerCase());
+    }
+    for (const m of sql.matchAll(/ALTER\s+TABLE\s+(?:IF\s+EXISTS\s+)?(?:ONLY\s+)?(?:public\.)?([a-z_0-9]+)\s+ADD\s+COLUMN\s+(?:IF\s+NOT\s+EXISTS\s+)?org_id\b/gi)) {
+      found.add(m[1].toLowerCase());
+    }
+  }
+  return found;
+}
+
+describe('DSR delete coverage (SEC-C01)', () => {
+  const orgTables = orgScopedTables();
+
+  it('classifies every org_id table as deleted or retained with a reason', () => {
+    assert.ok(orgTables.size > 50, `parsed only ${orgTables.size} org tables; the migration parser broke`);
+    const deleted = new Set(DSR_DELETE_TABLES);
+    const unclassified = [...orgTables].filter((t) => !deleted.has(t) && !(t in DSR_RETAINED_TABLES)).sort();
+    assert.deepEqual(unclassified, [], `add these to a DSR delete list or DSR_RETAINED_TABLES: ${unclassified.join(', ')}`);
+  });
+
+  it('never both deletes and retains a table, and lists no table twice', () => {
+    assert.deepEqual(DSR_DELETE_TABLES.filter((t) => t in DSR_RETAINED_TABLES), []);
+    assert.equal(new Set(DSR_DELETE_TABLES).size, DSR_DELETE_TABLES.length);
+  });
+
+  it('deletes the memory revision history and sync cursors (MEM-E01)', () => {
+    assert.ok(DSR_DELETE_TABLES.includes('memory_revisions'));
+    assert.ok(DSR_DELETE_TABLES.includes('sync_cursors'));
   });
 });

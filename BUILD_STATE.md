@@ -1,5 +1,11 @@
 # Darex Build State
 
+## DSR delete covers every org table, or names why it keeps it (2026-10-05)
+
+- The DSR delete job (`dsr/tables.ts`) listed 36 tables; the schema has 89 with `org_id`. It left customer data behind: CRM entities and identifiers, real-estate inquiries/showings/listings, leases and charges, growth leads and dossiers, intent signals, tool invocations (arguments), failed webhook payloads, notification log, sentiment, feedback, and earlier memory text in `memory_revisions` (27sept SEC-C01, MEM-E01).
+- New `CUSTOMER_DATA_TABLES` (25) joins the delete list (61 total). `DSR_RETAINED_TABLES` names the 28 kept tables with a reason: account (users, memberships, invites, push devices), configuration (employees, skills, packs, channels, connectors, widget) and legal records (audit, billing, the DSR request itself), because the org stays a working account. Deleting any of those is a product/legal decision, left open. `tables.test.ts` parses the migrations for `org_id` tables (matches the live schema, 89/89) and fails when one is in neither list; checked by removing one entry. The org soft-delete purge (`lib/org-purge.ts`) also clears `memory_revisions` and `sync_cursors`.
+- Verified: workflows dsr tests 14/14, dashboard and workflows typecheck, every listed name exists in the live schema. All FKs onto the new tables are SET NULL or CASCADE, so the order cannot fail. Not verified: a full DSR delete run on a populated org. Still open: export covers fewer tables than delete; org purge does not call Cognee/Hindsight; Nango/Langfuse/SuperTokens/MinIO cleanup.
+
 ## A knowledge source can be disabled, and disabling hides its chunks (2026-10-05)
 
 - Retrieval and the Brain list skip memory whose `knowledge_sources` row is `disabled`, but matched `ks.path = source_ref` exactly. Chunk memories carry `path#cN` (worker ingest) or `path#chunk-N` (dashboard embed), so a disabled file's chunks were still retrieved. Nothing could set `disabled` anyway, and every sync upsert wrote its own status over it (27sept MEM-B02).
