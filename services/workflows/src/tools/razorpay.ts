@@ -1,3 +1,4 @@
+import { openSecret } from '@darex/whatsapp-gateway';
 import type { ToolRisk } from './risk.js';
 import type { ToolActionContext, ToolModule } from './shared.js';
 import { apiError, confirmFromRisk, fetchWithTimeout, notConnected, withOrgScopedClient } from './shared.js';
@@ -21,6 +22,14 @@ async function execute(ctx: ToolActionContext) {
     razorpayKeyId = String(meta.keyId || meta.key_id || '');
     razorpayKeySecret = String(meta.keySecret || meta.key_secret || '');
   });
+  if (razorpayKeySecret) {
+    try {
+      razorpayKeySecret = openSecret(razorpayKeySecret);
+    } catch (err) {
+      // A sealed secret we cannot open (missing or changed key) is never sent.
+      return apiError('razorpay', actionName, timestamp, `${err instanceof Error ? err.message : err}. Reconnect Razorpay in Connectors.`);
+    }
+  }
   if (!razorpayKeyId || !razorpayKeySecret) {
     if (process.env.NODE_ENV !== 'production' && process.env.ALLOW_GLOBAL_RAZORPAY_DEV === 'true') {
       razorpayKeyId = process.env.RAZORPAY_KEY_ID || '';

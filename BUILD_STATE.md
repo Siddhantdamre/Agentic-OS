@@ -1,5 +1,11 @@
 # Darex Build State
 
+## Razorpay key secrets are stored encrypted (2026-10-05)
+
+- The per-org Razorpay key secret was saved as plaintext in `channels.meta` (`keySecret`/`key_secret`), so anyone with DB or backup access could create payment links for that org (27sept RT-S04 / BIZ-S01; the WhatsApp half was already sealed).
+- `POST /api/integrations/razorpay` now seals the secret with the same AES-256-GCM helper as the WhatsApp token (`sealSecret`, key `CHANNEL_SECRETS_KEY`), under both legacy names, with a `secret_hint`. It refuses with 503 before calling Razorpay when the key is not set. Readers open it at use: the agent's `razorpay` tool (a secret it cannot open is reported as "reconnect", never sent) and the connector test route (treated as not connected). Old plaintext rows keep working until `node infra/scripts/seal-razorpay-secrets.js [--dry-run]` seals them (idempotent, same shape as `seal-whatsapp-tokens.js`).
+- Verified: `razorpay-secret-seal.test.ts` (sealed under both names, never plaintext, opens back, 503 without a key and Razorpay not called); dashboard and workflows typecheck. Ran the backfill on a temporary local row: dry run, seal, re-run skipped, value opens to the original; row deleted. Dev DB had no Razorpay rows. Not verified: a live Razorpay connect and payment link with a real key.
+
 ## A retried agent turn no longer re-runs tools the first attempt already ran (2026-10-05)
 
 - `runAgentTurnActivity` (`AutonomousAgentWorkflow`, also the child turn of every inbound `WorkItemWorkflow`) has `maximumAttempts: 2` and catches its own errors, so Temporal retries it only after a 12-minute timeout or a dead worker. The retry re-ran the whole turn, so a send, charge or update from the first attempt could happen twice, sometimes while the first attempt was still running (RT-B03, the part still open after the failover fix).

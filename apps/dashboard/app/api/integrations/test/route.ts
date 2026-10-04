@@ -49,7 +49,12 @@ function razorpayCredsFromMeta(meta: Record<string, unknown> | null | undefined)
 } | null {
   const src = meta && typeof meta === 'object' ? meta : {};
   const keyId = String(src.keyId || src.key_id || '');
-  const keySecret = String(src.keySecret || src.key_secret || '');
+  let keySecret = String(src.keySecret || src.key_secret || '');
+  try {
+    keySecret = keySecret ? openSecret(keySecret) : '';
+  } catch {
+    return null; // sealed secret that cannot be opened: treat as not connected
+  }
   if (!keyId || !keySecret) return null;
   return { keyId, keySecret };
 }

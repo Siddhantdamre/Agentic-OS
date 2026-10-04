@@ -3,7 +3,8 @@
  * Callers: apps/dashboard/lib/nango-client.ts connectRazorpayByok,
  * connectors + integrations UI modals.
  * Glob of app/api/integrations has whatsapp but no razorpay route (confirmed).
- * Writes channels.meta JSONB: { keyId, keySecret, key_id, key_secret } — never returned to the client.
+ * Writes channels.meta JSONB: { keyId, keySecret, key_id, key_secret, secret_hint }. The secret is
+ * sealed (CHANNEL_SECRETS_KEY) and never returned to the client.
  */
 
 import { NextResponse } from 'next/server';
@@ -12,6 +13,7 @@ import { realtimeHub } from '@/lib/realtime-hub';
 import { auditConnectorChange, denyUnlessConnectorManager } from '@/lib/connector-rbac';
 import { upsertOrgConnector } from '@/lib/connector-registry';
 import { pingRazorpay } from '@darex/connectors';
+import { sealSecret, secretHint, secretsKeyConfigured } from '@darex/whatsapp-gateway';
 
 export async function POST(request: Request) {
   try {
@@ -27,6 +29,14 @@ export async function POST(request: Request) {
         return NextResponse.json({ message: 'Razorpay keyId and keySecret are required' }, { status: 400 });
       }
 
+      // The secret is stored encrypted; refuse to save one we could not protect.
+      if (!secretsKeyConfigured()) {
+        return NextResponse.json(
+          { success: false, connected: false, message: 'Key storage is not set up on this server (CHANNEL_SECRETS_KEY).' },
+          { status: 503 }
+        );
+      }
+
       const ping = await pingRazorpay({ keyId, keySecret });
       if (!ping.ok) {
         await client.query(
@@ -40,11 +50,14 @@ export async function POST(request: Request) {
         );
       }
 
+      // Both legacy key names hold the same sealed value; secret_hint is safe to show.
+      const sealed = sealSecret(keySecret);
       const metaPayload = JSON.stringify({
         keyId,
-        keySecret,
+        keySecret: sealed,
         key_id: keyId,
-        key_secret: keySecret,
+        key_secret: sealed,
+        secret_hint: secretHint(keySecret),
         verifiedAt: new Date().toISOString(),
       });
 

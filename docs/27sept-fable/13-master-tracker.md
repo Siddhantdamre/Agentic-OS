@@ -129,7 +129,7 @@ Counts at audit time: **600 findings** (ASK 47 · EMP 50 · RT 62 · MEM 51 · C
 |---|---|---|---|---|---|
 | RT-B01 | P0 | `database_query` allows CTE writes and `set_config` | `tools/database.ts:16,42-43` | 1.3 | 🟢 |
 | RT-B02 | P0 | Sandbox host fallback with `process.env` | `tools/sandbox.ts:162-216` | 1.3 | 🟢 |
-| RT-B03 | P0 | Three re-execution paths, no idempotency | `local-turn.ts:814-834` | 1.8 | 🔴 |
+| RT-B03 | P0 | Three re-execution paths, no idempotency | `local-turn.ts:814-834` | 1.8 | 🟢 failover stop + per-activity retry claim |
 | RT-B04 | P0 | ~85 fetches without abort; executor 15 s < module 20 s | `tool-executor.ts:67-82` | 1.8 | 🔴 |
 | RT-B05 | P0 | Gmail/Drive non-2xx → `[]` → "executed" | `tools/gmail.ts:275-288` | 1.8 | 🟢 (2026-09-28: gmailHttpFailure & googleDriveHttpFailure return status:'error' with reason:'revoked'|'insufficient_scope'|'api_error'; non-2xx never returns [] or executed; verified in gmail-http.test.ts and google-drive.test.ts) |
 | RT-B06 | P0 | No zod parse; monetary/channel defaults | `local-turn.ts:407-412`, `stripe.ts:161` | 1.4 | 🔴 |
@@ -158,7 +158,7 @@ Counts at audit time: **600 findings** (ASK 47 · EMP 50 · RT 62 · MEM 51 · C
 | RT-S01 | P0 | Sandbox on `darex-net`; global concurrency 2 | `docker-compose.yml:725-747` | 1.3 | 🟢 (2026-09-29: Verified — dedicated `sandbox-net` has `internal: true` with zero egress to `darex-net` or internet; `server.mjs` and `sandbox.ts` track active runs per tenant (`x-org-id`), enforce per-tenant limit of 2 concurrent runs preventing starvation, and forward `orgId`; tested in `sandbox-no-host.test.ts`) |
 | RT-S02 | P0 | Host fallback leaks env | `sandbox.ts:186` | 1.3 | 🟢 |
 | RT-S03 | P0 | RLS GUC mutable from chat | `database.ts` | 1.3 | 🟢 |
-| RT-S04 | P0 | BYOK plaintext | `whatsapp.ts:51-57`, `razorpay.ts:15-23` | 3.2 | 🔴 |
+| RT-S04 | P0 | BYOK plaintext | `whatsapp.ts:51-57`, `razorpay.ts:15-23` | 3.2 | 🟢 sealed (2026-10-05) |
 | RT-S05 | P1 | SSRF check string-only; no redirect/DNS/IPv6 | `web-extract.ts:11-49` | 4.5 | 🟢 (2026-09-28: same fix as `WEB-S01` — `tools/safe-url.ts` does real DNS resolution at connect time, re-checks every redirect hop, blocks non-canonical IP literals/link-local/metadata; `web-extract.ts` calls it before both Jina and direct-fetch paths; 7 unit tests + live checks) |
 | RT-S06 | P1 | Gmail header CRLF injection | `gmail.ts:437-438` | 4.5 | 🔴 |
 | RT-S07 | P1 | No injection fence on HTTP-sidecar path | `mcp-bridge.ts:1643-1665` | 4.5 | 🔴 |
@@ -405,7 +405,7 @@ Counts at audit time: **600 findings** (ASK 47 · EMP 50 · RT 62 · MEM 51 · C
 | BIZ-B25 | P2 | Invitee role forced `member` on one path | `auth/[[...path]]:321` | 3.6 | 🔴 |
 | BIZ-B26 | P2 | `channels[]` unvalidated | `org/create/route.ts:97-101` | 3.6 | 🔴 |
 | BIZ-B27 | P2 | Nango unreachable → "create in Nango UI" | `integrations/route.ts:104-125` | 3.6 | 🔴 |
-| BIZ-S01 | P0 | BYOK plaintext | `integrations/whatsapp:35`, `razorpay:41-43` | 3.2 | 🔴 (2026-09-28: confirmed still real — plaintext token/secret in `channels.meta`, zero encryption anywhere; needs a KMS/encryption-key product decision — which KMS, rotation, envelope vs. column encryption — before this is app code, not a pure code fix) |
+| BIZ-S01 | P0 | BYOK plaintext | `integrations/whatsapp:35`, `razorpay:41-43` | 3.2 | 🟢 sealed (2026-10-05) |
 | BIZ-S02 | P0 | No RBAC on connector connect/disconnect/BYOK | `integrations/route.ts:228-232` | 1.6 | 🔴 |
 | BIZ-S03 | P1 | `update_config` no audit/RBAC | `integrations/route.ts:460-475` | 1.6 | 🔴 |
 | BIZ-S04 | P1 | Any role reads billing | `billing/route.ts:44` | 1.6 | 🔴 |
