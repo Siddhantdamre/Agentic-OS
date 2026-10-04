@@ -25,6 +25,12 @@ import { bootstrapPeriodicSweeps } from './periodic-registry.js';
 import { startBillingSweep } from './billing/sweep-starter.js';
 import { startDlqRetention } from './dlq-retention-starter.js';
 import { startDsrReaper } from './dsr-reaper-starter.js';
+import {
+  ensureTrueForgeModelProvider,
+  ensureTrueForgeMcpServer,
+  ensureDarexAgent,
+} from './trueforge-client.js';
+
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -79,6 +85,16 @@ async function runWorker() {
       console.log('Temporal Agent Worker connected and listening on task queue: "darex-agent-tasks"');
       workerReady = true;
       delayMs = 2000;
+      // Seed TrueForge: model provider, MCP server, and the darex-ai named agent.
+      // These are idempotent — safe to run on every restart.
+      try {
+        await ensureTrueForgeModelProvider();
+        await ensureTrueForgeMcpServer();
+        await ensureDarexAgent();
+      } catch (seedErr: unknown) {
+        const msg = seedErr instanceof Error ? seedErr.message : String(seedErr);
+        console.warn(`TrueForge seed skipped: ${msg}`);
+      }
       try {
         await bootstrapPeriodicSweeps(new Client({ connection }));
       } catch (bootErr: unknown) {
