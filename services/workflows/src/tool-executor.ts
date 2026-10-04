@@ -364,7 +364,18 @@ async function invokeProvider(
         // whatever fields the caller did not supply — check whether phone
         // or title can be backfilled from an existing inbound email thread.
         if (typeof email === 'string') {
-          backfillContactFieldsActivity({ orgId: params.orgId, contactEmail: email }).catch((err) => {
+          backfillContactFieldsActivity({
+            orgId: params.orgId,
+            contactEmail: email,
+            actor: {
+              toolAllowlist: params.toolAllowlist,
+              employeeRole: params.employeeRole,
+              employeeId: params.employeeId,
+              actorUserId: params.actorUserId,
+              workflowId: params.workflowId,
+            },
+            execute: executeAutonomousToolAction,
+          }).catch((err) => {
             console.warn(`[Tool Executor] contact enrichment failed for org ${params.orgId}: ${err instanceof Error ? err.message : String(err)}`);
           });
         }

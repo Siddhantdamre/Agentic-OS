@@ -4,15 +4,25 @@
  * signature block (extractSignatureFields). Only fills fields that are
  * actually blank — never overwrites a value someone already entered.
  */
+import type { ToolExecutionParams, ToolExecutionResult } from '@darex/shared-types';
 import { isUndefinedTable, withOrgClient } from '../db.js';
-import { executeProvider } from '../tools/index.js';
 import { extractSignatureFields } from '../tools/gmail.js';
 
 type EmailMessage = { from?: string; body?: string };
 
+/**
+ * The gated executor (`executeAutonomousToolAction`), injected by the caller
+ * so the Gmail read and the HubSpot write go through the same allowlist,
+ * autonomy and audit checks as the call that triggered them (EMP-S02).
+ */
+export type GatedExecute = (params: ToolExecutionParams) => Promise<ToolExecutionResult>;
+
 export interface BackfillContactFieldsInput {
   orgId: string;
   contactEmail: string;
+  /** Who created the contact; the backfill runs as that employee. */
+  actor: Pick<ToolExecutionParams, 'toolAllowlist' | 'employeeRole' | 'employeeId' | 'actorUserId' | 'workflowId'>;
+  execute: GatedExecute;
 }
 
 export interface BackfillContactFieldsResult {
@@ -44,13 +54,13 @@ export async function backfillContactFieldsActivity(
         return { enriched: false, fieldsFilled: [], reason: 'no_missing_fields' };
       }
 
-      const fetched = await executeProvider({
+      const fetched = await input.execute({
+        ...input.actor,
         tool: 'gmail',
         action: 'fetch_latest_emails',
-        actionName: 'fetch_latest_emails',
         payload: { count: 25 },
         orgId: input.orgId,
-        timestamp: new Date().toISOString(),
+        source: 'sweep',
       });
       if (!fetched || fetched.status !== 'executed') {
         return { enriched: false, fieldsFilled: [], reason: fetched?.message || 'gmail not connected' };
@@ -99,14 +109,22 @@ export async function backfillContactFieldsActivity(
         );
       }
 
-      await executeProvider({
+      // The local entity is already updated; a CRM sync that is denied, parked
+      // for approval or fails is reported, not hidden.
+      const synced = await input.execute({
+        ...input.actor,
         tool: 'hubspot',
         action: 'update_contact',
-        actionName: 'update_contact',
         payload: { email: input.contactEmail, phone: patch.phone, jobtitle: patch.title },
         orgId: input.orgId,
-        timestamp: new Date().toISOString(),
-      }).catch(() => undefined);
+        source: 'sweep',
+      });
+      if (synced.status !== 'executed') {
+        console.warn(
+          `[enrichment] HubSpot update for org ${input.orgId} not executed (${synced.status}): ${synced.message || 'no message'}`,
+        );
+        return { enriched: true, fieldsFilled, reason: `crm_sync_${synced.status}` };
+      }
 
       return { enriched: true, fieldsFilled };
     });

@@ -1,5 +1,12 @@
 # Darex Build State
 
+## Contact enrichment runs through the tool gate (2026-10-05)
+
+- After a HubSpot contact was created, `backfillContactFieldsActivity` read Gmail and wrote `update_contact` to HubSpot through the raw `executeProvider`: no allowlist, autonomy, approval or audit, and a failed write was swallowed with `.catch(() => undefined)` (27sept EMP-S02, the remaining CRM write).
+- Both calls now go through `executeAutonomousToolAction`, injected by `tool-executor.ts` (no circular import), as the employee that created the contact (allowlist, role, employee id, actor, workflow id; `source: 'sweep'`). A HubSpot update that is denied, parked or fails is logged and returned as `reason: crm_sync_<status>`; the local entity update still stands.
+- Still raw on purpose: operator-internal Slack/WhatsApp alerts in `activities/customer.ts` and `activities/open-loop-sweep.ts`.
+- Verified: typecheck; ran the activity against the local Postgres with a recording executor: Gmail read and HubSpot write both went through it with the creator's allowlist and role, phone and title were filled from the signature, and a denied HubSpot write came back as `crm_sync_denied`. Test entity deleted. Not verified: a real Gmail/HubSpot account.
+
 ## A routed employee with no tools no longer inherits the webhook default's tools (2026-10-05)
 
 - `routeEmployeeActivity` merged the router's pick with the caller's defaults. When the pick was a different employee whose card had no tools (a blank custom employee), it inherited the webhook default employee's allowlist and persona, so it could use Customer's Stripe/WhatsApp tools (27sept EMP-B02).
