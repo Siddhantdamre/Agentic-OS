@@ -156,11 +156,15 @@ services:
       dockerfile: ../infra/docker/frontend/Dockerfile
       args:
         DASHBOARD_URL: http://dashboard:3000
+        TRUEFORGE_URL: http://trueforge:8790
     container_name: darex-frontend
     ports: !override
       - "127.0.0.1:3100:3100"
     restart: always
     mem_limit: 512m
+    environment:
+      - DASHBOARD_URL=http://dashboard:3000
+      - TRUEFORGE_URL=http://trueforge:8790
     depends_on:
       dashboard:
         condition: service_started
