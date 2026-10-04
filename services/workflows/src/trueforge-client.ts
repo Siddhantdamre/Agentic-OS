@@ -257,7 +257,7 @@ export async function ensureDarexAgent(baseUrl = trueforgeUrl()): Promise<void> 
   const agentModel =
     process.env.TRUEFORGE_CHAT_MODEL ||
     process.env.TRUEFORGE_MODEL ||
-    'openrouter/gemini-2-5-flash';
+    'openrouter/deepseek-v4-1-flash';
   const instructions =
     process.env.DAREX_AGENT_INSTRUCTIONS ||
     'You are the DareX AI autonomous workforce assistant. You have full access to connected enterprise tools via the darex MCP server. Help the user orchestrate employees, query data, run multi-step actions, and grow their business. Be concise, professional, and action-oriented.';
