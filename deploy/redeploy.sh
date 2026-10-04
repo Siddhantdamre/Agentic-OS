@@ -87,8 +87,8 @@ STATE_FILE="$ROOT/.git/darex-deployed"
 if [ "$DO_STATUS" -eq 1 ]; then
   compose ps
   echo
-  curl -sf "http://127.0.0.1:3000/api/health" && echo "  ✓ dashboard health ok" || echo "  ✗ dashboard health FAIL"
-  curl -sf "http://127.0.0.1:3100/api/health" && echo "  ✓ frontend (and /api proxy) ok" || echo "  ✗ frontend FAIL"
+  curl -sf "http://127.0.0.1:${DASHBOARD_PORT:-13000}/api/health" && echo "  ✓ dashboard health ok" || echo "  ✗ dashboard health FAIL"
+  curl -sf "http://127.0.0.1:${FRONTEND_HOST_PORT:-13100}/api/health" && echo "  ✓ frontend (and /api proxy) ok" || echo "  ✗ frontend FAIL"
   docker exec darex-postgres pg_isready -U darex -d darex 2>/dev/null && echo "  ✓ postgres ready" || echo "  ✗ postgres not ready"
   exit 0
 fi
@@ -384,8 +384,8 @@ log "Applying any new migrations (already-applied ones are skipped)"
 run_migrations
 
 # ── health checks ─────────────────────────────────────────────────────────────
-wait_http "dashboard" "http://127.0.0.1:3000/api/health" darex-dashboard
-wait_http "frontend (and its /api proxy)" "http://127.0.0.1:3100/api/health" darex-frontend
+wait_http "dashboard" "http://127.0.0.1:${DASHBOARD_PORT:-13000}/api/health" darex-dashboard
+wait_http "frontend (and its /api proxy)" "http://127.0.0.1:${FRONTEND_HOST_PORT:-13100}/api/health" darex-frontend
 
 PUBLIC="no"
 if [ -n "${NEXT_PUBLIC_APP_URL:-}" ] && curl -sf --max-time 20 "${NEXT_PUBLIC_APP_URL}/api/health" >/dev/null 2>&1; then PUBLIC="yes"; fi
@@ -408,7 +408,7 @@ cat <<EOF
   Backend  : $(git -C "$ROOT" rev-parse --short HEAD 2>/dev/null || echo unknown)
   Frontend : ${FRONT_AFTER:0:7}${FRONT_AFTER:+ }(refreshed)
   Rebuilt  : ${ORDERED[*]:-nothing}
-  Site     : ${NEXT_PUBLIC_APP_URL:-http://127.0.0.1:3100} (HTTPS reachable: ${PUBLIC})
+  Site     : ${NEXT_PUBLIC_APP_URL:-http://127.0.0.1:${FRONTEND_HOST_PORT:-13100}} (HTTPS reachable: ${PUBLIC})
   DB       : volumes preserved — all data intact
   Logs     : docker logs darex-dashboard | darex-frontend
   Status   : ./deploy/redeploy.sh --status

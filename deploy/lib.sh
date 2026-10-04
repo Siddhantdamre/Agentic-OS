@@ -177,12 +177,12 @@ wait_http() { # name url container [max_tries]
 # download happens once, not on every deploy.
 run_migrations() {
   if command -v node >/dev/null 2>&1 && { [ -d "$ROOT/apps/dashboard/node_modules/pg" ] || [ -d "$ROOT/node_modules/pg" ]; }; then
-    DB_HOST=127.0.0.1 DB_PORT=5432 DB_USER=darex \
+    DB_HOST=127.0.0.1 DB_PORT="${POSTGRES_HOST_PORT:-15432}" DB_USER=darex \
       DB_PASSWORD="${SUPERUSER_DB_PASSWORD:-darex_dev_secret}" DB_NAME="${DB_NAME:-darex}" \
       node "$ROOT/infra/db/migrate.js"
   else
     docker run --rm --network host -v "$ROOT:/app:ro" -v darex-migrate-deps:/tmp/m -w /app \
-      -e DB_HOST=127.0.0.1 -e DB_PORT=5432 -e DB_USER=darex \
+      -e DB_HOST=127.0.0.1 -e DB_PORT="${POSTGRES_HOST_PORT:-15432}" -e DB_USER=darex \
       -e DB_PASSWORD="${SUPERUSER_DB_PASSWORD:-darex_dev_secret}" -e DB_NAME="${DB_NAME:-darex}" \
       node:22-bookworm-slim sh -c '{ [ -d /tmp/m/node_modules/pg ] || npm install --no-save --prefix /tmp/m pg@8 >/dev/null; } && NODE_PATH=/tmp/m/node_modules node infra/db/migrate.js'
   fi
