@@ -1,5 +1,12 @@
 # Darex Build State
 
+## Stripe writes carry an idempotency key (2026-10-05)
+
+- No provider write sent an idempotency key, so a Temporal retry of a plan step, or an approval executed twice, could create a second Stripe charge, refund, customer or payment link (27sept RT-B10).
+- `providerIdempotencyKey` (`tools/shared.ts`) derives `darex-<sha256>` from org, a durable anchor (approved pending-action id, else workflow id), tool, action and the arguments (key order ignored). `invokeProvider` passes it on `ToolActionContext.idempotencyKey`; Stripe adds `Idempotency-Key` to its write POSTs (one per action). A call with no anchor (a chat turn, which RT-B03 no longer retries) gets no key, so identical but separate chat requests are not merged. Two identical writes in one plan do collapse into one at Stripe.
+- Not done: Razorpay, Twilio and HubSpot. No idempotency header was verified for them, so none is guessed; plan steps there still rely on the per-step `claimIdempotent`.
+- Verified: `provider-idempotency.test.ts` (same step same key, any field change a new key, no anchor no key), workflows suite, typecheck. Not verified: the header against Stripe (no test account; Stripe auth goes through Nango).
+
 ## The Gmail tool can search, not only read the latest emails (2026-10-05)
 
 - `gmail_fetch` listed the newest N messages only, so "find the invoice email from Acme" read the last ten and hoped (27sept TOOL-G01).

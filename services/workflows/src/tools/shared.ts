@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { Pool, PoolClient } from 'pg';
 import { connectorSignInPath, type ToolExecutionResult } from '@darex/shared-types';
@@ -100,6 +101,51 @@ export interface ToolActionContext {
   timestamp: string;
   /** Aborted when the executor deadline passes; fetchWithTimeout honors it. */
   signal?: AbortSignal;
+  /**
+   * Stable across retries of the same call (RT-B10); set only when the call
+   * has a durable anchor (workflow id or approved action). Providers that
+   * support it send it so a retried write is not applied twice.
+   */
+  idempotencyKey?: string;
+}
+
+function stableJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(',')}]`;
+  if (value && typeof value === 'object') {
+    const rec = value as Record<string, unknown>;
+    return `{${Object.keys(rec)
+      .filter((k) => rec[k] !== undefined)
+      .sort()
+      .map((k) => `${JSON.stringify(k)}:${stableJson(rec[k])}`)
+      .join(',')}}`;
+  }
+  return JSON.stringify(value ?? null);
+}
+
+/**
+ * Provider idempotency key for one tool call, or undefined when nothing makes
+ * a retry recognisable (a chat turn is not retried; see RT-B03). Same anchor,
+ * tool, action and arguments give the same key, so two identical writes in one
+ * plan collapse into one at the provider.
+ */
+export function providerIdempotencyKey(params: {
+  orgId: string;
+  tool: string;
+  action: string;
+  payload: unknown;
+  workflowId?: string;
+  approvedPendingActionId?: string;
+}): string | undefined {
+  const anchor = params.approvedPendingActionId
+    ? `approval:${params.approvedPendingActionId}`
+    : params.workflowId
+      ? `wf:${params.workflowId}`
+      : '';
+  if (!anchor) return undefined;
+  const digest = createHash('sha256')
+    .update([params.orgId, anchor, params.tool.toLowerCase(), params.action.toLowerCase(), stableJson(params.payload)].join('\u0000'))
+    .digest('hex');
+  return `darex-${digest.slice(0, 40)}`;
 }
 
 export interface ToolModule {

@@ -1,5 +1,5 @@
 import type { ToolCatalogEntry, ToolExecutionParams, ToolExecutionResult } from '@darex/shared-types';
-import { TOOL_EXECUTION_TIMEOUT_MS, withOrgScopedClient } from './tools/shared.js';
+import { TOOL_EXECUTION_TIMEOUT_MS, providerIdempotencyKey, withOrgScopedClient } from './tools/shared.js';
 import { executeProvider, resolveToolRisk, type ToolRisk } from './tools/index.js';
 import { filterAllowlistForPersona, normalizeEmployeePersona, roleCapabilityDenial } from './tools/role-capability.js';
 import { withProviderRateLimit } from './tools/provider-rate-limit.js';
@@ -329,6 +329,14 @@ async function invokeProvider(
           orgId: params.orgId,
           timestamp,
           signal,
+          idempotencyKey: providerIdempotencyKey({
+            orgId: params.orgId,
+            tool: params.tool,
+            action: params.action,
+            payload: params.payload,
+            workflowId: params.workflowId,
+            approvedPendingActionId: params.approvedPendingActionId,
+          }),
         });
       }),
       TOOL_EXECUTION_TIMEOUT_MS,

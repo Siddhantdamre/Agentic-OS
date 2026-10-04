@@ -136,7 +136,7 @@ Counts at audit time: **600 findings** (ASK 47 · EMP 50 · RT 62 · MEM 51 · C
 | RT-B07 | P0 | `module.confirm` not enforced in executor; no role → autonomy skipped | `tool-executor.ts:345-346` | 1.4 | 🟢 (2026-09-29: `resolveToolRisk` enforces `mod.confirm(action)` on tool modules alongside `confirmForRisk(risk)`; `tool-gate.ts` parks confirm-class actions across all callers; missing employee identity fails closed; verified in `executor-confirm.test.ts`) |
 | RT-B08 | P1 | No tool-call cap on in-process turn | `local-turn.ts:612` | 4.3 | 🔴 |
 | RT-B09 | P1 | 422 approvals-pending → session recreated, approvals lost | `trueforge-client.ts:514-556` | 4.3 | 🔴 |
-| RT-B10 | P1 | No provider idempotency keys | all write tools | 1.8 | 🔴 |
+| RT-B10 | P1 | No provider idempotency keys | all write tools | 1.8 | 🟡 2026-10-05: Stripe writes send `Idempotency-Key` for plan-step and approved-action calls. Razorpay/Twilio/HubSpot have no verified header; plan steps rely on `claimIdempotent` |
 | RT-B11 | P1 | `executePlanStepActivity` passes no role | `orchestration.ts:288-333` | 1.4 | 🟢 (2026-09-29: `executePlanStepActivity` resolves `resolvePlanStepActor(orgId, step)` and forwards real `employeeRole`/`employeeId`/`toolAllowlist` into `executeAutonomousToolAction`; covered by `plan-step-actor.test.ts`) |
 | RT-B12 | P1 | Model-supplied `employee_role` used | `mcp-bridge.ts:1622-1623` | 1.4 | 🔴 |
 | RT-B13 | P1 | In-process turns bypass Langfuse/LiteLLM; usage dropped | `local-turn.ts:246-262` | 1.11 | 🟡 |

@@ -20,9 +20,12 @@ async function execute(ctx: ToolActionContext) {
   const stripeToken = _stripeAuth.kind === 'connected' ? _stripeAuth.accessToken : null;
   const _stripeAuthErr = _stripeAuth.kind === 'connected' ? null : nangoAuthError('stripe', actionName, timestamp, _stripeAuth);
   if (!stripeToken) return _stripeAuthErr ?? notConnected('stripe', actionName, timestamp);
-  const stripeHeaders = {
+  // Each write action makes one POST, so one key per call is enough; Stripe
+  // replays the first response for a repeated key (RT-B10).
+  const stripeHeaders: Record<string, string> = {
     Authorization: `Bearer ${stripeToken}`,
     'Content-Type': 'application/x-www-form-urlencoded',
+    ...(ctx.idempotencyKey ? { 'Idempotency-Key': ctx.idempotencyKey } : {}),
   };
   try {
     if (actionName.includes('charge') && !actionName.includes('refund')) {
