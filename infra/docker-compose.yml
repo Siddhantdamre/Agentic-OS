@@ -1030,6 +1030,7 @@ services:
       # TRUEFORGE_URL=http://host.docker.internal:8791 (recreate to apply).
       - TRUEFORGE_URL=http://trueforge:8790
       - TRUEFORGE_MODEL=${TRUEFORGE_MODEL:-openrouter/deepseek-v4-1-flash}
+      - TRUEFORGE_CHAT_MODEL=${TRUEFORGE_CHAT_MODEL:-openrouter/gemini-2-5-flash}
       # Same two-runtime trap as above: root .env holds the host-dev value.
       # Flip to http://cognee:8000 at cutover.
       - COGNEE_URL=${COGNEE_URL:-http://cognee:8000}
@@ -1132,6 +1133,7 @@ services:
       # TRUEFORGE_URL=http://host.docker.internal:8791 (recreate to apply).
       - TRUEFORGE_URL=http://trueforge:8790
       - TRUEFORGE_MODEL=${TRUEFORGE_MODEL:-openrouter/deepseek-v4-1-flash}
+      - TRUEFORGE_CHAT_MODEL=${TRUEFORGE_CHAT_MODEL:-openrouter/gemini-2-5-flash}
       # Same two-runtime trap as above: root .env holds the host-dev value.
       # Flip to http://cognee:8000 at cutover.
       - COGNEE_URL=${COGNEE_URL:-http://cognee:8000}

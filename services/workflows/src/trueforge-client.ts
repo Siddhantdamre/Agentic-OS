@@ -190,6 +190,16 @@ export async function ensureTrueForgeModelProvider(baseUrl = trueforgeUrl()): Pr
               name: 'gemini-2-5-flash-lite',
               properties: { context_length: 1048576, max_output_tokens: turnOutputTokenCap(65536) },
             },
+            {
+              model_id: 'openai/gpt-4o',
+              name: 'gpt-4o',
+              properties: { context_length: 128000, max_output_tokens: turnOutputTokenCap(16384) },
+            },
+            {
+              model_id: 'openai/gpt-4o-mini',
+              name: 'gpt-4o-mini',
+              properties: { context_length: 128000, max_output_tokens: turnOutputTokenCap(16384) },
+            },
           ],
         },
       }),
@@ -244,7 +254,10 @@ export async function ensureTrueForgeMcpServer(baseUrl = trueforgeUrl()): Promis
  */
 export async function ensureDarexAgent(baseUrl = trueforgeUrl()): Promise<void> {
   const AGENT_NAME = 'darex-ai';
-  const agentModel = process.env.TRUEFORGE_CHAT_MODEL || 'openrouter/claude-3.5-sonnet';
+  const agentModel =
+    process.env.TRUEFORGE_CHAT_MODEL ||
+    process.env.TRUEFORGE_MODEL ||
+    'openrouter/gemini-2-5-flash';
   const instructions =
     process.env.DAREX_AGENT_INSTRUCTIONS ||
     'You are the DareX AI autonomous workforce assistant. You have full access to connected enterprise tools via the darex MCP server. Help the user orchestrate employees, query data, run multi-step actions, and grow their business. Be concise, professional, and action-oriented.';

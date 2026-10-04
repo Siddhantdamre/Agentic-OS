@@ -143,6 +143,7 @@ services:
       - DAREX_PROD_FAILFAST=true
       - DB_USER=darex_app
       - ALLOW_DEMO_AUTH=false
+      - TRUEFORGE_CHAT_MODEL=${TRUEFORGE_CHAT_MODEL:-openrouter/gemini-2-5-flash}
 
   # The user-facing app (NEW-FRONTEND). It proxies /api/* to the dashboard, so the reverse
   # proxy (Caddy/nginx) points at 127.0.0.1:3100 and the session cookie stays same-origin.
@@ -182,6 +183,7 @@ services:
       - ALLOW_DEMO_AUTH=false
       - DB_USER=darex_app
       - DAREX_PROD_FAILFAST=true
+      - TRUEFORGE_CHAT_MODEL=${TRUEFORGE_CHAT_MODEL:-openrouter/gemini-2-5-flash}
 
   evolution:
     init: true
