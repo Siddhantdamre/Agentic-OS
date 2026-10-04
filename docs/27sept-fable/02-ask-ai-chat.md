@@ -86,7 +86,7 @@ Audit date 2026-09-27, read-only. Scope: `apps/dashboard/app/api/ask-ai/**`, `ap
 
 | ID | Sev | Evidence | Gap | Status |
 |---|---|---|---|---|
-| ASK-E01 | P0 | `audit-events.ts` called only at `plan/route.ts:109-120` | No audit for plan cancel, step edit, tool approval/denial, mode change, crew dispatch, executed tool with actor. | 🔴 |
+| ASK-E01 | P0 | `audit-events.ts` called only at `plan/route.ts:109-120` | No audit for plan cancel, step edit, tool approval/denial, mode change, crew dispatch, executed tool with actor. | 🟢 2026-10-05: plan cancel / step edit, tool approve / deny (fail closed), Ask mode change (`settings.update`) and crew dispatch audited; kinds in migration 207 |
 | ASK-E02 | P1 | `rate-limit.ts:98-99,147-166` in-memory; 429 with no `Retry-After` | Concurrency cap per process (×N replicas); no per-user token/cost quota. | 🔴 |
 | ASK-E03 | P1 | `route.ts:683-690` `.catch(()=>{})`; `execute/route.ts:446-453` | No correlation id in events/headers; no metrics for stream duration, approval latency, plan success. | 🔴 |
 | ASK-E04 | P1 | `route.ts:423-435,1440-1447`; `conversations/route.ts:34` | No retention or PII redaction on `messages.content`/`tool_calls` (raw tool outputs incl. emails); no export. | 🔴 |

@@ -12,7 +12,7 @@ export type AuditActorInput =
   | { actorType: 'employee'; employeeId: string }
   | { actorType: 'system'; component: string };
 
-/** Must match audit_events_kind_chk (migration 150); audit-events.test.ts pins it. */
+/** Must match audit_events_kind_chk (migration 207); audit-events.test.ts pins it. */
 export const AUDIT_EVENT_KINDS = [
   'tool.execute',
   'plan.approve',
@@ -59,6 +59,11 @@ export const AUDIT_EVENT_KINDS = [
   'skill.update',
   'impersonation.start',
   'impersonation.end',
+  'plan.cancel',
+  'plan.step_edit',
+  'tool.approve',
+  'tool.deny',
+  'crew.dispatch',
 ] as const;
 
 export type AuditEventKind = (typeof AUDIT_EVENT_KINDS)[number];

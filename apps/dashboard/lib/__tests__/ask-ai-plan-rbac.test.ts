@@ -162,4 +162,44 @@ describe('Ask AI Plan Approval RBAC (SEC-R01)', () => {
     expect(data.success).toBe(true);
     expect(data.status).toBe('approved');
   });
+
+  describe('audit (ASK-E01)', () => {
+    const audit = () => require('@/lib/audit-events').recordAuditEvent as jest.Mock;
+    const patch = (body: Record<string, unknown>) =>
+      PATCH(
+        new Request('http://localhost/api/ask-ai/plan', {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ planId: mockPlanId, ...body }),
+        })
+      );
+    beforeEach(() => {
+      currentUserRole = 'admin';
+      audit().mockClear();
+    });
+
+    it('records who cancelled a plan', async () => {
+      const res = await patch({ action: 'cancel' });
+      expect(res.status).toBe(200);
+      expect(audit()).toHaveBeenCalledWith(
+        expect.objectContaining({ kind: 'plan.cancel', planId: mockPlanId, actor: { actorType: 'user', userId: mockUserId } }),
+        expect.anything()
+      );
+    });
+
+    it('records a step edit without the edited arguments', async () => {
+      const res = await patch({
+        steps: [{ id: 'step-2', enabled: false, payload: { to: 'customer@example.com' } }],
+      });
+      expect(res.status).toBe(200);
+      const call = audit().mock.calls.find(([e]) => e.kind === 'plan.step_edit');
+      expect(call).toBeDefined();
+      expect(call![0].payload.steps).toEqual([
+        { id: 'step-1', tool: 'web_search', action: 'search', enabled: true },
+        { id: 'step-2', tool: 'gmail', action: 'draft_email', enabled: false },
+      ]);
+      expect(call![0].payload.payloadEdited).toEqual(['step-2']);
+      expect(JSON.stringify(call![0])).not.toContain('customer@example.com');
+    });
+  });
 });

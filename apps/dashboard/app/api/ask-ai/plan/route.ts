@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import type { PoolClient } from 'pg';
 import { getScopedClient, scopedAuthErrorResponse } from '@/lib/db';
 import { tryReadJson } from '@/lib/safe-json';
 import { recordAuditEvent } from '@/lib/audit-events';
@@ -56,6 +57,26 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
   } finally {
     if (client) client.release();
+  }
+}
+
+/** Plan cancel / step edit audit (ASK-E01). A failed insert is logged, not hidden. */
+async function auditPlanChange(
+  client: PoolClient,
+  orgId: string,
+  userId: string,
+  kind: 'plan.cancel' | 'plan.step_edit',
+  planId: string,
+  payload: Record<string, unknown>
+): Promise<void> {
+  try {
+    await recordAuditEvent(
+      { orgId, kind, actor: { actorType: 'user', userId }, resultStatus: 'ok', planId, payload: { planId, ...payload } },
+      { client, orgId }
+    );
+  } catch (auditErr: unknown) {
+    const message = auditErr instanceof Error ? auditErr.message : String(auditErr);
+    console.warn(`[ask-ai/plan] ${kind} audit_events insert failed:`, message);
   }
 }
 
@@ -208,6 +229,7 @@ export async function PATCH(request: Request) {
         `UPDATE agent_plans SET status = 'cancelled', updated_at = NOW() WHERE id = $1 AND org_id = $2`,
         [planId, orgId]
       );
+      await auditPlanChange(client, orgId, userId, 'plan.cancel', planId, { previousStatus: existing.status });
       realtimeHub.publish(orgId, { type: 'plan_updated', message: planId });
       const waiting = await client.query(
         `SELECT temporal_workflow_id FROM work_items
@@ -291,6 +313,16 @@ export async function PATCH(request: Request) {
         `UPDATE agent_plans SET steps = $3, updated_at = NOW() WHERE id = $1 AND org_id = $2`,
         [planId, orgId, JSON.stringify(capped)]
       );
+      // Step ids, tools and on/off only: edited arguments can hold customer data.
+      await auditPlanChange(client, orgId, userId, 'plan.step_edit', planId, {
+        steps: capped.map((step: any) => ({
+          id: step.id ?? null,
+          tool: step.tool ?? null,
+          action: step.action ?? null,
+          enabled: step.enabled !== false,
+        })),
+        payloadEdited: incoming.filter((st) => st.payload && typeof st.payload === 'object').map((st) => byKey(st)),
+      });
       realtimeHub.publish(orgId, { type: 'plan_updated', message: planId });
       return NextResponse.json({ success: true, steps: capped });
     }

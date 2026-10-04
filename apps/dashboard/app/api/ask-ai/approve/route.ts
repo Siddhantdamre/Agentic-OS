@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getScopedClient, scopedAuthErrorResponse } from '@/lib/db';
 import { readJsonBody } from '@/lib/safe-json';
+import { recordAuditEvent } from '@/lib/audit-events';
 import { logLangfuseTrace } from '@/lib/langfuse-trace';
 import { canApproveActions, canApproveRefunds, canCallPayTools, isPayTool, loadHumanRole } from '@/lib/rbac';
 import { mapTurnToResult, sanitizeAgentReply } from '@darex/workflows/dist/agent-client';
@@ -134,6 +135,26 @@ export async function POST(request: Request) {
           { status: 403 }
         );
       }
+    }
+
+    // ASK-E01: one audit row per decision before the turn resumes. Like the
+    // /api/decisions path, a tool does not run on an approval with no record.
+    try {
+      for (const d of decisions) {
+        await recordAuditEvent({
+          orgId,
+          kind: d.decision === 'allow' ? 'tool.approve' : 'tool.deny',
+          actor: { actorType: 'user', userId },
+          resultStatus: 'ok',
+          tool: d.tool ?? null,
+          action: d.action ?? null,
+          approverUserId: userId,
+          payload: { sessionId, threadId: d.threadId, toolCallId: d.toolCallId, reason: d.reason ?? null },
+        });
+      }
+    } catch (auditErr: unknown) {
+      console.error('[ask-ai/approve] audit_events insert failed; not resuming:', auditErr instanceof Error ? auditErr.message : auditErr);
+      return NextResponse.json({ error: 'Could not record the approval, so nothing was run. Try again.' }, { status: 500 });
     }
 
     const encoder = new TextEncoder();

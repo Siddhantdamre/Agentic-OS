@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getOrgScopedClient, getScopedClient, releaseScopedClient, scopedAuthErrorResponse } from '@/lib/db';
 import { logLangfuseTrace } from '@/lib/langfuse-trace';
+import { recordAuditEvent } from '@/lib/audit-events';
 import { classifyRequest } from '@/lib/classify';
 import { generatePlan } from '@/lib/plan-generator';
 import { getPlaybook, playbookToPlan } from '@/lib/playbook-matcher';
@@ -259,6 +260,10 @@ async function persistAskModeChoice(
   employeeIds: string[],
 ): Promise<void> {
   try {
+    const prior = await client.query<{ ask_mode: string | null; ask_employee_ids: string[] | null }>(
+      `SELECT ask_mode, ask_employee_ids FROM conversations WHERE id = $1 AND org_id = $2`,
+      [conversationId, orgId],
+    );
     await client.query(
       `UPDATE conversations
           SET ask_mode = $1, ask_employee_ids = $2::uuid[], updated_at = NOW()
@@ -274,6 +279,31 @@ async function persistAskModeChoice(
              updated_at = NOW()`,
       [orgId, userId, mode, employeeIds],
     );
+    // Saved on every turn; audit only an actual change of who answers (ASK-E01).
+    const before = prior.rows[0];
+    const sameIds = (a: readonly string[], b: readonly string[]) =>
+      a.length === b.length && [...a].sort().join(',') === [...b].sort().join(',');
+    if (before && (before.ask_mode !== mode || !sameIds(before.ask_employee_ids ?? [], employeeIds))) {
+      try {
+        await recordAuditEvent(
+          {
+            orgId,
+            kind: 'settings.update',
+            actor: { actorType: 'user', userId },
+            resultStatus: 'ok',
+            payload: {
+              setting: 'ask_ai.mode',
+              conversationId,
+              from: { mode: before.ask_mode, employeeIds: before.ask_employee_ids ?? [] },
+              to: { mode, employeeIds },
+            },
+          },
+          { client, orgId },
+        );
+      } catch (auditErr: unknown) {
+        console.warn('[Ask AI] mode change audit failed:', auditErr instanceof Error ? auditErr.message : auditErr);
+      }
+    }
   } catch (err: unknown) {
     const code = (err as { code?: string })?.code;
     if (code === '42703' || code === '42P01') {
@@ -1052,6 +1082,23 @@ function streamCrewAnswer(args: {
           specialists,
           ...(args.fixedMembers ? { fixedMembers: true } : {}),
         };
+
+        // ASK-E01: who dispatched which crew. Each member's tools are gated and audited on their own.
+        await recordAuditEvent({
+          orgId: args.orgId,
+          kind: 'crew.dispatch',
+          actor: { actorType: 'user', userId: args.userId },
+          resultStatus: 'ok',
+          payload: {
+            crewKey: crewInput.idempotencyKey,
+            conversationId: args.conversationId || null,
+            reason: crewInput.reason ?? null,
+            managerEmployeeId: crewInput.manager.employeeId ?? null,
+            specialistEmployeeIds: crewInput.specialists.map((s) => s.employeeId ?? null),
+          },
+        }).catch((auditErr: unknown) =>
+          console.warn('crew.dispatch audit failed:', auditErr instanceof Error ? auditErr.message : auditErr),
+        );
 
         for (const spec of specialists) {
           send('subagent', {

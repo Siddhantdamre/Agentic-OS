@@ -1,6 +1,7 @@
 import { usageBlockedResponse } from '@/lib/usage-gate';
 import { NextResponse } from 'next/server';
 import { getScopedClient, scopedAuthErrorResponse } from '@/lib/db';
+import { recordAuditEvent } from '@/lib/audit-events';
 import { readJsonBody } from '@/lib/safe-json';
 import {
   isActiveCrewMember,
@@ -35,7 +36,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'userMessage is required' }, { status: 400 });
     }
 
-    const { client, orgId } = await getScopedClient();
+    const { client, orgId, userId } = await getScopedClient();
     const usageDenied = await usageBlockedResponse(orgId);
     if (usageDenied) {
       client.release();
@@ -162,6 +163,23 @@ export async function POST(request: Request) {
       manager,
       specialists: specialistInputs.length > 0 ? specialistInputs : [manager],
     };
+
+    // ASK-E01: who dispatched which crew. Each member's tools are gated and audited on their own.
+    await recordAuditEvent({
+      orgId: orgId,
+      kind: 'crew.dispatch',
+      actor: { actorType: 'user', userId: userId },
+      resultStatus: 'ok',
+      payload: {
+        crewKey: crewInput.idempotencyKey,
+        conversationId: body.conversationId || null,
+        reason: crewInput.reason ?? null,
+        managerEmployeeId: crewInput.manager.employeeId ?? null,
+        specialistEmployeeIds: crewInput.specialists.map((s) => s.employeeId ?? null),
+      },
+    }).catch((auditErr: unknown) =>
+      console.warn('crew.dispatch audit failed:', auditErr instanceof Error ? auditErr.message : auditErr),
+    );
 
     let usedTemporal = false;
     let result: CrewWorkflowResult;

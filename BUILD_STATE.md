@@ -1,5 +1,11 @@
 # Darex Build State
 
+## Ask AI plan, approval, mode and crew actions are audited (2026-10-05)
+
+- Only plan approve and tool execute wrote `audit_events`. Cancelling a plan, editing its steps, approving or denying a paused tool in chat, changing who answers (Ask mode), and dispatching a crew left no record of who did it (27sept ASK-E01).
+- Migration `207_audit_event_kinds_ask_ai.sql` adds `plan.cancel`, `plan.step_edit`, `tool.approve`, `tool.deny`, `crew.dispatch` to `audit_events_kind_chk` (full union of 150; `AUDIT_EVENT_KINDS` updated, pinned by `audit-events.test.ts`). Plan cancel and step edit (`api/ask-ai/plan`) record the actor; step edits store step ids, tools and on/off plus which steps had arguments edited, never the arguments. `api/ask-ai/approve` writes one row per decision before resuming and returns 500 without resuming if that fails, like `/api/decisions`. The Ask mode save runs every turn, so a `settings.update` (`setting: ask_ai.mode`, from/to) is written only when the mode or employees actually change. Crew dispatch from `/api/ask-ai` and `/api/agent/crew` records the manager and specialist employee ids. Failures on the non-approval paths are logged, not thrown.
+- Verified: dashboard typecheck; `ask-ai-plan-rbac.test.ts` (cancel and step-edit cases, arguments absent), `ask-ai-approve-audit.test.ts` (per-decision rows, no resume when the insert fails), `audit-events.test.ts`; migration 207 applied to the local DB and all five kinds inserted (rolled back). Not unit-tested: the mode-change and crew-dispatch rows (large route; typechecked only).
+
 ## A chunked file becomes ready once its chunks are indexed (2026-10-05)
 
 - Worker ingest stages a file, queues one embed job per chunk (`path#cN`, each with its own `knowledge_sources` row) and leaves the file's own row at `syncing`. `markJob` only updated the chunk rows, so every chunked Drive file showed "Syncing" forever and never got `last_synced` (27sept MEM-B01).

@@ -58,7 +58,7 @@ Counts at audit time: **600 findings** (ASK 47 · EMP 50 · RT 62 · MEM 51 · C
 | ASK-G09 | P2 | Regex synthesises founder/year claims | `tool-answer.ts:286-300` | 2.1 | 🔴 |
 | ASK-G10 | P2 | `ActionPermissionCard` never receives data | `page.tsx:2355-2360` | 2.1 | 🔴 |
 | ASK-G11 | P2 | `MENTION_ALLOWLIST_MODE='org-union'` contradicts locked mode | `employee-mentions.ts:1-8` | 2.3 | 🔴 |
-| ASK-E01 | P0 | No audit for cancel/edit/approve/deny/mode/crew/executed tool | `audit-events.ts` one caller | 1.9 | 🔴 |
+| ASK-E01 | P0 | No audit for cancel/edit/approve/deny/mode/crew/executed tool | `audit-events.ts` one caller | 1.9 | 🟢 2026-10-05 |
 | ASK-E02 | P1 | Per-process concurrency cap; no per-user quota; no `Retry-After` | `rate-limit.ts:98-99` | 3.5 | 🔴 |
 | ASK-E03 | P1 | No correlation id; no stream/approval/plan metrics | `route.ts:683-690` | 0.6 / 4.1 | 🔴 |
 | ASK-E04 | P1 | No retention/redaction on `messages.content`/`tool_calls` | `route.ts:423-435` | 3.2 | 🔴 |
