@@ -131,7 +131,7 @@ Legend: **impl** = in `ACTIONS`. **missing** = expected by an enterprise admin o
 
 | ID | Sev | Issue | Fix packet | Status |
 |---|---|---|---|---|
-| TOOL-G01 | **P0** | Gmail has no `q=` search — inbox find is last-N | with SRCH-G01 / WEB-B17 | 🔴 |
+| TOOL-G01 | **P0** | Gmail has no `q=` search — inbox find is last-N | with SRCH-G01 / WEB-B17 | 🟢 2026-10-05: `gmail_fetch` takes `query` (Gmail search syntax) |
 | TOOL-G02 | P1 | Calendar cannot delete or do recurring/rooms | Workspace depth sprint | 🔴 |
 | TOOL-G03 | P1 | HubSpot no companies/notes/tasks/pipelines | CRM depth | 🔴 |
 | TOOL-G04 | P1 | Slack no search/threads | with WEB-G13 | 🔴 |

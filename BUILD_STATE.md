@@ -1,5 +1,11 @@
 # Darex Build State
 
+## The Gmail tool can search, not only read the latest emails (2026-10-05)
+
+- `gmail_fetch` listed the newest N messages only, so "find the invoice email from Acme" read the last ten and hoped (27sept TOOL-G01).
+- `gmail_fetch` takes an optional `query` in Gmail search syntax (`from:`, `subject:`, `is:unread`, `newer_than:`), sent as `q`. The URL is built by `gmailListUrl` (URLSearchParams encoding, query trimmed and capped at 500 chars, count clamped to 1..50). The reply message and `data.query` say what was searched. The tool description tells the model when to use it.
+- Verified: `gmail-http.test.ts` (encoding, clamping, empty query), workflows suite, typecheck. Not verified: a live Gmail account.
+
 ## Ask AI plan, approval, mode and crew actions are audited (2026-10-05)
 
 - Only plan approve and tool execute wrote `audit_events`. Cancelling a plan, editing its steps, approving or denying a paused tool in chat, changing who answers (Ask mode), and dispatching a crew left no record of who did it (27sept ASK-E01).

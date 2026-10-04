@@ -21,8 +21,10 @@ export const TOOLS: ToolDef[] = [
   },
   {
     name: 'gmail_fetch',
-    description: 'Fetch the latest emails from the org-connected Gmail inbox.',
-    schema: { org_id: z.string(), count: z.number().optional() },
+    description:
+      'Fetch or search emails in the org-connected Gmail inbox. Pass query in Gmail search syntax ' +
+      '(e.g. "from:alice@acme.com is:unread newer_than:7d", "subject:invoice") to find specific emails; omit it for the latest.',
+    schema: { org_id: z.string(), count: z.number().optional(), query: z.string().max(500).optional() },
     tool: 'gmail',
     action: 'fetch_latest_emails',
   },

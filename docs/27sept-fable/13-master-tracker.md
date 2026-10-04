@@ -684,7 +684,7 @@ Counts at audit time: **600 findings** (ASK 47 · EMP 50 · RT 62 · MEM 51 · C
 
 | ID | Sev | Issue | Pkt | Status |
 |---|---|---|---|---|
-| TOOL-G01 | P0 | Gmail no `q=` search | 16.1 | 🔴 |
+| TOOL-G01 | P0 | Gmail no `q=` search | 16.1 | 🟢 2026-10-05: `gmail_fetch` takes `query` (Gmail search syntax) |
 | TOOL-G02 | P1 | Calendar no delete/recurring/rooms | 16.2 | 🔴 |
 | TOOL-G03 | P1 | HubSpot no companies/notes/tasks/pipelines | 16.3 | 🔴 |
 | TOOL-G04 | P1 | Slack no search/threads | 16.4 | 🔴 |

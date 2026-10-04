@@ -175,9 +175,25 @@ export function gmailHttpFailure(action: string, timestamp: string, status: numb
   );
 }
 
-async function fetchRealGmailMessagesFull(accessToken: string, count: number = 10): Promise<any[]> {
+const GMAIL_MAX_RESULTS = 50;
+const GMAIL_QUERY_MAX_CHARS = 500;
+
+/**
+ * Message list URL. `query` is Gmail search syntax (`from:alice is:unread
+ * newer_than:7d`), so the agent can find a specific email instead of reading
+ * the latest N (TOOL-G01). Count is clamped to 1..50.
+ */
+export function gmailListUrl(count: unknown, query?: unknown): string {
+  const n = Math.min(GMAIL_MAX_RESULTS, Math.max(1, Math.trunc(Number(count)) || 10));
+  const params = new URLSearchParams({ maxResults: String(n) });
+  const q = typeof query === 'string' ? query.trim().slice(0, GMAIL_QUERY_MAX_CHARS) : '';
+  if (q) params.set('q', q);
+  return `https://gmail.googleapis.com/gmail/v1/users/me/messages?${params.toString()}`;
+}
+
+async function fetchRealGmailMessagesFull(accessToken: string, count: number = 10, query?: string): Promise<any[]> {
   try {
-    const listRes = await fetchWithTimeout(`https://gmail.googleapis.com/gmail/v1/users/me/messages?maxResults=${count}`, {
+    const listRes = await fetchWithTimeout(gmailListUrl(count, query), {
       headers: { Authorization: `Bearer ${accessToken}` },
     });
     if (!listRes.ok) throw new GmailHttpError(listRes.status);
@@ -298,20 +314,24 @@ async function execute(ctx: ToolActionContext) {
 
   if (actionName.includes('fetch') || actionName.includes('read') || actionName.includes('list')) {
     const count = payload.count || 10;
+    const query = typeof payload.query === 'string' ? payload.query.trim() : '';
 
     if (accessToken) {
       console.log(`[Gmail Tool] Fetching real live emails using OAuth access token for org ${orgId}...`);
       try {
-      const realEmails = await fetchRealGmailMessagesFull(accessToken, count);
+      const realEmails = await fetchRealGmailMessagesFull(accessToken, count, query || undefined);
 
       return {
         tool: 'gmail',
         action: 'fetch_latest_emails',
         status: 'executed' as const,
-        message: `Fetched ${realEmails.length} real live emails from connected Gmail account`,
+        message: query
+          ? `Found ${realEmails.length} emails matching "${query}" in the connected Gmail account`
+          : `Fetched ${realEmails.length} real live emails from connected Gmail account`,
         data: {
           totalFetched: realEmails.length,
           filter: payload.filter || 'inbox',
+          query: query || null,
           emails: realEmails,
         },
         timestamp,
