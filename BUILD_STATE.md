@@ -1,5 +1,12 @@
 # Darex Build State
 
+## A retried agent turn no longer re-runs tools the first attempt already ran (2026-10-05)
+
+- `runAgentTurnActivity` (`AutonomousAgentWorkflow`, also the child turn of every inbound `WorkItemWorkflow`) has `maximumAttempts: 2` and catches its own errors, so Temporal retries it only after a 12-minute timeout or a dead worker. The retry re-ran the whole turn, so a send, charge or update from the first attempt could happen twice, sometimes while the first attempt was still running (RT-B03, the part still open after the failover fix).
+- The activity now claims `wf:<workflowId>:<runId>:agent-turn:<activityId>` in `idempotency_keys` before running (`runGuardedAgentTurn`). Retries share the key and the workflow's own follow-up turns do not. A retry that finds a finished attempt returns its saved result. One that finds an unfinished attempt runs nothing and returns `turn_retry_held` (customer channels get the escalation holding reply), which `WorkItemWorkflow` turns into needs_attention. A claim error is thrown so Temporal retries the claim; only SQLSTATE 42P01 (table missing) runs unguarded. `isUndefinedTable`'s "does not exist" text match is not used here, because it also matches a missing role or database.
+- Inbound redelivery was already deduped: the `WorkItemWorkflow` id is derived from the inbound event, and a second start gets the existing handle.
+- Verified: `agent-turn-retry.test.ts` (8 cases), full workflows suite 446/446, typecheck. Also ran against the local Postgres `idempotency_keys` with a real org: the second call with the same key returned the saved result without running, and a concurrent call while the first was running was held. Probe rows deleted. Not verified: a real Temporal activity timeout and retry.
+
 ## redeploy.sh rebuilds only the services a code change touches (2026-10-01)
 
 - Checked against each Dockerfile's COPY lines: the worker image copies only `apps/dashboard/package.json`, not the dashboard source, but its build fingerprint (`service_inputs`, lib.sh) covered all of `apps/dashboard`, so a dashboard code change would also have rebuilt the worker. The worker now fingerprints only that package.json; dashboard and mcp-bridge still cover the whole folder (mcp-bridge is built FROM the dashboard image).

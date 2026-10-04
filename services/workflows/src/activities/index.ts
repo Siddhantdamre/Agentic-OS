@@ -1,6 +1,6 @@
 import { ApplicationFailure, Context } from '@temporalio/activity';
 import type { AgentTaskInput, AgentTaskResult } from '../agent-engine.js';
-import { readIdempotent, sideEffectKey, withOrgClient, writeIdempotent } from '../db.js';
+import { claimIdempotent, readIdempotent, sideEffectKey, withOrgClient, writeIdempotent } from '../db.js';
 import { runAutonomousAgentDirect } from '../agent-client.js';
 import { toRetrieveActivityResult } from '../memory/retrieve.js';
 import { retrieveForEmployee } from '../memory/employee-retrieve.js';
@@ -157,7 +157,103 @@ function requireOrgId(orgId: string | undefined): string {
   return orgId;
 }
 
+/**
+ * RT-B03: Temporal retries this activity only when the previous attempt timed
+ * out or its worker died, so a retry can find the first attempt's tools
+ * (send/charge) already dispatched, or still running. The key is per activity
+ * execution (run id + activity id), so retries share it and the workflow's
+ * own follow-up turns do not.
+ */
+export function agentTurnClaimKey(): string | undefined {
+  try {
+    const info = Context.current().info;
+    const { workflowId, runId } = info.workflowExecution;
+    if (!workflowId || !runId || !info.activityId) return undefined;
+    return `wf:${workflowId}:${runId}:agent-turn:${info.activityId}`;
+  } catch {
+    return undefined;
+  }
+}
+
+export const TURN_RETRY_HELD_ERROR = 'turn_retry_held';
+
+/** Result for a retry whose earlier attempt never finished: hand to a human. */
+export function turnRetryHeldResult(input: AgentTaskInput): AgentTaskResult {
+  const isCustomerInbound = Boolean(
+    input.customerIdentifier || (input.employeeRole && /customer/i.test(input.employeeRole))
+  );
+  return {
+    success: false,
+    replyMessage: isCustomerInbound
+      ? ESCALATION_HOLDING_REPLY
+      : 'This request timed out partway through, so I did not run it again. ' +
+        'Check whether any message, charge or update already went out before asking again.',
+    executedSteps: [
+      { step: 1, action: 'Agent Turn', result: 'Earlier attempt did not finish; not retried so no tool runs twice' },
+    ],
+    usedTools: [],
+    error: TURN_RETRY_HELD_ERROR,
+    retryable: false,
+    isDone: true,
+    forceEscalate: true,
+  };
+}
+
+export interface TurnClaimStore {
+  claim(orgId: string, key: string): Promise<{ claimed: boolean; cached: AgentTaskResult | null }>;
+  write(orgId: string, key: string, result: AgentTaskResult): Promise<void>;
+}
+
+const dbTurnClaimStore: TurnClaimStore = {
+  claim: (orgId, key) => claimIdempotent<AgentTaskResult>(orgId, key),
+  write: (orgId, key, result) => writeIdempotent(orgId, key, result),
+};
+
+/** Runs `run` at most once per claim key; see `agentTurnClaimKey`. */
+export async function runGuardedAgentTurn(
+  input: AgentTaskInput,
+  claimKey: string | undefined,
+  run: (input: AgentTaskInput) => Promise<AgentTaskResult>,
+  store: TurnClaimStore = dbTurnClaimStore
+): Promise<AgentTaskResult> {
+  let claimed = false;
+  if (claimKey && input.orgId) {
+    try {
+      const claim = await store.claim(input.orgId, claimKey);
+      if (!claim.claimed) {
+        if (claim.cached) return claim.cached;
+        console.warn(`[Temporal Activity] runAgentTurn retry held, earlier attempt unfinished: ${claimKey}`);
+        return turnRetryHeldResult(input);
+      }
+      claimed = true;
+    } catch (err) {
+      // Without idempotency_keys the guard cannot exist; any other error is
+      // thrown so Temporal retries the claim rather than running unguarded.
+      // Checks the SQLSTATE only: isUndefinedTable also matches any message
+      // with "does not exist" (a missing role or database).
+      if ((err as { code?: string } | null)?.code !== '42P01') throw err;
+      console.warn('[Temporal Activity] idempotency_keys missing; agent turn runs without retry guard');
+    }
+  }
+
+  const result = await run(input);
+
+  if (claimed && claimKey) {
+    try {
+      await store.write(input.orgId, claimKey, result);
+    } catch (err) {
+      // A retry then sees an unfinished claim and holds, the safe direction.
+      console.error('[Temporal Activity] failed to record agent turn result:', err instanceof Error ? err.message : err);
+    }
+  }
+  return result;
+}
+
 export async function runAgentTurnActivity(input: AgentTaskInput): Promise<AgentTaskResult> {
+  return runGuardedAgentTurn(input, agentTurnClaimKey(), runAgentTurnOnce);
+}
+
+async function runAgentTurnOnce(input: AgentTaskInput): Promise<AgentTaskResult> {
   try {
     let priorMessages: { role: string; content: string }[] = [];
     if (input.conversationId) {

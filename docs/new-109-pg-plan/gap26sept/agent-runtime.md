@@ -15,7 +15,7 @@
 | 9 | Provider circuit breaker for failover | P2 | `circuit-breaker.ts` + `local-turn.ts` | 🟢 Done | Skips providers after 3 failures for 60s. |
 | 10 | Unbounded in-process session map | P2 | `local-turn.ts:putLocalSession` | 🟢 Done | Max 500 sessions + 30m TTL reap. |
 | 11 | Malformed/garbled tool args run on defaults (`{}`, `amount || 5000`, `#general`) | P0 | `local-turn.ts:parseToolArguments`, `tools/stripe.ts`, `tools/razorpay.ts`, `tools/slack.ts` | 🟢 Done (RT-B06) | zod `safeParse` before execute; money/channel defaults removed. `tool-args.test.ts`. |
-| 12 | Model failover / local→HTTP fallthrough re-runs tools that already executed | P0 | `local-turn.ts:runLocalTurn` | 🟡 Partial (RT-B03) | Tool side done: after any non-read tool dispatch, no candidate failover and no HTTP fallthrough (stop result). Temporal retry + per-inbound-event `claimIdempotent` still open. |
+| 12 | Model failover / local→HTTP fallthrough re-runs tools that already executed | P0 | `local-turn.ts:runLocalTurn` | 🟢 Done (RT-B03) | After any non-read tool dispatch, no candidate failover and no HTTP fallthrough (stop result). Temporal retry: `runGuardedAgentTurn` claims `idempotency_keys` per activity execution; a retry returns the saved result or holds (`turn_retry_held` → needs_attention) instead of re-running. Inbound redelivery deduped by the event-derived `WorkItemWorkflow` id. `agent-turn-retry.test.ts` + local Postgres check; no live Temporal timeout run. |
 | 13 | No tool-call cap per in-process turn | P1 | `local-turn.ts:LOCAL_TURN_MAX_TOOL_CALLS` | 🟢 Done (RT-B08) | 25 by default (env), then abort. `local-turn-budget.test.ts`. |
 
 ## Status: mostly closed; rows 6 and 8 reopened 2026-09-28 (see `docs/27sept-fable/04-agent-runtime-and-tools.md`, RT-B04/RT-S07)
