@@ -11,6 +11,7 @@
 FROM node:22-bookworm-slim AS deps
 WORKDIR /app
 COPY package.json package-lock.json ./
+COPY scripts/ ./scripts/
 # The npm cache mount keeps downloads between builds; the layer only reruns when the lockfile changes.
 RUN --mount=type=cache,target=/root/.npm npm ci
 
