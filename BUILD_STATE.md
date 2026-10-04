@@ -1,5 +1,11 @@
 # Darex Build State
 
+## Worker agent turns are traced in Langfuse (2026-10-05)
+
+- Only dashboard routes traced turns. Turns the worker runs (inbound WhatsApp/email/SMS/widget replies via WorkItemWorkflow, crews, sweeps) used a no-op tracer, so the busiest customer-facing traffic never showed in Langfuse (27sept OPS-B03). Spend was already metered (`recordTurnSpend`).
+- New `src/langfuse-trace.ts` posts the same ingestion batch as the dashboard helper (trace with the org as `userId`, plus a generation with token usage, duration and USD cost when reported). `runAgentTurnActivity` fires it after each turn, without waiting, with employee, conversation, tools used and step count; failed turns are level ERROR. It is not added to `runTrueForgeTurn`, which dashboard chat also uses and already traces. A missing config is logged once per process and an ingest failure is logged; neither affects the turn. The worker container already gets `LANGFUSE_HOST` and keys from compose.
+- Verified: `langfuse-trace.test.ts` (event-level timestamp, trace/generation link, usage and cost mapping, config), workflows suite, typecheck. Not verified: ingestion into a running Langfuse (not up locally).
+
 ## Each embed job keeps its own text (2026-10-05)
 
 - The text an embed job was about to embed lived in `knowledge_sources.metadata.pendingText`, one row per source. Conversation write-back queues a job on every message for the same source, so the second write replaced the first and both jobs embedded the later text; the earlier message was never indexed (27sept MEM-B03).

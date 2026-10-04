@@ -2,6 +2,7 @@ import { ApplicationFailure, Context } from '@temporalio/activity';
 import type { AgentTaskInput, AgentTaskResult } from '../agent-engine.js';
 import { claimIdempotent, readIdempotent, sideEffectKey, withOrgClient, writeIdempotent } from '../db.js';
 import { runAutonomousAgentDirect } from '../agent-client.js';
+import { logWorkerTurnTrace } from '../langfuse-trace.js';
 import { toRetrieveActivityResult } from '../memory/retrieve.js';
 import { retrieveForEmployee } from '../memory/employee-retrieve.js';
 import type { RetrieveMemoryActivityResult } from '../memory/retrieve.js';
@@ -338,7 +339,25 @@ async function runAgentTurnOnce(input: AgentTaskInput): Promise<AgentTaskResult>
         confidenceScore: gate.topSimilarity,
       };
     }
-    return await runAutonomousAgentDirect(input, { priorMessages, retrievedMemory });
+    const result = await runAutonomousAgentDirect(input, { priorMessages, retrievedMemory });
+    // OPS-B03: worker turns (inbound channels, crews) were never traced.
+    void logWorkerTurnTrace({
+      name: 'AgentTurn-Worker',
+      orgId: input.orgId,
+      input: input.userMessage,
+      output: result.replyMessage,
+      usage: result.usage,
+      level: result.success ? 'DEFAULT' : 'ERROR',
+      metadata: {
+        employeeId: input.employeeId ?? null,
+        employeeRole: input.employeeRole ?? null,
+        conversationId: input.conversationId ?? null,
+        usedTools: result.usedTools,
+        steps: result.executedSteps.length,
+        error: result.error ?? null,
+      },
+    });
+    return result;
   } catch (err: any) {
     console.error('[Temporal Activity] runAgentTurn failed:', err.message);
     return {

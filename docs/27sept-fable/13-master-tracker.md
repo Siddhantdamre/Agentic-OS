@@ -458,7 +458,7 @@ Counts at audit time: **600 findings** (ASK 47 · EMP 50 · RT 62 · MEM 51 · C
 |---|---|---|---|---|---|
 | OPS-B01 | P0 | Decision audit inserts fail CHECK silently | `decisions/route.ts:211-218` | 1.9 | 🔴 |
 | OPS-B02 | P0 | `recordModelSpend` never invoked | `wf/cost/track.ts:34` | 1.11 | 🟢 (2026-09-28: `runTrueForgeTurn`/`resumeTrueForgeTurn` in `trueforge-client.ts` now wrap every turn — in-process and HTTP sidecar, first attempt and resumed — and call `recordModelSpend` with the real `usage.totalCostInUsd`; fire-and-forget so a spend-write failure never breaks a reply; workflows suite 328/328, no dedicated test for the DB write itself) |
-| OPS-B03 | P0 | Worker turns emit no Langfuse traces | `wf/local-turn.ts:245` | 1.11 | 🔴 |
+| OPS-B03 | P0 | Worker turns emit no Langfuse traces | `wf/local-turn.ts:245` | 1.11 | 🟢 2026-10-05: worker turn activity sends an `AgentTurn-Worker` trace + generation (usage, cost) via `langfuse-trace.ts` |
 | OPS-B13 | P0 | Approving a confirm-class pending action via `/api/decisions` never executed it; route reported `success:true` regardless | `decisions/route.ts:335-398` | 1.9 | 🟢 (2026-09-28: found while wiring `SEC-R01`'s pay-RBAC backstop; `approvedPendingActionId`/`actorUserId`/`source:'approval'` now passed, response checks the real executor result; dashboard tsc clean, jest 301/301, no DB-backed test for this route) |
 | OPS-B04 | P1 | `DormantLeadRevival` never started | — | 4.3 | 🔴 |
 | OPS-B05 | P1 | Provision sweep list diverges from registry | `employee-provision.ts:74-84` | 4.3 | 🔴 |
