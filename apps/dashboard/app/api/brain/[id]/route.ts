@@ -106,6 +106,29 @@ export async function PATCH(
       }
 
       switch (action) {
+        case 'disable':
+        case 'enable': {
+          // Disabling hides the file and all its chunks from retrieval and the
+          // Brain list; syncs keep it disabled until it is enabled again.
+          if (parsed.kind !== 'source') {
+            return NextResponse.json({ error: 'Only a source can be disabled or enabled' }, { status: 400 });
+          }
+          const res = await client.query<{ id: string; status: string }>(
+            `UPDATE knowledge_sources
+                SET status = CASE WHEN $3 THEN 'disabled'
+                                  WHEN status = 'disabled' THEN 'ready'
+                                  ELSE status END,
+                    updated_at = NOW()
+              WHERE id = $1 AND org_id = $2
+              RETURNING id, status`,
+            [parsed.id, orgId, action === 'disable']
+          );
+          if (!res.rows[0]?.id) {
+            return NextResponse.json({ error: 'Not found' }, { status: 404 });
+          }
+          realtimeHub.publish(orgId, { type: 'memory.updated', message: `source:${parsed.id}` });
+          return NextResponse.json({ ok: true, id: `source:${parsed.id}`, status: res.rows[0].status });
+        }
         case 'correct': {
           if (parsed.kind === 'source') {
             return NextResponse.json({ error: 'Cannot correct a source; reindex instead' }, { status: 400 });

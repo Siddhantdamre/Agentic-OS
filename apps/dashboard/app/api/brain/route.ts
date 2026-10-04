@@ -128,7 +128,7 @@ const DISABLED_SOURCE_SQL = `
     SELECT 1 FROM knowledge_sources ks
     WHERE ks.org_id = t.org_id
       AND ks.connector = t.source
-      AND ks.path = t.source_ref
+      AND ks.path IN (t.source_ref, regexp_replace(t.source_ref, '#(c|chunk-)[0-9]+$', ''))
       AND ks.status = 'disabled'
   )
 `;
@@ -274,7 +274,7 @@ async function loadEntities(
           SELECT 1 FROM knowledge_sources ks
            WHERE ks.org_id = entity_memory.org_id
              AND ks.connector = entity_memory.source
-             AND ks.path = entity_memory.source_ref
+             AND ks.path IN (entity_memory.source_ref, regexp_replace(entity_memory.source_ref, '#(c|chunk-)[0-9]+$', ''))
              AND ks.status = 'disabled'
         )
         ${q ? `AND body_tsv @@ plainto_tsquery('english', $3)` : ''}

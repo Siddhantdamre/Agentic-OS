@@ -1,5 +1,11 @@
 # Darex Build State
 
+## A knowledge source can be disabled, and disabling hides its chunks (2026-10-05)
+
+- Retrieval and the Brain list skip memory whose `knowledge_sources` row is `disabled`, but matched `ks.path = source_ref` exactly. Chunk memories carry `path#cN` (worker ingest) or `path#chunk-N` (dashboard embed), so a disabled file's chunks were still retrieved. Nothing could set `disabled` anyway, and every sync upsert wrote its own status over it (27sept MEM-B02).
+- The six filters (`memory/retrieve.ts` ×4, `api/brain/route.ts` ×2) now also match the source_ref with the chunk suffix removed (`regexp_replace(source_ref, '#(c|chunk-)[0-9]+$', '')`), so a path with its own `#` is not cut. `PATCH /api/brain/source:<id>` takes `action: disable | enable` (owner/admin, org-scoped, 404 otherwise; enable sets `ready`). Every status write on `knowledge_sources` (ingest upsert and updates, embed `markJob` and upsert, dashboard embed upserts, reindex upsert) keeps `disabled` in place. NEW-FRONTEND Settings > Business has a Disable/Enable button and a "Disabled" chip per source (committed in that repo).
+- Verified: `brain-source-disable.test.ts` (4 cases), both typechecks; on the local Postgres in a rolled-back transaction: after disabling, the whole-file row and both chunk formats were hidden and another file's chunk stayed visible, a re-sync upsert plus a `markJob`-style update left it `disabled`, and enable restored `ready`. Frontend: vitest (API client and component), tsc, eslint. Not verified: a browser click-through against the live stack.
+
 ## Contact enrichment runs through the tool gate (2026-10-05)
 
 - After a HubSpot contact was created, `backfillContactFieldsActivity` read Gmail and wrote `update_contact` to HubSpot through the raw `executeProvider`: no allowlist, autonomy, approval or audit, and a failed write was swallowed with `.catch(() => undefined)` (27sept EMP-S02, the remaining CRM write).

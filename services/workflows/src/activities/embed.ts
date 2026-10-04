@@ -453,7 +453,7 @@ async function markJob(
     const sourceStatus = state === 'succeeded' ? 'ready' : state === 'failed' ? 'error' : 'syncing';
     await client.query(
       `UPDATE knowledge_sources
-          SET status = $1,
+          SET status = CASE WHEN status = 'disabled' THEN status ELSE $1 END,
               content_hash = COALESCE($2, content_hash),
               last_synced = CASE WHEN $3 THEN NOW() ELSE last_synced END,
               metadata = metadata - 'pendingText'
@@ -604,7 +604,7 @@ async function persistEmbedJobWithClient(
      ON CONFLICT (org_id, connector, path)
      DO UPDATE SET
        metadata = knowledge_sources.metadata || EXCLUDED.metadata,
-       status = 'pending',
+       status = CASE WHEN knowledge_sources.status = 'disabled' THEN 'disabled' ELSE 'pending' END,
        updated_at = NOW()
      RETURNING id`,
     [

@@ -300,7 +300,7 @@ function hybridSql(hasEmployee: boolean): string {
       SELECT 1 FROM knowledge_sources ks
       WHERE ks.org_id = em.org_id
         AND ks.connector = em.source
-        AND ks.path = em.source_ref
+        AND ks.path IN (em.source_ref, regexp_replace(em.source_ref, '#(c|chunk-)[0-9]+$', ''))
         AND ks.status = 'disabled'
     )
     AND (
@@ -337,7 +337,7 @@ SELECT * FROM (
       SELECT 1 FROM knowledge_sources ks
       WHERE ks.org_id = om.org_id
         AND ks.connector = om.source
-        AND ks.path = om.source_ref
+        AND ks.path IN (om.source_ref, regexp_replace(om.source_ref, '#(c|chunk-)[0-9]+$', ''))
         AND ks.status = 'disabled'
     )
     AND (
@@ -372,7 +372,7 @@ SELECT * FROM (
       SELECT 1 FROM knowledge_sources ks
       WHERE ks.org_id = en.org_id
         AND ks.connector = en.source
-        AND ks.path = en.source_ref
+        AND ks.path IN (en.source_ref, regexp_replace(en.source_ref, '#(c|chunk-)[0-9]+$', ''))
         AND ks.status = 'disabled'
     )
     AND (
@@ -406,7 +406,7 @@ SELECT * FROM (
       SELECT 1 FROM knowledge_sources ks
       WHERE ks.org_id = cm.org_id
         AND ks.connector = cm.source
-        AND ks.path = cm.source_ref
+        AND ks.path IN (cm.source_ref, regexp_replace(cm.source_ref, '#(c|chunk-)[0-9]+$', ''))
         AND ks.status = 'disabled'
     )
     AND (

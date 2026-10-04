@@ -522,7 +522,7 @@ async function upsertCatalog(params: {
      ON CONFLICT (org_id, connector, path)
      DO UPDATE SET
        metadata = knowledge_sources.metadata || EXCLUDED.metadata,
-       status = EXCLUDED.status,
+       status = CASE WHEN knowledge_sources.status = 'disabled' THEN 'disabled' ELSE EXCLUDED.status END,
        content_hash = COALESCE(EXCLUDED.content_hash, knowledge_sources.content_hash),
        updated_at = NOW()
      RETURNING id`,
@@ -587,7 +587,7 @@ async function finishJob(params: {
   };
   await params.client.query(
     `UPDATE knowledge_sources
-        SET status = $1,
+        SET status = CASE WHEN status = 'disabled' THEN status ELSE $1 END,
             content_hash = COALESCE($2, content_hash),
             metadata = (metadata - 'ingestText' - 'ingestBase64' - 'pendingText') || $3::jsonb
       WHERE id = $4 AND org_id = $5`,
@@ -786,7 +786,7 @@ async function prepareIngest(input: IngestFileActivityInput): Promise<IngestFile
     const contentHash = createHash('sha256').update(redactedWhole.text, 'utf8').digest('hex');
     await client.query(
       `UPDATE knowledge_sources
-          SET status = 'syncing',
+          SET status = CASE WHEN status = 'disabled' THEN status ELSE 'syncing' END,
               content_hash = $1,
               metadata = (metadata - 'ingestText' - 'ingestBase64' - 'pendingText') || $2::jsonb
         WHERE id = $3 AND org_id = $4`,
@@ -937,7 +937,7 @@ async function markConflict(
 ): Promise<number> {
   const res = await client.query(
     `UPDATE knowledge_sources
-        SET status = 'conflict',
+        SET status = CASE WHEN status = 'disabled' THEN status ELSE 'conflict' END,
             metadata = metadata || $1::jsonb
       WHERE org_id = $2 AND path = $3 AND connector = ANY($4::text[])`,
     [JSON.stringify({ conflict: { connectors, hashes, markedAt: new Date().toISOString() } }), orgId, path, connectors],

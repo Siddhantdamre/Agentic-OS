@@ -300,7 +300,7 @@ export async function enqueueEmbedJob(input: EnqueueEmbedJobInput): Promise<Enqu
          ON CONFLICT (org_id, connector, path)
          DO UPDATE SET
            metadata = knowledge_sources.metadata || EXCLUDED.metadata,
-           status = 'pending',
+           status = CASE WHEN knowledge_sources.status = 'disabled' THEN 'disabled' ELSE 'pending' END,
            updated_at = NOW()
          RETURNING id`,
         [
@@ -336,7 +336,7 @@ export async function enqueueEmbedJob(input: EnqueueEmbedJobInput): Promise<Enqu
            ON CONFLICT (org_id, connector, path)
            DO UPDATE SET
              metadata = knowledge_sources.metadata || EXCLUDED.metadata,
-             status = 'pending',
+             status = CASE WHEN knowledge_sources.status = 'disabled' THEN 'disabled' ELSE 'pending' END,
              updated_at = NOW()
            RETURNING id`,
           [

@@ -200,7 +200,7 @@ export async function POST(request: Request) {
              VALUES ($1, $2, $3, 'pending', $4::jsonb)
              ON CONFLICT (org_id, connector, path)
              DO UPDATE SET
-               status = 'pending',
+               status = CASE WHEN knowledge_sources.status = 'disabled' THEN 'disabled' ELSE 'pending' END,
                metadata = knowledge_sources.metadata || EXCLUDED.metadata,
                updated_at = NOW()
              RETURNING id`,
