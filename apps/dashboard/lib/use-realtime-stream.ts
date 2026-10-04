@@ -28,9 +28,10 @@ const STREAM_URL = '/api/stream/events';
 
 /**
  * The one client for `/api/stream/events`. Closes the stream while the tab
- * is hidden, reconnects with 1.5^n backoff plus jitter (max 30 s), and
- * reports `fallback` while disconnected so the page can show a banner and
- * poll through `onFallbackTick`.
+ * is hidden, reconnects with 1.5^n backoff plus jitter (max 30 s) asking the
+ * server to replay from the last event seen (`?since=`), and reports
+ * `fallback` while disconnected so the page can show a banner and poll
+ * through `onFallbackTick`.
  */
 export function useRealtimeStream({
   events,
@@ -54,6 +55,9 @@ export function useRealtimeStream({
     let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
     let attempts = 0;
     let disposed = false;
+    // Last seen event timestamp for ?since= replay (parity with the
+    // NEW-FRONTEND fetch client). Prevents missing events across reconnects.
+    let lastTs: number | undefined;
 
     const listener = (e: MessageEvent) => {
       let payload: RealtimeEventPayload;
@@ -62,6 +66,9 @@ export function useRealtimeStream({
       } catch (err) {
         console.error('[realtime] unparseable event', err);
         return;
+      }
+      if (typeof payload.ts === 'number' && Number.isFinite(payload.ts)) {
+        lastTs = lastTs === undefined ? payload.ts : Math.max(lastTs, payload.ts);
       }
       onEventRef.current({ ...payload, type: e.type as RealtimeEventType });
     };
@@ -90,7 +97,8 @@ export function useRealtimeStream({
     const connect = () => {
       if (disposed || document.hidden) return;
       close();
-      const source = new EventSource(STREAM_URL);
+      const url = lastTs !== undefined ? `${STREAM_URL}?since=${lastTs}` : STREAM_URL;
+      const source = new EventSource(url);
       es = source;
       for (const t of types) source.addEventListener(t, listener as EventListener);
       source.onopen = () => {
