@@ -233,15 +233,33 @@ test('EMP-B01: an emergency with no dispatch employee never inherits the caller 
   assert.notEqual(merged.employeeRole, 'Sales & Lead Gen');
 });
 
-test('mergeRoutedForCaller: a real employee with no card tools still gets the caller fallback', () => {
+test('mergeRoutedForCaller: the caller\'s own employee with no card tools still gets the caller fallback', () => {
   const routed = lockToEmployee({ ...ROSTER[0], toolAllowlist: [] }, 'name lock');
   const merged = mergeRoutedForCaller(routed, {
+    employeeId: ROSTER[0].id,
     toolAllowlist: ['gmail', 'whatsapp'],
     employeeName: 'fallback',
     employeeRole: 'fallback-role',
     employeePersona: 'fallback-persona',
   });
   assert.deepEqual(merged.toolAllowlist, ['gmail', 'whatsapp']);
+});
+
+test('EMP-B02: a different employee with no card tools does not inherit the webhook default allowlist', () => {
+  const routed = lockToEmployee({ ...ROSTER[0], toolAllowlist: [], persona: '' }, 'name lock');
+  const caller = {
+    employeeId: 'emp-webhook-default',
+    toolAllowlist: ['stripe', 'whatsapp', 'gmail'],
+    employeeName: 'Customer',
+    employeeRole: 'Customer Support',
+    employeePersona: 'customer persona',
+  };
+  const merged = mergeRoutedForCaller(routed, caller);
+  assert.equal(merged.employeeId, ROSTER[0].id);
+  assert.deepEqual(merged.toolAllowlist, []);
+  assert.equal(merged.employeePersona, '');
+  // No caller id at all: the list belongs to nobody, so it is not inherited either.
+  assert.deepEqual(mergeRoutedForCaller(routed, { ...caller, employeeId: undefined }).toolAllowlist, []);
 });
 
 const FULL_ROSTER: RouteEmployee[] = [

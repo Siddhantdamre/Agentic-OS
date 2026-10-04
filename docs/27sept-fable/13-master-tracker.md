@@ -73,7 +73,7 @@ Counts at audit time: **600 findings** (ASK 47 · EMP 50 · RT 62 · MEM 51 · C
 | ID | Sev | Issue | Where | Pkt | Status |
 |---|---|---|---|---|---|
 | EMP-B01 | P0 | `EMERGENCY_RE` (fire/drive/flood) → dispatch → null → org-union allowlist | `route-employee.ts:73-82` | 2.3 | 🟢 (2026-09-28: `WorkItemWorkflow` already short-circuited dispatch/human before touching tools, but `routeEmployeeActivity` still returned a full caller-allowlist fallback attached to that result — a landmine for any future caller. New `mergeRoutedForCaller` only applies the caller-allowlist/identity fallback for a real `employee` destination; `route-employee.test.ts` covers both branches, workflows 330/330) |
-| EMP-B02 | P0 | `routeEmployeeActivity` inherits webhook default allowlist when routed list empty | `activities/index.ts:606-612` | 2.3 | 🔴 |
+| EMP-B02 | P0 | `routeEmployeeActivity` inherits webhook default allowlist when routed list empty | `activities/index.ts:606-612` | 2.3 | 🟢 2026-10-05 |
 | EMP-B03 | P1 | Custom roles infer `other`; never picked; org-union fallback | `route-employee.ts:243,292-294` | 2.3 | 🔴 |
 | EMP-B04 | P1 | Keyword collisions (returns/sheets/drive/lead) | `route-employee.ts:92-98` | 2.3 | 🔴 |
 | EMP-B05 | P1 | Empty `toolAllowlist` ⇒ org union | `tool-executor.ts:255-259` | 2.3 | 🟢 (2026-09-28: side effect of the `tool-gate.ts` refactor — `resolveOrgToolAllowlist`'s org-union fallback no longer exists anywhere; an empty employee card now falls through to core-read-only, never a union) |

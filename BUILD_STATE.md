@@ -1,5 +1,11 @@
 # Darex Build State
 
+## A routed employee with no tools no longer inherits the webhook default's tools (2026-10-05)
+
+- `routeEmployeeActivity` merged the router's pick with the caller's defaults. When the pick was a different employee whose card had no tools (a blank custom employee), it inherited the webhook default employee's allowlist and persona, so it could use Customer's Stripe/WhatsApp tools (27sept EMP-B02).
+- `mergeRoutedForCaller` now falls back to the caller's allowlist and persona only when the routed employee is the caller's own (`CallerDefaults.employeeId`, passed from `params.employeeId`). Another employee keeps its own empty list, which downstream means core tools plus connected channels only (`mergeRuntimeAllowlist`), not everything. With no caller id, nothing is inherited. Name/role fallback for empty fields is unchanged.
+- Verified: `route-employee.test.ts` (new EMP-B02 case; the existing fallback case now names the caller's employee), workflows suite 447/447, typecheck. Not verified: a live inbound webhook routed to a blank custom employee.
+
 ## Razorpay key secrets are stored encrypted (2026-10-05)
 
 - The per-org Razorpay key secret was saved as plaintext in `channels.meta` (`keySecret`/`key_secret`), so anyone with DB or backup access could create payment links for that org (27sept RT-S04 / BIZ-S01; the WhatsApp half was already sealed).

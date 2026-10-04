@@ -709,6 +709,7 @@ export async function routeEmployeeActivity(params: {
   });
 
   const merged = mergeRoutedForCaller(routed, {
+    employeeId: params.employeeId,
     toolAllowlist: params.toolAllowlist,
     employeeName: params.employeeName,
     employeeRole: params.employeeRole,

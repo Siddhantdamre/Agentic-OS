@@ -231,6 +231,8 @@ export function isHumanDestination(destination: RouteDestination): boolean {
 }
 
 export interface CallerDefaults {
+  /** The employee the caller's defaults belong to (webhook default employee). */
+  employeeId?: string;
   toolAllowlist: string[];
   employeeName: string;
   employeeRole: string;
@@ -242,17 +244,20 @@ export interface CallerDefaults {
  * return value. A human/dispatch destination never inherits the caller's
  * identity or tool allowlist (EMP-B01) — nobody is going to execute tools as
  * "human"/"dispatch", so a real allowlist has no business attaching to it.
- * An employee destination with an empty card allowlist still falls back to
- * the caller's allowlist, same as before.
+ * An employee destination falls back to the caller's defaults only when it is
+ * the caller's own employee (EMP-B02). A different employee with an empty
+ * card gets no tools (core only downstream), not the webhook default's list —
+ * otherwise a blank custom employee inherited Customer's Stripe/WhatsApp.
  */
 export function mergeRoutedForCaller(routed: RouteResult, caller: CallerDefaults): RouteResult & CallerDefaults {
   const isEmployee = routed.destination === 'employee';
+  const isCallersOwn = isEmployee && Boolean(routed.employeeId) && routed.employeeId === caller.employeeId;
   return {
     ...routed,
     employeeName: isEmployee ? routed.employeeName || caller.employeeName : routed.employeeName,
     employeeRole: isEmployee ? routed.employeeRole || caller.employeeRole : routed.employeeRole,
-    employeePersona: isEmployee ? routed.employeePersona || caller.employeePersona : routed.employeePersona,
-    toolAllowlist: isEmployee && routed.toolAllowlist.length === 0 ? caller.toolAllowlist : routed.toolAllowlist,
+    employeePersona: isCallersOwn ? routed.employeePersona || caller.employeePersona : routed.employeePersona,
+    toolAllowlist: isCallersOwn && routed.toolAllowlist.length === 0 ? caller.toolAllowlist : routed.toolAllowlist,
   };
 }
 
