@@ -4,6 +4,7 @@ import React, { Suspense, useState } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Loader2, Lock } from 'lucide-react';
+import { responseErrorMessage } from '@/lib/client-error';
 
 function ResetForm() {
   const router = useRouter();
@@ -22,18 +23,22 @@ function ResetForm() {
     }
     setLoading(true);
     setError('');
-    const res = await fetch('/api/auth/reset-password', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ token, password }),
-    });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) {
-      setError(data.message || 'Could not reset password');
+    try {
+      const res = await fetch('/api/auth/reset-password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token, password }),
+      });
+      if (!res.ok) {
+        setError(await responseErrorMessage(res, 'We couldn’t reset your password. Please try again, or request a new link.'));
+        setLoading(false);
+        return;
+      }
+      router.push('/login');
+    } catch {
+      setError('We couldn’t reset your password. Please check your connection and try again.');
       setLoading(false);
-      return;
     }
-    router.push('/login');
   };
 
   if (!token) {

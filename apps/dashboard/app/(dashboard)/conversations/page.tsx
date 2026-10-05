@@ -23,6 +23,7 @@ import { LiveRegion, StatusBadge } from '@/components/a11y';
 import { FormattedMarkdownResponse } from '@/components/chat/FormattedMarkdownResponse';
 import { safeHttpUrl } from '@/lib/safe-url';
 import { useRealtimeStream } from '@/lib/use-realtime-stream';
+import { networkErrorMessage } from '@/lib/client-error';
 
 const INBOX_EVENTS = [
   'needs_attention',
@@ -186,7 +187,7 @@ function ConversationsPageInner() {
       const res = await fetch(`/api/conversations?${queryParams.toString()}`);
       if (!res.ok) {
         if (!opts?.append) {
-          setListError(`Failed to load conversations (${res.status})`);
+          setListError('We couldn’t load conversations. Please try again.');
         }
         return;
       }
@@ -414,7 +415,7 @@ function ConversationsPageInner() {
       }
     } catch (err) {
       console.error('Failed to create new chat:', err);
-      setNewChatError(err instanceof Error ? err.message : 'Network error creating chat');
+      setNewChatError(networkErrorMessage(err, 'Network error creating chat'));
     } finally {
       setCreatingChat(false);
     }
@@ -438,7 +439,7 @@ function ConversationsPageInner() {
       }
     } catch (err) {
       console.error('Failed to update status:', err);
-      setStatusError(err instanceof Error ? err.message : 'Network error updating status');
+      setStatusError(networkErrorMessage(err, 'Network error updating status'));
     }
   };
 
@@ -646,7 +647,7 @@ function ConversationsPageInner() {
               {[
                 { id: 'all', label: 'All Channels', icon: Filter },
                 { id: 'whatsapp', label: 'WhatsApp', icon: MessageSquare },
-                { id: 'chatwoot', label: 'Chatwoot', icon: MessageSquare },
+                { id: 'chatwoot', label: 'Live chat', icon: MessageSquare },
                 { id: 'gmail', label: 'Email / Gmail', icon: Mail },
                 { id: 'instagram', label: 'Instagram', icon: MessageSquare },
                 { id: 'sms', label: 'SMS', icon: MessageSquare },

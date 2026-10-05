@@ -45,7 +45,7 @@ export function SnippetCard({
         return;
       }
       const body = await res.json().catch(() => ({}));
-      setError(typeof body?.error === 'string' ? body.error : `Save failed (${res.status})`);
+      setError(typeof body?.error === 'string' ? body.error : 'We couldn’t save that. Please try again.');
     } catch {
       setError('Save failed. Check your connection and try again.');
     } finally {
@@ -64,7 +64,7 @@ export function SnippetCard({
         return;
       }
       const body = await res.json().catch(() => ({}));
-      setError(typeof body?.error === 'string' ? body.error : `Delete failed (${res.status})`);
+      setError(typeof body?.error === 'string' ? body.error : 'We couldn’t delete that. Please try again.');
     } catch {
       setError('Delete failed. Check your connection and try again.');
     } finally {

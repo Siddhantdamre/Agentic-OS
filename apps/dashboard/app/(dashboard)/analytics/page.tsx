@@ -22,6 +22,7 @@ import {
   Download,
 } from 'lucide-react';
 import { LiveRegion } from '@/components/a11y';
+import { networkErrorMessage } from '@/lib/client-error';
 
 type RangeKey = '24h' | '7d' | '30d' | '90d';
 
@@ -102,7 +103,7 @@ export default function AnalyticsPage() {
         window.location.href = '/login';
         return;
       }
-      if (!analyticsRes.ok) throw new Error(`Failed to load analytics (${analyticsRes.status})`);
+      if (!analyticsRes.ok) throw new Error('We couldn’t load analytics. Please try again.');
       const d: AnalyticsData = await analyticsRes.json();
       setData(d);
       setRoi(roiRes.ok ? await roiRes.json() : null);
@@ -128,7 +129,7 @@ export default function AnalyticsPage() {
       if (quiet) setError(null);
       setLiveMessage(`Analytics refreshed. ${d.metrics?.totalConversations ?? 0} conversations tracked.`);
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Failed to load analytics';
+      const msg = networkErrorMessage(err, 'Failed to load analytics');
       // A failed background refresh keeps the last good numbers on screen.
       if (quiet) {
         console.error('[analytics] live refresh failed', err);

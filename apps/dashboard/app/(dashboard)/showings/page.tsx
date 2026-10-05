@@ -4,6 +4,7 @@ import React, { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { AlertTriangle, Calendar, Clock, MapPin, XCircle } from 'lucide-react';
 import { ConfirmButton, LiveRegion, StatusBadge } from '@/components/a11y';
+import { networkErrorMessage } from '@/lib/client-error';
 
 interface ShowingRow {
   id: string;
@@ -64,6 +65,8 @@ export default function ShowingsPage() {
         const data = (await res.json().catch(() => ({}))) as { error?: string };
         setLiveMessage(data.error || 'Cancel failed');
       }
+    } catch (err) {
+      setLiveMessage(networkErrorMessage(err, 'We couldn’t cancel that showing. Please try again.'));
     } finally {
       setBusyId(null);
     }

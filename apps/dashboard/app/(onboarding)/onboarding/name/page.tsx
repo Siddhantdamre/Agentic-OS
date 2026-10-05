@@ -17,7 +17,7 @@ export default function OnboardingNamePage() {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ wizardStep: 'team-size', businessName }),
-    });
+    }).catch(() => undefined); // progress save is best-effort; the last step saves everything
     router.push('/onboarding/team-size');
   };
 

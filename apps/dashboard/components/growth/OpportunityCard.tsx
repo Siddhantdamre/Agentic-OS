@@ -2,6 +2,7 @@
 
 import React, { useState } from 'react';
 import { Building2, Send, Clock, X } from 'lucide-react';
+import { networkErrorMessage } from '@/lib/client-error';
 
 export const REJECTION_REASONS = [
   { id: 'wrong_fit', label: 'Wrong fit' },
@@ -39,6 +40,7 @@ export function OpportunityCard({ workItemId, payload, disabled, onDecision }: O
   const [phase, setPhase] = useState<'open' | 'reasons' | 'done'>('open');
   const [busy, setBusy] = useState(false);
   const [doneLabel, setDoneLabel] = useState('');
+  const [error, setError] = useState('');
 
   const whyCompany = payload.whyThisCompany || payload.whyCompany || '';
   const whyPerson = payload.whyThisPerson || payload.whyPerson || '';
@@ -49,12 +51,15 @@ export function OpportunityCard({ workItemId, payload, disabled, onDecision }: O
   const finish = async (decision: OpportunityDecision, reason?: RejectionReasonId) => {
     if (busy || disabled) return;
     setBusy(true);
+    setError('');
     try {
       await onDecision?.(decision, reason);
       setDoneLabel(
         decision === 'approve' ? 'Queued to send' : decision === 'snooze' ? 'Snoozed' : 'Passed'
       );
       setPhase('done');
+    } catch (err) {
+      setError(networkErrorMessage(err, 'We couldn’t save your decision. Please try again.'));
     } finally {
       setBusy(false);
     }
@@ -110,6 +115,8 @@ export function OpportunityCard({ workItemId, payload, disabled, onDecision }: O
           </section>
         )}
       </div>
+
+      {error && <p role="alert" className="px-5 pb-3 text-xs text-red-600">{error}</p>}
 
       {phase === 'reasons' ? (
         <div className="px-5 pb-5 space-y-2">

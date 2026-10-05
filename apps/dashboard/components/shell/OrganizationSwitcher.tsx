@@ -105,7 +105,7 @@ export function OrganizationSwitcher() {
         setError(
           typeof body.error === 'string' && body.error.trim()
             ? body.error
-            : `Switch failed (${res.status})`
+            : 'We couldn’t switch workspace. Please try again.'
         );
         setSwitchingId(null);
         return;
@@ -134,7 +134,7 @@ export function OrganizationSwitcher() {
         setError(
           typeof body.error === 'string' && body.error.trim()
             ? body.error
-            : `Could not create workspace (${res.status})`
+            : 'We couldn’t create the workspace. Please try again.'
         );
         setCreateBusy(false);
         return;

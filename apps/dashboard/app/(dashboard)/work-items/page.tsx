@@ -12,6 +12,7 @@ import {
   Columns3,
 } from 'lucide-react';
 import { LiveRegion, StatusBadge, type StatusTone } from '@/components/a11y';
+import { networkErrorMessage } from '@/lib/client-error';
 
 type WorkItemStatus =
   | 'open'
@@ -159,7 +160,7 @@ async function mutate(
     }
     return { ok: true };
   } catch (err: unknown) {
-    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    return { ok: false, error: networkErrorMessage(err, 'Something went wrong. Please try again.') };
   }
 }
 
@@ -176,7 +177,7 @@ async function decide(workItemId: string, action: 'approve' | 'reject'): Promise
     }
     return { ok: true };
   } catch (err: unknown) {
-    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    return { ok: false, error: networkErrorMessage(err, 'Something went wrong. Please try again.') };
   }
 }
 
@@ -307,7 +308,7 @@ export default function WorkItemsPage() {
       if (!res.ok) {
         if (quiet) return;
         setItems([]);
-        setError(`Failed to load work items (${res.status})`);
+        setError('We couldn’t load work items. Please try again.');
         setLiveMessage('Failed to load work items');
         return;
       }
@@ -355,7 +356,7 @@ export default function WorkItemsPage() {
             .map((e) => ({ id: e.id as string, name: e.name as string }))
         );
       } catch (err: unknown) {
-        setError(err instanceof Error ? err.message : 'Failed to load employees');
+        setError(networkErrorMessage(err, 'Failed to load employees'));
       }
     })();
   }, []);

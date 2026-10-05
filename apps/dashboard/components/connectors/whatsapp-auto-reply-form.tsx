@@ -2,6 +2,7 @@
 
 import React, { useEffect, useState } from 'react';
 import { RefreshCw } from 'lucide-react';
+import { networkErrorMessage } from '@/lib/client-error';
 
 type Mode = 'agent' | 'ai_simple' | 'fixed' | 'off';
 type Audience = 'everyone' | 'allow_list' | 'block_list';
@@ -145,7 +146,7 @@ export default function WhatsAppAutoReplyForm(props: {
           setEmployees(Array.isArray(d.employees) ? d.employees : []);
         }
       })
-      .catch((e) => alive && setLoadError(e instanceof Error ? e.message : 'Could not load settings'));
+      .catch((e) => alive && setLoadError(networkErrorMessage(e, 'Could not load settings')));
     return () => {
       alive = false;
     };
@@ -168,7 +169,7 @@ export default function WhatsAppAutoReplyForm(props: {
       }
       onSaved();
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Network error');
+      setError(networkErrorMessage(e, 'Network error'));
     } finally {
       setSaving(false);
     }

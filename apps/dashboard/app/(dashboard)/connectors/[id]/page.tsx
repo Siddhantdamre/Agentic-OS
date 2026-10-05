@@ -30,6 +30,7 @@ import {
   startRealNangoOAuth,
 } from '@/lib/nango-client';
 import WhatsAppConnectModal from '@/components/connectors/whatsapp-connect-modal';
+import { networkErrorMessage } from '@/lib/client-error';
 
 interface ConnectorSpec {
   name: string;
@@ -113,7 +114,7 @@ const CONNECTOR_SPECS: Record<string, ConnectorSpec> = {
   whatsapp: {
     name: 'WhatsApp Business',
     category: 'Messaging',
-    desc: 'Link WhatsApp by scanning a QR, or use the official Meta Cloud API, for inbound and outbound customer chats. Your AI employees reply either way.',
+    desc: 'Link WhatsApp by scanning a QR code, or use the official WhatsApp Business connection, to chat with customers. Your AI employees reply either way.',
     icon: MessageSquare,
     authMode: 'OAuth 2.0 (Meta Cloud API)',
     nangoKey: 'whatsapp',
@@ -316,7 +317,7 @@ export default function ConnectorDetailPage() {
       }
     } catch (err) {
       console.error('Failed to load connector status:', err);
-      setLoadError(err instanceof Error ? err.message : 'Failed to load connector status');
+      setLoadError(networkErrorMessage(err, 'Failed to load connector status'));
     } finally {
       setLoadingStatus(false);
     }
@@ -336,7 +337,7 @@ export default function ConnectorDetailPage() {
         const result = await disconnectProvider(connectorId);
         if (!result.success) throw new Error(result.error || 'Disconnect failed');
         setConnected(false);
-        setConnectSuccess('Disconnected successfully. Nango tokens were revoked.');
+        setConnectSuccess('Disconnected. Access to this tool has been removed.');
         await checkConnectionStatus();
         return;
       }
@@ -537,7 +538,7 @@ export default function ConnectorDetailPage() {
 
       {!connected && liveAuthMode === 'byok' && (
         <div className="bg-white border border-cream-300 rounded-3xl p-6 text-xs text-slate-600">
-          Connect WhatsApp by scanning a QR code or with the official Meta Cloud API. You pick when you click Connect.
+          Connect WhatsApp by scanning a QR code or with the official WhatsApp Business connection. You pick when you click Connect.
         </div>
       )}
 
@@ -580,10 +581,10 @@ export default function ConnectorDetailPage() {
       {/* Tab Navigation */}
       <div className="flex items-center space-x-2 border-b border-cream-300 pb-2">
         {[
-          { id: 'test', label: 'Interactive API Runner', icon: Terminal },
-          { id: 'specs', label: 'Credentials & Scopes', icon: Key },
-          { id: 'webhooks', label: 'Webhook Listeners', icon: Webhook },
-          { id: 'logs', label: `Database Logs (${logs.length})`, icon: Activity },
+          { id: 'test', label: 'Try an action', icon: Terminal },
+          { id: 'specs', label: 'Access & permissions', icon: Key },
+          { id: 'webhooks', label: 'Incoming updates', icon: Webhook },
+          { id: 'logs', label: `Activity log (${logs.length})`, icon: Activity },
         ].map((tab) => (
           <button
             key={tab.id}
@@ -608,10 +609,10 @@ export default function ConnectorDetailPage() {
             <div className="flex items-center justify-between border-b border-cream-200 pb-3">
               <div className="flex items-center space-x-2">
                 <Terminal className="w-4 h-4 text-amber-700" />
-                <h3 className="font-bold text-heading text-sm">Execute `@darex/connectors` Proxy Function</h3>
+                <h3 className="font-bold text-heading text-sm">Try an action on {display.name}</h3>
               </div>
               <span className="text-[10px] font-mono bg-cream-200 text-amber-800 font-bold px-2 py-0.5 rounded">
-                Live Nango Execution
+                Runs for real
               </span>
             </div>
 
@@ -635,7 +636,7 @@ export default function ConnectorDetailPage() {
                 className="w-full py-3 bg-amber-500 hover:bg-amber-600 text-heading font-bold text-xs rounded-xl transition shadow-md flex items-center justify-center space-x-2 disabled:opacity-50"
               >
                 <Play className="w-4 h-4 fill-current" />
-                <span>{executing ? 'Executing Connector Request...' : `Run ${display.name} Action`}</span>
+                <span>{executing ? 'Running…' : `Run ${display.name} action`}</span>
               </button>
             </div>
 
@@ -643,9 +644,9 @@ export default function ConnectorDetailPage() {
             {testResult && (
               <div className="mt-4 p-4 bg-slate-950 text-slate-200 font-mono text-xs rounded-2xl space-y-2 border border-slate-800">
                 <div className="flex items-center justify-between text-slate-400 border-b border-slate-800 pb-1.5 text-[11px]">
-                  <span>Execution Output</span>
+                  <span>Result</span>
                   <span className={testResult.success ? 'text-emerald-400 font-bold' : 'text-amber-400 font-bold'}>
-                    {testResult.success ? '200 OK — Execution Logged to DB' : 'Proxy Response'}
+                    {testResult.success ? 'Done — saved to your activity log' : 'Response'}
                   </span>
                 </div>
                 <pre className="text-[11px] whitespace-pre-wrap max-h-60 overflow-y-auto">{JSON.stringify(testResult, null, 2)}</pre>
@@ -657,13 +658,13 @@ export default function ConnectorDetailPage() {
           <div className="lg:col-span-5 space-y-4">
             <div className="bg-slate-950 text-slate-200 rounded-3xl p-6 border border-slate-800 space-y-4 shadow-sm">
               <div className="flex items-center justify-between border-b border-slate-800 pb-3">
-                <span className="text-xs font-semibold text-slate-400 font-mono">TypeScript Agent Invocation</span>
+                <span className="text-xs font-semibold text-slate-400 font-mono">Example for developers</span>
                 <button
                   onClick={copyCode}
                   className="text-xs text-slate-400 hover:text-amber-400 flex items-center space-x-1 transition"
                 >
                   {copiedSnippet ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
-                  <span>{copiedSnippet ? 'Copied' : 'Copy Code'}</span>
+                  <span>{copiedSnippet ? 'Copied' : 'Copy example'}</span>
                 </button>
               </div>
 
@@ -673,9 +674,9 @@ export default function ConnectorDetailPage() {
             </div>
 
             <div className="p-4 bg-cream-100 border border-cream-300 rounded-2xl text-xs text-slate-600 space-y-1">
-              <span className="font-bold text-heading block">Idempotent Temporal Activity</span>
+              <span className="font-bold text-heading block">Safe to retry</span>
               <p className="text-[11px] leading-relaxed">
-                When an AI employee calls this connector during a customer conversation workflow, the call is wrapped in a retry-safe Temporal Activity with RLS tenant context.
+                When an AI employee uses this connection during a customer conversation, the call is retried safely if something goes wrong, and only ever touches your own business’s data.
               </p>
             </div>
           </div>
@@ -686,15 +687,15 @@ export default function ConnectorDetailPage() {
       {activeTab === 'specs' && (
         <div className="bg-white border border-cream-300 rounded-3xl p-8 space-y-6 shadow-sm">
           <div className="space-y-1">
-            <h3 className="text-lg font-bold text-heading">Nango Tenant Isolation Credentials</h3>
+            <h3 className="text-lg font-bold text-heading">Your connection</h3>
             <p className="text-xs text-slate-500">
-              Connection tokens are stored in self-hosted Nango database schema and isolated per tenant org.
+              Your sign-in details for this tool are stored securely and kept separate from every other business.
             </p>
           </div>
 
           <div className="grid grid-cols-2 gap-6">
             <div className="p-5 bg-cream-50 border border-cream-300 rounded-2xl space-y-2">
-              <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider block">Nango Provider Key</span>
+              <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider block">Connection name</span>
               <code className="text-sm font-bold font-mono text-amber-800 bg-cream-200 px-2 py-1 rounded">{display.nangoKey}</code>
             </div>
 
@@ -706,7 +707,7 @@ export default function ConnectorDetailPage() {
 
           {/* Required Env Vars */}
           <div className="space-y-3">
-            <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wider">Required Environment Variables</h4>
+            <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wider">Settings your administrator needs to provide</h4>
             <div className="border border-cream-300 rounded-2xl overflow-hidden divide-y divide-cream-200">
               {display.envVars.map((env, idx) => (
                 <div key={idx} className="p-4 flex items-center justify-between bg-white text-xs">
@@ -719,7 +720,7 @@ export default function ConnectorDetailPage() {
 
           {/* Scopes List */}
           <div className="space-y-3">
-            <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wider">Required OAuth Scopes</h4>
+            <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wider">Permissions requested</h4>
             <div className="flex flex-wrap gap-2">
               {display.scopes.map((scope, idx) => (
                 <span key={idx} className="px-3 py-1.5 bg-cream-200 text-slate-800 font-mono text-xs rounded-xl border border-cream-300">
@@ -735,19 +736,14 @@ export default function ConnectorDetailPage() {
       {activeTab === 'webhooks' && (
         <div className="bg-white border border-cream-300 rounded-3xl p-8 space-y-6 shadow-sm">
           <div className="space-y-1">
-            <h3 className="text-lg font-bold text-heading">Webhook Ingestion Endpoint</h3>
+            <h3 className="text-lg font-bold text-heading">How updates reach you</h3>
             <p className="text-xs text-slate-500">
-              Inbound webhooks from {display.name} are ingested into Postgres <code className="font-mono text-amber-800">channel_logs</code> and processed under &lt;500ms.
+              When {display.name} sends news — like a new message — it is received automatically and appears in your activity log. There is nothing to set up here.
             </p>
           </div>
 
-          <div className="p-4 bg-slate-950 text-slate-200 rounded-2xl font-mono text-xs flex items-center justify-between border border-slate-800">
-            <span>http://localhost:3000/api/integrations/webhooks</span>
-            <span className="text-emerald-400 font-bold">POST Listener</span>
-          </div>
-
           <div className="space-y-3">
-            <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wider">Supported Webhook Events</h4>
+            <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wider">Updates we listen for</h4>
             <div className="grid grid-cols-3 gap-3">
               {display.webhookEvents.map((evt, idx) => (
                 <div key={idx} className="p-3 bg-cream-100 border border-cream-300 rounded-xl text-xs font-mono text-slate-700 flex items-center space-x-2">

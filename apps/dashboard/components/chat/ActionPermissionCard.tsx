@@ -203,7 +203,7 @@ export const ActionPermissionCard: React.FC<ActionPermissionCardProps> = ({
               ) : (
                 <div className="bg-heading rounded-xl overflow-hidden">
                   <div className="flex items-center px-3.5 py-1.5 border-b border-slate-700 bg-slate-900">
-                    <span className="text-[10px] font-mono text-slate-400">Response Payload</span>
+                    <span className="text-[10px] font-mono text-slate-400">Response</span>
                   </div>
                   <pre className="p-3 text-[11px] font-mono text-emerald-400 overflow-x-auto">
                     {JSON.stringify(executionResult.data, null, 2)}

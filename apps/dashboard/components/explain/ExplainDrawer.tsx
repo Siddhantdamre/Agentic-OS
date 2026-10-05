@@ -2,6 +2,7 @@
 
 import React, { useState } from 'react';
 import { HelpCircle, X } from 'lucide-react';
+import { networkErrorMessage } from '@/lib/client-error';
 
 type ExplainMatch = {
   actionConsidered?: string;
@@ -37,11 +38,11 @@ export function ExplainDrawer({ objectId, defaultQuery = '' }: ExplainDrawerProp
       if (query.trim()) params.set('q', query.trim());
       if (objectId) params.set('objectId', objectId);
       const res = await fetch(`/api/agent/explain?${params.toString()}`);
-      if (!res.ok) throw new Error(`Explain failed (${res.status})`);
+      if (!res.ok) throw new Error("We couldn’t load that explanation. Please try again.");
       const data = (await res.json()) as ExplainResponse;
       setResult(data);
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'Explain failed');
+      setError(networkErrorMessage(err, 'Explain failed'));
     } finally {
       setLoading(false);
     }

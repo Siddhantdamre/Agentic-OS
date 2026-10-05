@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Lock, Mail, ArrowRight, Eye, EyeOff, Sparkles, Loader2, ShieldCheck } from 'lucide-react';
 import { safePostLoginPath } from '@/lib/session-cookie';
+import { networkErrorMessage } from '@/lib/client-error';
 
 function LoginForm() {
   const router = useRouter();
@@ -90,7 +91,7 @@ function LoginForm() {
         throw new Error(
           res.ok
             ? 'Unexpected response from server. Please try again.'
-            : `Server returned an error (${res.status}). Please try again.`
+            : 'Something went wrong on our side. Please try again.'
         );
       }
 
@@ -111,7 +112,7 @@ function LoginForm() {
         router.push(safePostLoginPath(searchParams?.get('redirect')));
       }
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'Login failed. Please check your credentials.');
+      setError(networkErrorMessage(err, 'Login failed. Please check your credentials.'));
       setLoading(false);
     }
   };

@@ -46,7 +46,7 @@ export function DsrPrivacyPanel({ orgSlug, orgName, viewerRole = null }: Props) 
         return;
       }
       if (!res.ok) {
-        setLoadError(`Failed to load DSR history (${res.status})`);
+        setLoadError('We couldn’t load DSR history. Please try again.');
         return;
       }
       const data = (await res.json()) as { requests?: DsrRequestRow[] };
@@ -82,7 +82,7 @@ export function DsrPrivacyPanel({ orgSlug, orgName, viewerRole = null }: Props) 
       });
       const data = (await res.json().catch(() => ({}))) as { error?: string; dsrRequestId?: string };
       if (!res.ok) {
-        setActionError(data.error || `Export failed (${res.status})`);
+        setActionError(data.error || 'We couldn’t prepare your export. Please try again.');
         return;
       }
       setActionOk(`Export queued (${data.dsrRequestId?.slice(0, 8)}…). Download appears when completed.`);
@@ -106,7 +106,7 @@ export function DsrPrivacyPanel({ orgSlug, orgName, viewerRole = null }: Props) 
       });
       const data = (await res.json().catch(() => ({}))) as { error?: string; dsrRequestId?: string };
       if (!res.ok) {
-        setActionError(data.error || `Delete failed (${res.status})`);
+        setActionError(data.error || 'We couldn’t delete that. Please try again.');
         return;
       }
       setConfirmOpen(false);
@@ -170,7 +170,7 @@ export function DsrPrivacyPanel({ orgSlug, orgName, viewerRole = null }: Props) 
           <h3 className="text-sm font-bold text-red-900">Confirm irreversible delete</h3>
           <p className="text-xs text-red-800">
             Type <span className="font-mono font-semibold">{confirmHint}</span> to confirm. This
-            wipes conversations, memory, embeddings, and agent state for this organization.
+            permanently deletes your conversations, everything your AI employees have learned, and their saved progress for this business.
           </p>
           <input
             type="text"

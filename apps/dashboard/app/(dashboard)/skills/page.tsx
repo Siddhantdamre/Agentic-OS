@@ -138,7 +138,7 @@ const FIRST_PARTY_SKILLS: FirstPartySkill[] = [
     id: 'nango-integrations-playbook',
     name: 'WhatsApp Business Messaging',
     version: '1.0.0',
-    description: 'Meta Cloud API customer messaging, automated templates, and chat handling.',
+    description: 'Customer messaging on WhatsApp, with ready-made message templates and automatic chat handling.',
     requiresTools: ['mcp.darex.whatsapp_send', 'mcp.darex.gmail_fetch'],
     connectorId: 'whatsapp',
     examplePrompt: 'Send a WhatsApp notification update to customer',
@@ -160,6 +160,9 @@ function parseAllowlist(tools: unknown): string[] {
 
 const SKILLS_EVENTS = ['integration_updated'] as const;
 
+const SKILLS_LOAD_FAILED =
+  'We couldn’t check which of your tools are connected, so the “ready” labels below may be out of date. Please try again in a moment.';
+
 export default function SkillsPage() {
   const [integrations, setIntegrations] = useState<Record<string, boolean>>({});
   const [employees, setEmployees] = useState<EmployeeInfo[]>([]);
@@ -167,6 +170,7 @@ export default function SkillsPage() {
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState<'all' | 'ready' | 'needs_setup'>('all');
   const [liveMessage, setLiveMessage] = useState('');
+  const [loadError, setLoadError] = useState('');
 
   const loadData = useCallback(async (quiet = false) => {
     if (!quiet) setLoading(true);
@@ -175,6 +179,12 @@ export default function SkillsPage() {
         fetch('/api/integrations'),
         fetch('/api/employees'),
       ]);
+
+      if (!integRes.ok || !empRes.ok) {
+        setLoadError(SKILLS_LOAD_FAILED);
+      } else {
+        setLoadError('');
+      }
 
       if (integRes.ok) {
         const integData = await integRes.json();
@@ -194,6 +204,7 @@ export default function SkillsPage() {
       if (!quiet) setLiveMessage(`${FIRST_PARTY_SKILLS.length} playbooks loaded`);
     } catch (err) {
       console.error('Failed to load skills live context:', err);
+      setLoadError(SKILLS_LOAD_FAILED);
     } finally {
       if (!quiet) setLoading(false);
     }
@@ -253,7 +264,7 @@ export default function SkillsPage() {
           <div className="flex items-center gap-2">
             <h1 className="text-2xl sm:text-3xl font-serif font-bold text-heading">Playbook Skills</h1>
             <span className="text-xs font-mono font-bold bg-amber-500/20 text-amber-800 px-2 py-0.5 rounded-md border border-amber-500/30">
-              TrueForge Core
+              Built in
             </span>
           </div>
           <p className="text-slate-500 text-sm mt-1">
@@ -270,6 +281,12 @@ export default function SkillsPage() {
           <span>Sync Status</span>
         </button>
       </div>
+
+      {loadError && (
+        <div role="alert" className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+          {loadError}
+        </div>
+      )}
 
       {/* Search & Filter Controls */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -372,7 +389,7 @@ export default function SkillsPage() {
 
                 {/* Required MCP tools list */}
                 <div className="space-y-1">
-                  <span className="text-[10px] font-mono text-slate-400 uppercase">MCP Actions:</span>
+                  <span className="text-[10px] font-mono text-slate-400 uppercase">Needs these tools:</span>
                   <ul className="text-[11px] font-mono text-slate-500 space-y-0.5">
                     {skill.requiresTools.map((tool) => (
                       <li key={tool} className="flex items-center gap-1">
@@ -431,7 +448,7 @@ export default function SkillsPage() {
         <div>
           <p className="font-bold">Enterprise Safety Architecture</p>
           <p className="mt-0.5 text-amber-800 leading-relaxed">
-            All playbook skills run inside TrueForge autonomous sandboxes with strict RLS database isolation. External actions respect employee autonomy policies and never send or charge without approval.
+            Every skill runs in its own protected space, kept separate from other businesses. Anything that reaches outside — sending a message, charging a card — follows each employee’s approval rules and never happens without your say-so.
           </p>
         </div>
       </div>

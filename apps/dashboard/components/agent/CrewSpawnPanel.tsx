@@ -84,7 +84,7 @@ export const CrewSpawnPanel: React.FC = () => {
 
       <div className="flex items-center justify-between">
         <p className="text-[11px] text-slate-400">
-          Each employee keeps their own tool allowlist. Missing OAuth still returns notConnected.
+          Each employee only uses the tools they’re allowed. If a tool isn’t connected, the action is blocked — never faked.
         </p>
         <button
           type="button"
@@ -117,7 +117,7 @@ export const CrewSpawnPanel: React.FC = () => {
             </span>
             {result.reason && <span className="text-slate-500">— {result.reason}</span>}
             {result.usedTemporal && (
-              <span className="text-[10px] font-bold text-emerald-700">Temporal</span>
+              <span className="text-[10px] font-bold text-emerald-700">Saved progress</span>
             )}
           </div>
 

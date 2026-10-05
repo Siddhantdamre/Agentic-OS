@@ -100,7 +100,7 @@ export default function SettingsPage() {
           console.error('[settings] live refresh failed', res.status);
           return;
         }
-        setLoadError(`Failed to load settings (${res.status})`);
+        setLoadError('We couldn’t load settings. Please try again.');
         return;
       }
       const data = await res.json();
@@ -316,7 +316,7 @@ export default function SettingsPage() {
       setDeleteError(
         typeof data.error === 'string'
           ? data.error
-          : `Failed to request deletion (${res.status})`
+          : 'We couldn’t request deletion. Please try again.'
       );
     } catch (err) {
       console.error('Failed to request deletion:', err);
@@ -679,8 +679,7 @@ export default function SettingsPage() {
               <div className="bg-white border border-cream-300 rounded-3xl p-6 space-y-4 shadow-sm">
                 <h2 className="text-lg font-serif font-bold text-heading">Public chat widget</h2>
                 <p className="text-xs text-slate-500">
-                  Drop this script on your site. Messages persist immediately and return HTTP 200 without waiting on the model.
-                  The site key is public; it cannot call admin APIs. Tenant is resolved from the key — never send <code>org_id</code>.
+                  Paste this snippet into your website to show the chat widget. Messages are saved straight away and never wait on the AI. The site key is safe to publish — it can only start chats for your business and cannot change any settings.
                 </p>
                 {!widget?.hasPack && (
                   <p className="text-xs text-amber-700 font-semibold">

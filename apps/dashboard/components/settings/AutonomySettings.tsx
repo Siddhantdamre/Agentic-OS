@@ -4,6 +4,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { useLiveRefresh } from '@/lib/use-live-refresh';
 import { Shield, Clock, Ban } from 'lucide-react';
 import { LiveRegion } from '@/components/a11y';
+import { networkErrorMessage } from '@/lib/client-error';
 
 type AutonomyRule = {
   id: string;
@@ -109,7 +110,7 @@ export function AutonomySettings() {
         setError('Some settings could not be loaded. Refresh to try again.');
       }
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'Network error loading settings');
+      setError(networkErrorMessage(err, 'Network error loading settings'));
     } finally {
       setLoading(false);
     }
@@ -161,7 +162,7 @@ export function AutonomySettings() {
         )
       );
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'Network error updating autonomy tier');
+      setError(networkErrorMessage(err, 'Network error updating autonomy tier'));
     } finally {
       setSavingRuleId(null);
     }
@@ -209,7 +210,7 @@ export function AutonomySettings() {
         return next;
       });
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'Network error updating rule');
+      setError(networkErrorMessage(err, 'Network error updating rule'));
     } finally {
       setSavingRuleId(null);
     }
@@ -250,7 +251,7 @@ export function AutonomySettings() {
       setNewRule(EMPTY_NEW_RULE);
       await load();
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'Network error creating rule');
+      setError(networkErrorMessage(err, 'Network error creating rule'));
     } finally {
       setCreating(false);
     }
@@ -273,7 +274,7 @@ export function AutonomySettings() {
       setLive(status === 'approved' ? 'Decision approved' : 'Decision rejected');
       setPending((prev) => prev.filter((row) => row.id !== id));
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : `Network error resolving decision`);
+      setError(networkErrorMessage(err, `Network error resolving decision`));
     } finally {
       setResolvingId(null);
     }
@@ -294,7 +295,7 @@ export function AutonomySettings() {
         setError(typeof body.error === 'string' ? body.error : 'Could not dismiss suppression');
       }
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'Network error dismissing suppression');
+      setError(networkErrorMessage(err, 'Network error dismissing suppression'));
     }
   };
 

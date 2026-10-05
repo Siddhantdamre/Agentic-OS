@@ -1,5 +1,16 @@
 # Darex Build State
 
+## First-run experience: plain wording and explained failures on every customer screen (2026-10-05)
+
+- Against company main 9d141bc. Customer-facing screens and shared components only.
+- Wording: customer screens named internal parts ("Nango", "Temporal", "Langfuse", "RLS", "Postgres", "notConnected", "Phase 3 Ready", a hard-coded `localhost:3000` webhook URL). 67 hits in source at the start; `lib/__tests__/customer-vocabulary.test.ts` now reads all customer-facing source and fails on any developer term. Two terms are allowed with reasons (Settings webhook URLs that the customer pastes into Meta/Chatwoot; the word "tenant" in real estate). The operator console under `app/(platform)` is not scanned.
+- Failures: the client now answers a dropped connection, a rate limit and an empty 500 with a plain sentence (`lib/client-error.ts`: `responseErrorMessage`, `networkErrorMessage`). Before: 16 of 164 browser fetch calls were unguarded (onboarding saves, password reset, invites, listings, showings, growth decisions), 32 on-screen errors passed `err.message` through ("Failed to fetch"), 26 messages carried an HTTP status, and five pages (insight, plans, skills, brain, billing) showed an empty list or nothing when their request failed. Contracts: `client-fetch-contract`, `client-error-display-contract`, `app/(dashboard)/__tests__/load-failure.test.tsx` (15 tests, 13 failed first).
+- Recovery pages: forgot-password, reset-password and invite never ended in a stuck button or an endless spinner when the connection dropped; forgot-password no longer says "we sent a reset link" when the server answered 429 or 5xx.
+- Onboarding: the last step has a hint when no channel is chosen, and no longer shows "Unexpected end of JSON input" on an empty failure.
+- Proof: dashboard 790 tests in 120 suites, `tsc` clean, production build passes. Real browser (headless Chromium) on the built server: 0 developer words on 31 screens; 29 of 29 pages handle a server error, a rate limit and a dropped connection (the four onboarding forms are covered by unit tests); 31 of 31 pages load by clicking with no script error. The six-step first-run journey needs the next commit (the failed-turn sentence) to pass its last check.
+- Operational note: a server started before a rebuild serves old pages whose script files no longer exist; the page loads (200) and nothing responds to clicks. Restart the server after every build.
+- Not verified: the live frontend (separate repo), a hosted model, the production server.
+
 ## Temporal outages cost one request, not every request (2026-10-05)
 
 - `getTemporalClient` started a fresh connect on every call, so with Temporal down each request that needed it hung for the 5 s connect timeout before the direct fallback ran (`/api/brain/reindex` and `/api/dsr/export` took 5.0 s each, every time). `createLazyConnector` (`temporal-connect.ts`) shares one attempt among concurrent callers, caches a success, and after a failure answers null at once for `TEMPORAL_RETRY_BACKOFF_MS` (default 10 s). `TEMPORAL_CONNECT_TIMEOUT_MS` (default 5 s) is unchanged. 7 tests; workflows suite 475 before, 482 after. Measured end to end with Temporal down: 4 sequential requests took 4,992, 24, 16 and 21 ms (before: about 5,000 ms each).

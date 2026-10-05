@@ -7,6 +7,7 @@ import { DecisionCardPanel, type CustomerDecisionCard } from '@/components/custo
 import { OpenLoopsDrawer } from '@/components/customer/OpenLoopsDrawer';
 import { TeachKnowledgeGapModal } from '@/components/customer/TeachKnowledgeGapModal';
 import { useRealtimeStream } from '@/lib/use-realtime-stream';
+import { networkErrorMessage } from '@/lib/client-error';
 
 const CUSTOMER_EVENTS = ['needs_attention', 'conversation_updated', 'message_received'] as const;
 
@@ -48,7 +49,7 @@ export default function CustomerEmployeePage() {
     setLoading(true);
     try {
       const res = await fetch(`/api/employees/customer?limit=${limit}&offset=${nextOffset}`);
-      if (!res.ok) throw new Error(`Failed to load customer brief (${res.status})`);
+      if (!res.ok) throw new Error('We couldn’t load customer brief. Please try again.');
       const data = (await res.json()) as CustomerBrief;
       setBrief((prev) => ({
         handled: Number(data.handled || 0),
@@ -66,7 +67,7 @@ export default function CustomerEmployeePage() {
       setOffset(nextOffset);
       setError(null);
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'Failed to load customer brief');
+      setError(networkErrorMessage(err, 'Failed to load customer brief'));
     } finally {
       setLoading(false);
     }

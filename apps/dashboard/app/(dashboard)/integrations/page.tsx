@@ -39,6 +39,7 @@ import {
 } from 'lucide-react';
 import { disconnectProvider, startRealNangoOAuth } from '@/lib/nango-client';
 import { LiveRegion, StatusBadge } from '@/components/a11y';
+import { networkErrorMessage } from '@/lib/client-error';
 
 interface Integration {
   id: string;
@@ -130,7 +131,7 @@ export default function IntegrationsPage() {
       console.error('Failed to load integrations:', err);
       setIntegrations([]);
       setLogs([]);
-      setLoadError(err instanceof Error ? err.message : 'Failed to load integrations');
+      setLoadError(networkErrorMessage(err, 'Failed to load integrations'));
     } finally {
       setLoading(false);
     }
@@ -161,7 +162,7 @@ export default function IntegrationsPage() {
       }
       const result = await startRealNangoOAuth(app.id, { extraParams: extras });
       if (result.success) {
-        setNotification({ type: 'success', message: `${app.name} connected successfully via Nango OAuth!` });
+        setNotification({ type: 'success', message: `${app.name} is now connected.` });
       } else {
         setNotification({ type: 'error', message: result.error || `Failed to connect ${app.name}` });
       }
@@ -223,7 +224,7 @@ export default function IntegrationsPage() {
         <div>
           <h1 className="text-3xl font-serif font-bold text-heading">Integrations & Connectors</h1>
           <p className="text-slate-500 text-sm mt-1">
-            Nango OAuth credential storage & multi-tenant webhook routing layer (<code className="bg-cream-200 px-1 py-0.5 rounded text-amber-800 font-mono text-xs">http://localhost:3003</code>).
+            Connect the tools your business uses. Sign-in details are stored securely and never shared with other businesses.
           </p>
         </div>
 
@@ -232,7 +233,7 @@ export default function IntegrationsPage() {
           className="px-4 py-2 bg-cream-200 hover:bg-cream-300 border border-cream-300 rounded-xl text-xs font-semibold text-slate-700 flex items-center space-x-2 transition-colors"
         >
           <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
-          <span>Refresh Nango Status</span>
+          <span>Refresh status</span>
         </button>
       </div>
 
@@ -265,19 +266,19 @@ export default function IntegrationsPage() {
         <div className="bg-cream-200/70 border border-cream-300 p-5 rounded-2xl space-y-1 shadow-sm">
           <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Connected Tools</span>
           <div className="text-3xl font-bold text-heading">{stats.connectedApps} / {integrations.length}</div>
-          <span className="text-xs text-emerald-600 font-medium">Nango OAuth active</span>
+          <span className="text-xs text-emerald-600 font-medium">Secure sign-in</span>
         </div>
 
         <div className="bg-cream-200/70 border border-cream-300 p-5 rounded-2xl space-y-1 shadow-sm">
           <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Total Syncs Today</span>
           <div className="text-3xl font-bold text-heading">{stats.totalSyncsToday}</div>
-          <span className="text-xs text-emerald-600 font-medium">Live DB payload delivery</span>
+          <span className="text-xs text-emerald-600 font-medium">Updates received automatically</span>
         </div>
 
         <div className="bg-cream-200/70 border border-cream-300 p-5 rounded-2xl space-y-1 shadow-sm">
-          <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Failed Webhooks</span>
+          <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Failed updates</span>
           <div className="text-3xl font-bold text-heading">{stats.failedWebhooks}</div>
-          <span className="text-xs text-slate-500 font-medium">0 retry queue backlog</span>
+          <span className="text-xs text-slate-500 font-medium">Nothing waiting to retry</span>
         </div>
 
         <div className="bg-cream-200/70 border border-cream-300 p-5 rounded-2xl space-y-1 shadow-sm">
@@ -347,7 +348,7 @@ export default function IntegrationsPage() {
                     disabled={isBusy}
                     className="px-4 py-2 bg-amber-500 hover:bg-amber-600 text-heading text-xs font-bold rounded-xl transition-all shadow-md hover:shadow-lg disabled:opacity-50 flex items-center space-x-1.5"
                   >
-                    <span>{isBusy ? 'Connecting OAuth...' : 'Connect via Nango'}</span>
+                    <span>{isBusy ? 'Connecting OAuth...' : 'Connect'}</span>
                   </button>
                 )}
               </div>
@@ -367,7 +368,7 @@ export default function IntegrationsPage() {
                 </div>
                 <div>
                   <h2 className="text-xl font-serif font-bold text-heading">{selectedApp.name}</h2>
-                  <span className="text-xs text-slate-400 font-medium">Nango Connector Execution Drawer</span>
+                  <span className="text-xs text-slate-400 font-medium">Tool details</span>
                 </div>
               </div>
 
@@ -384,10 +385,10 @@ export default function IntegrationsPage() {
               <div className="p-4 bg-cream-100 rounded-2xl border border-cream-300 space-y-2">
                 <div className="flex items-center space-x-2 text-xs font-semibold text-slate-600">
                   <ShieldCheck className="w-4 h-4 text-emerald-600" />
-                  <span>Tenant Connection Scope</span>
+                  <span>Your connection</span>
                 </div>
                 <p className="text-xs text-slate-600">
-                  Nango Connection ID: <code className="bg-cream-200 px-1.5 py-0.5 rounded text-amber-800 font-mono">{selectedApp.nangoConnectionId}</code>
+                  Connection ID: <code className="bg-cream-200 px-1.5 py-0.5 rounded text-amber-800 font-mono">{selectedApp.nangoConnectionId}</code>
                 </p>
                 <p className="text-xs text-slate-500">
                   OAuth Provider Mode: <span className="font-semibold text-slate-700">{selectedApp.id === 'razorpay' ? 'API Key' : 'OAuth 2.0'}</span>
@@ -402,7 +403,7 @@ export default function IntegrationsPage() {
                     <h3 className="text-sm font-bold text-heading">Execute `@darex/connectors` Function</h3>
                   </div>
                   <span className="text-xs bg-amber-500/10 text-amber-800 font-semibold px-2.5 py-0.5 rounded-full">
-                    Live Nango Proxy
+                    Runs for real
                   </span>
                 </div>
 
@@ -571,7 +572,7 @@ export default function IntegrationsPage() {
                     className="w-full py-2.5 bg-amber-500 hover:bg-amber-600 text-heading text-xs font-bold rounded-xl transition-all shadow-md flex items-center justify-center space-x-2"
                   >
                     <Play className="w-3.5 h-3.5 fill-current" />
-                    <span>{testRunning ? 'Executing Nango API Proxy...' : `Run ${selectedApp.name} Action`}</span>
+                    <span>{testRunning ? 'Running…' : `Run ${selectedApp.name} Action`}</span>
                   </button>
 
                   {testResult && (
@@ -591,7 +592,7 @@ export default function IntegrationsPage() {
               {/* Real Database Event Logs Feed */}
               <div>
                 <div className="flex items-center justify-between mb-2">
-                  <h3 className="text-sm font-bold text-heading">Live Database Webhook & Log Feed</h3>
+                  <h3 className="text-sm font-bold text-heading">Recent activity</h3>
                   <span className="text-xs text-slate-400 font-medium">{filteredLogs.length} entries</span>
                 </div>
 
@@ -629,7 +630,7 @@ export default function IntegrationsPage() {
                   onClick={() => handleConnectOAuth(selectedApp)}
                   className="w-full py-3 bg-amber-500 hover:bg-amber-600 text-heading text-sm font-bold rounded-2xl transition-all shadow-md"
                 >
-                  Authorize via Nango OAuth
+                  Connect securely
                 </button>
               )}
             </div>

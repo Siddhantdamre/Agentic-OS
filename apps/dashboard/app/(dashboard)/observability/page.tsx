@@ -6,6 +6,7 @@ import type { FirstObservation, TrajectorySnapshot } from '@/lib/onboarding-roll
 import { toRolloutWeekViews } from '@/lib/onboarding-rollout';
 import { useLiveRefresh } from '@/lib/use-live-refresh';
 import { PendingDecisionCard, type PendingDecision } from '@/components/observability/PendingDecisionCard';
+import { responseErrorMessage } from '@/lib/client-error';
 
 const OBSERVABILITY_EVENTS = [
   'needs_attention',
@@ -14,6 +15,15 @@ const OBSERVABILITY_EVENTS = [
   'work_item_updated',
   'settings_updated',
 ] as const;
+
+const LOAD_FAILED = 'We couldn’t load employee health just now. Please try again in a moment.';
+const ACTION_FAILED = 'That didn’t work. Please try again.';
+
+async function getJson(url: string): Promise<any> {
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
+}
 
 export default function ObservabilityPage() {
   const [metrics, setMetrics] = useState<SilentMetric[]>([]);
@@ -27,6 +37,9 @@ export default function ObservabilityPage() {
   const [explain, setExplain] = useState<Array<{ reasonSummary: string; confidence: number; decision: string }>>([]);
   const [backfillNote, setBackfillNote] = useState('');
   const [dispatchNote, setDispatchNote] = useState('');
+  const [metricsFailed, setMetricsFailed] = useState(false);
+  const [decisionsFailed, setDecisionsFailed] = useState(false);
+  const [actionNote, setActionNote] = useState('');
 
   const refreshDispatchStatus = () => {
     // dryRun: report configured vs not without POSTing to the webhook on every page load
@@ -38,7 +51,7 @@ export default function ObservabilityPage() {
       .then(async (r) => {
         const data = await r.json().catch(() => null);
         if (r.status === 403) {
-          setDispatchNote('Alert webhook dispatch requires org settings access.');
+          setDispatchNote('Sending alerts to your team needs settings access.');
           return;
         }
         if (!r.ok || !data) {
@@ -46,37 +59,47 @@ export default function ObservabilityPage() {
           return;
         }
         if (data.dispatched === false && data.reason === 'not_configured') {
-          setDispatchNote('Webhook dispatch is not configured (DAREX_ALERT_WEBHOOK_URL).');
+          setDispatchNote('Alert delivery isn’t set up yet (DAREX_ALERT_WEBHOOK_URL).');
           return;
         }
         if (data.dispatched === false && data.reason === 'preview') {
           const n = Array.isArray(data.alerts) ? data.alerts.length : 0;
-          setDispatchNote(`Webhook dispatch configured — ${n} alert(s) ready (not sent).`);
+          setDispatchNote(`Alert delivery is set up — ${n} alert(s) ready (not sent yet).`);
           return;
         }
         if (data.dispatched) {
-          setDispatchNote(`Last dispatch: sent ${Array.isArray(data.alerts) ? data.alerts.length : 0} alert(s).`);
+          setDispatchNote(`Last delivery: sent ${Array.isArray(data.alerts) ? data.alerts.length : 0} alert(s).`);
           return;
         }
-        setDispatchNote(`Last dispatch: ${data.reason || 'failed'}${data.message ? ` — ${data.message}` : ''}.`);
+        setDispatchNote('The last alert delivery didn’t go through.');
       })
       .catch(() => setDispatchNote('Alert dispatch check failed.'));
   };
 
   const load = () => {
-    fetch('/api/observability/metrics').then((r) => (r.ok ? r.json() : null)).then((data) => {
-      if (!data) return;
-      setMetrics(data.metrics || []);
-      const alertCount = data.alertCount || 0;
-      setAlerts(alertCount);
-      setStage(data.rolloutStage || 0);
-      setKillSwitch(Boolean(data.killSwitch));
-      if (alertCount > 0) refreshDispatchStatus();
-      else setDispatchNote('');
-    });
-    fetch('/api/onboarding/observation').then((r) => (r.ok ? r.json() : null)).then((data) => data?.observation && setObservation(data.observation));
-    fetch('/api/onboarding/trajectory').then((r) => (r.ok ? r.json() : null)).then((data) => data?.trajectory && setTrajectory(data.trajectory));
-    fetch('/api/decisions').then((r) => (r.ok ? r.json() : null)).then((data) => setDecisions(data?.decisions || []));
+    // Every request is caught: a dropped connection must never become an unhandled rejection, and a failed
+    // metrics request must never be shown as "no problems".
+    getJson('/api/observability/metrics')
+      .then((data) => {
+        setMetricsFailed(false);
+        setMetrics(data.metrics || []);
+        const alertCount = data.alertCount || 0;
+        setAlerts(alertCount);
+        setStage(data.rolloutStage || 0);
+        setKillSwitch(Boolean(data.killSwitch));
+        if (alertCount > 0) refreshDispatchStatus();
+        else setDispatchNote('');
+      })
+      .catch(() => setMetricsFailed(true));
+    // Optional panels: if they are unavailable the page simply omits them.
+    getJson('/api/onboarding/observation').then((data) => data?.observation && setObservation(data.observation)).catch(() => undefined);
+    getJson('/api/onboarding/trajectory').then((data) => data?.trajectory && setTrajectory(data.trajectory)).catch(() => undefined);
+    getJson('/api/decisions')
+      .then((data) => {
+        setDecisionsFailed(false);
+        setDecisions(data?.decisions || []);
+      })
+      .catch(() => setDecisionsFailed(true));
   };
 
   useEffect(() => { load(); }, []);
@@ -85,27 +108,52 @@ export default function ObservabilityPage() {
   useLiveRefresh({ events: OBSERVABILITY_EVENTS, refetch: load });
 
   const resolve = async (id: string, status: 'approved' | 'rejected') => {
-    await fetch('/api/decisions', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id, status }) });
+    setActionNote('');
+    try {
+      const res = await fetch('/api/decisions', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id, status }) });
+      if (!res.ok) setActionNote(await responseErrorMessage(res, ACTION_FAILED));
+    } catch {
+      setActionNote(ACTION_FAILED);
+    }
     load();
   };
 
   const runExplain = async (e: React.FormEvent) => {
     e.preventDefault();
-    const res = await fetch(`/api/agent/explain?q=${encodeURIComponent(query)}`);
-    if (!res.ok) { setExplain([]); return; }
-    const data = await res.json();
-    const rows = data.matches || data.decisions || [];
-    setExplain(rows.map((row: Record<string, unknown>) => ({
-      reasonSummary: String(row.reasonSummary || row.reason_summary || ''),
-      confidence: Number(row.confidence ?? row.confidenceScore ?? 0),
-      decision: String(row.decision || ''),
-    })));
+    setActionNote('');
+    try {
+      const res = await fetch(`/api/agent/explain?q=${encodeURIComponent(query)}`);
+      if (!res.ok) {
+        setExplain([]);
+        setActionNote(await responseErrorMessage(res, 'We couldn’t look that up. Please try again.'));
+        return;
+      }
+      const data = await res.json();
+      const rows = data.matches || data.decisions || [];
+      setExplain(rows.map((row: Record<string, unknown>) => ({
+        reasonSummary: String(row.reasonSummary || row.reason_summary || ''),
+        confidence: Number(row.confidence ?? row.confidenceScore ?? 0),
+        decision: String(row.decision || ''),
+      })));
+    } catch {
+      setExplain([]);
+      setActionNote('We couldn’t look that up. Please check your connection and try again.');
+    }
   };
 
   const runBackfill = async () => {
-    const res = await fetch('/api/onboarding/backfill', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ windowDays: 30 }) });
-    const data = await res.json();
-    setBackfillNote(res.ok ? `Imported ${data.job?.loopsImported || 0} closed loops and ${data.job?.wonImported || 0} won accounts. Nothing was chased.` : data.error || 'Backfill failed');
+    setBackfillNote('');
+    try {
+      const res = await fetch('/api/onboarding/backfill', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ windowDays: 30 }) });
+      if (!res.ok) {
+        setBackfillNote(await responseErrorMessage(res, 'We couldn’t import your history. Please try again.'));
+        return;
+      }
+      const data = await res.json();
+      setBackfillNote(`Imported ${data.job?.loopsImported || 0} closed loops and ${data.job?.wonImported || 0} won accounts. Nothing was chased.`);
+    } catch {
+      setBackfillNote('We couldn’t import your history. Please check your connection and try again.');
+    }
   };
 
   const weeks = toRolloutWeekViews(stage);
@@ -114,8 +162,16 @@ export default function ObservabilityPage() {
     <div className="max-w-6xl mx-auto space-y-8 pb-16">
       <div>
         <h1 className="text-3xl font-serif font-bold text-heading">Employee health</h1>
-        <p className="text-sm text-slate-500 mt-1">Zero is an alert. {alerts} metric{alerts === 1 ? '' : 's'} outside the healthy band.{killSwitch ? ' Kill switch is on — shadow only.' : ''}</p>
-        {alerts > 0 && dispatchNote ? (
+        {metricsFailed ? (
+          <p role="alert" className="text-sm text-red-700 mt-1">{LOAD_FAILED}</p>
+        ) : (
+          <p className="text-sm text-slate-500 mt-1">Zero is an alert. {alerts} metric{alerts === 1 ? '' : 's'} outside the healthy band.{killSwitch ? ' Kill switch is on — shadow only.' : ''}</p>
+        )}
+        {decisionsFailed && !metricsFailed ? (
+          <p role="alert" className="text-sm text-red-700 mt-1">We couldn’t load the decisions waiting for you. Please refresh in a moment.</p>
+        ) : null}
+        {actionNote ? <p role="alert" className="text-sm text-red-700 mt-1">{actionNote}</p> : null}
+        {!metricsFailed && alerts > 0 && dispatchNote ? (
           <p className="text-xs text-slate-500 mt-1">{dispatchNote}</p>
         ) : null}
       </div>

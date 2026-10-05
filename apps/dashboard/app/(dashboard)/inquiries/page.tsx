@@ -7,6 +7,7 @@ import { AlertTriangle, ArrowRight, Inbox } from 'lucide-react';
 import { LiveRegion, StatusBadge, type StatusTone } from '@/components/a11y';
 import { isRealEstateBrokerage } from '@/app/(onboarding)/pack-recommendations';
 import { BookShowingControl, RentChargesPanel } from '@/components/re/SchedulePanel';
+import { networkErrorMessage } from '@/lib/client-error';
 
 type InquiryStatus = 'new' | 'contacted' | 'showing' | 'closed' | 'lost' | string;
 
@@ -185,7 +186,7 @@ export default function InquiriesPage() {
       setLiveMessage(`Inquiry moved to ${nextStatus}`);
     } catch (err) {
       console.error('Inquiry status update failed:', err);
-      setLiveMessage(err instanceof Error ? err.message : 'Status update failed');
+      setLiveMessage(networkErrorMessage(err, 'Status update failed'));
     } finally {
       setMovingId(null);
     }

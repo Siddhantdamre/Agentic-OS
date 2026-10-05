@@ -5,6 +5,7 @@ import { QrCode, ShieldCheck, RefreshCw, ArrowLeft } from 'lucide-react';
 import { connectWhatsAppByok, connectWhatsAppEmbedded, getWhatsAppQrStatus, startWhatsAppQr } from '@/lib/nango-client';
 import { embeddedSignupAvailable, startEmbeddedSignup } from '@/lib/meta-embedded-signup';
 import WhatsAppAutoReplyForm from '@/components/connectors/whatsapp-auto-reply-form';
+import { networkErrorMessage } from '@/lib/client-error';
 
 type Mode = 'choose' | 'qr' | 'api' | 'auto-reply';
 type QrPhase = 'idle' | 'starting' | 'waiting' | 'error';
@@ -123,7 +124,7 @@ export default function WhatsAppConnectModal(props: {
       setDoneMessage('WhatsApp connected through Facebook.');
       setMode('auto-reply');
     } catch (e) {
-      setApiError(e instanceof Error ? e.message : 'Facebook signup failed');
+      setApiError(networkErrorMessage(e, 'Facebook signup failed'));
     } finally {
       setBusy(false);
     }
@@ -202,8 +203,7 @@ export default function WhatsAppConnectModal(props: {
               <span>
                 <span className="block text-sm font-bold text-heading">Official WhatsApp Business API</span>
                 <span className="block text-xs text-slate-500">
-                  Connect through Meta Cloud API with your own access token. Recommended for production: message
-                  templates, delivery receipts, no ban risk.
+                  Connect through the official WhatsApp Business connection with your own access token. Recommended for real use: message templates, delivery receipts, and no risk of your number being banned.
                 </span>
               </span>
             </button>

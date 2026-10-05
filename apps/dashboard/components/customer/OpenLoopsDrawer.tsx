@@ -2,6 +2,7 @@
 
 import React, { useEffect, useState } from 'react';
 import { X, CheckCircle, Clock, ExternalLink } from 'lucide-react';
+import { networkErrorMessage } from '@/lib/client-error';
 
 type OpenLoop = {
   id: string;
@@ -34,14 +35,14 @@ export function OpenLoopsDrawer({
       setLoading(true);
       try {
         const res = await fetch('/api/employees/customer/open-loops');
-        if (!res.ok) throw new Error(`Failed to load (${res.status})`);
+        if (!res.ok) throw new Error('We couldn’t load this list. Please try again.');
         const data = await res.json();
         if (!cancelled) {
           setLoops(Array.isArray(data.openLoops) ? data.openLoops : []);
           setError(null);
         }
       } catch (err) {
-        if (!cancelled) setError(err instanceof Error ? err.message : 'Failed to load');
+        if (!cancelled) setError(networkErrorMessage(err, 'We couldn’t load this list. Please try again.'));
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -52,18 +53,22 @@ export function OpenLoopsDrawer({
   }, [isOpen]);
 
   const resolve = async (loopId: string) => {
-    const res = await fetch('/api/employees/customer/open-loops', {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ loopId, status: 'fulfilled' }),
-    });
-    if (!res.ok) {
-      const data = await res.json().catch(() => ({}));
-      setError(typeof data.error === 'string' ? data.error : 'Update failed');
-      return;
+    try {
+      const res = await fetch('/api/employees/customer/open-loops', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ loopId, status: 'fulfilled' }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        setError(typeof data.error === 'string' ? data.error : 'We couldn’t update that. Please try again.');
+        return;
+      }
+      setLoops((prev) => prev.filter((l) => l.id !== loopId));
+      onUpdated?.();
+    } catch (err) {
+      setError(networkErrorMessage(err, 'We couldn’t update that. Please try again.'));
     }
-    setLoops((prev) => prev.filter((l) => l.id !== loopId));
-    onUpdated?.();
   };
 
   if (!isOpen) return null;

@@ -3,22 +3,35 @@
 import React, { useState } from 'react';
 import Link from 'next/link';
 import { Loader2, Mail } from 'lucide-react';
+import { responseErrorMessage } from '@/lib/client-error';
 
 export default function ForgotPasswordPage() {
   const [email, setEmail] = useState('');
   const [submitted, setSubmitted] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
-    await fetch('/api/auth/forgot-password', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email }),
-    });
-    setSubmitted(true);
-    setLoading(false);
+    setError('');
+    try {
+      const res = await fetch('/api/auth/forgot-password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email }),
+      });
+      // The server answers 200 whether or not the account exists. Anything else means no email went out.
+      if (!res.ok) {
+        setError(await responseErrorMessage(res, 'We couldn’t send the reset link right now. Please try again.'));
+        return;
+      }
+      setSubmitted(true);
+    } catch {
+      setError('We couldn’t send the reset link. Please check your connection and try again.');
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -30,6 +43,7 @@ export default function ForgotPasswordPage() {
         </p>
       ) : (
         <form onSubmit={handleSubmit} className="space-y-3">
+          {error && <p role="alert" className="text-xs text-red-300 text-center">{error}</p>}
           <div className="relative">
             <Mail className="w-4 h-4 text-emerald-500 absolute left-3.5 top-3.5" />
             <input

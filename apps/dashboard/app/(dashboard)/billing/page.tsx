@@ -13,6 +13,7 @@ import {
   Cpu,
   ExternalLink,
 } from 'lucide-react';
+import { responseErrorMessage } from '@/lib/client-error';
 
 type CatalogPlan = {
   key: 'starter' | 'growth' | 'enterprise';
@@ -93,20 +94,22 @@ function formatMoney(amountMinor: number, currency: string): string {
   }
 }
 
+const BILLING_LOAD_FAILED = 'We couldn’t load your billing details just now. Please try again in a moment.';
+
 function meterLabel(kind: string): string {
   switch (kind) {
     case 'llm_tokens':
-      return 'LLM (Langfuse cost)';
+      return 'AI usage';
     case 'whatsapp_conversations':
       return 'WhatsApp conversations';
     case 'seats':
       return 'Seats';
     case 'embeddings':
-      return 'Embeddings';
+      return 'Knowledge indexing';
     case 'successful_actions':
       return 'Successful actions';
     case 'disconnected_actions':
-      return 'Disconnected (notConnected)';
+      return 'Blocked: tool not connected';
     default:
       return kind;
   }
@@ -135,12 +138,12 @@ export default function BillingPage() {
       }
       if (!res.ok) {
         setData(null);
-        setMessage(json.error || `Could not load billing (${res.status})`);
+        setMessage(await responseErrorMessage({ status: res.status, json: async () => json }, BILLING_LOAD_FAILED));
         return;
       }
       if (!json.providers || !Array.isArray(json.catalog)) {
         setData(null);
-        setMessage(json.error || 'Billing response was incomplete');
+        setMessage(BILLING_LOAD_FAILED);
         return;
       }
       setData(json);
@@ -151,7 +154,7 @@ export default function BillingPage() {
       console.error(err);
       if (quiet) return;
       setData(null);
-      setMessage('Could not load billing');
+      setMessage(BILLING_LOAD_FAILED);
     } finally {
       if (!quiet) setLoading(false);
     }
@@ -161,7 +164,7 @@ export default function BillingPage() {
     const params = new URLSearchParams(window.location.search);
     const checkoutResult = params.get('checkout');
     if (checkoutResult === 'success') {
-      setMessage('Checkout completed. Plan updates when the provider webhook confirms payment.');
+      setMessage('Payment received. Your plan updates as soon as the payment is confirmed — this can take a minute.');
     } else if (checkoutResult === 'cancel') {
       setMessage('Checkout canceled — no charge was made.');
     }
@@ -181,7 +184,7 @@ export default function BillingPage() {
       });
       const json = await res.json().catch(() => ({}));
       if (!res.ok) {
-        setMessage(json.error || 'Checkout failed');
+        setMessage(await responseErrorMessage({ status: res.status, json: async () => json }, 'We couldn’t start checkout. Please try again.'));
         return;
       }
       if (json.changed === true) {
@@ -200,7 +203,7 @@ export default function BillingPage() {
       setMessage('Checkout did not return a payment URL. Check provider configuration.');
     } catch (err) {
       console.error(err);
-      setMessage('Checkout failed');
+      setMessage('We couldn’t start checkout. Please try again.');
     } finally {
       setBusy(false);
     }
@@ -217,7 +220,7 @@ export default function BillingPage() {
       });
       const json = await res.json().catch(() => ({}));
       if (!res.ok) {
-        setMessage(json.error || 'Portal unavailable');
+        setMessage(await responseErrorMessage({ status: res.status, json: async () => json }, 'The billing portal isn’t available right now. Please try again.'));
         return;
       }
       if (typeof json.url === 'string' && json.url.length > 0) {
@@ -251,7 +254,7 @@ export default function BillingPage() {
       });
       const json = await res.json().catch(() => ({}));
       if (!res.ok) {
-        setMessage(json.error || 'Cancel failed');
+        setMessage(await responseErrorMessage({ status: res.status, json: async () => json }, 'We couldn’t cancel that. Please try again.'));
         return;
       }
       setMessage(
@@ -279,7 +282,7 @@ export default function BillingPage() {
       });
       const json = await res.json().catch(() => ({}));
       if (!res.ok) {
-        setMessage(json.error || 'Plan change failed');
+        setMessage(await responseErrorMessage({ status: res.status, json: async () => json }, 'We couldn’t change your plan. Please try again.'));
         return;
       }
       setMessage(
@@ -305,8 +308,7 @@ export default function BillingPage() {
       <div>
         <h1 className="text-3xl font-serif font-bold text-heading">Billing</h1>
         <p className="text-slate-500 text-sm mt-1">
-          Darex subscription for this organization. Amounts and price IDs come from env. Darex never
-          holds client funds or escrow.
+          Your Darex subscription. Darex never holds your customers’ money.
         </p>
       </div>
 
@@ -341,8 +343,7 @@ export default function BillingPage() {
 
           {data.llmError && (
             <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
-              Langfuse cost unavailable: {data.llmError}. WhatsApp and seat meters still loaded. No
-              fabricated $0 total.
+              We couldn’t load your AI usage cost just now, so it isn’t shown (it is not shown as $0). Your WhatsApp and seat usage are up to date.
             </div>
           )}
 
@@ -358,7 +359,7 @@ export default function BillingPage() {
                 Current plan
               </span>
               <div className="text-3xl font-bold text-heading capitalize">{data.plan}</div>
-              <span className="text-xs text-slate-500 font-medium">orgs.plan for this tenant</span>
+              <span className="text-xs text-slate-500 font-medium">Your current subscription</span>
             </div>
             <div className="bg-cream-200/70 border border-cream-300 p-5 rounded-2xl space-y-2 shadow-sm">
               <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Seats</span>
@@ -413,7 +414,7 @@ export default function BillingPage() {
                   <div className="text-xs text-slate-500 mt-1">
                     {p.amountCents != null
                       ? formatMoney(p.amountCents, p.currency)
-                      : 'Amount from env (unset)'}
+                      : 'Price not set yet'}
                     /period
                   </div>
                 </button>
@@ -491,8 +492,7 @@ export default function BillingPage() {
               <h2 className="text-lg font-serif font-bold text-heading">Usage meters</h2>
             </div>
             <p className="text-sm text-slate-500">
-              LLM from GET /api/analytics/cost (Langfuse). WhatsApp from conversations. Soft then
-              hard caps from env. notConnected does not count as a successful action.
+              AI usage is the cost of your employees’ answers. WhatsApp usage counts conversations. You are warned at a soft limit and blocked at a hard limit. Actions that couldn’t run because a tool wasn’t connected don’t count as done.
             </p>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               {data.meters.map((m) => (
@@ -520,7 +520,7 @@ export default function BillingPage() {
             </div>
             <div className="flex flex-wrap gap-4 text-xs text-slate-500">
               <span className="flex items-center gap-1">
-                <Cpu className="w-3.5 h-3.5" /> Langfuse
+                <Cpu className="w-3.5 h-3.5" /> AI usage
               </span>
               <span className="flex items-center gap-1">
                 <MessageSquare className="w-3.5 h-3.5" /> WhatsApp
@@ -535,8 +535,7 @@ export default function BillingPage() {
             <div className="bg-white border border-cream-300 rounded-3xl p-6 shadow-sm space-y-2">
               <h2 className="text-lg font-serif font-bold text-heading">Confirm / reject (this org)</h2>
               <p className="text-sm text-slate-500">
-                Plan promotion is human-named and never trains on another tenant. Drift flag when
-                reject rate is high.
+                An employee only moves up a level when a person approves it, and what it learns stays in your business. You will be warned if too many of its answers are rejected.
               </p>
               <p className="text-sm text-heading">
                 Confirmed {data.confirmReject.confirmed} · Rejected {data.confirmReject.rejected} ·
@@ -570,7 +569,7 @@ export default function BillingPage() {
           <div className="bg-white border border-cream-300 rounded-3xl p-6 shadow-sm space-y-3">
             <h2 className="text-lg font-serif font-bold text-heading">Invoices</h2>
             <p className="text-xs text-slate-500">
-              Isolated by org RLS. A failed payment cannot list another organization&apos;s invoices.
+              Only your business can see these invoices.
             </p>
             {data.invoices.length === 0 ? (
               <p className="text-sm text-slate-500">No invoices for this organization.</p>

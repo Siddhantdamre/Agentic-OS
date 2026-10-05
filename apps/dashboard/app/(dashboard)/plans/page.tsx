@@ -6,6 +6,7 @@ import { PlanCard, type PlanStep } from '@/components/chat/PlanCard';
 import { ExecutionStrip, type StepRunStatus } from '@/components/chat/ExecutionStrip';
 import { useRealtimeStream } from '@/lib/use-realtime-stream';
 import { LiveRegion, StatusBadge, type StatusTone } from '@/components/a11y';
+import { responseErrorMessage } from '@/lib/client-error';
 
 type PlanStatus =
   | 'pending'
@@ -74,6 +75,8 @@ function normalizePlan(row: Record<string, unknown>): InboxPlan | null {
 
 const PLAN_EVENTS = ['plan_updated'] as const;
 
+const PLANS_LOAD_FAILED = 'We couldn’t load your plans just now. Please try again in a moment.';
+
 export default function PlansPage() {
   const [plans, setPlans] = useState<InboxPlan[]>([]);
   const [loading, setLoading] = useState(true);
@@ -84,20 +87,25 @@ export default function PlansPage() {
   );
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [showHistory, setShowHistory] = useState(false);
+  const [loadError, setLoadError] = useState('');
 
   const loadPlans = useCallback(async (quiet = false) => {
     if (!quiet) setLoading(true);
     try {
       const res = await fetch(showHistory ? '/api/ask-ai/plan?history=1' : '/api/ask-ai/plan');
       if (!res.ok) {
+        // Keep what is on screen on a quiet refresh; otherwise say so rather than showing an empty inbox.
         if (!quiet) setPlans([]);
+        setLoadError(await responseErrorMessage(res, PLANS_LOAD_FAILED));
         return;
       }
+      setLoadError('');
       const data = await res.json();
       const rows = Array.isArray(data.plans) ? data.plans : data.plan ? [data.plan] : [];
       setPlans(rows.map(normalizePlan).filter((p: InboxPlan | null): p is InboxPlan => Boolean(p)));
     } catch {
       if (!quiet) setPlans([]);
+      setLoadError(PLANS_LOAD_FAILED);
     } finally {
       if (!quiet) setLoading(false);
     }
@@ -368,9 +376,15 @@ export default function PlansPage() {
         </div>
       </div>
 
+      {loadError && (
+        <div role="alert" className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
+          {loadError}
+        </div>
+      )}
+
       {loading ? (
         <div className="p-8 text-center text-slate-500 font-serif">Loading plans…</div>
-      ) : plans.length === 0 ? (
+      ) : plans.length === 0 && !loadError ? (
         <div className="bg-white border border-dashed border-cream-300 rounded-3xl p-10 text-center space-y-2">
           <ListChecks className="w-10 h-10 text-slate-300 mx-auto" />
           <h2 className="font-serif font-bold text-heading">No plans in the inbox</h2>

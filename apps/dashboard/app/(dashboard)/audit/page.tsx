@@ -2,6 +2,7 @@
 
 import React, { useCallback, useEffect, useState } from 'react';
 import { ShieldCheck, ChevronDown } from 'lucide-react';
+import { networkErrorMessage } from '@/lib/client-error';
 
 interface AuditEvent {
   id: string;
@@ -53,14 +54,14 @@ export default function AuditLogPage() {
           setNextCursor(null);
           return;
         }
-        if (!res.ok) throw new Error(`Failed to load audit logs (${res.status})`);
+        if (!res.ok) throw new Error('We couldn’t load audit logs. Please try again.');
         const data = await res.json();
         const batch = (data.events || []) as AuditEvent[];
         setEvents((prev) => (cursor ? [...prev, ...batch] : batch));
         setNextCursor(data.nextCursor || null);
         setLangfuseBase(data.langfuseBaseUrl || null);
       } catch (err: unknown) {
-        setError(err instanceof Error ? err.message : 'Failed to load audit logs');
+        setError(networkErrorMessage(err, 'Failed to load audit logs'));
       } finally {
         setLoading(false);
       }
@@ -81,7 +82,7 @@ export default function AuditLogPage() {
             Audit log
           </h1>
           <p className="text-sm text-slate-500 mt-1">
-            Org-scoped record of AI actions and approvals. Payloads are truncated and redacted.
+            A record of what your AI employees did and what you approved. Long details are shortened and sensitive values are hidden.
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-3">

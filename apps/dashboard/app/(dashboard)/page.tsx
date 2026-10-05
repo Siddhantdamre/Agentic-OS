@@ -32,9 +32,9 @@ function HomeContent() {
   );
   const [provisionProgress, setProvisionProgress] = useState(0);
   const [warmupSteps, setWarmupSteps] = useState<WarmupStep[]>([
-    { id: 'employees', label: 'AI employees in roster', done: false },
-    { id: 'nango', label: 'Nango connector registry', done: false },
-    { id: 'pack', label: 'Pack recommendation recorded', done: false },
+    { id: 'employees', label: 'Your AI employees are ready', done: false },
+    { id: 'nango', label: 'Tool connections', done: false },
+    { id: 'pack', label: 'Starter skills chosen for your business', done: false },
   ]);
   const [askQuery, setAskQuery] = useState('');
   const [liveMessage, setLiveMessage] = useState('');
@@ -114,9 +114,9 @@ function HomeContent() {
         );
 
         const nextSteps: WarmupStep[] = [
-          { id: 'employees', label: 'AI employees in roster', done: employeesReady },
-          { id: 'nango', label: 'Nango connector registry reachable', done: nangoReady },
-          { id: 'pack', label: 'Pack recommendation recorded', done: packReady },
+          { id: 'employees', label: 'Your AI employees are ready', done: employeesReady },
+          { id: 'nango', label: 'Tool connections are ready', done: nangoReady },
+          { id: 'pack', label: 'Starter skills chosen for your business', done: packReady },
         ];
         setWarmupSteps(nextSteps);
         const doneCount = nextSteps.filter((s) => s.done).length;
@@ -289,7 +289,7 @@ function HomeContent() {
                 <StatusBadge label={`${provisionProgress}% complete`} tone="warning" />
               </div>
               <p className="text-slate-600 text-sm">
-                Progress is from live employee, Nango, and pack checks — not a timer.
+                This reflects what is really ready, not a timer.
               </p>
               <div className="w-full bg-cream-200 h-3 rounded-full overflow-hidden">
                 <div

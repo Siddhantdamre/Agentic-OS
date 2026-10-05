@@ -29,19 +29,13 @@ export function SystemDegradationBanner() {
         if (cancelled) return;
 
         if (data.status === 'unhealthy') {
-          setMessage('Core services are unavailable. Some actions may fail until Postgres recovers.');
+          setMessage('We’re having trouble reaching some of our systems. Some actions may not work for a few minutes — we’ll keep trying.');
           setDismissed(false);
           return;
         }
 
         if (data.status === 'degraded') {
-          const failing = Object.entries(data.checks || {})
-            .filter(([, v]) => v?.status === 'error')
-            .map(([k]) => k);
-          const label = failing.length > 0 ? failing.join(', ') : 'background services';
-          setMessage(
-            `Some background features are temporarily degraded (${label}). Chat and data remain available.`
-          );
+          setMessage('Some background features are running slowly right now. Chatting and your data are still available.');
           return;
         }
 
@@ -50,7 +44,7 @@ export function SystemDegradationBanner() {
       } catch {
         if (cancelled) return;
         // Network blip only — do not invent an outage list.
-        setMessage('Unable to reach Darex readiness probe. Retrying…');
+        setMessage('We can’t reach the service right now. Retrying…');
       }
     }
 

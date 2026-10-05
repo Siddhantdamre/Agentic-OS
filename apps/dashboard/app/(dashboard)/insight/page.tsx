@@ -13,6 +13,7 @@ import {
   Loader2,
   CheckCircle2,
 } from 'lucide-react';
+import { networkErrorMessage, responseErrorMessage } from '@/lib/client-error';
 
 type InsightCardType = 'growth' | 'efficiency' | 'integration' | 'attention';
 
@@ -48,6 +49,8 @@ const INSIGHT_EVENTS = [
   'rent_charge_paid',
 ] as const;
 
+const INSIGHT_LOAD_FAILED = 'We couldn’t load your insights just now. Please try again in a moment.';
+
 export default function InsightPage() {
   const [insights, setInsights] = useState<InsightItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -58,11 +61,17 @@ export default function InsightPage() {
   const [enqueueingId, setEnqueueingId] = useState<string | null>(null);
   const [started, setStarted] = useState<Record<string, { workflowId: string; namedWorkflow: string }>>({});
   const [actionError, setActionError] = useState<Record<string, string>>({});
+  const [loadError, setLoadError] = useState('');
 
   const load = useCallback(async () => {
     try {
       const res = await fetch('/api/insight');
+      if (!res.ok) {
+        setLoadError(await responseErrorMessage(res, INSIGHT_LOAD_FAILED));
+        return;
+      }
       const data = await res.json();
+      setLoadError('');
       setInsights(data.insights || []);
       if (data.weeklyCost && typeof data.weeklyCost.weeklyCostUsd === 'number') {
         setWeeklyCost(data.weeklyCost.weeklyCostUsd);
@@ -74,6 +83,7 @@ export default function InsightPage() {
       if (data.confirmReject) setConfirmReject(data.confirmReject);
     } catch (err: unknown) {
       console.error(err);
+      setLoadError(networkErrorMessage(err, INSIGHT_LOAD_FAILED));
     } finally {
       setLoading(false);
     }
@@ -112,7 +122,7 @@ export default function InsightPage() {
     } catch (err: unknown) {
       setActionError((prev) => ({
         ...prev,
-        [item.id]: err instanceof Error ? err.message : 'Failed to start workflow',
+        [item.id]: networkErrorMessage(err, 'Failed to start workflow'),
       }));
     } finally {
       setEnqueueingId(null);
@@ -125,8 +135,7 @@ export default function InsightPage() {
         <div>
           <h1 className="text-3xl font-serif font-bold text-heading">AI Business Insights</h1>
           <p className="text-slate-500 text-sm mt-1">
-            Scheduled cards from the metrics registry SQL. Review Action starts a named Temporal
-            workflow — not a free-form agent, and not an LLM scan of messages.
+            Insights are worked out on a schedule from your business numbers — not by reading your customers’ messages. “Review action” starts one specific, named routine, not an open-ended agent.
           </p>
         </div>
 
@@ -143,13 +152,13 @@ export default function InsightPage() {
               <p className="text-[11px] font-bold uppercase tracking-wider text-slate-500">Weekly LLM cost</p>
               <p className="text-2xl font-serif font-bold text-heading mt-1">${weeklyCost.toFixed(4)}</p>
               <p className="text-xs text-slate-500 mt-1">
-                From Langfuse traces for this org
-                {costTraceCount != null ? ` (${costTraceCount} traces)` : ''}. Failed/notConnected actions
-                are not counted as success.
+                Based on this week’s AI activity for your business
+                {costTraceCount != null ? ` (${costTraceCount} requests)` : ''}. Actions that failed, or couldn’t
+                run because a tool wasn’t connected, aren’t counted as successful.
               </p>
               {costTruncated && (
                 <p className="mt-2 text-[11px] font-semibold text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-2 py-1 inline-block">
-                  Sampled — Langfuse fetch capped at 2,000 traces this week
+                  Estimate — based on the first 2,000 requests this week
                 </p>
               )}
             </div>
@@ -164,6 +173,12 @@ export default function InsightPage() {
               </p>
             </div>
           )}
+        </div>
+      )}
+
+      {loadError && (
+        <div role="alert" className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
+          {loadError}
         </div>
       )}
 
@@ -235,7 +250,7 @@ export default function InsightPage() {
                     {queued && (
                       <p className="text-[11px] text-emerald-700 flex items-center gap-1.5">
                         <CheckCircle2 className="w-3.5 h-3.5" />
-                        {queued.namedWorkflow} started — Temporal id {queued.workflowId}
+                        {queued.namedWorkflow} started — reference {queued.workflowId}
                       </p>
                     )}
                     {err && <p className="text-[11px] text-red-600">{err}</p>}

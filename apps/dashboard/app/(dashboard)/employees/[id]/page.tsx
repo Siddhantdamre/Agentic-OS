@@ -4,6 +4,7 @@ import React, { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
 import { Bot, ArrowLeft, Wrench, Activity } from 'lucide-react';
+import { networkErrorMessage } from '@/lib/client-error';
 
 type Employee = {
   id: string;
@@ -87,7 +88,7 @@ export default function EmployeeDetailPage() {
           setError(null);
         }
       } catch (err) {
-        if (!cancelled) setError(err instanceof Error ? err.message : 'Failed to load');
+        if (!cancelled) setError(networkErrorMessage(err, 'Failed to load'));
       } finally {
         if (!cancelled) setLoading(false);
       }

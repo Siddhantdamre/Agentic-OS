@@ -99,7 +99,7 @@ export default function EmployeesPage() {
         return;
       }
       if (!res.ok) {
-        setLoadError(`Failed to load employees (${res.status})`);
+        setLoadError('We couldn’t load employees. Please try again.');
         return;
       }
       const data = await res.json();

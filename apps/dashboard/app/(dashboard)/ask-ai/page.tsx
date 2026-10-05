@@ -2313,7 +2313,7 @@ I can answer questions and query your Darex data. Connector actions only run for
                           type="button"
                           onClick={() => handleVote(msg, 'up')}
                           className={`p-1 rounded-md ${msg.vote === 'up' ? 'text-emerald-600 bg-emerald-50' : 'text-slate-400 hover:text-slate-700'}`}
-                          title="Helpful — stored as a vote, not used to train on another tenant"
+                          title="Helpful — your vote is only used for your own business"
                         >
                           <ThumbsUp className="w-3 h-3" />
                         </button>
@@ -2321,7 +2321,7 @@ I can answer questions and query your Darex data. Connector actions only run for
                           type="button"
                           onClick={() => handleVote(msg, 'down')}
                           className={`p-1 rounded-md ${msg.vote === 'down' ? 'text-red-600 bg-red-50' : 'text-slate-400 hover:text-slate-700'}`}
-                          title="Not helpful — stored as a vote, not used to train on another tenant"
+                          title="Not helpful — your vote is only used for your own business"
                         >
                           <ThumbsDown className="w-3 h-3" />
                         </button>

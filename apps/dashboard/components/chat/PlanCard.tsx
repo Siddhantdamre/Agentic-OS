@@ -56,14 +56,14 @@ export const PlanCard: React.FC<PlanCardProps> = ({
     try {
       const parsed = JSON.parse(payloadDraft) as unknown;
       if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-        setPayloadError('Payload must be a JSON object');
+        setPayloadError('The details must look like {"name": "value"}.');
         return;
       }
       onUpdateStepPayload?.(planId, editingPayloadIndex, parsed as Record<string, unknown>);
       setEditingPayloadIndex(null);
       setPayloadError(null);
     } catch {
-      setPayloadError('Invalid JSON');
+      setPayloadError('That isn’t valid. Check for a missing quote or bracket.');
     }
   };
 

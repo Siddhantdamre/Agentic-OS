@@ -3,6 +3,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { AlertCircle, CheckCircle2, Layers, Link as LinkIcon, ShieldAlert, Users } from 'lucide-react';
+import { networkErrorMessage } from '@/lib/client-error';
 
 type ProviderStatus = {
   provider: string;
@@ -58,12 +59,12 @@ export function SkillsView() {
     setError(null);
     try {
       const res = await fetch('/api/skills');
-      if (!res.ok) throw new Error(`Failed to load skills (${res.status})`);
+      if (!res.ok) throw new Error('We couldn’t load skills. Please try again.');
       const data = (await res.json()) as { skills: SkillRow[]; employees: EmployeeOption[] };
       setSkills(data.skills || []);
       setEmployees(data.employees || []);
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'Failed to load skills');
+      setError(networkErrorMessage(err, 'Failed to load skills'));
     } finally {
       setLoading(false);
     }
@@ -84,11 +85,11 @@ export function SkillsView() {
       });
       if (!res.ok) {
         const data = (await res.json().catch(() => ({}))) as { error?: string };
-        throw new Error(data.error || `Update failed (${res.status})`);
+        throw new Error(data.error || 'We couldn’t save that. Please try again.');
       }
       await load();
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'Update failed');
+      setError(networkErrorMessage(err, 'Update failed'));
     } finally {
       setBusyId(null);
     }
@@ -233,8 +234,7 @@ export function SkillsPageShell() {
       <div>
         <h1 className="text-3xl font-serif font-bold text-heading">First-party skills</h1>
         <p className="text-slate-500 text-sm mt-1">
-          Live playbook readiness from connected Nango connectors and employee allowlists. There is
-          no public third-party store.
+          Shows which skills are ready to use, based on the tools you have connected and what each employee is allowed to do.
         </p>
       </div>
 

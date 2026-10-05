@@ -2,6 +2,7 @@
 
 import React, { useState } from 'react';
 import { ExternalLink } from 'lucide-react';
+import { networkErrorMessage } from '@/lib/client-error';
 
 export type CustomerDecisionCard = {
   title?: string; customer?: string; situation?: string; policy?: string;
@@ -39,7 +40,7 @@ export function DecisionCardPanel({
       }
       onResolved?.(action);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Decision failed');
+      setError(networkErrorMessage(err, 'Decision failed'));
     } finally {
       setBusy(false);
     }

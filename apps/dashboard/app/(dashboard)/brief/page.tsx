@@ -5,6 +5,7 @@ import { useLiveRefresh } from '@/lib/use-live-refresh';
 import { AlertTriangle, Check, CheckCircle2, Clock, XCircle } from 'lucide-react';
 import { ExplainDrawer } from '@/components/explain/ExplainDrawer';
 import { LiveRegion } from '@/components/a11y';
+import { networkErrorMessage } from '@/lib/client-error';
 
 type BriefException = {
   id: string;
@@ -43,7 +44,7 @@ export default function BriefPage() {
     try {
       const tz = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
       const res = await fetch(`/api/brief?tz=${encodeURIComponent(tz)}&limit=40`);
-      if (!res.ok) throw new Error(`Failed to load brief (${res.status})`);
+      if (!res.ok) throw new Error('We couldn’t load brief. Please try again.');
       const data = await res.json();
       setBrief({
         exceptions: Array.isArray(data.exceptions) ? data.exceptions : [],
@@ -57,7 +58,7 @@ export default function BriefPage() {
     } catch (err: unknown) {
       // A failed background refresh keeps the last good brief on screen.
       if (quiet) console.error('[brief] live refresh failed', err);
-      else setError(err instanceof Error ? err.message : 'Failed to load brief');
+      else setError(networkErrorMessage(err, 'Failed to load brief'));
     } finally {
       if (!quiet) setLoading(false);
     }
@@ -94,6 +95,8 @@ export default function BriefPage() {
           totalOpen: typeof prev.totalOpen === 'number' ? Math.max(0, prev.totalOpen - 1) : prev.totalOpen,
         };
       });
+    } catch (err) {
+      setError(networkErrorMessage(err, `We couldn’t ${action} that. Please try again.`));
     } finally {
       setActingId(null);
     }

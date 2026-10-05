@@ -5,6 +5,7 @@ import { useLiveRefresh } from '@/lib/use-live-refresh';
 import { Brain, Search } from 'lucide-react';
 import { SnippetCard, type BrainSnippetView } from '@/components/brain/SnippetCard';
 import { SourceRow, type BrainSourceView } from '@/components/brain/SourceRow';
+import { responseErrorMessage } from '@/lib/client-error';
 
 type BrainEntity = {
   entityType: string;
@@ -61,10 +62,7 @@ export default function BrainPage() {
           console.error('[brain] live refresh failed', res.status);
           return;
         }
-        const body = await res.json().catch(() => ({}));
-        const message =
-          typeof body?.error === 'string' ? body.error : `Failed to load brain (${res.status})`;
-        setError(message);
+        setError(await responseErrorMessage(res, 'We couldn’t load your business brain just now. Please try again.'));
         setData(EMPTY_PAYLOAD);
         return;
       }
@@ -83,7 +81,7 @@ export default function BrainPage() {
         console.error('[brain] live refresh failed', err);
         return;
       }
-      setError('Failed to load brain. Check your connection and try again.');
+      setError('We couldn’t load your business brain. Please check your connection and try again.');
       setData(EMPTY_PAYLOAD);
     } finally {
       if (!quiet) setLoading(false);

@@ -33,7 +33,7 @@ export default function OnboardingBusinessTypePage() {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ wizardStep: 'channels', businessType }),
-    });
+    }).catch(() => undefined); // progress save is best-effort; the last step saves everything
     router.push('/onboarding/channels');
   };
 

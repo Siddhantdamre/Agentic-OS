@@ -51,7 +51,7 @@ describe('SkillsPage', () => {
   it('renders playbook skills title and subtitle', async () => {
     render(<SkillsPage />);
     expect(screen.getByText('Playbook Skills')).toBeInTheDocument();
-    expect(screen.getByText('TrueForge Core')).toBeInTheDocument();
+    expect(screen.getByText('Built in')).toBeInTheDocument();
     await waitFor(() => {
       expect(screen.getByText('Google Calendar')).toBeInTheDocument();
     });

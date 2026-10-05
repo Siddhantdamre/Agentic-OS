@@ -10,6 +10,7 @@ import {
 } from '@/components/growth/OpportunityCard';
 import { LiveRegion } from '@/components/a11y';
 import { useLiveRefresh } from '@/lib/use-live-refresh';
+import { networkErrorMessage } from '@/lib/client-error';
 
 type GrowthOpportunity = {
   id: string;
@@ -46,7 +47,7 @@ export default function GrowthPage() {
     if (!quiet) setLoading(true);
     try {
       const res = await fetch('/api/growth/brief');
-      if (!res.ok) throw new Error(`Failed to load growth brief (${res.status})`);
+      if (!res.ok) throw new Error('We couldn’t load growth brief. Please try again.');
       const data = (await res.json()) as GrowthBrief;
       setBrief({
         opportunities: Array.isArray(data.opportunities) ? data.opportunities : [],
@@ -58,7 +59,7 @@ export default function GrowthPage() {
     } catch (err: unknown) {
       // A failed background refresh keeps the last good brief on screen.
       if (quiet) console.error('[growth] live refresh failed', err);
-      else setError(err instanceof Error ? err.message : 'Failed to load growth brief');
+      else setError(networkErrorMessage(err, 'Failed to load growth brief'));
     } finally {
       if (!quiet) setLoading(false);
     }
@@ -73,18 +74,23 @@ export default function GrowthPage() {
   const decide = async (id: string, decision: OpportunityDecision, reason?: RejectionReasonId) => {
     const action =
       decision === 'approve' ? 'approve' : decision === 'snooze' ? 'snooze' : 'reject';
-    const res = await fetch(`/api/growth/opportunities/${id}/decision`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action, reason: reason || null }),
-    });
+    let res: Response;
+    try {
+      res = await fetch(`/api/growth/opportunities/${id}/decision`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action, reason: reason || null }),
+      });
+    } catch (err) {
+      throw new Error(networkErrorMessage(err, 'We couldn’t save your decision. Please try again.'));
+    }
     const data = (await res.json().catch(() => ({}))) as {
       error?: string;
       outreachDispatched?: boolean;
       outreachBlockedReason?: string | null;
     };
     if (!res.ok) {
-      throw new Error(typeof data.error === 'string' ? data.error : 'Decision failed');
+      throw new Error(typeof data.error === 'string' ? data.error : 'We couldn’t save your decision. Please try again.');
     }
     if (action === 'approve') {
       setLive(
@@ -115,7 +121,7 @@ export default function GrowthPage() {
       );
       await load();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Match failed');
+      setError(networkErrorMessage(err, 'Match failed'));
     } finally {
       setMatching(false);
     }

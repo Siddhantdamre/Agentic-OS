@@ -43,6 +43,7 @@ import {
   X,
 } from 'lucide-react';
 import { LiveRegion, StatusBadge } from '@/components/a11y';
+import { networkErrorMessage } from '@/lib/client-error';
 
 interface Integration {
   id: string;
@@ -186,7 +187,7 @@ function ConnectorsScreen() {
     } catch (err) {
       console.error('Failed to fetch integrations:', err);
       setIntegrations([]);
-      setLoadError(err instanceof Error ? err.message : 'Failed to load connectors');
+      setLoadError(networkErrorMessage(err, 'Failed to load connectors'));
     } finally {
       setLoading(false);
     }
@@ -409,10 +410,10 @@ function ConnectorsScreen() {
         <div className="rounded-2xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-950 flex items-start gap-2">
           <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" />
           <div>
-            <p className="font-semibold">Nango public key is not configured</p>
+            <p className="font-semibold">Connecting tools isn’t switched on yet</p>
             <p className="text-xs mt-1 text-amber-900/80">
-              Set <code className="font-mono">NEXT_PUBLIC_NANGO_PUBLIC_KEY</code> on the dashboard. OAuth popups
-              will not start until an admin configures it — Darex will not fake a connection.
+              Ask the person who set this up to add <code className="font-mono">NEXT_PUBLIC_NANGO_PUBLIC_KEY</code> to the dashboard
+              settings. Until then the Connect buttons cannot start — nothing is pretended to be connected.
             </p>
           </div>
         </div>
@@ -446,7 +447,7 @@ function ConnectorsScreen() {
         <div>
           <h1 className="text-2xl sm:text-3xl font-serif font-bold text-heading">Connection Hub & Integrations</h1>
           <p className="text-slate-500 text-sm mt-1">
-            Connect your business tools via real OAuth popups (Nango Gateway running on port 3003).
+            Connect your business tools. You sign in on the tool’s own page — we never see your password.
           </p>
         </div>
 
@@ -464,25 +465,25 @@ function ConnectorsScreen() {
         <div className="bg-cream-200/70 border border-cream-300 p-5 rounded-2xl space-y-2 shadow-sm">
           <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Connected Tools</span>
           <div className="text-3xl font-bold text-emerald-600">{stats.connectedApps} / {integrations.length}</div>
-          <span className="text-xs text-emerald-600 font-medium">Real OAuth credentials</span>
+          <span className="text-xs text-emerald-600 font-medium">Securely signed in</span>
         </div>
 
         <div className="bg-cream-200/70 border border-cream-300 p-5 rounded-2xl space-y-2 shadow-sm">
           <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Sync Events Today</span>
           <div className="text-3xl font-bold text-heading">{stats.totalSyncsToday}</div>
-          <span className="text-xs text-slate-500 font-medium">Automated webhooks</span>
+          <span className="text-xs text-slate-500 font-medium">Received automatically</span>
         </div>
 
         <div className="bg-cream-200/70 border border-cream-300 p-5 rounded-2xl space-y-2 shadow-sm">
-          <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">OAuth Gateway</span>
-          <div className="text-3xl font-bold text-heading">Port 3003</div>
-          <span className="text-xs text-emerald-600 font-medium">Nango Live Server</span>
+          <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Connection service</span>
+          <div className="text-3xl font-bold text-heading">Ready</div>
+          <span className="text-xs text-emerald-600 font-medium">Running</span>
         </div>
 
         <div className="bg-cream-200/70 border border-cream-300 p-5 rounded-2xl space-y-2 shadow-sm">
-          <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Security Engine</span>
-          <div className="text-3xl font-bold text-heading">OAuth 2.0</div>
-          <span className="text-xs text-emerald-600 font-medium">PKCE & Refresh Tokens</span>
+          <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Sign-in security</span>
+          <div className="text-3xl font-bold text-heading">Secure</div>
+          <span className="text-xs text-emerald-600 font-medium">Renews automatically</span>
         </div>
       </div>
 

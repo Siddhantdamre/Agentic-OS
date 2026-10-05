@@ -2,6 +2,7 @@
 
 import React, { useState } from 'react';
 import { X, BookOpen, Sparkles } from 'lucide-react';
+import { networkErrorMessage } from '@/lib/client-error';
 
 export function TeachKnowledgeGapModal({
   cluster,
@@ -39,7 +40,7 @@ export function TeachKnowledgeGapModal({
       onSaved?.();
       onClose();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to save');
+      setError(networkErrorMessage(err, 'Failed to save'));
     } finally {
       setSaving(false);
     }

@@ -7,6 +7,7 @@ import { Building2 } from 'lucide-react';
 import { LiveRegion, StatusBadge } from '@/components/a11y';
 import { isRealEstateBrokerage } from '@/app/(onboarding)/pack-recommendations';
 import { BookShowingControl, RentChargesPanel } from '@/components/re/SchedulePanel';
+import { networkErrorMessage } from '@/lib/client-error';
 
 interface ListingRow {
   id: string;
@@ -229,6 +230,8 @@ export default function ListingsPage() {
                 const data = (await res.json().catch(() => ({}))) as { error?: string };
                 setLiveMessage(data.error || 'Failed to create listing');
               }
+            } catch (err) {
+              setLiveMessage(networkErrorMessage(err, 'We couldn’t save that listing. Please try again.'));
             } finally {
               setSaving(false);
             }
@@ -449,16 +452,20 @@ export default function ListingsPage() {
                           value={row.status || 'active'}
                           onChange={async (e) => {
                             const status = e.target.value;
-                            const res = await fetch(`/api/listings/${row.id}`, {
-                              method: 'PATCH',
-                              headers: { 'Content-Type': 'application/json' },
-                              body: JSON.stringify({ status }),
-                            });
-                            if (res.ok) {
-                              setRows((prev) => prev.map((r) => (r.id === row.id ? { ...r, status } : r)));
-                              setLiveMessage(`Updated status to ${status}`);
-                            } else {
-                              setLiveMessage('Status update failed');
+                            try {
+                              const res = await fetch(`/api/listings/${row.id}`, {
+                                method: 'PATCH',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ status }),
+                              });
+                              if (res.ok) {
+                                setRows((prev) => prev.map((r) => (r.id === row.id ? { ...r, status } : r)));
+                                setLiveMessage(`Updated status to ${status}`);
+                              } else {
+                                setLiveMessage('We couldn’t update the status. Please try again.');
+                              }
+                            } catch (err) {
+                              setLiveMessage(networkErrorMessage(err, 'We couldn’t update the status. Please try again.'));
                             }
                           }}
                         >
@@ -476,10 +483,16 @@ export default function ListingsPage() {
                           className="text-[11px] text-rose-700 text-left"
                           onClick={async () => {
                             if (!confirm('Withdraw this listing?')) return;
-                            const res = await fetch(`/api/listings/${row.id}`, { method: 'DELETE' });
-                            if (res.ok) {
-                              setRows((prev) => prev.filter((r) => r.id !== row.id));
-                              setLiveMessage('Listing withdrawn');
+                            try {
+                              const res = await fetch(`/api/listings/${row.id}`, { method: 'DELETE' });
+                              if (res.ok) {
+                                setRows((prev) => prev.filter((r) => r.id !== row.id));
+                                setLiveMessage('Listing withdrawn');
+                              } else {
+                                setLiveMessage('We couldn’t withdraw that listing. Please try again.');
+                              }
+                            } catch (err) {
+                              setLiveMessage(networkErrorMessage(err, 'We couldn’t withdraw that listing. Please try again.'));
                             }
                           }}
                         >
