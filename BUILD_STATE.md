@@ -1,5 +1,13 @@
 # Darex Build State
 
+## Redeploy rolls back a failed swap and builds the dashboard faster (2026-10-05)
+
+- `next build` had no build cache, so every code change recompiled the whole dashboard (several minutes on the 2 vCPU VM). The dashboard Dockerfile now mounts a persistent `.next/cache` for the build; the install layer was already cached by lockfile and only reruns when `package.json` or the lockfile change.
+- `redeploy.sh` already built every image before touching a running container, so a failed build left the old version serving. New: before building it tags each image it is about to replace as `<image>:rollback`. If anything after the swap fails (compose up, health checks, migrations) it restores those tags, recreates only those containers with `--no-build --no-deps`, waits for the site to answer, clears the "already built" stamp (otherwise the next run would skip the rebuild and redeploy the old image) and still exits non-zero. Migrations are not reversed; they are additive and idempotent.
+- The frontend is no longer restarted on every run, only when its image was rebuilt; the restart was extra downtime for an unchanged image.
+- Not zero downtime: dashboard and frontend are single containers, so a recreate is a gap of the container start time. True zero downtime needs two replicas behind the proxy (not built).
+- Verified: shell syntax; the rollback function run against stubbed docker/compose/curl (restores tags, recreates, clears the stamp on failure; does nothing when disarmed or on success). Not yet verified: a real failing deploy on the VM.
+
 ## Production host ports live in one file, deploy/ports.conf (2026-10-05)
 
 - Host ports were `${NAME:-default}` repeated across `docker-compose.prod.yml`, `deploy.sh`, `redeploy.sh` and `lib.sh`, so a port change meant editing several files and a missed one probed a dead port (Evolution health check defaulted to 8085 while prod binds 18085).
