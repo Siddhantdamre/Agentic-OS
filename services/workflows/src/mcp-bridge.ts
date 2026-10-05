@@ -17,7 +17,7 @@ const MESSAGE_ENDPOINT = '/messages';
 // Secret set → unsigned/invalid traffic is rejected. Secret unset → dev-only
 // unsigned mode; production refuses to serve without a secret.
 const BRIDGE_SECRET = process.env.MCP_BRIDGE_SECRET;
-const TENANT_TS_SKEW_MS = 5 * 60 * 1000;
+const TENANT_TS_SKEW_MS = parseInt(process.env.MCP_BRIDGE_TS_SKEW_MS || '3600000', 10);
 const MAX_SESSIONS = 200;
 /** Per-org cap so one tenant can't starve the global pool. LRU-evicts oldest of that org. */
 const MAX_SESSIONS_PER_ORG = parseInt(process.env.MCP_BRIDGE_MAX_SESSIONS_PER_ORG || '20', 10);
@@ -1879,11 +1879,13 @@ const httpServer = http.createServer(async (req, res) => {
         ctx.orgId = incomingCtx.orgId;
         ctx.userId = incomingCtx.userId;
         ctx.toolAllowlist = incomingCtx.toolAllowlist;
+        ctx.employeeRole = incomingCtx.employeeRole || ctx.employeeRole;
         ctx.signed = true;
       } else if (incomingCtx.orgId && !BRIDGE_SECRET) {
         ctx.orgId = incomingCtx.orgId;
         ctx.userId = incomingCtx.userId;
         ctx.toolAllowlist = incomingCtx.toolAllowlist;
+        ctx.employeeRole = incomingCtx.employeeRole || ctx.employeeRole;
       }
       ctx.lastSeen = Date.now();
       try {
