@@ -373,6 +373,48 @@ function isGmailId(id: string): boolean {
   return /^[A-Za-z0-9_-]{6,64}$/.test(id);
 }
 
+/** Bare addresses from a header like `"Lee, Jo" <jo@a.co>, b@c.co`. */
+export function parseAddressList(header: string): string[] {
+  const out: string[] = [];
+  for (const m of String(header || '').matchAll(/<([^<>\s]+@[^<>\s]+)>|([^\s,<>"]+@[^\s,<>"]+)/g)) {
+    out.push((m[1] || m[2]).toLowerCase());
+  }
+  return out;
+}
+
+/**
+ * Reply-all recipients: the primary goes to the sender (Reply-To or From),
+ * everyone else on To/Cc goes to Cc. The account's own address and
+ * duplicates are dropped.
+ */
+export function replyAllRecipients(
+  original: { from: string; replyTo?: string; to?: string; cc?: string },
+  self: string,
+): { to: string; cc: string } {
+  const me = self.toLowerCase();
+  const primary = parseAddressList(original.replyTo || original.from).filter((a) => a !== me);
+  const others = [...parseAddressList(original.to || ''), ...parseAddressList(original.cc || '')];
+  const seen = new Set(primary);
+  const cc: string[] = [];
+  for (const a of others) {
+    if (a === me || seen.has(a)) continue;
+    seen.add(a);
+    cc.push(a);
+  }
+  // Replying to your own sent mail: the first other recipient becomes primary.
+  const to = primary.length ? primary : cc.splice(0, 1);
+  return { to: to.join(', '), cc: cc.join(', ') };
+}
+
+async function gmailSelfAddress(accessToken: string): Promise<string> {
+  const res = await fetchWithTimeout('https://gmail.googleapis.com/gmail/v1/users/me/profile', {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  if (!res.ok) throw new GmailHttpError(res.status);
+  const data = await res.json();
+  return String(data.emailAddress || '');
+}
+
 const READ_BODY_MAX_CHARS = 20000;
 
 void fetchRealGmailMessages;
@@ -426,14 +468,21 @@ async function execute(ctx: ToolActionContext) {
     try {
       const original = await fetchGmailMessageFull(accessToken, id);
       if (!original) return apiError('gmail', actionName, timestamp, `No email found with id ${id}.`, { reason: 'not_found' });
-      const to = headerValue(payload.to) || original.replyTo || original.from;
+      const replyAll = payload.reply_all === true || payload.replyAll === true;
+      let to = headerValue(payload.to) || original.replyTo || original.from;
+      let cc = headerValue(payload.cc);
+      if (replyAll) {
+        const all = replyAllRecipients(original, await gmailSelfAddress(accessToken));
+        if (!headerValue(payload.to)) to = all.to || to;
+        cc = [all.cc, cc].filter(Boolean).join(', ');
+      }
       const subject = replySubject(original.subject);
       const references = [original.references, original.messageIdHeader].filter(Boolean).join(' ');
       const raw = buildRawEmail({
         to,
         subject,
         body: bodyText,
-        cc: payload.cc,
+        cc,
         bcc: payload.bcc,
         inReplyTo: original.messageIdHeader,
         references,
@@ -458,12 +507,14 @@ async function execute(ctx: ToolActionContext) {
         status: 'executed' as const,
         message: isDraft
           ? `Reply draft saved in the "${original.subject}" thread for ${to} — nothing has been sent yet`
-          : `Replied to ${to} in the "${original.subject}" thread`,
+          : `Replied to ${to}${cc ? ` (cc ${cc})` : ''} in the "${original.subject}" thread`,
         data: {
           ...(isDraft ? { draftId: out.id, messageId: out.message?.id } : { messageId: out.id }),
           threadId: original.threadId,
           inReplyTo: id,
           recipient: to,
+          cc: cc || null,
+          replyAll,
           subject,
         },
         timestamp,

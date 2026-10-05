@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { buildRawEmail, gmailHttpFailure, gmailListUrl, replySubject } from './gmail.js';
+import { buildRawEmail, gmailHttpFailure, gmailListUrl, parseAddressList, replyAllRecipients, replySubject } from './gmail.js';
 import { resolveCallRisk } from '../tool-executor.js';
 
 test('gmail 401 is revoked, not an empty inbox', () => {
@@ -60,4 +60,26 @@ test('gmail reply and read actions carry the right risk', () => {
   assert.equal(resolveCallRisk('gmail', 'reply_email')?.risk, 'send');
   assert.equal(resolveCallRisk('gmail', 'reply_email')?.confirm, true);
   assert.equal(resolveCallRisk('gmail_reply', 'reply_email')?.risk, 'send');
+});
+
+test('reply-all copies everyone on To/Cc except me and the sender', () => {
+  const r = replyAllRecipients(
+    { from: '"Lee, Jo" <jo@a.co>', to: 'me@x.co, Bo <bo@b.co>', cc: 'JO@a.co, cy@c.co' },
+    'ME@x.co',
+  );
+  assert.equal(r.to, 'jo@a.co');
+  assert.equal(r.cc, 'bo@b.co, cy@c.co');
+  assert.deepEqual(parseAddressList('"Lee, Jo" <jo@a.co>, b@c.co'), ['jo@a.co', 'b@c.co']);
+});
+
+test('reply-all on my own sent mail goes to the people I wrote to', () => {
+  const r = replyAllRecipients({ from: 'Me <me@x.co>', to: 'bo@b.co, cy@c.co' }, 'me@x.co');
+  assert.equal(r.to, 'bo@b.co');
+  assert.equal(r.cc, 'cy@c.co');
+});
+
+test('reply-all prefers Reply-To over From for the primary recipient', () => {
+  const r = replyAllRecipients({ from: 'noreply@a.co', replyTo: 'help@a.co', to: 'me@x.co' }, 'me@x.co');
+  assert.equal(r.to, 'help@a.co');
+  assert.equal(r.cc, '');
 });

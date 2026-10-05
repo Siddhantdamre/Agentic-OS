@@ -3,13 +3,69 @@ import type { ToolRisk } from './risk.js';
 import type { ToolActionContext, ToolModule } from './shared.js';
 import { confirmFromRisk, nangoAuthError, notConnected, resolveNangoAuth, withOrgScopedClient, fetchWithTimeout } from './shared.js';
 
-const ACTIONS = ['send_whatsapp_message'] as const;
+const ACTIONS = ['send_whatsapp_message', 'list_messages'] as const;
 
-function riskFor(_action: string): ToolRisk {
+function riskFor(action: string): ToolRisk {
+  const a = action.toLowerCase();
+  if (a.includes('list') || a.includes('read')) return 'read';
   return 'send';
 }
 
+/** Last 10 digits, so +91 98765 43210 and 9876543210 match the same contact. */
+export function phoneKey(v: unknown): string | null {
+  const digits = String(v ?? '').replace(/\D/g, '');
+  return digits.length >= 7 ? digits.slice(-10) : null;
+}
+
+/**
+ * Recent WhatsApp messages as stored by the inbound webhook (messages.channel_key
+ * = 'whatsapp'): role "user" is the contact, "assistant" is us. RLS-scoped.
+ */
+async function listMessages(ctx: ToolActionContext) {
+  const { payload, orgId, timestamp } = ctx;
+  const limit = Math.min(100, Math.max(1, Math.trunc(Number(payload.limit ?? payload.count)) || 20));
+  const phone = payload.phone ? phoneKey(payload.phone) : null;
+  if (payload.phone && !phone) {
+    return { tool: 'whatsapp', action: 'list_messages', status: 'error' as const, message: 'That phone number is not valid.', data: null, timestamp };
+  }
+  const rows = await withOrgScopedClient(orgId, async (client) => {
+    const res = await client.query(
+      `SELECT m.id, m.role, m.content, m.created_at, c.id AS conversation_id, c.contact_id,
+              c.metadata->>'sender_name' AS sender_name
+         FROM messages m
+         JOIN conversations c ON c.id = m.conversation_id AND c.org_id = m.org_id
+        WHERE m.org_id = $1
+          AND m.channel_key = 'whatsapp'
+          AND ($2::text IS NULL OR right(regexp_replace(c.contact_id, '\\D', '', 'g'), 10) = $2)
+        ORDER BY m.created_at DESC
+        LIMIT $3`,
+      [orgId, phone, limit],
+    );
+    return res.rows;
+  });
+  const messages = rows.map((r: any) => ({
+    id: r.id,
+    from: r.role === 'user' ? r.sender_name || r.contact_id : 'us',
+    contactPhone: r.contact_id,
+    direction: r.role === 'user' ? 'inbound' : 'outbound',
+    text: r.content,
+    at: r.created_at,
+    conversationId: r.conversation_id,
+  }));
+  return {
+    tool: 'whatsapp',
+    action: 'list_messages',
+    status: 'executed' as const,
+    message: messages.length
+      ? `Found ${messages.length} WhatsApp messages${phone ? ` with ${payload.phone}` : ''}`
+      : `No WhatsApp messages found${phone ? ` with ${payload.phone}` : ''}`,
+    data: { messages, count: messages.length },
+    timestamp,
+  };
+}
+
 async function execute(ctx: ToolActionContext) {
+  if (ctx.actionName === 'list_messages') return listMessages(ctx);
   const { payload, orgId, timestamp } = ctx;
   const phone = payload.phone || payload.contactId || payload.to;
   const textMsg = payload.message || payload.content || payload.body;

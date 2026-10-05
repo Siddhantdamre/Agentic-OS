@@ -83,7 +83,7 @@ export const CONNECTOR_REGISTRY_META: Record<string, ConnectorRegistryMeta> = {
     nangoKey: 'whatsapp',
     riskClass: 'send',
     verticalTags: ['core', 'messaging'],
-    mcpTools: ['whatsapp_send'],
+    mcpTools: ['whatsapp_send', 'whatsapp_list_messages'],
   },
   gmail: {
     nangoKey: 'gmail',
@@ -141,7 +141,7 @@ export const CONNECTOR_REGISTRY_META: Record<string, ConnectorRegistryMeta> = {
     nangoKey: 'slack',
     riskClass: 'send',
     verticalTags: ['core', 'messaging'],
-    mcpTools: ['slack_send', 'slack_read_channel', 'slack_post_decision_card'],
+    mcpTools: ['slack_send', 'slack_read_channel', 'slack_list_channels', 'slack_read_thread', 'slack_reply_thread', 'slack_post_decision_card'],
   },
   shopify: {
     nangoKey: 'shopify',
