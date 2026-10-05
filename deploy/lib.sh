@@ -6,8 +6,8 @@
 # Host ports live in one file; load it before anything reads a port. A per-machine .env that
 # the caller sources afterwards can still override a value.
 set -a
-# shellcheck source=deploy/ports.env
-. "$ROOT/deploy/ports.env"
+# shellcheck source=deploy/ports.conf
+. "$ROOT/deploy/ports.conf"
 set +a
 
 # The prod overlay uses `ports: !override` (Compose >= 2.24.4). Older Compose appends

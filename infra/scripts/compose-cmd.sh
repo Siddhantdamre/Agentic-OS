@@ -47,10 +47,10 @@ fi
 FILES+=("${OVERLAYS[@]+"${OVERLAYS[@]}"}")
 
 ENV_FILE=()
-# The prod overlay reads every host port from deploy/ports.env (single source of truth).
+# The prod overlay reads every host port from deploy/ports.conf (single source of truth).
 # Later --env-file wins, so .env can still override a port per machine.
-if [ ${#OVERLAYS[@]} -gt 0 ] && [ -f "$ROOT/deploy/ports.env" ]; then
-  ENV_FILE+=(--env-file "$ROOT/deploy/ports.env")
+if [ ${#OVERLAYS[@]} -gt 0 ] && [ -f "$ROOT/deploy/ports.conf" ]; then
+  ENV_FILE+=(--env-file "$ROOT/deploy/ports.conf")
 fi
 if [ -f "$ROOT/.env" ]; then
   ENV_FILE+=(--env-file "$ROOT/.env")

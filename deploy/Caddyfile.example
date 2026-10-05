@@ -1,5 +1,5 @@
 # Example reverse proxy for a single VM. Callers: operators installing Caddy
-# Ports come from deploy/ports.env (FRONTEND_HOST_PORT, DASHBOARD_PORT); keep these in sync.
+# Ports come from deploy/ports.conf (FRONTEND_HOST_PORT, DASHBOARD_PORT); keep these in sync.
 # on the host. The frontend binds 127.0.0.1:13100 in docker-compose.prod.yml and proxies /api
 # to the dashboard (127.0.0.1:13000), so the public site points at 13100.
 #
