@@ -8,7 +8,7 @@
 import { connectorSignInPath } from '@darex/shared-types';
 import type { ToolRisk } from './risk.js';
 import type { NangoAuthState, ToolActionContext, ToolModule } from './shared.js';
-import { apiError, confirmFromRisk, resolveNangoAuth, withOrgScopedClient } from './shared.js';
+import { apiError, confirmFromRisk, resolveGoogleAuth, resolveNangoAuth, withOrgScopedClient } from './shared.js';
 
 const ACTIONS = ['status', 'ping', 'list'] as const;
 
@@ -45,9 +45,28 @@ export interface ConnectorStatus {
   connectUrl: string;
 }
 
-export type ProbeFn = (orgId: string, keys: string[]) => Promise<NangoAuthState['kind']>;
+export type ProbeFn = (orgId: string, keys: string[], connectorKey?: string) => Promise<NangoAuthState['kind']>;
 
-export const liveProbe: ProbeFn = async (orgId, keys) => (await resolveNangoAuth(orgId, keys)).kind;
+export const liveProbe: ProbeFn = async (orgId, keys, connectorKey) => {
+  const primary = connectorKey || keys[0];
+  if (!primary) return 'never-configured';
+
+  // 1. Google Workspace umbrella resolution
+  const isGoogle = primary === 'gmail' || primary.startsWith('google-') || primary === 'google';
+  if (isGoogle) {
+    return (await resolveGoogleAuth(orgId, primary)).kind;
+  }
+
+  // 2. Standard OAuth connectors
+  const connIds = Array.from(
+    new Set([
+      `${orgId}_${primary}`,
+      ...keys.map((k) => `${orgId}_${k}`),
+      orgId,
+    ]),
+  );
+  return (await resolveNangoAuth(connIds, keys)).kind;
+};
 
 /** Pure builder: probes OAuth connectors live, never trusts the cache for `connected`. */
 export async function buildConnectorStatuses(
@@ -76,7 +95,7 @@ export async function buildConnectorStatuses(
         return { ...base, connected: false, verifiedBy: 'cache', state: 'unverified' };
       }
       const keys = Array.from(new Set([row.key, row.nangoKey].filter((k): k is string => !!k)));
-      const kind = await probe(orgId, keys);
+      const kind = await probe(orgId, keys, row.key);
       if (kind === 'connected') return { ...base, connected: true, verifiedBy: 'live', state: 'connected' };
       if (kind === 'revoked') return { ...base, connected: false, verifiedBy: 'live', state: 'revoked' };
       return { ...base, connected: false, verifiedBy: 'live', state: 'not_connected' };

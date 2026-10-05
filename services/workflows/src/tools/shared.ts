@@ -343,7 +343,19 @@ export async function resolveNangoAuth(
         const bodyText = await res.text().catch(() => '');
         if (!res.ok) {
           const lower = bodyText.toLowerCase();
-          if (res.status === 400 || res.status === 401 || /refresh|revok|expir|invalid_grant/.test(lower)) {
+          const isUnknown =
+            lower.includes('unknown_connection') ||
+            lower.includes('no connection matching') ||
+            lower.includes('connection_not_found') ||
+            lower.includes('not found') ||
+            lower.includes('unknown_provider_config_key');
+          if (isUnknown) {
+            return { kind: 'never-configured' };
+          }
+          if (
+            res.status === 401 ||
+            /invalid_grant|refresh_token_revoked|token.*revok|token.*expir|revoked|unauthorized_client/.test(lower)
+          ) {
             return { kind: 'revoked', detail: bodyText.slice(0, 200) };
           }
           return { kind: 'never-configured' };
@@ -354,9 +366,13 @@ export async function resolveNangoAuth(
           || data?.credentials?.access_token
           || null;
         const scope = data?.credentials?.raw?.scope || data?.credentials?.scope;
-        if (typeof token === 'string' && token.length > 0 && (!scopeValidator || scopeValidator(scope))) {
-          nangoCache.set(`${conn}\n${providerKey}`, { data, expiresAt: Date.now() + NANGO_CACHE_TTL_MS });
-          return { kind: 'connected', accessToken: token, connection: data };
+        if (typeof token === 'string' && token.length > 0) {
+          if (!scopeValidator || scopeValidator(scope)) {
+            nangoCache.set(`${conn}\n${providerKey}`, { data, expiresAt: Date.now() + NANGO_CACHE_TTL_MS });
+            return { kind: 'connected', accessToken: token, connection: data };
+          }
+          // Token exists but does not satisfy scope requirements for this tool.
+          return { kind: 'never-configured' };
         }
         return { kind: 'revoked', detail: 'Nango connection exists but has no access token' };
       } catch (err: any) {

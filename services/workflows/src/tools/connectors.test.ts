@@ -69,3 +69,22 @@ test('connectors_status is a core read tool so every employee can answer "is X c
   assert.ok(CORE_READ_TOOLS.includes('connectors_status'));
   assert.equal(isToolAllowed('connectors_status', CORE_READ_TOOLS), true);
 });
+
+test('probe passes connectorKey and never-configured state reports not_connected instead of revoked', async () => {
+  const probedKeys: Array<{ orgId: string; keys: string[]; connectorKey?: string }> = [];
+  const probe: ProbeFn = async (orgId, keys, connectorKey) => {
+    probedKeys.push({ orgId, keys, connectorKey });
+    return 'never-configured';
+  };
+  const [res] = await buildConnectorStatuses(
+    ORG,
+    [row({ key: 'google-calendar', nangoKey: 'google' })],
+    probe,
+    true,
+  );
+  assert.equal(probedKeys.length, 1);
+  assert.equal(probedKeys[0].connectorKey, 'google-calendar');
+  assert.deepEqual(probedKeys[0].keys, ['google-calendar', 'google']);
+  assert.equal(res.connected, false);
+  assert.equal(res.state, 'not_connected');
+});

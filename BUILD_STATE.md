@@ -1,5 +1,11 @@
 # Darex Build State
 
+## Unknown Nango connections no longer show as revoked (2026-10-05)
+
+- A 400 or an "unknown connection" answer from Nango counted as `revoked`, so a connector that was never linked told people to reconnect it. `resolveNangoAuth` now treats only 401, `invalid_grant` and revoked or expired tokens as revoked; unknown connection or provider config is `never-configured`, and a token without the needed scope is `never-configured` instead of "no access token".
+- The live probe passes the connector key and resolves the Google Workspace connectors through the umbrella Google login (`resolveGoogleAuth`).
+- Origin: written on the server by an agent and run there; reviewed, re-authored and landed from the `vm-agent-fixes-2026-10-05` branch. Verified: workflows build, 461 tests including the new probe test. Not yet verified: the Connectors tab against a real Google account after redeploy.
+
 ## Redeploy rolls back a failed swap and builds the dashboard faster (2026-10-05)
 
 - `next build` had no build cache, so every code change recompiled the whole dashboard (several minutes on the 2 vCPU VM). The dashboard Dockerfile now mounts a persistent `.next/cache` for the build; the install layer was already cached by lockfile and only reruns when `package.json` or the lockfile change.
