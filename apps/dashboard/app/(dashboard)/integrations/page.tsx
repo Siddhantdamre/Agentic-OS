@@ -328,7 +328,7 @@ export default function IntegrationsPage() {
                     setTestPayload({});
                     setTestResult(null);
                   }}
-                  className="text-xs text-amber-700 font-semibold hover:underline flex items-center space-x-1"
+                  className="touch-target text-xs text-amber-700 font-semibold hover:underline flex items-center space-x-1"
                 >
                   <span>View Details & Test</span>
                   <ExternalLink className="w-3 h-3" />

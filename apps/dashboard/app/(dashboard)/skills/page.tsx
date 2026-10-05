@@ -405,7 +405,7 @@ export default function SkillsPage() {
               <div className="pt-3 border-t border-cream-200 flex items-center justify-between gap-3">
                 <Link
                   href={`/connectors/${skill.connectorId}`}
-                  className="text-xs font-semibold text-slate-500 hover:text-amber-700 flex items-center gap-1 transition-colors"
+                  className="touch-target text-xs font-semibold text-slate-500 hover:text-amber-700 flex items-center gap-1 transition-colors"
                 >
                   <Plug className="w-3.5 h-3.5" />
                   <span>Connector Settings</span>

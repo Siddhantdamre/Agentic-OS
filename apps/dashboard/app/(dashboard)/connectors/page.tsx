@@ -739,7 +739,7 @@ function ConnectorsScreen() {
                 {/* Bottom Connection Action */}
                 <div className="pt-4 border-t border-cream-200 flex items-center justify-between">
                   <span className="text-[10px] text-slate-400 font-mono flex items-center space-x-1">
-                    <Link href={`/connectors/${item.id}`} className="flex items-center space-x-1 hover:text-amber-700">
+                    <Link href={`/connectors/${item.id}`} className="touch-target flex items-center space-x-1 hover:text-amber-700">
                       <ExternalLink className="w-3 h-3" />
                       <span>Test & details</span>
                     </Link>

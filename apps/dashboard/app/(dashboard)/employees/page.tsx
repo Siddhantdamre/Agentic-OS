@@ -452,7 +452,7 @@ export default function EmployeesPage() {
                       )}
                     </div>
                     {tools.some((tool) => !toolReady(tool)) ? (
-                      <Link href="/connectors" className="text-[11px] font-semibold text-amber-700 hover:underline">
+                      <Link href="/connectors" className="touch-target text-[11px] font-semibold text-amber-700 hover:underline">
                         Connect missing tools
                       </Link>
                     ) : null}

@@ -70,7 +70,7 @@ export function SystemDegradationBanner() {
       <button
         type="button"
         onClick={() => setDismissed(true)}
-        className="text-amber-700 hover:text-amber-900 p-1 rounded focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
+        className="touch-target text-amber-700 hover:text-amber-900 p-1 rounded focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
         aria-label="Dismiss status banner"
       >
         <X className="w-3.5 h-3.5" />

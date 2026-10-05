@@ -160,3 +160,16 @@
     scroll-behavior: auto !important;
   }
 }
+
+/* Touch screens: a control must be big enough to tap. On a phone, small text links and icon buttons were as little
+ * as 12 to 22 px high; WCAG 2.2 asks for at least 24 px and 44 px is comfortable. This applies only to devices
+ * whose main pointer is a finger, so desktop layouts are unchanged. */
+@media (pointer: coarse) {
+  .touch-target {
+    min-height: 44px;
+    min-width: 44px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+}

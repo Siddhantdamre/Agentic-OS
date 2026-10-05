@@ -1,5 +1,12 @@
 # Darex Build State
 
+## Small controls are big enough to tap on a phone (2026-10-05)
+
+- Measured in a real browser at 375 px wide across 34 pages: no page scrolls sideways, but 143 controls were under the 24 px minimum of WCAG 2.2, and five repeated controls accounted for about 120 of them ("Test & details", "View Details & Test", "Connector Settings", "Connect missing tools", the banner's dismiss button).
+- One touch-only rule in `app/globals.css` (`@media (pointer: coarse)`, so desktop is unchanged) gives `.touch-target` a 44 px minimum height and width, and those five controls carry the class.
+- Proof: `touch-targets.test.ts` (6 tests); the same browser run now finds 22 controls under 24 px (from 143) and 340 under 44 px (from 461).
+- Not fixed: the remaining 22 (small links in cards, two 13 px checkboxes) and the 340 that are under the comfortable 44 px, mostly dense lists and chips. Not verified: real devices (Chromium touch emulation only).
+
 ## Outlook, Slack and WhatsApp read and reply from Ask AI (2026-10-06)
 
 - Chat could send on these channels but not read or answer a conversation. Outlook was list and send only; Slack could post but not see channels or threads; WhatsApp could only send.
