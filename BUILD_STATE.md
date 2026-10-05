@@ -1,5 +1,12 @@
 # Darex Build State
 
+## Next 15 upgrade follow-up: codemod leftovers, React 19 peers, params test (2026-10-05)
+
+- The async-request-api codemod left `Promise<Promise<{ id }> | { id }>` types with `await Promise.resolve((await context.params))` in the listings, showings, packs config and integrations ping routes, plus `@next-codemod-error` comments on two re-exports. These are now plain `Promise<{ id }>` with `await context.params`. Both re-export targets (`employees/growth/page`, `api/listings` GET) take no params, so the warnings didn't apply.
+- `@testing-library/react` 14 and `lucide-react` 0.368 declared React 18-only peers. Moved to RTL 16 (adds `@testing-library/dom` 10) and lucide-react 0.562, the version `@openuidev` already installs, so it dedupes. Every icon import still type-checks.
+- New `lib/__tests__/route-params-async.test.ts` calls 11 dynamic handlers with Promise params. A valid id must reach auth and an invalid one must 400 first. Mutation-checked: un-awaiting `params` in one route fails its case.
+- Verified: typecheck (also with no `.next/`), lint, 621 dashboard tests, `next build`, audit gate exit 0. `next dev` serves the auth pages (200) and they hydrate with no browser console errors, dashboard pages redirect (307), and dynamic API routes return 401. Not verified: signed-in pages, because the local Postgres/SuperTokens stack wasn't running.
+
 ## A server checkout with commits that are not on origin/main is refused (2026-10-05)
 
 - A redeploy failed in the worker image build with duplicate `hasCogneeDataset` / `DATASET_CACHE_TTL_MS` declarations in `cognee-client.ts`: the server's checkout had both its own agent-written version and the one on `main`, which happens when `main` is merged into a server branch and the conflict is resolved by keeping both sides. `main` itself had one definition and CI was green.
