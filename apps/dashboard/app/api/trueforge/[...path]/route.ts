@@ -24,11 +24,49 @@ async function proxyToTrueforge(
 
   let orgId: string | undefined;
   let userId: string | undefined;
+  let activeRole = 'Executive';
+  let activeName = 'darex-ai';
+  let allowlist: string[] = [];
+
   try {
     const scoped = await getScopedClient();
     orgId = scoped.orgId;
     userId = scoped.userId;
-    scoped.client.release();
+
+    try {
+      const requestedRole = req.headers.get('x-employee-role') || req.nextUrl.searchParams.get('employee_role');
+      const requestedId = req.headers.get('x-employee-id') || req.nextUrl.searchParams.get('employee_id');
+
+      let query = `
+        SELECT id, name, role, tool_allowlist
+        FROM ai_employees
+        WHERE org_id = $1 AND status = 'active' AND archived_at IS NULL
+      `;
+      const queryParams: any[] = [orgId];
+
+      if (requestedId) {
+        query += ` AND id = $2`;
+        queryParams.push(requestedId);
+      } else if (requestedRole) {
+        query += ` AND LOWER(role) = LOWER($2)`;
+        queryParams.push(requestedRole);
+      } else {
+        query += ` ORDER BY (role = 'Executive') DESC, created_at ASC LIMIT 1`;
+      }
+
+      const empRes = await scoped.client.query(query, queryParams);
+      if (empRes.rows.length > 0) {
+        activeRole = empRes.rows[0].role;
+        activeName = empRes.rows[0].name;
+        if (Array.isArray(empRes.rows[0].tool_allowlist)) {
+          allowlist = empRes.rows[0].tool_allowlist;
+        }
+      }
+    } catch (dbErr) {
+      console.warn('[trueforge-proxy] employee lookup failed:', dbErr);
+    } finally {
+      scoped.client.release();
+    }
   } catch {
     // Unauthenticated or in demo mode
   }
@@ -44,10 +82,10 @@ async function proxyToTrueforge(
     const taskInput: AgentTaskInput = {
       orgId,
       userId: userId || '',
-      employeeName: 'darex-ai',
-      employeeRole: 'General Assistant',
+      employeeName: activeName,
+      employeeRole: activeRole,
       employeePersona: 'Autonomous business assistant',
-      toolAllowlist: [],
+      toolAllowlist: allowlist,
       userMessage: '',
     };
     const tenantHeaders = buildMcpTenantHeaders(taskInput);
