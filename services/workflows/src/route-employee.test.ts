@@ -296,3 +296,10 @@ test('who-are-you questions go to front-line support, not Research', () => {
   assert.equal(routed.employeeName, 'Emma');
   assert.match(routed.reason, /about the assistant/);
 });
+
+test('email and inbox triage questions go to Emma / Support, not Executive', () => {
+  assert.equal(routeTo('fetch my recent emails'), 'Emma');
+  assert.equal(routeTo('check my unread emails in Gmail'), 'Emma');
+  assert.equal(routeTo('triage my inbox'), 'Emma');
+});
+

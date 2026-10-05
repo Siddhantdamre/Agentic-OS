@@ -120,6 +120,14 @@ const KEYWORD_WEIGHTS: ReadonlyArray<{ key: RosterKey; pattern: RegExp; weight: 
     weight: 0.82,
     prefer: /\bemm?a\b|\bcustomer\s+support\b/,
   },
+  // Emma / Customer — email & inbox triage (fetch emails, unread emails, check mailbox)
+  {
+    key: 'support',
+    pattern:
+      /\b(emails?|gmail|inbox|mailbox|mail\s+triage|recent\s+mails?|unread\s+mails?|check\s+(my\s+)?(mail|email|inbox)|fetch\s+(my\s+)?(mail|email|inbox))\b/i,
+    weight: 0.88,
+    prefer: /\bemm?a\b|\bcustomer\b/,
+  },
   // Finance — pay/invoice/charge/billing (never refund-shaped).
   {
     key: 'finance',
