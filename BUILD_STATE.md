@@ -1,5 +1,11 @@
 # Darex Build State
 
+## The TrueForge proxy no longer forwards caller identity, cookies or stale encoding headers (2026-10-05)
+
+- TrueForge proxy (`/api/trueforge/*`, new upstream): the tenant's own identity headers were forwarded from the caller whenever the session scope could not be established, the caller's cookie and Authorization header were passed to the upstream service, upstream Set-Cookie and a stale `content-encoding` were passed back, and encoded `..` segments were not refused (no practical effect today: the proxy already exposes every upstream path to any signed-in member). Four of six route tests failed on the original; all pass now, and a run over real HTTP against a fake gzip upstream confirms each point. Not changed and worth a decision: every authenticated member can reach every path of the TrueForge HTTP API through this route.
+- Proof: 23 tests (4 of 6 route tests failed on the original) and 9 of 9 checks over real HTTP against a fake gzip upstream.
+- Not verified: the live site; the per-path allowlist is a design question for the owners.
+
 ## The API boundary: bad input answers 4xx, errors are logged and not leaked (2026-10-05)
 
 - Against company main 9d141bc (5 Oct, Next 15.5 and React 19).

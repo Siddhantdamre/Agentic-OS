@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getScopedClient } from '@/lib/db';
 import { buildMcpTenantHeaders } from '@darex/workflows/dist/trueforge-client';
 import type { AgentTaskInput } from '@darex/shared-types';
+import { isSafeProxyPath, sanitizeForwardHeaders, sanitizeResponseHeaders } from '@/lib/trueforge-proxy-headers';
 
 export const dynamic = 'force-dynamic';
 
@@ -18,6 +19,9 @@ async function proxyToTrueforge(
   { params }: { params: Promise<{ path?: string[] }> }
 ) {
   const { path = [] } = await params;
+  if (!isSafeProxyPath(path)) {
+    return NextResponse.json({ error: 'Invalid path' }, { status: 400 });
+  }
   const tfBase = getTrueforgeUrl();
   const search = req.nextUrl.search;
   const targetUrl = `${tfBase}/${path.join('/')}${search}`;
@@ -71,12 +75,8 @@ async function proxyToTrueforge(
     // Unauthenticated or in demo mode
   }
 
-  const forwardHeaders = new Headers();
-  for (const [key, value] of req.headers.entries()) {
-    const lk = key.toLowerCase();
-    if (lk === 'host' || lk === 'connection' || lk === 'content-length') continue;
-    forwardHeaders.set(key, value);
-  }
+  // Identity headers and the caller's credentials are dropped first; the session's own identity is added below.
+  const forwardHeaders = sanitizeForwardHeaders(req.headers);
 
   if (orgId) {
     const taskInput: AgentTaskInput = {
@@ -107,10 +107,7 @@ async function proxyToTrueforge(
   try {
     const res = await fetch(targetUrl, init);
 
-    const resHeaders = new Headers();
-    for (const [key, value] of res.headers.entries()) {
-      resHeaders.set(key, value);
-    }
+    const resHeaders = sanitizeResponseHeaders(res.headers);
 
     return new Response(res.body, {
       status: res.status,
