@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import type { SilentMetric } from '@/lib/employee-observability';
 import type { FirstObservation, TrajectorySnapshot } from '@/lib/onboarding-rollout';
 import { toRolloutWeekViews } from '@/lib/onboarding-rollout';
@@ -41,7 +41,7 @@ export default function ObservabilityPage() {
   const [decisionsFailed, setDecisionsFailed] = useState(false);
   const [actionNote, setActionNote] = useState('');
 
-  const refreshDispatchStatus = () => {
+  const refreshDispatchStatus = useCallback(() => {
     // dryRun: report configured vs not without POSTing to the webhook on every page load
     fetch('/api/observability/alerts/dispatch', {
       method: 'POST',
@@ -74,9 +74,9 @@ export default function ObservabilityPage() {
         setDispatchNote('The last alert delivery didn’t go through.');
       })
       .catch(() => setDispatchNote('Alert dispatch check failed.'));
-  };
+  }, []);
 
-  const load = () => {
+  const load = useCallback(() => {
     // Every request is caught: a dropped connection must never become an unhandled rejection, and a failed
     // metrics request must never be shown as "no problems".
     getJson('/api/observability/metrics')
@@ -100,9 +100,9 @@ export default function ObservabilityPage() {
         setDecisions(data?.decisions || []);
       })
       .catch(() => setDecisionsFailed(true));
-  };
+  }, [refreshDispatchStatus]);
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => { load(); }, [load]);
 
   // Quiet by construction: `load` only swaps state in place, no loading flag.
   useLiveRefresh({ events: OBSERVABILITY_EVENTS, refetch: load });
