@@ -104,7 +104,7 @@ export function catalogIdsFromConnectionId(orgId: string, connectionId: string):
   if (!connectionId.startsWith(prefix)) return [];
   const suffix = connectionId.slice(prefix.length);
   if (!suffix) return [];
-  if (suffix === 'google' || suffix === 'google-workspace') {
+  if (suffix === 'google' || suffix === 'google-workspace' || suffix === 'gmail') {
     return ['google-workspace', ...GOOGLE_WORKSPACE_SERVICES];
   }
   const matched = new Set<string>();

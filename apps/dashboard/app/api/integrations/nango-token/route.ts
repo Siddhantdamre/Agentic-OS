@@ -154,6 +154,39 @@ export async function POST(request: Request) {
         lastError: effectiveSuccess ? null : 'Nango OAuth not confirmed',
       });
 
+      if (effectiveSuccess && (provider === 'google-workspace' || provider === 'google' || provider === 'gmail' || provider.startsWith('google-'))) {
+        const googleFamily = [
+          'gmail',
+          'google-calendar',
+          'google-drive',
+          'google-docs',
+          'google-sheets',
+          'google-slides',
+          'google-workspace',
+        ];
+        for (const gProvider of googleFamily) {
+          if (gProvider === provider) continue;
+          const gSpec = getIntegration(gProvider);
+          await client.query(
+            `INSERT INTO channels (org_id, channel_type, status, nango_connection_id, connected_at, meta)
+             VALUES ($1, $2, 'connected', $3, NOW(), $4::jsonb)
+             ON CONFLICT (org_id, channel_type, account_key)
+             DO UPDATE SET status = 'connected',
+               nango_connection_id = $3,
+               connected_at = NOW(),
+               meta = COALESCE(channels.meta, '{}'::jsonb) || $4::jsonb`,
+            [orgId, gProvider, nangoConnId, JSON.stringify(extraMeta)]
+          );
+          await upsertOrgConnector(client, orgId, gProvider, {
+            status: 'connected',
+            nangoConnectionId: nangoConnId,
+            scopes: gSpec?.scopes || [],
+            lastOkAt: new Date(),
+            lastError: null,
+          });
+        }
+      }
+
       return NextResponse.json({
         success: effectiveSuccess,
         connected: effectiveSuccess,
