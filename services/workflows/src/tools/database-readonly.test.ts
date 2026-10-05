@@ -21,5 +21,5 @@ test('read-only SQL ignores write keywords inside quotes', () => {
 });
 
 test('read-only SQL rejects a second statement', () => {
-  assert.match(readOnlySqlViolation('SELECT 1; DELETE FROM work_items') || '', /single-statement/i);
+  assert.match(readOnlySqlViolation('SELECT 1; DELETE FROM work_items') || '', /single.statement/i);
 });

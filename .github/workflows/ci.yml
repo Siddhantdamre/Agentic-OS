@@ -235,3 +235,27 @@ jobs:
         env:
           DAREX_PLATFORM_DB_PASSWORD: darex_platform_ci_secret
         run: node tests/e2e-tenant-isolation.test.js
+
+      # The model-SQL boundary and the RLS catalog rules (migration 207). Both run as the
+      # real roles against the migrated database. Each fails on the pre-207 tool and schema.
+      - name: Build workflows (the SQL tool is imported from dist/)
+        run: |
+          pnpm --filter @darex/shared-types build
+          pnpm --filter @darex/whatsapp-gateway build
+          pnpm --filter @darex/workflows build
+
+      - name: Model-written SQL cannot write, cross tenants or read credentials
+        env:
+          DB_USER: darex_app
+          DB_PASSWORD: darex_app_dev_secret
+          DB_RESOLVER_USER: darex
+          DB_RESOLVER_PASSWORD: darex_dev_secret
+        run: node infra/scripts/check-database-query.js
+
+      - name: RLS coverage and reader-role rules
+        env:
+          DB_USER: darex_app
+          DB_PASSWORD: darex_app_dev_secret
+          DB_RESOLVER_USER: darex
+          DB_RESOLVER_PASSWORD: darex_dev_secret
+        run: node infra/scripts/check-rls-coverage.js
