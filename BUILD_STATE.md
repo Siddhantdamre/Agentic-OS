@@ -1,5 +1,10 @@
 # Darex Build State
 
+## Temporal outages cost one request, not every request (2026-10-05)
+
+- `getTemporalClient` started a fresh connect on every call, so with Temporal down each request that needed it hung for the 5 s connect timeout before the direct fallback ran (`/api/brain/reindex` and `/api/dsr/export` took 5.0 s each, every time). `createLazyConnector` (`temporal-connect.ts`) shares one attempt among concurrent callers, caches a success, and after a failure answers null at once for `TEMPORAL_RETRY_BACKOFF_MS` (default 10 s). `TEMPORAL_CONNECT_TIMEOUT_MS` (default 5 s) is unchanged. 7 tests; workflows suite 475 before, 482 after. Measured end to end with Temporal down: 4 sequential requests took 4,992, 24, 16 and 21 ms (before: about 5,000 ms each).
+- Not verified: behaviour against a real Temporal restart.
+
 ## The TrueForge proxy no longer forwards caller identity, cookies or stale encoding headers (2026-10-05)
 
 - TrueForge proxy (`/api/trueforge/*`, new upstream): the tenant's own identity headers were forwarded from the caller whenever the session scope could not be established, the caller's cookie and Authorization header were passed to the upstream service, upstream Set-Cookie and a stale `content-encoding` were passed back, and encoded `..` segments were not refused (no practical effect today: the proxy already exposes every upstream path to any signed-in member). Four of six route tests failed on the original; all pass now, and a run over real HTTP against a fake gzip upstream confirms each point. Not changed and worth a decision: every authenticated member can reach every path of the TrueForge HTTP API through this route.

@@ -21,35 +21,27 @@ import {
 import { withOrgClient } from './db.js';
 import { markDsrRequestFailed, runDsrDelete } from './dsr/run-delete.js';
 import { runDsrExport } from './dsr/run-export.js';
+import { createLazyConnector } from './temporal-connect.js';
 
-let clientInstance: Client | null = null;
-let connecting: Promise<Client | null> | null = null;
+function envMs(name: string, fallback: number): number {
+  const n = Number.parseInt(process.env[name] || '', 10);
+  return Number.isFinite(n) && n > 0 ? n : fallback;
+}
+
+const temporalAddress = () => process.env.TEMPORAL_ADDRESS || 'localhost:7233';
+
+// One shared attempt, cached on success; after a failure the next TEMPORAL_RETRY_BACKOFF_MS (default 10 s)
+// answer null at once, so a Temporal outage costs one request the connect timeout instead of every request.
+const getClient = createLazyConnector<Client>({
+  connect: async () => new Client({ connection: await Connection.connect({ address: temporalAddress() }) }),
+  timeoutMs: envMs('TEMPORAL_CONNECT_TIMEOUT_MS', 5000),
+  backoffMs: envMs('TEMPORAL_RETRY_BACKOFF_MS', 10_000),
+  onConnected: () => console.log(`Connected to Temporal cluster at ${temporalAddress()}`),
+  onFailure: (err) => console.warn(`[Temporal Client] Could not connect to cluster at ${temporalAddress()}: ${err.message}`),
+});
 
 export async function getTemporalClient(): Promise<Client | null> {
-  if (clientInstance) return clientInstance;
-  if (connecting) return connecting;
-
-  const address = process.env.TEMPORAL_ADDRESS || 'localhost:7233';
-  connecting = (async () => {
-    try {
-      const connection = await Promise.race([
-        Connection.connect({ address }),
-        new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error(`Temporal connect timed out after 5s (${address})`)), 5000)
-        ),
-      ]);
-      clientInstance = new Client({ connection });
-      console.log(`Connected to Temporal cluster at ${address}`);
-      return clientInstance;
-    } catch (err: any) {
-      console.warn(`[Temporal Client] Could not connect to cluster at ${address}: ${err.message}`);
-      return null;
-    } finally {
-      connecting = null;
-    }
-  })();
-
-  return connecting;
+  return getClient();
 }
 
 function workflowIdFor(input: AgentTaskInput): string {
