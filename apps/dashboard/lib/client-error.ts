@@ -35,6 +35,9 @@ const BROWSER_NETWORK_WORDING = /failed to fetch|networkerror|load failed|networ
  * and anything with internals in it is replaced by `fallback`.
  */
 export function networkErrorMessage(err: unknown, fallback: string): string {
-  if (err instanceof TypeError || (err instanceof Error && BROWSER_NETWORK_WORDING.test(err.message))) return NETWORK_ERROR;
+  // A TypeError alone is not proof of a network failure: `x is undefined` is a bug, and must not read as "check your connection".
+  if (err instanceof Error && BROWSER_NETWORK_WORDING.test(err.message)) return NETWORK_ERROR;
+  // The language's own error types describe our code, not the customer's situation: never show their text.
+  if (err instanceof TypeError || err instanceof ReferenceError || err instanceof RangeError || err instanceof SyntaxError) return fallback;
   return err instanceof Error ? publicErrorMessage(err, fallback) : fallback;
 }

@@ -72,3 +72,16 @@ describe('networkErrorMessage', () => {
     expect(networkErrorMessage(new Error('connect ECONNREFUSED 10.0.0.5:5432'), 'fallback')).toBe('fallback');
   });
 });
+
+describe('networkErrorMessage: only a real network failure is called one', () => {
+  it('does not blame the connection for a programming error', () => {
+    expect(networkErrorMessage(new TypeError("Cannot read properties of undefined (reading 'name')"), 'fallback')).toBe('fallback');
+    expect(networkErrorMessage(new TypeError('x is not a function'), 'fallback')).toBe('fallback');
+  });
+
+  it('still recognises the browsers’ own wording for a failed request', () => {
+    for (const m of ['Failed to fetch', 'Load failed', 'NetworkError when attempting to fetch resource.', 'Network request failed']) {
+      expect(networkErrorMessage(new TypeError(m), 'fallback')).toBe(NETWORK_ERROR);
+    }
+  });
+});
