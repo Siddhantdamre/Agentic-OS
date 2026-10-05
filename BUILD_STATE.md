@@ -1,5 +1,10 @@
 # Darex Build State
 
+## Gmail reply-all from Ask AI (2026-10-06)
+
+- `gmail_reply` and `gmail_draft_reply` take `reply_all: true`. The reply goes to the sender (Reply-To, else From) and copies everyone else on the original To/Cc. The connected account's own address (from the Gmail profile) and duplicates are dropped. When you reply-all to your own sent mail, the first person you wrote to becomes the main recipient. An explicit `to`/`cc` from the caller still wins or is added.
+- Verified: new `replyAllRecipients` / `parseAddressList` tests (quoted names with commas, case-insensitive self and duplicate removal, own sent mail, Reply-To). Not verified: a live reply-all against Gmail.
+
 ## Gmail read, reply and reply-draft from Ask AI (2026-10-05)
 
 - Gmail gains `read_email` (one message in full by id), `reply_email` (sent in the original thread with `In-Reply-To`/`References`, `Re:` subject, to the Reply-To/From unless `to` is given; send-risk, approval first) and `draft_reply` (same, saved as a draft). Chat tools: `gmail_read_email`, `gmail_reply`, `gmail_draft_reply`; `gmail_send` takes cc/bcc. Before this, chat could only start new emails, so "reply to that email" produced an unthreaded message or a refusal.

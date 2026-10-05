@@ -77,7 +77,7 @@ const TOOLS: ToolDef[] = [
     name: 'gmail_reply',
     description:
       'Reply to an email in its existing thread (Re: subject, In-Reply-To set). Needs the messageId from gmail_fetch. ' +
-      'Replies to the original sender unless "to" is given. Goes to a human for approval first.',
+      'Replies to the original sender unless "to" is given; reply_all: true also copies everyone on To/Cc. Goes to a human for approval first.',
     schema: {
       org_id: z.string(),
       messageId: z.string(),
@@ -85,6 +85,7 @@ const TOOLS: ToolDef[] = [
       to: z.string().optional(),
       cc: z.string().optional(),
       bcc: z.string().optional(),
+      reply_all: z.boolean().optional(),
     },
     tool: 'gmail',
     action: 'reply_email',
@@ -92,7 +93,7 @@ const TOOLS: ToolDef[] = [
   {
     name: 'gmail_draft_reply',
     description:
-      'Save a reply to an email as a Gmail draft in the same thread (does NOT send). Needs the messageId from gmail_fetch.',
+      'Save a reply to an email as a Gmail draft in the same thread (does NOT send). Needs the messageId from gmail_fetch; reply_all: true copies everyone on To/Cc.',
     schema: {
       org_id: z.string(),
       messageId: z.string(),
@@ -100,6 +101,7 @@ const TOOLS: ToolDef[] = [
       to: z.string().optional(),
       cc: z.string().optional(),
       bcc: z.string().optional(),
+      reply_all: z.boolean().optional(),
     },
     tool: 'gmail',
     action: 'draft_reply',
