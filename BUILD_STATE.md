@@ -1,5 +1,10 @@
 # Darex Build State
 
+## Below the skill tier minimum a call asks for approval instead of failing (2026-10-05)
+
+- "Send an email" from chat failed with `Action blocked: autonomy tier 1 is below skill minimum 2 for "gmail"`. The skill-tier check in `tool-gate.ts` refused every non-read call, including drafts, and also ran on the approval executor's re-entry, so even a human-approved send could never execute. Below the skill minimum a call now parks for approval (reason `skill_tier`; sends already park as `confirm_class`), drafts are not tier-checked (they reach nobody), and an approved re-entry skips the check.
+- Verified: `@darex/workflows` tests, including new gate cases (below-tier send parks, non-confirm write parks as `skill_tier`, draft runs, approved send runs). Not verified: a live send through the deployed chat, because no local stack was running.
+
 ## Next 15 upgrade follow-up: codemod leftovers, React 19 peers, params test (2026-10-05)
 
 - The async-request-api codemod left `Promise<Promise<{ id }> | { id }>` types with `await Promise.resolve((await context.params))` in the listings, showings, packs config and integrations ping routes, plus `@next-codemod-error` comments on two re-exports. These are now plain `Promise<{ id }>` with `await context.params`. Both re-export targets (`employees/growth/page`, `api/listings` GET) take no params, so the warnings didn't apply.

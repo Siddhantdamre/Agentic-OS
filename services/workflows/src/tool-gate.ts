@@ -259,11 +259,14 @@ export async function runToolGate(params: GateParams, deps: GateDeps): Promise<G
   if (!riskGate) {
     return deny('policy_denied', `"${params.tool}.${actionName}" is not a registered tool action. Nothing was run.`);
   }
-  // Skill tier minimums exist for skills that draft/send/pay. Reading has no
-  // side effects, so it must reach the provider, which reports an honest
-  // not-connected result instead of an autonomy denial.
-  const tierBlock = risk === 'read' ? null : await deps.skillTierBlock(params.orgId, employee.role, params.tool, actionName);
-  if (tierBlock) return deny('policy_denied', tierBlock);
+  // Skill tier minimums say how far an employee may act ALONE. Below the
+  // minimum the call goes to a human for approval rather than being refused,
+  // so "send this email" from chat becomes an approval card. Reads and drafts
+  // reach nobody outside the workspace, and an approved re-entry already has
+  // its human sign-off, so none of those are tier-checked.
+  const tierBlock = risk === 'read' || risk === 'draft' || approved
+    ? null
+    : await deps.skillTierBlock(params.orgId, employee.role, params.tool, actionName);
 
   // 7 · Payload: no invented amounts or channels. Zod shape checks run at the
   // model boundary (local-turn / mcp-bridge) where the raw args still exist.
@@ -343,6 +346,7 @@ export async function runToolGate(params: GateParams, deps: GateDeps): Promise<G
     // 8 · Confirm class parks every send/pay/sign/publish/delete/execute,
     // from chat, plan steps, crews, webhooks, and sweeps alike.
     if (riskGate.confirm) return park(riskGate.risk, 'confirm_class');
+    if (tierBlock) return park(actionSurfaceType(risk, actionName), 'skill_tier');
     if (stageVerdict === 'escalate') return park(actionSurfaceType(risk, actionName), 'rollout_stage');
 
     // 9 · Autonomy, always, with the DB role.

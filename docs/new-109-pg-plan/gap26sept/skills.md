@@ -8,7 +8,7 @@
 | 2 | In-process tool schemas invent connectors without ownership | P0 | `local-tool-select.ts` | 🟢 Done | Allowlist intersection only. |
 | 3 | Dashboard `/api/skills` + org_skills schema + UI toggles | P0 | `apps/dashboard/**` + `099_org_skills.sql` | 🟢 Done | GET/PATCH skills API, org_skills/employee_skills migration, live SkillsView toggles. |
 | 4 | Sync skill assignments ↔ `ai_employees.tool_allowlist` via API | P0 | `apps/dashboard/app/api/skills/[id]/route.ts` | 🟢 Done | PATCH rebuilds employee allowlists from assigned enabled skills. |
-| 5 | Enforce `minAutonomyLevel` at tool execution | P1 | `skills/catalog.ts` + `tool-executor.ts` | 🟢 Done | `minAutonomyForTool` + employee_autonomy_rules tier check before execute. |
+| 5 | Enforce `minAutonomyLevel` at tool execution | P1 | `skills/catalog.ts` + `tool-executor.ts` + `tool-gate.ts` | 🟢 Done | `minAutonomyForTool` + employee_autonomy_rules tier check before execute. 2026-10-05: below the minimum a call now parks for human approval (`skill_tier`) instead of being refused; reads, drafts and approved re-entries skip the check. |
 | 6 | Live Nango connector status on skills UI | P1 | dashboard skills page | 🟢 Done | Provider status from org_connectors + channels; honest not connected. |
 
 ## Status: closed (runtime gating + dashboard `/api/skills` + allowlist sync + live connector status)
