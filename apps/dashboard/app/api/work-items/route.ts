@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getScopedClient, scopedAuthErrorResponse } from '@/lib/db';
 import { realtimeHub } from '@/lib/realtime-hub';
 import { canReadOperations, loadHumanRole, type HumanRole } from '@/lib/rbac';
+import { jsonBodyOrEmpty } from '@/lib/safe-json';
 
 export const dynamic = 'force-dynamic';
 
@@ -105,13 +106,14 @@ export async function GET(request: NextRequest) {
     if (/work_items|does not exist|relation/i.test(message)) {
       return NextResponse.json({ workItems: [] });
     }
+    console.error('GET /api/work-items Error:', err);
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
   }
 }
 
 export async function POST(request: NextRequest) {
   try {
-    const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
+    const body = (await jsonBodyOrEmpty(request)) as Record<string, unknown>;
     if (body.org_id !== undefined || body.orgId !== undefined) {
       return NextResponse.json({ error: 'org_id is not accepted from the request body' }, { status: 400 });
     }

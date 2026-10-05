@@ -5,6 +5,8 @@ import { denyUnlessConnectorManager } from '@/lib/connector-rbac';
 import { saveMetaCloudChannel } from '@/lib/whatsapp-meta-channel';
 import { providerIdOf } from '@darex/whatsapp-gateway';
 import { isChannelId, listWhatsAppChannels, publicWhatsAppNumber } from '@/lib/whatsapp-numbers';
+import { jsonBodyOrEmpty } from '@/lib/safe-json';
+import { publicErrorMessage } from '@/lib/public-error';
 
 export async function POST(request: Request) {
   try {
@@ -12,7 +14,7 @@ export async function POST(request: Request) {
     try {
       const forbidden = await denyUnlessConnectorManager(client, userId);
       if (forbidden) return forbidden;
-      const { accessToken, phoneNumberId, wabaId, channelId, add } = await request.json();
+      const { accessToken, phoneNumberId, wabaId, channelId, add } = await jsonBodyOrEmpty(request);
       if (channelId != null && !isChannelId(channelId)) {
         return NextResponse.json({ message: 'Invalid channelId' }, { status: 400 });
       }
@@ -31,7 +33,7 @@ export async function POST(request: Request) {
     const __scopedAuth = scopedAuthErrorResponse(err);
     if (__scopedAuth) return __scopedAuth;
     console.error('WhatsApp Manual Connect Error:', err);
-    return NextResponse.json({ message: err.message }, { status: 500 });
+    return NextResponse.json({ message: publicErrorMessage(err) }, { status: 500 });
   }
 }
 
@@ -63,6 +65,7 @@ export async function GET() {
   } catch (err: any) {
     const __scopedAuth2 = scopedAuthErrorResponse(err);
     if (__scopedAuth2) return __scopedAuth2;
-    return NextResponse.json({ message: err.message }, { status: 500 });
+    console.error('GET /api/integrations/whatsapp Error:', err);
+    return NextResponse.json({ message: publicErrorMessage(err) }, { status: 500 });
   }
 }

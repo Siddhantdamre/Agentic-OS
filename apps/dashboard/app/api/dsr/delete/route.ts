@@ -4,6 +4,7 @@ import { matchesDsrDeleteConfirm } from '@/lib/dsr-confirm';
 import { recordAuditEvent } from '@/lib/audit-events';
 import { canDeleteDsr, loadHumanRole } from '@/lib/rbac';
 import { enqueueDsrDelete } from '@darex/workflows/dist/workflow-client';
+import { jsonBodyOrEmpty } from '@/lib/safe-json';
 
 export const dynamic = 'force-dynamic';
 
@@ -16,11 +17,7 @@ export const dynamic = 'force-dynamic';
 export async function POST(request: Request) {
   try {
     let body: Record<string, unknown> = {};
-    try {
-      body = (await request.json()) as Record<string, unknown>;
-    } catch {
-      body = {};
-    }
+    body = await jsonBodyOrEmpty<Record<string, unknown>>(request);
     if (body.org_id !== undefined || body.orgId !== undefined) {
       return NextResponse.json({ error: 'org_id is not accepted from the request body' }, { status: 400 });
     }

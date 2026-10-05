@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getScopedClient, scopedAuthErrorResponse } from '@/lib/db';
 import { decideApproval } from '@/lib/decide-approval';
+import { jsonBodyOrEmpty } from '@/lib/safe-json';
 
 /**
  * Resolve a parked autonomy action by token. Timeout never approves — the
@@ -12,7 +13,7 @@ export const dynamic = 'force-dynamic';
 
 export async function POST(request: Request) {
   try {
-    const body = (await request.json().catch(() => ({}))) as {
+    const body = (await jsonBodyOrEmpty(request)) as {
       pendingActionId?: string;
       token?: string;
       decision?: string;

@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { getScopedClient, scopedAuthErrorResponse } from '@/lib/db';
 import { rejectBodyOrgId } from '@/app/api/packs/_lib';
 import { realtimeHub } from '@/lib/realtime-hub';
+import { jsonBodyOrEmpty } from '@/lib/safe-json';
 
 export const dynamic = 'force-dynamic';
 
@@ -65,6 +66,7 @@ export async function GET(_request: Request, context: { params: Promise<{ id: st
     if (missingTables(message)) {
       return NextResponse.json({ error: '015_packs.sql not applied', invented: false }, { status: 503 });
     }
+    console.error('GET /api/listings/[id] Error:', err);
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
   }
 }
@@ -77,7 +79,7 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
     }
     const { client, orgId } = await getScopedClient();
     try {
-      const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
+      const body = (await jsonBodyOrEmpty(request)) as Record<string, unknown>;
       const rejected = rejectBodyOrgId(body);
       if (rejected) {
         return NextResponse.json({ error: rejected }, { status: 400 });
@@ -165,6 +167,7 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
   } catch (err) {
     const __scopedAuth2 = scopedAuthErrorResponse(err);
     if (__scopedAuth2) return __scopedAuth2;
+    console.error('PATCH /api/listings/[id] Error:', err);
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
   }
 }
@@ -195,6 +198,7 @@ export async function DELETE(_request: Request, context: { params: Promise<{ id:
   } catch (err) {
     const __scopedAuth3 = scopedAuthErrorResponse(err);
     if (__scopedAuth3) return __scopedAuth3;
+    console.error('DELETE /api/listings/[id] Error:', err);
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
   }
 }

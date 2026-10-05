@@ -10,6 +10,7 @@ import {
   withWidgetCors,
   WIDGET_ALLOWLIST,
 } from '../_lib';
+import { jsonBodyOrEmpty } from '@/lib/safe-json';
 
 /**
  * POST /api/widget/tools
@@ -26,11 +27,7 @@ export async function POST(request: Request) {
   if (!auth.ok) return auth.response;
 
   let body: Record<string, unknown> = {};
-  try {
-    body = (await request.json()) as Record<string, unknown>;
-  } catch {
-    body = {};
-  }
+  body = await jsonBodyOrEmpty<Record<string, unknown>>(request);
   ignoreBodyOrgId(body);
 
   const tool = typeof body.tool === 'string' ? body.tool : typeof body.name === 'string' ? body.name : '';

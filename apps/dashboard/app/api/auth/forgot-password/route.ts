@@ -5,12 +5,13 @@ import { appBaseUrl, sendTransactionalEmail } from '@/lib/mail';
 import { clientIpFromRequest, denyAuthIfLimited } from '@/lib/rate-limit';
 import { lookupUserById } from '@/lib/auth-user';
 import { recordAuditEvent } from '@/lib/audit-events';
+import { jsonBodyOrEmpty } from '@/lib/safe-json';
 
 export async function POST(request: Request) {
   const limited = denyAuthIfLimited(clientIpFromRequest(request), 'forgot_password');
   if (limited) return limited;
 
-  const body = (await request.json().catch(() => ({}))) as { email?: string };
+  const body = (await jsonBodyOrEmpty(request)) as { email?: string };
   const email = typeof body.email === 'string' ? normalizeEmail(body.email) : '';
 
   if (!email || !isValidEmail(email)) {

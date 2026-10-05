@@ -4,6 +4,8 @@ import { getScopedClient, scopedAuthErrorResponse } from '@/lib/db';
 import { denyUnlessConnectorManager } from '@/lib/connector-rbac';
 import { saveMetaCloudChannel } from '@/lib/whatsapp-meta-channel';
 import { isChannelId } from '@/lib/whatsapp-numbers';
+import { jsonBodyOrEmpty } from '@/lib/safe-json';
+import { publicErrorMessage } from '@/lib/public-error';
 
 /**
  * POST /api/integrations/whatsapp/embedded-signup
@@ -27,7 +29,7 @@ export async function POST(request: Request) {
         );
       }
 
-      const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
+      const body = (await jsonBodyOrEmpty(request)) as Record<string, unknown>;
       const done = await completeEmbeddedSignup({
         code: typeof body.code === 'string' ? body.code : '',
         wabaId: typeof body.wabaId === 'string' ? body.wabaId : '',
@@ -57,6 +59,7 @@ export async function POST(request: Request) {
   } catch (err: unknown) {
     const scoped = scopedAuthErrorResponse(err);
     if (scoped) return scoped;
-    return NextResponse.json({ success: false, message: err instanceof Error ? err.message : String(err) }, { status: 500 });
+    console.error('POST /api/integrations/whatsapp/embedded-signup Error:', err);
+    return NextResponse.json({ success: false, message: publicErrorMessage(err) }, { status: 500 });
   }
 }

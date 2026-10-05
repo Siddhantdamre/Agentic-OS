@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getScopedClient, scopedAuthErrorResponse } from '@/lib/db';
+import { stripNulChars } from '@/lib/safe-json';
 
 export const dynamic = 'force-dynamic';
 
@@ -10,7 +11,7 @@ export async function GET(request: NextRequest) {
     const { client, orgId } = await getScopedClient();
     try {
       const { searchParams } = new URL(request.url);
-      const q = (searchParams.get('q') || searchParams.get('query') || '').trim();
+      const q = stripNulChars(searchParams.get('q') || searchParams.get('query') || '').trim();
       const objectId = searchParams.get('objectId') || searchParams.get('action_id') || undefined;
       const actionType = searchParams.get('actionType') || undefined;
 

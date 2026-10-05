@@ -1,22 +1,27 @@
 import { NextResponse } from 'next/server';
 import { pool } from '@/lib/db';
 import { updatePasswordHash } from '@/lib/auth-user';
-import { hashPassword, sha256Hex } from '@/lib/password';
+import { hashPassword, passwordLengthError, sha256Hex } from '@/lib/password';
 import { clientIpFromRequest, denyAuthIfLimited } from '@/lib/rate-limit';
 import { lookupUserById } from '@/lib/auth-user';
 import { recordAuditEvent } from '@/lib/audit-events';
+import { jsonBodyOrEmpty } from '@/lib/safe-json';
 
 export async function POST(request: Request) {
   const limited = denyAuthIfLimited(clientIpFromRequest(request), 'reset_password');
   if (limited) return limited;
 
-  const body = (await request.json().catch(() => ({}))) as { token?: string; password?: string };
+  const body = (await jsonBodyOrEmpty(request)) as { token?: string; password?: string };
   const token = typeof body.token === 'string' ? body.token : '';
   const password = typeof body.password === 'string' ? body.password : '';
 
-  if (!token || password.length < 8) {
+  const lengthError = passwordLengthError(password);
+  if (!token || lengthError) {
     return NextResponse.json(
-      { status: 'ERROR', message: 'A valid token and password of at least 8 characters are required.' },
+      {
+        status: 'ERROR',
+        message: lengthError || 'A valid token and password of at least 8 characters are required.',
+      },
       { status: 400 }
     );
   }

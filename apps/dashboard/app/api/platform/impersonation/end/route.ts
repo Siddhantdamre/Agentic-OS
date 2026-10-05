@@ -13,6 +13,7 @@ import {
   parseSessionCookie,
   SESSION_COOKIE,
 } from '@/lib/session-cookie';
+import { publicErrorMessage } from '@/lib/public-error';
 
 export const dynamic = 'force-dynamic';
 
@@ -126,7 +127,7 @@ export async function POST() {
       return NextResponse.json(
         {
           error: 'platform_migration_pending',
-          message: err instanceof Error ? err.message : 'migration pending',
+          message: publicErrorMessage(err, 'migration pending'),
         },
         { status: 503 }
       );

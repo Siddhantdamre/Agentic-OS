@@ -8,6 +8,7 @@ import {
   listWhatsAppChannels,
   publicWhatsAppNumber,
 } from '@/lib/whatsapp-numbers';
+import { publicErrorMessage } from '@/lib/public-error';
 
 /**
  * The org's linked WhatsApp numbers (QR and official API alike).
@@ -27,7 +28,8 @@ export async function GET() {
   } catch (err: unknown) {
     const scoped = scopedAuthErrorResponse(err);
     if (scoped) return scoped;
-    return NextResponse.json({ message: err instanceof Error ? err.message : String(err) }, { status: 500 });
+    console.error('GET /api/integrations/whatsapp/numbers Error:', err);
+    return NextResponse.json({ message: publicErrorMessage(err) }, { status: 500 });
   }
 }
 
@@ -52,6 +54,7 @@ export async function DELETE(request: Request) {
   } catch (err: unknown) {
     const scoped = scopedAuthErrorResponse(err);
     if (scoped) return scoped;
-    return NextResponse.json({ success: false, message: err instanceof Error ? err.message : String(err) }, { status: 500 });
+    console.error('DELETE /api/integrations/whatsapp/numbers Error:', err);
+    return NextResponse.json({ success: false, message: publicErrorMessage(err) }, { status: 500 });
   }
 }

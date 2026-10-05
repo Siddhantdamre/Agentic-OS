@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { getScopedClient, scopedAuthErrorResponse } from '@/lib/db';
 import { canManageOrgSettings, loadHumanRole } from '@/lib/rbac';
 import { isLivePackId, rejectBodyOrgId, updatePackConfig } from '../../_lib';
+import { jsonBodyOrEmpty } from '@/lib/safe-json';
 
 export const dynamic = 'force-dynamic';
 
@@ -23,7 +24,7 @@ export async function PATCH(
       return NextResponse.json({ error: 'Pack is not live / unknown' }, { status: 400 });
     }
 
-    const body = (await request.json().catch(() => ({}))) as {
+    const body = (await jsonBodyOrEmpty(request)) as {
       config?: unknown;
       orgId?: unknown;
       org_id?: unknown;
@@ -69,6 +70,7 @@ export async function PATCH(
         { status: 503 }
       );
     }
+    console.error('PATCH /api/packs/[id]/config Error:', err);
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
   }
 }

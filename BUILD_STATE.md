@@ -1,5 +1,14 @@
 # Darex Build State
 
+## The API boundary: bad input answers 4xx, errors are logged and not leaked (2026-10-05)
+
+- Against company main 9d141bc (5 Oct, Next 15.5 and React 19).
+- Request bodies: 53 routes answered 500 for `null`, malformed JSON or NUL characters. Every route now reads its body with `jsonBodyOrEmpty` (`lib/safe-json.ts`); `route-body-contract.test.ts` fails the build on a bare `request.json()` (it caught the two e-mail verification routes added upstream the same day). Sign-up: e-mail over 254 characters is refused before the pattern runs; passwords 8 to 1024. Ask AI: prompt over 100,000 characters answers 413 (`ASK_AI_MAX_PROMPT_CHARS`).
+- Races: 12 parallel backfills answered 11 x 200 and 1 x 500 (check-then-insert on the default autonomy rules); two simultaneous saves of one autonomy rule had the same shape. Both now tolerate the unique violation.
+- Errors: 34 routes copied `err.message` into their response, which can carry a database host and port, a table or constraint name or a setting name. `publicErrorMessage` (`lib/public-error.ts`) keeps what a person can act on and hides the rest; `route-error-body-contract.test.ts` enforces it. 54 catch blocks answered 500 and logged nothing; each now logs, and `route-500-logging-contract.test.ts` enforces it. `/api/analytics/cost` no longer returns Langfuse setting names to tenants.
+- Proof (measured on a7b03fa, before the later commits in this series): dashboard 707 tests in 109 suites (584 before this work), `tsc` clean, lint unchanged, production build passes; fuzz of 3,298 requests: 0 critical, 0 high, 0 review, no HTTP 500; the 92 remaining 5xx are 502/503 answers where a dependency is not configured (TrueForge, Langfuse, Nango, Evolution, Meta signup).
+- Not verified: the live frontend, a hosted model, the production server.
+
 ## The per-tenant webhook URL resolves again; a failed credential no longer falls through to the inbox map (2026-10-03)
 
 - `POST /api/webhooks/chatwoot?org_id=<id>&token=<secret>` (the documented per-tenant URL) answered 400 "Cannot resolve organization" for a valid active org, so no message was stored and the agent never replied. `orgs` is FORCE ROW LEVEL SECURITY and the route resolves the tenant before any org context exists, but the `?org_id=` and `X-Darex-Org-Id` branches ran a plain `SELECT ... FROM orgs` on the pool. Measured: 4 orgs as owner, 0 visible to `darex_app`.

@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getScopedClient, scopedAuthErrorResponse } from '@/lib/db';
 import { getTemporalClient } from '@darex/workflows/dist/workflow-client';
+import { jsonBodyOrEmpty } from '@/lib/safe-json';
 
 /**
  * Connector Sync/Ingest entrypoint (Temporal SyncWorkflow / IngestWorkflow).
@@ -149,7 +150,7 @@ export async function GET() {
 
 export async function POST(request: Request) {
   try {
-    const body = asRecord(await request.json().catch(() => ({})));
+    const body = asRecord(await jsonBodyOrEmpty(request));
     // Never trust body.org_id / body.orgId — session RLS only.
     void body.org_id;
     void body.orgId;

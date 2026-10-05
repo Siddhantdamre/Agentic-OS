@@ -137,6 +137,7 @@ export async function GET(request: Request) {
   } catch (error: unknown) {
     const __scopedAuth = scopedAuthErrorResponse(error);
     if (__scopedAuth) return __scopedAuth;
+    console.error('GET /api/employees/customer Error:', error);
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
   }
 }

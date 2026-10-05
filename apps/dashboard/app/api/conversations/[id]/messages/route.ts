@@ -15,6 +15,7 @@ import { recordOutboundDelivery } from '@/lib/failed-webhooks';
 import { safeHttpUrl } from '@/lib/safe-url';
 import { canActOnConversations, loadHumanRole } from '@/lib/rbac';
 import { auditConversationAction } from '@/lib/conversation-audit';
+import { publicErrorMessage } from '@/lib/public-error';
 
 type MessageRole = 'user' | 'customer' | 'human_agent' | 'assistant';
 /** Canonical roles returned by the API (inbound customer traffic is always `user`). */
@@ -342,7 +343,7 @@ export async function POST(
                 attempted: true,
                 sent: false,
                 statusCode: 0,
-                message: e instanceof Error ? e.message : 'send failed',
+                message: publicErrorMessage(e, 'send failed'),
                 body: '',
               },
             });

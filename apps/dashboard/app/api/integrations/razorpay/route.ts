@@ -14,6 +14,8 @@ import { auditConnectorChange, denyUnlessConnectorManager } from '@/lib/connecto
 import { upsertOrgConnector } from '@/lib/connector-registry';
 import { pingRazorpay } from '@darex/connectors';
 import { sealSecret, secretHint, secretsKeyConfigured } from '@darex/whatsapp-gateway';
+import { jsonBodyOrEmpty } from '@/lib/safe-json';
+import { publicErrorMessage } from '@/lib/public-error';
 
 export async function POST(request: Request) {
   try {
@@ -21,7 +23,7 @@ export async function POST(request: Request) {
     try {
       const forbidden = await denyUnlessConnectorManager(client, userId);
       if (forbidden) return forbidden;
-      const body = await request.json();
+      const body = await jsonBodyOrEmpty(request);
       const keyId = body.keyId || body.key_id;
       const keySecret = body.keySecret || body.key_secret;
 
@@ -108,7 +110,7 @@ export async function POST(request: Request) {
     const __scopedAuth = scopedAuthErrorResponse(err);
     if (__scopedAuth) return __scopedAuth;
     console.error('Razorpay connect error:', err);
-    return NextResponse.json({ message: err.message }, { status: 500 });
+    return NextResponse.json({ message: publicErrorMessage(err) }, { status: 500 });
   }
 }
 
@@ -135,6 +137,7 @@ export async function GET() {
   } catch (err: any) {
     const __scopedAuth2 = scopedAuthErrorResponse(err);
     if (__scopedAuth2) return __scopedAuth2;
-    return NextResponse.json({ message: err.message }, { status: 500 });
+    console.error('GET /api/integrations/razorpay Error:', err);
+    return NextResponse.json({ message: publicErrorMessage(err) }, { status: 500 });
   }
 }

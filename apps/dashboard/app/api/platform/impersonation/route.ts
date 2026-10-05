@@ -14,6 +14,8 @@ import {
   applySessionCookies,
   cookieSecure,
 } from '@/lib/session-cookie';
+import { jsonBodyOrEmpty } from '@/lib/safe-json';
+import { publicErrorMessage } from '@/lib/public-error';
 
 export const dynamic = 'force-dynamic';
 
@@ -39,7 +41,7 @@ export async function POST(request: Request) {
     const admin = await requirePlatformAdmin();
     if (admin instanceof NextResponse) return admin;
 
-    const body = (await request.json().catch(() => ({}))) as ImpersonationBody;
+    const body = (await jsonBodyOrEmpty(request)) as ImpersonationBody;
     const parsed = parseConfirmReason(body);
     if (parsed instanceof NextResponse) return parsed;
 
@@ -226,7 +228,7 @@ export async function POST(request: Request) {
       return NextResponse.json(
         {
           error: 'platform_migration_pending',
-          message: err instanceof Error ? err.message : 'migration pending',
+          message: publicErrorMessage(err, 'migration pending'),
         },
         { status: 503 }
       );

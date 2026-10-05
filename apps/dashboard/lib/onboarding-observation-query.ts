@@ -72,7 +72,8 @@ export async function runConversationBackfill(client: PoolClient, orgId: string,
   await client.query(
     `INSERT INTO employee_autonomy_rules (org_id, action_type, employee_role, autonomy_tier, reversibility, requires_human_approval)
      SELECT $1, x.action_type, NULL, x.tier, x.rev, x.ask FROM (VALUES ('observe',1,'reversible',FALSE), ('internal_update',2,'reversible',FALSE), ('send_email',3,'visible',TRUE), ('refund_payment',4,'irreversible',TRUE)) AS x(action_type, tier, rev, ask)
-      WHERE NOT EXISTS (SELECT 1 FROM employee_autonomy_rules r WHERE r.org_id = $1 AND r.action_type = x.action_type AND r.employee_role IS NULL)`,
+      WHERE NOT EXISTS (SELECT 1 FROM employee_autonomy_rules r WHERE r.org_id = $1 AND r.action_type = x.action_type AND r.employee_role IS NULL)
+     ON CONFLICT DO NOTHING`,
     [orgId]
   );
   return { loopsImported, wonImported };

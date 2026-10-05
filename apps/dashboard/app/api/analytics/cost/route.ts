@@ -41,9 +41,10 @@ export async function GET() {
     if (__scopedAuth) return __scopedAuth;
     if (error instanceof LangfuseUnavailableError || error instanceof LangfuseConfigError) {
       console.error('API /api/analytics/cost Langfuse:', error.message);
+      // The detail (setting names, hostnames) stays in the log above; a customer gets a sentence they can act on.
       return NextResponse.json(
         {
-          error: error.message,
+          error: 'Cost figures are temporarily unavailable. Nothing is estimated in their place; try again shortly.',
           verified: false,
           source: 'langfuse',
           orgId: orgId || undefined,

@@ -84,6 +84,7 @@ export async function POST() {
   } catch (err) {
     const __scopedAuth = scopedAuthErrorResponse(err);
     if (__scopedAuth) return __scopedAuth;
+    console.error('POST /api/work-items/sweep-sla Error:', err);
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
   }
 }

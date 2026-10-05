@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getScopedClient, scopedAuthErrorResponse } from '@/lib/db';
+import { jsonBodyOrEmpty } from '@/lib/safe-json';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -56,7 +57,7 @@ export async function PATCH(request: Request) {
   try {
     const { client, orgId } = await getScopedClient();
     try {
-      const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
+      const body = (await jsonBodyOrEmpty(request)) as Record<string, unknown>;
       if (body.org_id !== undefined || body.orgId !== undefined) {
         return NextResponse.json({ error: 'org_id is not accepted from the request body' }, { status: 400 });
       }

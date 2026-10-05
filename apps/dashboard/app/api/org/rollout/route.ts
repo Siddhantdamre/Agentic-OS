@@ -3,6 +3,7 @@ import { getScopedClient, scopedAuthErrorResponse } from '@/lib/db';
 import { canManageOrgSettings, loadHumanRole } from '@/lib/rbac';
 import { loadRuntimeControls, writeRolloutStage } from '@/lib/employee-metrics-query';
 import { canAdvanceStage, parseRolloutStage } from '@/lib/employee-rollout';
+import { jsonBodyOrEmpty } from '@/lib/safe-json';
 
 export const dynamic = 'force-dynamic';
 
@@ -24,6 +25,7 @@ export async function GET() {
   } catch (err) {
     const __scopedAuth = scopedAuthErrorResponse(err);
     if (__scopedAuth) return __scopedAuth;
+    console.error('GET /api/org/rollout Error:', err);
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
   }
 }
@@ -37,7 +39,7 @@ export async function PATCH(request: Request) {
         return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
       }
 
-      const body = (await request.json().catch(() => ({}))) as {
+      const body = (await jsonBodyOrEmpty(request)) as {
         stage?: number;
         force?: boolean;
         orgId?: string;
@@ -82,6 +84,7 @@ export async function PATCH(request: Request) {
   } catch (err) {
     const __scopedAuth2 = scopedAuthErrorResponse(err);
     if (__scopedAuth2) return __scopedAuth2;
+    console.error('PATCH /api/org/rollout Error:', err);
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
   }
 }

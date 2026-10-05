@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { getScopedClient, scopedAuthErrorResponse } from '@/lib/db';
 import { canManageOrgSettings, loadHumanRole } from '@/lib/rbac';
 import { parseBusinessHours } from '@/lib/onboarding-rollout';
+import { jsonBodyOrEmpty } from '@/lib/safe-json';
 
 export const dynamic = 'force-dynamic';
 
@@ -30,6 +31,7 @@ export async function GET() {
   } catch (err) {
     const __scopedAuth = scopedAuthErrorResponse(err);
     if (__scopedAuth) return __scopedAuth;
+    console.error('GET /api/onboarding/settings Error:', err);
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
   }
 }
@@ -43,7 +45,7 @@ export async function PATCH(request: Request) {
         return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
       }
 
-      const body = (await request.json().catch(() => ({}))) as {
+      const body = (await jsonBodyOrEmpty(request)) as {
         timezone?: string;
         businessHours?: unknown;
         decisionRecipientId?: string | null;
@@ -102,6 +104,7 @@ export async function PATCH(request: Request) {
   } catch (err) {
     const __scopedAuth2 = scopedAuthErrorResponse(err);
     if (__scopedAuth2) return __scopedAuth2;
+    console.error('PATCH /api/onboarding/settings Error:', err);
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
   }
 }

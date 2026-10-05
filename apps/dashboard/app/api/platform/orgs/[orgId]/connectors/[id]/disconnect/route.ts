@@ -14,6 +14,8 @@ import {
   deleteNangoConnection,
   isNangoSecretConfigured,
 } from '@/lib/nango-server';
+import { jsonBodyOrEmpty } from '@/lib/safe-json';
+import { publicErrorMessage } from '@/lib/public-error';
 
 export const dynamic = 'force-dynamic';
 
@@ -32,7 +34,7 @@ export async function POST(request: Request, context: RouteContext) {
     if (denied) return denied;
 
     const { orgId, id: connectorId } = await context.params;
-    const body = (await request.json().catch(() => ({}))) as {
+    const body = (await jsonBodyOrEmpty(request)) as {
       confirm?: unknown;
       reason?: unknown;
     };
@@ -157,7 +159,7 @@ export async function POST(request: Request, context: RouteContext) {
     }
     if (code === 'P502') {
       return NextResponse.json(
-        { success: false, message: err instanceof Error ? err.message : 'Nango error' },
+        { success: false, message: publicErrorMessage(err, 'Nango error') },
         { status: 502 }
       );
     }

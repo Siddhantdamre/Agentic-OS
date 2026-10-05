@@ -4,6 +4,7 @@ import {
   platformErrorResponse,
   withPlatformTransaction,
 } from '@/lib/platform-db';
+import { stripNulChars } from '@/lib/safe-json';
 
 export const dynamic = 'force-dynamic';
 
@@ -19,7 +20,7 @@ export async function GET(request: Request) {
     if (admin instanceof NextResponse) return admin;
 
     const url = new URL(request.url);
-    const q = (url.searchParams.get('q') || '').trim();
+    const q = stripNulChars(url.searchParams.get('q') || '').trim();
     if (!q) {
       return NextResponse.json({ error: 'q required' }, { status: 400 });
     }

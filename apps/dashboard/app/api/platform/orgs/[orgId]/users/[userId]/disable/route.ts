@@ -9,6 +9,8 @@ import {
   platformErrorResponse,
   withPlatformTransaction,
 } from '@/lib/platform-db';
+import { jsonBodyOrEmpty } from '@/lib/safe-json';
+import { publicErrorMessage } from '@/lib/public-error';
 
 export const dynamic = 'force-dynamic';
 
@@ -28,7 +30,7 @@ export async function POST(request: Request, context: RouteContext) {
     if (denied) return denied;
 
     const { orgId, userId } = await context.params;
-    const body = (await request.json().catch(() => ({}))) as {
+    const body = (await jsonBodyOrEmpty(request)) as {
       confirm?: unknown;
       reason?: unknown;
       disabled?: unknown;
@@ -90,7 +92,7 @@ export async function POST(request: Request, context: RouteContext) {
     if (code === 'P404') return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     if (code === 'P503') {
       return NextResponse.json(
-        { error: 'platform_migration_pending', message: err instanceof Error ? err.message : 'disabled_at missing' },
+        { error: 'platform_migration_pending', message: publicErrorMessage(err, 'disabled_at missing') },
         { status: 503 }
       );
     }

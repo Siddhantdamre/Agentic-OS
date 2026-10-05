@@ -11,6 +11,7 @@ import {
   nangoConnectionExists,
   primaryConnectionId,
 } from '@/lib/nango-server';
+import { publicErrorMessage } from '@/lib/public-error';
 
 /**
  * GET /api/integrations/nango-token
@@ -206,6 +207,6 @@ export async function POST(request: Request) {
     const __scopedAuth2 = scopedAuthErrorResponse(error);
     if (__scopedAuth2) return __scopedAuth2;
     console.error('Nango token confirm error:', error);
-    return NextResponse.json({ error: error.message || 'Internal Server Error' }, { status: 500 });
+    return NextResponse.json({ error: publicErrorMessage(error, 'Internal Server Error') }, { status: 500 });
   }
 }

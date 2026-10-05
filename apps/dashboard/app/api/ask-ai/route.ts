@@ -58,6 +58,9 @@ import type { AgentTaskInput, CrewPlan, CrewRosterMember, CrewWorkflowInput, Cre
 import { runCrewDirect } from '@darex/workflows/dist/crew-runner';
 import type { PoolClient } from 'pg';
 import { resolveLockedHandoff, resolveCustomHandoff, type HandoffOffer } from '@/lib/handoffs';
+import { readJsonBody } from '@/lib/safe-json';
+import { askAiPromptTooLong } from '@/lib/ask-ai-limits';
+import { publicErrorMessage } from '@/lib/public-error';
 
 export const dynamic = 'force-dynamic';
 
@@ -423,13 +426,12 @@ export async function POST(request: Request) {
       );
     }
 
-    let body: Record<string, unknown> | null = null;
-    try {
-      body = await request.json();
-    } catch {
+    const parsedBody = await readJsonBody(request);
+    if (!parsedBody.ok) {
       release();
-      return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 });
+      return parsedBody.response;
     }
+    const body: Record<string, unknown> | null = parsedBody.body;
     if (body?.org_id !== undefined || body?.orgId !== undefined) {
       release();
       return NextResponse.json({ error: 'org_id is not accepted from the request body' }, { status: 400 });
@@ -440,6 +442,11 @@ export async function POST(request: Request) {
     if (typeof prompt !== 'string' || prompt.trim().length === 0) {
       release();
       return NextResponse.json({ error: 'Prompt is required' }, { status: 400 });
+    }
+    const promptTooLong = askAiPromptTooLong(prompt);
+    if (promptTooLong) {
+      release();
+      return NextResponse.json({ error: promptTooLong }, { status: 413 });
     }
 
     let conversationId = requestedConversationId || '';
@@ -1431,14 +1438,14 @@ function streamSimpleAnswer(args: {
           try {
             await persistAskAiMessage(args.orgId, args.conversationId, 'assistant', `❌ ${err.message || 'An error occurred'}`, {
               type: 'simple',
-              error: err.message,
+              error: publicErrorMessage(err),
               retryable: true,
             });
           } catch (persistErr: any) {
             console.warn('[Ask AI] Failed to persist assistant error message:', persistErr?.message);
           }
         }
-        send('error', { error: err.message, retryable: true });
+        send('error', { error: publicErrorMessage(err), retryable: true });
       } finally {
         lease.release();
         controller.close();

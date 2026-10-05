@@ -21,6 +21,8 @@ import {
   seatMax,
   upsertSubscription,
 } from '../_lib';
+import { jsonBodyOrEmpty } from '@/lib/safe-json';
+import { publicErrorMessage } from '@/lib/public-error';
 
 export const dynamic = 'force-dynamic';
 
@@ -32,7 +34,7 @@ export const dynamic = 'force-dynamic';
  */
 export async function POST(request: Request) {
   try {
-    const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
+    const body = (await jsonBodyOrEmpty(request)) as Record<string, unknown>;
     if (requestHasClientOrgId(request, body)) {
       return NextResponse.json({ error: CLIENT_ORG_ID_ERROR }, { status: 400 });
     }
@@ -216,7 +218,7 @@ export async function POST(request: Request) {
     const __scopedAuth = scopedAuthErrorResponse(error);
     if (__scopedAuth) return __scopedAuth;
     if (error instanceof BillingConfigError) {
-      return NextResponse.json({ error: error.message, connected: false }, { status: 503 });
+      return NextResponse.json({ error: publicErrorMessage(error), connected: false }, { status: 503 });
     }
     console.error('API /api/billing/checkout POST Error:', error);
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });

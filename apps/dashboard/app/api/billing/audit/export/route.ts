@@ -26,6 +26,7 @@ export async function GET() {
     const authErr = scopedAuthErrorResponse(err);
     if (authErr) return authErr;
     const message = err instanceof Error ? err.message : String(err);
+    console.error('GET /api/billing/audit/export Error:', err);
     return new Response(message, { status: 500 });
   }
 
@@ -81,6 +82,7 @@ export async function GET() {
         },
       });
     }
+    console.error('GET /api/billing/audit/export Error:', err);
     return new Response(message, { status: 500 });
   } finally {
     client.release();

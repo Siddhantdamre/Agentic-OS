@@ -3,6 +3,7 @@ import { getScopedClient, scopedAuthErrorResponse } from '@/lib/db';
 import { canManageOrgSettings, loadHumanRole } from '@/lib/rbac';
 import { clampBackfillWindow, mapBackfillRow } from '@/lib/onboarding-rollout';
 import { runConversationBackfill } from '@/lib/onboarding-observation-query';
+import { jsonBodyOrEmpty } from '@/lib/safe-json';
 
 export const dynamic = 'force-dynamic';
 
@@ -22,6 +23,7 @@ export async function GET() {
   } catch (err) {
     const __scopedAuth = scopedAuthErrorResponse(err);
     if (__scopedAuth) return __scopedAuth;
+    console.error('GET /api/onboarding/backfill Error:', err);
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
   }
 }
@@ -35,7 +37,7 @@ export async function POST(request: Request) {
         return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
       }
 
-      const body = (await request.json().catch(() => ({}))) as {
+      const body = (await jsonBodyOrEmpty(request)) as {
         windowDays?: number;
         orgId?: string;
         org_id?: string;
@@ -78,6 +80,7 @@ export async function POST(request: Request) {
   } catch (err) {
     const __scopedAuth2 = scopedAuthErrorResponse(err);
     if (__scopedAuth2) return __scopedAuth2;
+    console.error('POST /api/onboarding/backfill Error:', err);
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
   }
 }

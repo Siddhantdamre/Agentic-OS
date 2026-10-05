@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { getScopedClient, scopedAuthErrorResponse } from '@/lib/db';
 import { rejectBodyOrgId } from '@/app/api/packs/_lib';
 import { realtimeHub } from '@/lib/realtime-hub';
+import { jsonBodyOrEmpty } from '@/lib/safe-json';
 
 export const dynamic = 'force-dynamic';
 
@@ -126,6 +127,7 @@ export async function GET(request: Request) {
     if (missingTables(message)) {
       return NextResponse.json({ listings: [], invented: false, error: '015_packs.sql not applied' }, { status: 200 });
     }
+    console.error('GET /api/listings Error:', err);
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
   }
 }
@@ -134,7 +136,7 @@ export async function POST(request: Request) {
   try {
     const { client, orgId } = await getScopedClient();
     try {
-      const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
+      const body = (await jsonBodyOrEmpty(request)) as Record<string, unknown>;
       const rejected = rejectBodyOrgId(body);
       if (rejected) {
         return NextResponse.json({ error: rejected }, { status: 400 });
@@ -191,6 +193,7 @@ export async function POST(request: Request) {
   } catch (err) {
     const __scopedAuth2 = scopedAuthErrorResponse(err);
     if (__scopedAuth2) return __scopedAuth2;
+    console.error('POST /api/listings Error:', err);
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
   }
 }

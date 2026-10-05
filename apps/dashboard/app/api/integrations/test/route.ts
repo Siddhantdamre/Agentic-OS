@@ -20,6 +20,8 @@ import {
   sendWhatsApp as sendWhatsAppViaGateway,
 } from '@darex/whatsapp-gateway';
 import { getIntegration, isIntegrationId } from '@/lib/integrations-catalog';
+import { jsonBodyOrEmpty } from '@/lib/safe-json';
+import { publicErrorMessage } from '@/lib/public-error';
 
 function getNangoClient(): NangoConnectorClient {
   return new NangoConnectorClient();
@@ -65,7 +67,7 @@ export async function POST(request: Request) {
     try {
       const forbidden = await denyUnlessConnectorManager(client, userId);
       if (forbidden) return forbidden;
-      const { provider, payload: rawPayload } = await request.json();
+      const { provider, payload: rawPayload } = await jsonBodyOrEmpty(request);
       const payload = rawPayload && typeof rawPayload === 'object' ? rawPayload : {};
 
       if (!provider || !isIntegrationId(provider)) {
@@ -223,7 +225,7 @@ export async function POST(request: Request) {
         connected = err.connected === true;
         const reconnectUrl = err.reconnectUrl || '/connectors';
         result = {
-          error: err.message || 'API Proxy Execution Failed',
+          error: publicErrorMessage(err, 'API Proxy Execution Failed'),
           connected: false,
           reconnectUrl,
           setupUrl: reconnectUrl,
@@ -264,6 +266,6 @@ export async function POST(request: Request) {
     const __scopedAuth = scopedAuthErrorResponse(err);
     if (__scopedAuth) return __scopedAuth;
     console.error('Integration Test Error:', err);
-    return NextResponse.json({ message: err.message }, { status: 500 });
+    return NextResponse.json({ message: publicErrorMessage(err) }, { status: 500 });
   }
 }

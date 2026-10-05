@@ -15,6 +15,7 @@ import {
   platformErrorResponse,
   withPlatformTransaction,
 } from '@/lib/platform-db';
+import { jsonBodyOrEmpty } from '@/lib/safe-json';
 
 export const dynamic = 'force-dynamic';
 
@@ -102,7 +103,7 @@ export async function PUT(request: Request, context: RouteContext) {
     if (denied) return denied;
 
     const { orgId } = await context.params;
-    const body = (await request.json().catch(() => ({}))) as OverridesBody;
+    const body = (await jsonBodyOrEmpty(request)) as OverridesBody;
 
     const seatCapRaw = body.seat_cap !== undefined ? body.seat_cap : body.seatCap;
     let seatCap: number | null | undefined = undefined;

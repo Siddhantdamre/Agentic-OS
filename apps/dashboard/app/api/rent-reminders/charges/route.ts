@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getScopedClient, scopedAuthErrorResponse } from '@/lib/db';
 import { rejectBodyOrgId } from '@/app/api/packs/_lib';
+import { jsonBodyOrEmpty } from '@/lib/safe-json';
 
 export const dynamic = 'force-dynamic';
 
@@ -14,7 +15,7 @@ export async function POST(request: Request) {
   try {
     const { client, orgId } = await getScopedClient();
     try {
-      const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
+      const body = (await jsonBodyOrEmpty(request)) as Record<string, unknown>;
       const rejected = rejectBodyOrgId(body);
       if (rejected) {
         return NextResponse.json({ error: rejected }, { status: 400 });

@@ -9,6 +9,8 @@ import {
   platformErrorResponse,
   withPlatformTransaction,
 } from '@/lib/platform-db';
+import { jsonBodyOrEmpty } from '@/lib/safe-json';
+import { publicErrorMessage } from '@/lib/public-error';
 
 export const dynamic = 'force-dynamic';
 
@@ -26,7 +28,7 @@ export async function POST(request: Request, context: RouteContext) {
     if (denied) return denied;
 
     const { orgId, userId } = await context.params;
-    const body = (await request.json().catch(() => ({}))) as {
+    const body = (await jsonBodyOrEmpty(request)) as {
       confirm?: unknown;
       reason?: unknown;
     };
@@ -90,7 +92,7 @@ export async function POST(request: Request, context: RouteContext) {
       return NextResponse.json(
         {
           error: 'platform_migration_pending',
-          message: err instanceof Error ? err.message : 'session_epoch missing',
+          message: publicErrorMessage(err, 'session_epoch missing'),
         },
         { status: 503 }
       );

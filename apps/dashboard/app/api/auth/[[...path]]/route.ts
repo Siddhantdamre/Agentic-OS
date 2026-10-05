@@ -14,7 +14,7 @@ import {
   SESSION_REMEMBER_MAX_AGE_SECONDS,
 } from '@/lib/session-cookie';
 import { issueSessionCookies, verifySessionCookie } from '@/lib/session-epoch';
-import { hashPassword, isValidEmail, normalizeEmail, verifyPassword } from '@/lib/password';
+import { hashPassword, isValidEmail, normalizeEmail, passwordLengthError, verifyPassword } from '@/lib/password';
 import {
   acceptInviteToken,
   insertAuthUser,
@@ -46,6 +46,7 @@ import {
   markEmailVerified,
   sendVerificationEmail,
 } from '@/lib/email-verification';
+import { jsonBodyOrEmpty } from '@/lib/safe-json';
 
 ensureSuperTokensInit();
 
@@ -237,7 +238,7 @@ export async function POST(
   const ip = clientIpFromRequest(request);
 
   try {
-    const body = (await request.json()) as {
+    const body = (await jsonBodyOrEmpty(request)) as {
       email?: string;
       password?: string;
       rememberMe?: boolean;
@@ -387,8 +388,9 @@ export async function POST(
       const limited = denyAuthIfLimited(ip, 'register');
       if (limited) return limited;
 
-      if (password.length < 8) {
-        return jsonError('Password must be at least 8 characters.', 400);
+      const lengthError = passwordLengthError(password);
+      if (lengthError) {
+        return jsonError(lengthError, 400);
       }
 
       const passwordHash = hashPassword(password);

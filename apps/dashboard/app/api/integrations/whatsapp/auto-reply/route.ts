@@ -4,6 +4,8 @@ import { auditConnectorChange, denyUnlessConnectorManager } from '@/lib/connecto
 import { providerIdOf } from '@darex/whatsapp-gateway';
 import { parseAutoReply, validateAutoReply } from '@/lib/whatsapp-auto-reply-config';
 import { findWhatsAppChannel, isChannelId } from '@/lib/whatsapp-numbers';
+import { tryReadJson } from '@/lib/safe-json';
+import { publicErrorMessage } from '@/lib/public-error';
 
 /**
  * How this org's WhatsApp connection replies (QR and official API alike).
@@ -41,7 +43,8 @@ export async function GET(request: Request) {
   } catch (err: unknown) {
     const scoped = scopedAuthErrorResponse(err);
     if (scoped) return scoped;
-    return NextResponse.json({ message: err instanceof Error ? err.message : String(err) }, { status: 500 });
+    console.error('GET /api/integrations/whatsapp/auto-reply Error:', err);
+    return NextResponse.json({ message: publicErrorMessage(err) }, { status: 500 });
   }
 }
 
@@ -55,7 +58,7 @@ export async function PUT(request: Request) {
       const wanted = wantedChannel(request);
       if (wanted === 'bad') return NextResponse.json({ success: false, message: 'Invalid channelId' }, { status: 400 });
       const target = await findWhatsAppChannel(client, orgId, wanted);
-      const checked = validateAutoReply(await request.json().catch(() => null));
+      const checked = validateAutoReply(await tryReadJson(request));
       if (!checked.ok) {
         return NextResponse.json({ success: false, message: checked.error }, { status: 400 });
       }
@@ -104,6 +107,7 @@ export async function PUT(request: Request) {
   } catch (err: unknown) {
     const scoped = scopedAuthErrorResponse(err);
     if (scoped) return scoped;
-    return NextResponse.json({ success: false, message: err instanceof Error ? err.message : String(err) }, { status: 500 });
+    console.error('PUT /api/integrations/whatsapp/auto-reply Error:', err);
+    return NextResponse.json({ success: false, message: publicErrorMessage(err) }, { status: 500 });
   }
 }

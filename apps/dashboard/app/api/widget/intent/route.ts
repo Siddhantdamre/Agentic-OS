@@ -19,6 +19,7 @@ import {
   widgetPreflight,
   withWidgetCors,
 } from '../_lib';
+import { jsonBodyOrEmpty } from '@/lib/safe-json';
 
 export const dynamic = 'force-dynamic';
 
@@ -46,11 +47,7 @@ export async function POST(request: Request) {
   }
 
   let body: Record<string, unknown> = {};
-  try {
-    body = (await request.json()) as Record<string, unknown>;
-  } catch {
-    body = {};
-  }
+  body = await jsonBodyOrEmpty<Record<string, unknown>>(request);
   ignoreBodyOrgId(body);
 
   const path =

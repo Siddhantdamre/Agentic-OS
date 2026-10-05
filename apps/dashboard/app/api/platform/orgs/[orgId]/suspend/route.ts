@@ -8,6 +8,7 @@ import {
   platformErrorResponse,
   withPlatformTransaction,
 } from '@/lib/platform-db';
+import { jsonBodyOrEmpty } from '@/lib/safe-json';
 
 export const dynamic = 'force-dynamic';
 
@@ -22,7 +23,7 @@ export async function POST(request: Request, context: RouteContext) {
     if (denied) return denied;
 
     const { orgId } = await context.params;
-    const body = (await request.json().catch(() => ({}))) as {
+    const body = (await jsonBodyOrEmpty(request)) as {
       confirm?: unknown;
       reason?: unknown;
     };

@@ -3,6 +3,7 @@ import { getScopedClient, scopedAuthErrorResponse } from '@/lib/db';
 import { recordAuditEvent } from '@/lib/audit-events';
 import { canManageOrgSettings, loadHumanRole } from '@/lib/rbac';
 import { loadRuntimeControls, writeKillSwitch } from '@/lib/employee-metrics-query';
+import { jsonBodyOrEmpty } from '@/lib/safe-json';
 
 export const dynamic = 'force-dynamic';
 
@@ -22,6 +23,7 @@ export async function GET() {
   } catch (err) {
     const __scopedAuth = scopedAuthErrorResponse(err);
     if (__scopedAuth) return __scopedAuth;
+    console.error('GET /api/org/kill-switch Error:', err);
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
   }
 }
@@ -34,7 +36,7 @@ async function write(request: Request) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 
-    const body = (await request.json().catch(() => ({}))) as {
+    const body = (await jsonBodyOrEmpty(request)) as {
       enabled?: boolean;
       active?: boolean;
       orgId?: string;
@@ -80,6 +82,7 @@ export async function PATCH(request: Request) {
   } catch (err) {
     const __scopedAuth2 = scopedAuthErrorResponse(err);
     if (__scopedAuth2) return __scopedAuth2;
+    console.error('PATCH /api/org/kill-switch Error:', err);
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
   }
 }

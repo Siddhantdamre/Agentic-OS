@@ -10,6 +10,7 @@ import {
   widgetPreflight,
   withWidgetCors,
 } from '../_lib';
+import { jsonBodyOrEmpty } from '@/lib/safe-json';
 
 /**
  * POST /api/widget/session
@@ -38,7 +39,7 @@ export async function POST(request: Request) {
 
   let contactHint = 'widget-visitor';
   try {
-    const body = (await request.json()) as Record<string, unknown>;
+    const body = await jsonBodyOrEmpty<Record<string, unknown>>(request);
     ignoreBodyOrgId(body);
     if (typeof body.visitorId === 'string' && body.visitorId.trim()) {
       contactHint = body.visitorId.trim().slice(0, 80);

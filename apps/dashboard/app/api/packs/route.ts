@@ -9,6 +9,7 @@ import {
   uninstallPackForOrg,
   upgradePackForOrg,
 } from './_lib';
+import { jsonBodyOrEmpty } from '@/lib/safe-json';
 
 export const dynamic = 'force-dynamic';
 
@@ -98,6 +99,7 @@ export async function GET() {
         { status: 503 }
       );
     }
+    console.error('GET /api/packs Error:', err);
     return NextResponse.json(
       { error: 'Internal Server Error', packs: [], installed: [], livePackIds: LIVE_PACK_IDS_LIST },
       { status: 500 }
@@ -116,7 +118,7 @@ export async function POST(request: Request) {
           { status: 403 }
         );
       }
-      const body = (await request.json().catch(() => ({}))) as {
+      const body = (await jsonBodyOrEmpty(request)) as {
         packId?: string;
         pack_id?: string;
         action?: string;
@@ -200,6 +202,7 @@ export async function POST(request: Request) {
         { status: 503 }
       );
     }
+    console.error('POST /api/packs Error:', err);
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
   }
 }
@@ -215,7 +218,7 @@ export async function DELETE(request: Request) {
           { status: 403 }
         );
       }
-      const body = (await request.json().catch(() => ({}))) as {
+      const body = (await jsonBodyOrEmpty(request)) as {
         packId?: string;
         pack_id?: string;
         orgId?: string;
@@ -250,6 +253,7 @@ export async function DELETE(request: Request) {
         { status: 503 }
       );
     }
+    console.error('DELETE /api/packs Error:', err);
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
   }
 }

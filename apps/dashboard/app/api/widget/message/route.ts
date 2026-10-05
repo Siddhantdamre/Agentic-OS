@@ -16,6 +16,7 @@ import {
   widgetPreflight,
   withWidgetCors,
 } from '../_lib';
+import { tryReadJson } from '@/lib/safe-json';
 
 /**
  * POST /api/widget/message
@@ -135,10 +136,11 @@ export async function POST(request: Request) {
   const limited = denyWebhookIfLimited(auth.orgId);
   if (limited) return withWidgetCors(request, limited, auth.allowedOrigins);
 
+  const parsedBody = await tryReadJson<Record<string, unknown>>(request);
   let body: Record<string, unknown>;
-  try {
-    body = (await request.json()) as Record<string, unknown>;
-  } catch {
+  if (parsedBody) {
+    body = parsedBody;
+  } else {
     return withWidgetCors(
       request,
       NextResponse.json({ error: 'Invalid JSON' }, { status: 400 }),

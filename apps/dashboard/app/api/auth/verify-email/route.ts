@@ -4,12 +4,13 @@ import { clientIpFromRequest, denyAuthIfLimited } from '@/lib/rate-limit';
 import { consumeVerificationToken } from '@/lib/email-verification';
 import { lookupUserById } from '@/lib/auth-user';
 import { recordAuditEvent } from '@/lib/audit-events';
+import { jsonBodyOrEmpty } from '@/lib/safe-json';
 
 export async function POST(request: Request) {
   const limited = denyAuthIfLimited(clientIpFromRequest(request), 'reset_password');
   if (limited) return limited;
 
-  const body = (await request.json().catch(() => ({}))) as { token?: string };
+  const body = (await jsonBodyOrEmpty(request)) as { token?: string };
   const token = typeof body.token === 'string' ? body.token : '';
   if (!token) {
     return NextResponse.json({ status: 'ERROR', message: 'A verification token is required.' }, { status: 400 });

@@ -6,6 +6,7 @@ import { lookupUserById } from '@/lib/auth-user';
 import { enqueueEmbedJob } from '@/lib/embed-enqueue';
 import { realtimeHub } from '@/lib/realtime-hub';
 import { enqueueReindexEmbed, loadKnowledgeSourceForReindex } from '@/lib/brain-reindex';
+import { jsonBodyOrEmpty } from '@/lib/safe-json';
 
 export const dynamic = 'force-dynamic';
 
@@ -87,7 +88,7 @@ export async function PATCH(
       return NextResponse.json({ error: 'Invalid id' }, { status: 400 });
     }
 
-    const body = await request.json().catch(() => ({}));
+    const body = await jsonBodyOrEmpty(request);
     const action = typeof body?.action === 'string' ? body.action : 'correct';
 
     let embedInput: {

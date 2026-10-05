@@ -10,6 +10,8 @@ import { canManageOrgSettings, loadHumanRole } from '@/lib/rbac';
 import { upsertOrgMembership } from '@/lib/auth-security';
 import { recordAuditEvent } from '@/lib/audit-events';
 import { installPackForOrg, isLivePackId } from '@/app/api/packs/_lib';
+import { jsonBodyOrEmpty } from '@/lib/safe-json';
+import { publicErrorMessage } from '@/lib/public-error';
 
 /**
  * Install recommended packs via the canonical dashboard installer
@@ -77,7 +79,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ status: 'ERROR', message: 'Forbidden' }, { status: 403 });
     }
 
-    const body = (await request.json().catch(() => ({}))) as {
+    const body = (await jsonBodyOrEmpty(request)) as {
       businessName?: string;
       teamSize?: number;
       businessType?: string;
@@ -197,7 +199,7 @@ export async function POST(request: Request) {
   } catch (err) {
     console.error('Org create error:', err);
     return NextResponse.json(
-      { status: 'ERROR', message: err instanceof Error ? err.message : 'Failed to create organization' },
+      { status: 'ERROR', message: publicErrorMessage(err, 'Failed to create organization') },
       { status: 500 }
     );
   } finally {

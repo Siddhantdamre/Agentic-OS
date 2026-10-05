@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getScopedClient, scopedAuthErrorResponse } from '@/lib/db';
 import crypto from 'crypto';
+import { jsonBodyOrEmpty } from '@/lib/safe-json';
 
 export const dynamic = 'force-dynamic';
 
@@ -194,7 +195,7 @@ export async function PATCH(request: Request) {
     client = scoped.client;
     const { orgId, userId } = scoped;
 
-    const body = await request.json();
+    const body = await jsonBodyOrEmpty(request);
     if (body?.org_id !== undefined || body?.orgId !== undefined) {
       return NextResponse.json({ error: 'org_id is not accepted from the request body' }, { status: 400 });
     }
@@ -243,7 +244,7 @@ export async function DELETE(request: Request) {
     let targetId = searchParams.get('id');
     if (!targetId) {
       try {
-        const body = await request.json();
+        const body = await jsonBodyOrEmpty(request);
         if (body?.org_id !== undefined || body?.orgId !== undefined) {
           return NextResponse.json({ error: 'org_id is not accepted from the request body' }, { status: 400 });
         }

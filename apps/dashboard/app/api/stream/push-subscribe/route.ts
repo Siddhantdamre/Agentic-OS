@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getScopedClient, scopedAuthErrorResponse } from '@/lib/db';
+import { jsonBodyOrEmpty } from '@/lib/safe-json';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -17,7 +18,7 @@ export async function POST(request: Request) {
     client = scoped.client;
     const { orgId, userId } = scoped;
 
-    const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
+    const body = (await jsonBodyOrEmpty(request)) as Record<string, unknown>;
     if (body.orgId != null || body.org_id != null) {
       return NextResponse.json({ error: 'org_id must not be supplied in body' }, { status: 400 });
     }
@@ -87,7 +88,7 @@ export async function DELETE(request: Request) {
     const scoped = await getScopedClient();
     client = scoped.client;
     const { orgId, userId } = scoped;
-    const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
+    const body = (await jsonBodyOrEmpty(request)) as Record<string, unknown>;
     const endpoint = typeof body.endpoint === 'string' ? body.endpoint.trim() : '';
     if (!endpoint) {
       return NextResponse.json({ error: 'endpoint is required' }, { status: 400 });

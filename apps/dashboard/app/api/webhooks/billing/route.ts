@@ -10,6 +10,7 @@ import {
   releaseWebhookClaim,
   type DetectedBillingProvider,
 } from '@/app/api/billing/_lib';
+import { publicErrorMessage } from '@/lib/public-error';
 
 export const dynamic = 'force-dynamic';
 
@@ -69,7 +70,7 @@ export async function POST(request: Request) {
     assertBillingWebhookSignature(provider, rawBody, request.headers);
   } catch (err) {
     if (err instanceof BillingSignatureError) {
-      return NextResponse.json({ error: err.message }, { status: err.status });
+      return NextResponse.json({ error: publicErrorMessage(err) }, { status: err.status });
     }
     return NextResponse.json({ error: 'Unsigned billing webhook rejected' }, { status: 401 });
   }

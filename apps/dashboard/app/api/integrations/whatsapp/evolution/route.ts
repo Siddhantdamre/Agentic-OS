@@ -12,6 +12,8 @@ import { getScopedClient, scopedAuthErrorResponse } from '@/lib/db';
 import { denyUnlessConnectorManager } from '@/lib/connector-rbac';
 import { markWhatsAppQrConnected } from '@/lib/whatsapp-evolution-channel';
 import { disconnectWhatsAppNumber, findWhatsAppChannel, isChannelId, resolveConnectSlot } from '@/lib/whatsapp-numbers';
+import { jsonBodyOrEmpty } from '@/lib/safe-json';
+import { publicErrorMessage } from '@/lib/public-error';
 
 /**
  * QR (WhatsApp Web) connect flow, served by the self-hosted Evolution API.
@@ -57,7 +59,7 @@ export async function POST(request: Request) {
       const hook = webhookConfig();
       if (!evolutionConfigured() || !hook) return notConfigured();
 
-      const body = (await request.json().catch(() => ({}))) as { channelId?: unknown; add?: unknown };
+      const body = (await jsonBodyOrEmpty(request)) as { channelId?: unknown; add?: unknown };
       if (body.channelId != null && !isChannelId(body.channelId)) return BAD_CHANNEL();
       const slot = await resolveConnectSlot(client, orgId, {
         channelId: (body.channelId as string | undefined) ?? null,
@@ -127,7 +129,8 @@ export async function POST(request: Request) {
   } catch (err: unknown) {
     const scoped = scopedAuthErrorResponse(err);
     if (scoped) return scoped;
-    return NextResponse.json({ success: false, message: err instanceof Error ? err.message : String(err) }, { status: 500 });
+    console.error('POST /api/integrations/whatsapp/evolution Error:', err);
+    return NextResponse.json({ success: false, message: publicErrorMessage(err) }, { status: 500 });
   }
 }
 
@@ -176,7 +179,8 @@ export async function GET(request: Request) {
   } catch (err: unknown) {
     const scoped = scopedAuthErrorResponse(err);
     if (scoped) return scoped;
-    return NextResponse.json({ message: err instanceof Error ? err.message : String(err) }, { status: 500 });
+    console.error('GET /api/integrations/whatsapp/evolution Error:', err);
+    return NextResponse.json({ message: publicErrorMessage(err) }, { status: 500 });
   }
 }
 
@@ -201,6 +205,7 @@ export async function DELETE(request: Request) {
   } catch (err: unknown) {
     const scoped = scopedAuthErrorResponse(err);
     if (scoped) return scoped;
-    return NextResponse.json({ success: false, message: err instanceof Error ? err.message : String(err) }, { status: 500 });
+    console.error('DELETE /api/integrations/whatsapp/evolution Error:', err);
+    return NextResponse.json({ success: false, message: publicErrorMessage(err) }, { status: 500 });
   }
 }

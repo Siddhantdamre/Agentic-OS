@@ -16,6 +16,8 @@ import {
   nangoConnectionExists,
   primaryConnectionId,
 } from '@/lib/nango-server';
+import { jsonBodyOrEmpty } from '@/lib/safe-json';
+import { publicErrorMessage } from '@/lib/public-error';
 
 function publicMeta(meta: Record<string, unknown> | null | undefined): Record<string, unknown> {
   const src = meta && typeof meta === 'object' ? meta : {};
@@ -254,7 +256,7 @@ export async function GET() {
     const __scopedAuth = scopedAuthErrorResponse(err);
     if (__scopedAuth) return __scopedAuth;
     console.error('Integrations GET error:', err);
-    return NextResponse.json({ message: err.message, integrations: [], stats: {}, logs: [] }, { status: 500 });
+    return NextResponse.json({ message: publicErrorMessage(err), integrations: [], stats: {}, logs: [] }, { status: 500 });
   }
 }
 
@@ -265,7 +267,7 @@ export async function POST(request: Request) {
     try {
       const forbidden = await denyUnlessConnectorManager(client, userId);
       if (forbidden) return forbidden;
-      const { provider, action, extra } = await request.json();
+      const { provider, action, extra } = await jsonBodyOrEmpty(request);
 
       if (!provider || !action) {
         return NextResponse.json({ message: 'provider and action are required' }, { status: 400 });
@@ -598,6 +600,6 @@ export async function POST(request: Request) {
     const __scopedAuth2 = scopedAuthErrorResponse(err);
     if (__scopedAuth2) return __scopedAuth2;
     console.error('Integration POST error:', err);
-    return NextResponse.json({ message: err.message }, { status: 500 });
+    return NextResponse.json({ message: publicErrorMessage(err) }, { status: 500 });
   }
 }

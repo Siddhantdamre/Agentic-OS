@@ -127,16 +127,16 @@ export async function PATCH(request: Request) {
           : 'reversible';
 
       try {
-        const existing = await client.query<{ id: string }>(
-          `SELECT id FROM employee_autonomy_rules
-           WHERE org_id = $1 AND action_type = $2
-             AND COALESCE(employee_role, '*') = COALESCE($3, '*')
-           LIMIT 1`,
-          [orgId, actionType, employeeRole]
-        );
-
-        if (existing.rows[0]) {
-          await client.query(
+        const findRule = () =>
+          client.query<{ id: string }>(
+            `SELECT id FROM employee_autonomy_rules
+             WHERE org_id = $1 AND action_type = $2
+               AND COALESCE(employee_role, '*') = COALESCE($3, '*')
+             LIMIT 1`,
+            [orgId, actionType, employeeRole]
+          );
+        const updateRule = (id: string) =>
+          client.query(
             `UPDATE employee_autonomy_rules SET
                autonomy_tier = $2,
                reversibility = $3,
@@ -144,16 +144,29 @@ export async function PATCH(request: Request) {
                confidence_threshold = COALESCE($4, confidence_threshold),
                updated_at = NOW()
              WHERE id = $1 AND org_id = $5`,
-            [existing.rows[0].id, autonomyTier, reversibility, minConfidence, orgId]
+            [id, autonomyTier, reversibility, minConfidence, orgId]
           );
+
+        const existing = await findRule();
+        if (existing.rows[0]) {
+          await updateRule(existing.rows[0].id);
         } else {
-          await client.query(
-            `INSERT INTO employee_autonomy_rules (
-               org_id, action_type, employee_role, autonomy_tier, reversibility,
-               requires_human_approval, confidence_threshold, updated_at
-             ) VALUES ($1, $2, $3, $4, $5, $4 < 4, COALESCE($6, 0.85), NOW())`,
-            [orgId, actionType, employeeRole, autonomyTier, reversibility, minConfidence]
-          );
+          try {
+            await client.query(
+              `INSERT INTO employee_autonomy_rules (
+                 org_id, action_type, employee_role, autonomy_tier, reversibility,
+                 requires_human_approval, confidence_threshold, updated_at
+               ) VALUES ($1, $2, $3, $4, $5, $4 < 4, COALESCE($6, 0.85), NOW())`,
+              [orgId, actionType, employeeRole, autonomyTier, reversibility, minConfidence]
+            );
+          } catch (insertErr: unknown) {
+            // Select-then-insert: an identical save running at the same moment inserted the row first
+            // (unique violation). That is not a failure; apply this request's values to that row.
+            if ((insertErr as { code?: string } | null)?.code !== '23505') throw insertErr;
+            const winner = await findRule();
+            if (!winner.rows[0]) throw insertErr;
+            await updateRule(winner.rows[0].id);
+          }
         }
       } catch (err: unknown) {
         if (isMissingTable(err, 'employee_autonomy_rules')) {

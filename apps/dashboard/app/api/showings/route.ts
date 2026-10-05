@@ -12,6 +12,7 @@ import {
   queryGoogleCalendarFreeBusy,
 } from '@darex/connectors';
 import { ensureOrgGoogleCalendarWatch } from '@/lib/gcal-watch';
+import { jsonBodyOrEmpty } from '@/lib/safe-json';
 
 export const dynamic = 'force-dynamic';
 
@@ -77,6 +78,7 @@ export async function GET(request: Request) {
     if (missingTables(message)) {
       return NextResponse.json({ showings: [], invented: false });
     }
+    console.error('GET /api/showings Error:', err);
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
   }
 }
@@ -93,7 +95,7 @@ export async function POST(request: Request) {
     let durationMinutes = 60;
 
     try {
-      const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
+      const body = (await jsonBodyOrEmpty(request)) as Record<string, unknown>;
       const rejected = rejectBodyOrgId(body);
       if (rejected) {
         return NextResponse.json({ error: rejected }, { status: 400 });

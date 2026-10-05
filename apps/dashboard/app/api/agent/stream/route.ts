@@ -6,6 +6,7 @@ import { runAutonomousAgentDirect } from '@darex/workflows/dist/agent-client';
 import { retrieveForEmployee } from '@darex/workflows/dist/memory/employee-retrieve';
 import { startAutonomousAgentWorkflow } from '@darex/workflows/dist/workflow-client';
 import { channelTypesFromRows, mergeRuntimeAllowlist } from '@darex/workflows/dist/tool-executor';
+import { publicErrorMessage } from '@/lib/public-error';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -177,7 +178,7 @@ export async function POST(request: Request) {
 
 `));
           } catch (err: any) {
-            controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'error', error: err.message })}
+            controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'error', error: publicErrorMessage(err) })}
 
 `));
           } finally {
@@ -254,7 +255,7 @@ export async function POST(request: Request) {
         }
 
         if (error) {
-          controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'error', error: error.message })}
+          controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'error', error: publicErrorMessage(error) })}
 
 `));
         } else if (finalResult) {

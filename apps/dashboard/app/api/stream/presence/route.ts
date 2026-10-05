@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getScopedClient, scopedAuthErrorResponse } from '@/lib/db';
 import { realtimeHub } from '@/lib/realtime-hub';
+import { jsonBodyOrEmpty } from '@/lib/safe-json';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -26,7 +27,7 @@ export async function POST(request: Request) {
     client = scoped.client;
     const { orgId, userId } = scoped;
 
-    const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
+    const body = (await jsonBodyOrEmpty(request)) as Record<string, unknown>;
     if (body.orgId != null || body.org_id != null) {
       return NextResponse.json({ error: 'org_id must not be supplied in body' }, { status: 400 });
     }

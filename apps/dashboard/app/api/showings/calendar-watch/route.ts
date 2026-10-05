@@ -75,6 +75,7 @@ export async function GET() {
     if (/gcal_calendar_watches|does not exist|relation/i.test(message)) {
       return NextResponse.json({ watches: [], invented: false });
     }
+    console.error('GET /api/showings/calendar-watch Error:', err);
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
   }
 }

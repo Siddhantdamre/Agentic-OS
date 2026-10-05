@@ -11,6 +11,7 @@ import {
 } from '@darex/workflows/dist/memory/retrieve';
 import { hindsightEnabled, listHindsight, searchHindsight } from '@darex/workflows/dist/memory/hindsight-client';
 import { cogneeEnabled, searchCognee } from '@darex/workflows/dist/memory/cognee-client';
+import { jsonBodyOrEmpty, stripNulChars } from '@/lib/safe-json';
 
 export const dynamic = 'force-dynamic';
 
@@ -422,7 +423,7 @@ async function loadGraph(
 export async function GET(request: Request) {
   try {
     const { searchParams } = new URL(request.url);
-    const query = (searchParams.get('q') || '').trim();
+    const query = stripNulChars(searchParams.get('q') || '').trim();
 
     // Resolve session + role, then release before any LiteLLM embed call.
     const first = await getScopedClient();
@@ -495,7 +496,7 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
-    const body = await request.json().catch(() => ({}));
+    const body = await jsonBodyOrEmpty(request);
     const action = typeof body?.action === 'string' ? body.action : '';
 
     const { client, orgId, userId } = await getScopedClient();

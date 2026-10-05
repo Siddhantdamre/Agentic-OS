@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getScopedClient, scopedAuthErrorResponse } from '@/lib/db';
 import { realtimeHub } from '@/lib/realtime-hub';
 import { decideApproval } from '@/lib/decide-approval';
+import { jsonBodyOrEmpty } from '@/lib/safe-json';
 
 export const dynamic = 'force-dynamic';
 
@@ -70,6 +71,7 @@ export async function GET(request: NextRequest) {
     if (/agent_pending_actions|does not exist|relation/i.test(message)) {
       return NextResponse.json({ orgId: null, decisions: [] });
     }
+    console.error('GET /api/decisions Error:', err);
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
   }
 }
@@ -79,7 +81,7 @@ export async function PATCH(request: NextRequest) {
     const { client, orgId, userId } = await getScopedClient();
     client.release();
 
-    const body = (await request.json().catch(() => ({}))) as {
+    const body = (await jsonBodyOrEmpty(request)) as {
       id?: string;
       status?: string;
       modifiedPayload?: Record<string, unknown>;

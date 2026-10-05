@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getScopedClient, scopedAuthErrorResponse } from '@/lib/db';
+import { jsonBodyOrEmpty } from '@/lib/safe-json';
 
 export const dynamic = 'force-dynamic';
 
@@ -33,7 +34,7 @@ export async function POST(
     if (!UUID_RE.test(rawId)) {
       return NextResponse.json({ error: 'Invalid id' }, { status: 400 });
     }
-    const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
+    const body = (await jsonBodyOrEmpty(request)) as Record<string, unknown>;
     if (body.org_id !== undefined || body.orgId !== undefined) {
       return NextResponse.json({ error: 'org_id is not accepted from the request body' }, { status: 400 });
     }

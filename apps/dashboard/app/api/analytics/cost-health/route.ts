@@ -99,6 +99,7 @@ export async function GET() {
   } catch (error: unknown) {
     const __scopedAuth = scopedAuthErrorResponse(error);
     if (__scopedAuth) return __scopedAuth;
+    console.error('GET /api/analytics/cost-health Error:', error);
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
   } finally {
     scoped?.client.release();

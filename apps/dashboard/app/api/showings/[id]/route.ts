@@ -6,6 +6,7 @@ import {
   intervalOverlapsBusy,
   queryGoogleCalendarFreeBusy,
 } from '@darex/connectors';
+import { jsonBodyOrEmpty } from '@/lib/safe-json';
 
 export const dynamic = 'force-dynamic';
 
@@ -39,7 +40,7 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
     }
     const { client, orgId } = await getScopedClient();
     try {
-      const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
+      const body = (await jsonBodyOrEmpty(request)) as Record<string, unknown>;
       const rejected = rejectBodyOrgId(body);
       if (rejected) {
         return NextResponse.json({ error: rejected }, { status: 400 });
@@ -175,6 +176,7 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
     if (missingTables(message)) {
       return NextResponse.json({ error: '015_packs.sql not applied' }, { status: 503 });
     }
+    console.error('PATCH /api/showings/[id] Error:', err);
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
   }
 }
@@ -189,7 +191,7 @@ export async function DELETE(request: Request, context: { params: Promise<{ id: 
     try {
       let cancellationReason: string | null = null;
       try {
-        const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
+        const body = (await jsonBodyOrEmpty(request)) as Record<string, unknown>;
         const rejected = rejectBodyOrgId(body);
         if (rejected) {
           return NextResponse.json({ error: rejected }, { status: 400 });
@@ -230,6 +232,7 @@ export async function DELETE(request: Request, context: { params: Promise<{ id: 
   } catch (err) {
     const __scopedAuth2 = scopedAuthErrorResponse(err);
     if (__scopedAuth2) return __scopedAuth2;
+    console.error('DELETE /api/showings/[id] Error:', err);
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
   }
 }

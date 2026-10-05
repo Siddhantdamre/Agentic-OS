@@ -40,6 +40,22 @@ export function normalizeEmail(email: string): string {
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
+/** RFC 5321: a mailbox address is at most 254 characters. */
+export const MAX_EMAIL_LENGTH = 254;
+export const MIN_PASSWORD_LENGTH = 8;
+/** Far above any real passphrase; stops a megabyte body being hashed on a public endpoint. */
+export const MAX_PASSWORD_LENGTH = 1024;
+
 export function isValidEmail(email: string): boolean {
-  return EMAIL_RE.test(email.trim());
+  const trimmed = email.trim();
+  // Length first: it bounds the pattern below (quadratic on long dotted input) and keeps oversized
+  // strings away from the identity layer, where they used to surface as HTTP 500.
+  return trimmed.length <= MAX_EMAIL_LENGTH && EMAIL_RE.test(trimmed);
+}
+
+/** A user-facing reason the password is refused, or null when its length is acceptable. */
+export function passwordLengthError(password: string): string | null {
+  if (password.length < MIN_PASSWORD_LENGTH) return `Password must be at least ${MIN_PASSWORD_LENGTH} characters.`;
+  if (password.length > MAX_PASSWORD_LENGTH) return `Password must be at most ${MAX_PASSWORD_LENGTH} characters.`;
+  return null;
 }

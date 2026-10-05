@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { getScopedClient, scopedAuthErrorResponse } from '@/lib/db';
 import { canManageOrgSettings, loadHumanRole } from '@/lib/rbac';
 import { recommendationPayload } from '@/app/(onboarding)/pack-recommendations';
+import { jsonBodyOrEmpty } from '@/lib/safe-json';
 
 export async function GET() {
   try {
@@ -31,6 +32,7 @@ export async function GET() {
   } catch (err) {
     const __scopedAuth = scopedAuthErrorResponse(err);
     if (__scopedAuth) return __scopedAuth;
+    console.error('GET /api/org/onboarding Error:', err);
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
   }
 }
@@ -44,7 +46,7 @@ export async function PATCH(request: Request) {
         return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
       }
 
-      const body = (await request.json().catch(() => ({}))) as {
+      const body = (await jsonBodyOrEmpty(request)) as {
         wizardStep?: string;
         businessName?: string;
         teamSize?: number;
@@ -105,6 +107,7 @@ export async function PATCH(request: Request) {
   } catch (err) {
     const __scopedAuth2 = scopedAuthErrorResponse(err);
     if (__scopedAuth2) return __scopedAuth2;
+    console.error('PATCH /api/org/onboarding Error:', err);
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
   }
 }

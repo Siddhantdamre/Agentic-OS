@@ -15,6 +15,7 @@ import {
   refreshOrgMeters,
   requestHasClientOrgId,
 } from './_lib';
+import { publicErrorMessage } from '@/lib/public-error';
 
 export const dynamic = 'force-dynamic';
 
@@ -128,7 +129,7 @@ export async function GET(request: Request) {
     const __scopedAuth = scopedAuthErrorResponse(error);
     if (__scopedAuth) return __scopedAuth;
     if (error instanceof BillingConfigError) {
-      return NextResponse.json({ error: error.message }, { status: 503 });
+      return NextResponse.json({ error: publicErrorMessage(error) }, { status: 503 });
     }
     console.error('API /api/billing GET Error:', error);
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
