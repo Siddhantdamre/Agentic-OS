@@ -40,6 +40,44 @@ const COGNEE_URL =
     : (process.env.DB_HOST === 'pgbouncer' ? 'http://cognee:8000' : (rawCogneeUrl || 'http://127.0.0.1:8000'));
 const COGNEE_TIMEOUT_MS = parseInt(process.env.COGNEE_TIMEOUT_MS || '3500', 10);
 
+let _cachedDatasets: Set<string> | null = null;
+let _cachedDatasetsAt = 0;
+const DATASET_CACHE_TTL_MS = 30_000;
+
+export async function hasCogneeDataset(orgId: string): Promise<boolean> {
+  const now = Date.now();
+  if (_cachedDatasets && now - _cachedDatasetsAt < DATASET_CACHE_TTL_MS) {
+    return _cachedDatasets.has(`org_${orgId}`);
+  }
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 2000);
+    const res = await fetch(`${COGNEE_URL}/api/v1/datasets`, {
+      method: 'GET',
+      headers: cogneeAuthHeaders(),
+      signal: controller.signal,
+    }).finally(() => clearTimeout(timer));
+
+    if (!res.ok) return true;
+    const list = (await res.json()) as any;
+    if (Array.isArray(list)) {
+      if (list.length === 0) {
+        _cachedDatasets = new Set();
+        _cachedDatasetsAt = now;
+        return false;
+      }
+      if (typeof list[0] === 'object' && list[0] !== null && ('name' in list[0] || 'id' in list[0])) {
+        _cachedDatasets = new Set(list.map((d: any) => d.name).filter(Boolean));
+        _cachedDatasetsAt = now;
+        return _cachedDatasets.has(`org_${orgId}`);
+      }
+    }
+    return true;
+  } catch {
+    return true;
+  }
+}
+
 /**
  * Cognee's server accepts either a user API key (`X-Api-Key`, minted via its
  * /api/v1/auth/api-keys router) or a login JWT (`Authorization: Bearer`).
@@ -145,6 +183,8 @@ export async function searchCognee(params: CogneeSearchParams): Promise<MemoryCi
   const timer = setTimeout(() => controller.abort(), timeoutMs);
 
   const datasetName = `org_${orgId}`;
+  if (!(await hasCogneeDataset(orgId))) return [];
+
   try {
     const res = await fetch(`${COGNEE_URL}/api/v1/search`, {
       method: 'POST',
@@ -242,6 +282,9 @@ export async function rememberCognee(params: CogneeRememberParams): Promise<bool
       signal: controller.signal,
     });
 
+    if (res.ok && _cachedDatasets) {
+      _cachedDatasets.add(datasetName);
+    }
     return res.ok;
   } catch (err: any) {
     console.warn('[cognee] Remember failed:', err?.message);
@@ -279,6 +322,9 @@ async function findCogneeDatasetId(orgId: string): Promise<string | null> {
 export async function deleteCogneeDataset(orgId: string): Promise<void> {
   const id = await findCogneeDatasetId(orgId);
   if (!id) return;
+  if (_cachedDatasets) {
+    _cachedDatasets.delete(`org_${orgId}`);
+  }
   const res = await cogneeCall(`/api/v1/datasets/${encodeURIComponent(id)}`, { method: 'DELETE', headers: cogneeAuthHeaders() }, 60_000);
   if (res.ok || res.status === 404) return;
   const detail = await res.text().catch(() => '');
