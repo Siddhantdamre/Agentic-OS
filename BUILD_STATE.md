@@ -1,5 +1,10 @@
 # Darex Build State
 
+## Email routing only claims inbox triage, not every message with "email" (2026-10-05)
+
+- The routing rule added for email and inbox triage (to Emma / Customer Support) matched the bare words "email" and "gmail" at weight 0.88, so "Email the qualified lead the demo invite" (Sales outreach) and "Draft a reply to this ad-lead email" (Marketing) were taken from their owners and sent to Support; two `employee-capabilities` rows failed in CI. The pattern now needs inbox-triage phrasing (inbox, mailbox, recent/unread/new/latest emails, emails in Gmail, triage/check/fetch my email or inbox). The three triage examples from the original change still route to Emma, and a new test asserts that writing or sending an email does not.
+- Verified: 470 `@darex/workflows` tests and 603 dashboard tests pass with a fresh workflows build (the dashboard test reads the built `dist`, so a stale build hides this). Not verified: live Ask AI routing on real phrasing beyond these examples.
+
 ## Deleting a Cognee dataset keeps its marker until the delete succeeds (2026-10-05)
 
 - A branch change in `deleteCogneeDataset` removed the org's "dataset present" marker before calling Cognee's delete. If the delete then failed, the marker was gone while the dataset still existed, so search skipped that org's data and the next DSR delete could not find it; `memory/cognee-client.test.ts` ("keeps the dataset marked present when the delete fails") caught it and failed the branch's CI unit-test step. The marker is again removed only after the delete returns ok or 404.

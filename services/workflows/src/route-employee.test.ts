@@ -303,3 +303,8 @@ test('email and inbox triage questions go to Emma / Support, not Executive', () 
   assert.equal(routeTo('triage my inbox'), 'Emma');
 });
 
+test('writing or sending an email is not inbox triage', () => {
+  assert.notEqual(routeTo('Email the qualified lead the demo invite'), 'Emma');
+  assert.notEqual(routeTo('Draft a reply to this ad-lead email'), 'Emma');
+});
+

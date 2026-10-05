@@ -120,11 +120,12 @@ const KEYWORD_WEIGHTS: ReadonlyArray<{ key: RosterKey; pattern: RegExp; weight: 
     weight: 0.82,
     prefer: /\bemm?a\b|\bcustomer\s+support\b/,
   },
-  // Emma / Customer — email & inbox triage (fetch emails, unread emails, check mailbox)
+  // Emma / Customer — inbox triage (fetch/check emails, unread emails, mailbox). Not the bare word
+  // "email": drafting or sending an email belongs to Sales / Marketing.
   {
     key: 'support',
     pattern:
-      /\b(emails?|gmail|inbox|mailbox|mail\s+triage|recent\s+mails?|unread\s+mails?|check\s+(my\s+)?(mail|email|inbox)|fetch\s+(my\s+)?(mail|email|inbox))\b/i,
+      /\b(inbox|mailbox|mail\s+triage|(recent|unread|new|latest)\s+(e-?)?mails?|e?mails?\s+in\s+(my\s+)?gmail|gmail\s+(inbox|messages)|triage\s+(my\s+)?(inbox|e?mails?)|(check|fetch)\s+(my\s+)?(recent\s+)?(e-?)?(mails?|inbox))\b/i,
     weight: 0.88,
     prefer: /\bemm?a\b|\bcustomer\b/,
   },
