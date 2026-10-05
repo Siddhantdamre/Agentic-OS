@@ -22,7 +22,7 @@ const HINDSIGHT_TIMEOUT_MS = parseInt(process.env.HINDSIGHT_TIMEOUT_MS || '3500'
 function headers(json = false): Record<string, string> {
   const h: Record<string, string> = {};
   if (json) h['Content-Type'] = 'application/json';
-  const key = process.env.HINDSIGHT_API_KEY?.trim();
+  const key = (process.env.HINDSIGHT_API_KEY || 'darex-hindsight-dev-key').trim();
   if (key) h.Authorization = `Bearer ${key}`;
   return h;
 }

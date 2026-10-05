@@ -13,6 +13,12 @@ export const rules: HandoffRule[] = [
   },
   {
     fromRoleIncludes: ['executive'],
+    patterns: [/\b(email|emails|gmail|inbox|mailbox|unread mail|mail triage)\b/i],
+    toRole: 'Customer Support',
+    reason: 'Email triage, mailbox checking, and customer communications belong to Customer Support (Emma) or Customer.',
+  },
+  {
+    fromRoleIncludes: ['executive'],
     patterns: [/\b(sheet|calendar deadlock|work item|reconcil)\b/i],
     toRole: 'Operations',
     reason: 'Sheets, calendar deadlocks, work items, and reconciliation belong to Operations.',

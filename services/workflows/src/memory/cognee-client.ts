@@ -189,6 +189,8 @@ export async function searchCognee(params: CogneeSearchParams): Promise<MemoryCi
   const timer = setTimeout(() => controller.abort(), timeoutMs);
 
   const datasetName = `org_${orgId}`;
+  if (!(await hasCogneeDataset(orgId))) return [];
+
   try {
     const res = await fetch(`${COGNEE_URL}/api/v1/search`, {
       method: 'POST',
@@ -286,7 +288,9 @@ export async function rememberCognee(params: CogneeRememberParams): Promise<bool
       signal: controller.signal,
     });
 
-    if (res.ok && datasetNames) datasetNames.add(datasetName);
+    if (res.ok && datasetNames) {
+      datasetNames.add(datasetName);
+    }
     return res.ok;
   } catch (err: any) {
     console.warn('[cognee] Remember failed:', err?.message);

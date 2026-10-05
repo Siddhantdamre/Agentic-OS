@@ -6,6 +6,15 @@
 - `@testing-library/react` 14 and `lucide-react` 0.368 declared React 18-only peers. Moved to RTL 16 (adds `@testing-library/dom` 10) and lucide-react 0.562, the version `@openuidev` already installs, so it dedupes. Every icon import still type-checks.
 - New `lib/__tests__/route-params-async.test.ts` calls 11 dynamic handlers with Promise params. A valid id must reach auth and an invalid one must 400 first. Mutation-checked: un-awaiting `params` in one route fails its case.
 - Verified: typecheck (also with no `.next/`), lint, 621 dashboard tests, `next build`, audit gate exit 0. `next dev` serves the auth pages (200) and they hydrate with no browser console errors, dashboard pages redirect (307), and dynamic API routes return 401. Not verified: signed-in pages, because the local Postgres/SuperTokens stack wasn't running.
+## Email routing only claims inbox triage, not every message with "email" (2026-10-05)
+
+- The routing rule added for email and inbox triage (to Emma / Customer Support) matched the bare words "email" and "gmail" at weight 0.88, so "Email the qualified lead the demo invite" (Sales outreach) and "Draft a reply to this ad-lead email" (Marketing) were taken from their owners and sent to Support; two `employee-capabilities` rows failed in CI. The pattern now needs inbox-triage phrasing (inbox, mailbox, recent/unread/new/latest emails, emails in Gmail, triage/check/fetch my email or inbox). The three triage examples from the original change still route to Emma, and a new test asserts that writing or sending an email does not.
+- Verified: 470 `@darex/workflows` tests and 603 dashboard tests pass with a fresh workflows build (the dashboard test reads the built `dist`, so a stale build hides this). Not verified: live Ask AI routing on real phrasing beyond these examples.
+
+## Deleting a Cognee dataset keeps its marker until the delete succeeds (2026-10-05)
+
+- A branch change in `deleteCogneeDataset` removed the org's "dataset present" marker before calling Cognee's delete. If the delete then failed, the marker was gone while the dataset still existed, so search skipped that org's data and the next DSR delete could not find it; `memory/cognee-client.test.ts` ("keeps the dataset marked present when the delete fails") caught it and failed the branch's CI unit-test step. The marker is again removed only after the delete returns ok or 404.
+- Verified: all 468 `@darex/workflows` tests pass after merging main into the branch. Not verified: a delete against a real Cognee instance.
 
 ## A server checkout with commits that are not on origin/main is refused (2026-10-05)
 
