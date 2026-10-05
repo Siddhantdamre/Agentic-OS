@@ -605,7 +605,7 @@ export const INTEGRATION_CATALOG: IntegrationCatalogItem[] = [
       { name: 'MICROSOFT_CLIENT_SECRET', desc: 'Azure AD app client secret (paste into Nango UI)' },
     ],
     webhookEvents: ['message_received'],
-    operatorHint: 'Needs a real Microsoft OAuth client in Nango. Agent tools: outlook_list_messages, outlook_draft_email, outlook_send.',
+    operatorHint: 'Needs a real Microsoft OAuth client in Nango. Agent tools: outlook_list_messages, outlook_read_message, outlook_draft_email, outlook_draft_reply, outlook_send, outlook_reply.',
   },
   {
     id: 'microsoft-calendar',

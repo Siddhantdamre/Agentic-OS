@@ -1,5 +1,14 @@
 # Darex Build State
 
+## Outlook, Slack and WhatsApp read and reply from Ask AI (2026-10-06)
+
+- Chat could send on these channels but not read or answer a conversation. Outlook was list and send only; Slack could post but not see channels or threads; WhatsApp could only send.
+- Outlook: `outlook_list_messages` takes a search `query`, new `outlook_read_message` (full body as text), `outlook_reply` (Graph `reply`/`replyAll`, approval first), `outlook_draft_reply` (`createReply`/`createReplyAll`), `outlook_send` takes bcc and comma-separated `to`. Message ids are validated and URL-encoded before reaching Graph.
+- Slack: new `slack_list_channels`, `slack_read_thread` (`conversations.replies`) and `slack_reply_thread` (posts with `thread_ts`, approval first; needs an explicit channel, never the ops fallback). `slack_read_channel` takes a limit. The thread action is named `send_reply` on purpose: "thread" contains "read", so a name like `reply_in_thread` was classed as a read by the risk check, which a test caught.
+- WhatsApp: new `whatsapp_list_messages` reads stored inbound and outbound messages (`messages.channel_key = 'whatsapp'`, RLS-scoped), optionally for one phone matched on its last 10 digits. Replying stays `whatsapp_send`, which already goes to approval.
+- Inbound HITL treats `outlook_reply` and `slack_reply_thread` as sends.
+- Verified: 485 `@darex/workflows` tests (new `messaging-actions.test.ts`: search URL, id validation, Slack ts, phone key, the risk class of every new action, tool-to-action wiring) and 625 dashboard tests. Not verified: live calls to Graph, Slack or the WhatsApp query against a real database. The Slack token may lack `channels:read` and `groups:history`; Slack then returns a clear `missing_scope` error.
+
 ## Gmail reply-all from Ask AI (2026-10-06)
 
 - `gmail_reply` and `gmail_draft_reply` take `reply_all: true`. The reply goes to the sender (Reply-To, else From) and copies everyone else on the original To/Cc. The connected account's own address (from the Gmail profile) and duplicates are dropped. When you reply-all to your own sent mail, the first person you wrote to becomes the main recipient. An explicit `to`/`cc` from the caller still wins or is added.

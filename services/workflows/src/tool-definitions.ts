@@ -14,10 +14,19 @@ export const TOOLS: ToolDef[] = [
   {
     name: 'whatsapp_send',
     description:
-      'Send a WhatsApp text message to a phone number via the org-connected WhatsApp Business channel.',
+      'Send a WhatsApp text message to a phone number via the org-connected WhatsApp channel. ' +
+      'Also how you reply to a WhatsApp contact. Goes to a human for approval first.',
     schema: { org_id: z.string(), phone: z.string(), message: z.string() },
     tool: 'whatsapp',
     action: 'send_whatsapp_message',
+  },
+  {
+    name: 'whatsapp_list_messages',
+    description:
+      'Read recent WhatsApp messages received and sent on the org channel, newest first. Pass phone to read one contact\'s chat.',
+    schema: { org_id: z.string(), phone: z.string().optional(), limit: z.number().optional() },
+    tool: 'whatsapp',
+    action: 'list_messages',
   },
   {
     name: 'gmail_fetch',
@@ -293,10 +302,34 @@ export const TOOLS: ToolDef[] = [
   },
   {
     name: 'slack_read_channel',
-    description: 'Read recent messages from a Slack channel in the org-connected workspace.',
-    schema: { org_id: z.string(), channel: z.string().optional(), employee_role: z.string().optional() },
+    description:
+      'Read recent messages from a Slack channel in the org-connected workspace. Each message has a ts; ' +
+      'messages with reply_count have a thread you can open with slack_read_thread.',
+    schema: { org_id: z.string(), channel: z.string().optional(), limit: z.number().optional(), employee_role: z.string().optional() },
     tool: 'slack',
     action: 'read_channel',
+  },
+  {
+    name: 'slack_list_channels',
+    description: 'List the Slack channels in the org-connected workspace (id, name, whether the bot is a member).',
+    schema: { org_id: z.string() },
+    tool: 'slack',
+    action: 'list_channels',
+  },
+  {
+    name: 'slack_read_thread',
+    description: 'Read every reply in a Slack thread. Needs the channel and the parent message ts (thread_ts).',
+    schema: { org_id: z.string(), channel: z.string(), thread_ts: z.string() },
+    tool: 'slack',
+    action: 'read_thread',
+  },
+  {
+    name: 'slack_reply_thread',
+    description:
+      'Reply inside a Slack thread. Needs the channel and the parent message ts (thread_ts). Goes to a human for approval first.',
+    schema: { org_id: z.string(), channel: z.string(), thread_ts: z.string(), message: z.string() },
+    tool: 'slack',
+    action: 'send_reply',
   },
   {
     name: 'slack_post_decision_card',
@@ -862,10 +895,50 @@ export const TOOLS: ToolDef[] = [
   },
   {
     name: 'outlook_list_messages',
-    description: 'List recent messages from the org-connected Microsoft Outlook mailbox.',
-    schema: { org_id: z.string(), count: z.number().optional() },
+    description:
+      'List or search recent messages in the org-connected Outlook mailbox. Pass query as search text ' +
+      '(e.g. "from:alice invoice") to find specific emails; omit it for the latest.',
+    schema: { org_id: z.string(), count: z.number().optional(), query: z.string().max(500).optional() },
     tool: 'microsoft-outlook',
     action: 'list_messages',
+  },
+  {
+    name: 'outlook_read_message',
+    description: 'Read one Outlook email in full (body, sender, recipients) by its messageId from outlook_list_messages.',
+    schema: { org_id: z.string(), messageId: z.string() },
+    tool: 'microsoft-outlook',
+    action: 'read_message',
+  },
+  {
+    name: 'outlook_reply',
+    description:
+      'Reply to an Outlook email in its thread. Needs the messageId from outlook_list_messages; reply_all: true ' +
+      'replies to everyone. Goes to a human for approval first.',
+    schema: {
+      org_id: z.string(),
+      messageId: z.string(),
+      body: z.string(),
+      reply_all: z.boolean().optional(),
+      to: z.string().optional(),
+      cc: z.string().optional(),
+    },
+    tool: 'microsoft-outlook',
+    action: 'reply_email',
+  },
+  {
+    name: 'outlook_draft_reply',
+    description:
+      'Save a reply to an Outlook email as a draft in its thread (does NOT send). Needs the messageId; reply_all: true for everyone.',
+    schema: {
+      org_id: z.string(),
+      messageId: z.string(),
+      body: z.string(),
+      reply_all: z.boolean().optional(),
+      to: z.string().optional(),
+      cc: z.string().optional(),
+    },
+    tool: 'microsoft-outlook',
+    action: 'draft_reply',
   },
   {
     name: 'outlook_draft_email',
@@ -889,6 +962,7 @@ export const TOOLS: ToolDef[] = [
       subject: z.string(),
       body: z.string(),
       cc: z.string().optional(),
+      bcc: z.string().optional(),
     },
     tool: 'microsoft-outlook',
     action: 'send_email',
