@@ -1,5 +1,11 @@
 # Darex Build State
 
+## CI dependency audit gates on production deps with pinned overrides (2026-10-05)
+
+- CI's `Dependency audit` step (`pnpm audit --audit-level=high`) failed every push with 88 advisories (2 critical, 38 high); typecheck, build, tests, the RLS suite and the deny-list job were already green. Root `package.json` now has `pnpm.overrides` for axios, fast-uri, @grpc/grpc-js, nanoid, postcss, nodemailer (6 to 10, pulled in by supertokens-node), hono, ip-address, qs and yaml, and the lockfile is regenerated. Production advisories drop from 88 to 25 (9 high, 2 critical).
+- The step is now `node infra/scripts/audit-gate.js`: it audits production deps only and fails on any high/critical advisory not in its allowlist. pnpm 9.0.0 (the pinned `packageManager`) ignores `pnpm.auditConfig.ignoreGhsas`, so the allowlist lives in the script. Accepted for now: the Next 14.2.35 advisories (fix is the Next 15.5.24+ major upgrade of apps/dashboard, not done) and `braces` (no upstream patch). Dev-only advisories (jest, eslint) are no longer gated.
+- Verified: the gate exits 0 locally with pnpm 9.0.0 and the new lockfile. Not verified: a CI run after the push, the dashboard build and tests with the overridden versions, and a real email send through nodemailer 10 from supertokens-node.
+
 ## A guard stops Darex from taking another project's ports (2026-10-05)
 
 - The VM also runs mtip (80/443, 47020-47544), WA-AKG (3030, 3306), TrueForge (8085, 8791) and openclaw (18789). Nothing checked Darex's ports against them: `deploy.sh` ignored every Docker proxy, and `redeploy.sh` had no check, so a clash only showed up as a `compose up` failure after images were built.

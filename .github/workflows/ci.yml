@@ -165,7 +165,7 @@ jobs:
           pnpm --filter @darex/dashboard test
 
       - name: Dependency audit
-        run: pnpm audit --audit-level=high
+        run: node infra/scripts/audit-gate.js
 
   isolation:
     name: Multi-tenant RLS isolation suite
