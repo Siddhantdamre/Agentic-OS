@@ -54,7 +54,10 @@ RUN touch apps/dashboard/.env.local
 # supplies the real password at container start.
 ENV DB_PASSWORD=build-only-not-a-runtime-secret \
     APP_DB_PASSWORD=build-only-not-a-runtime-secret
-RUN pnpm --filter @darex/dashboard build
+# The Next build cache survives rebuilds (a mount is not part of the image), so a code-only
+# change recompiles just what changed instead of the whole app.
+RUN --mount=type=cache,id=next-cache,target=/app/apps/dashboard/.next/cache \
+    pnpm --filter @darex/dashboard build
 
 # Slim the runtime tree: drop the .next build cache and the native binaries this image never
 # loads (musl builds on a glibc/Debian base, and the turbo CLI used only for monorepo builds).

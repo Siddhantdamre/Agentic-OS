@@ -10,6 +10,48 @@ set -a
 . "$ROOT/deploy/ports.conf"
 set +a
 
+# Host ports are shared with other projects on this VM. Run before anything is built or recreated:
+# every port the stack will publish must be inside Darex's range, not reserved for another project,
+# not used twice, and not already held by something other than a darex-* container (ours are about
+# to be replaced, theirs must never be touched). Needs compose, ss and docker; set PORT_GUARD_SKIP_LIVE=1
+# to check only the configuration.
+port_owner() { # prints the container name holding host port $1, "host process", or nothing when free
+  local p="$1" c
+  ss -tlnH "sport = :$p" 2>/dev/null | grep -q . || return 0
+  c="$(docker ps --format '{{.Names}}\t{{.Ports}}' 2>/dev/null | awk -F'\t' -v p=":$p->" 'index($2, p) { print $1; exit }')"
+  printf '%s' "${c:-host process}"
+}
+
+check_port_ownership() {
+  local min="${DAREX_PORT_MIN:-10000}" max="${DAREX_PORT_MAX:-19999}" svc port owner bad=0 seen=" "
+  local pairs
+  pairs="$(compose config --format json | python3 -c 'import sys,json
+for n, s in sorted(json.load(sys.stdin)["services"].items()):
+    for p in s.get("ports", []):
+        print(n, p["published"])')" || die "Could not read the published ports from compose."
+  while read -r svc port; do
+    [ -n "${port:-}" ] || continue
+    if [ "$port" -lt "$min" ] || [ "$port" -gt "$max" ]; then
+      printf 'ERROR: %s publishes host port %s, outside Darex'"'"'s range %s-%s (set it in deploy/ports.conf)\n' "$svc" "$port" "$min" "$max" >&2; bad=1
+    fi
+    case " ${OTHER_PROJECTS_PORTS:-} " in *" $port "*)
+      printf 'ERROR: %s publishes host port %s, which another project on this VM uses (deploy/ports.conf)\n' "$svc" "$port" >&2; bad=1 ;;
+    esac
+    case "$seen" in *" $port "*)
+      printf 'ERROR: host port %s is published by more than one Darex service (%s is the second)\n' "$port" "$svc" >&2; bad=1 ;;
+    esac
+    seen="$seen$port "
+    [ "${PORT_GUARD_SKIP_LIVE:-0}" = "1" ] && continue
+    owner="$(port_owner "$port")"
+    case "$owner" in
+      ""|darex-*) ;;
+      *) printf 'ERROR: %s wants host port %s but %s already holds it. Change it in deploy/ports.conf; nothing was touched.\n' "$svc" "$port" "$owner" >&2; bad=1 ;;
+    esac
+  done <<< "$pairs"
+  [ "$bad" -eq 0 ] || die "Port conflict: fix deploy/ports.conf, then re-run. Running containers were not touched."
+  info "Host ports are all Darex's own: no clash with other projects"
+}
+
 # The prod overlay uses `ports: !override` (Compose >= 2.24.4). Older Compose appends
 # loopback binds to the kernel's all-interface binds, leaving Postgres/Redis public.
 check_compose_version() {

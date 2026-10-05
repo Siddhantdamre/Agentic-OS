@@ -250,6 +250,7 @@ if [ "$DO_PLAN" -eq 0 ]; then
     [ -n "$val" ] || die "$key is missing in .env. Run ./deploy/deploy.sh once: it adds missing secrets and leaves the rest alone."
   done
   check_compose_version
+  check_port_ownership
 fi
 
 # ── work out what to rebuild ─────────────────────────────────────────────────
@@ -338,7 +339,7 @@ fi
 SKIPPED=()
 for s in "${BUILDABLE[@]}"; do in_list "$s" "${ORDERED[@]+"${ORDERED[@]}"}" || SKIPPED+=("$s"); done
 info "unchanged: ${SKIPPED[*]+"${SKIPPED[*]}"}"
-info "frontend : restarted at the end of every run"
+info "frontend : restarted only when its image was rebuilt"
 if [ "$DO_PLAN" -eq 1 ]; then exit 0; fi
 
 # ── build ────────────────────────────────────────────────────────────────────
@@ -346,6 +347,46 @@ if [ "$DO_PLAN" -eq 1 ]; then exit 0; fi
 # reported now, not after the other images have built.
 [ "${#ORDERED[@]}" -eq 0 ] || check_build_inputs "${ORDERED[@]}"
 ensure_trueforge_image
+
+# Rollback safety net. The running containers are not touched until every build has finished, so a
+# failed build changes nothing. Past that point a failed swap, health check or migration restores
+# these tags (see rollback_deploy). Tagging also keeps the old image safe from `docker image prune`.
+ROLLBACK_SVCS=(); ROLLBACK_IMGS=(); ROLLBACK_TAGS=(); ROLLBACK_ARMED=0
+for s in "${ORDERED[@]+"${ORDERED[@]}"}"; do
+  img=""; i=0
+  for b in "${BUILDABLE[@]}"; do [ "$b" = "$s" ] && img="${IMAGES[$i]}"; i=$((i + 1)); done
+  [ -n "$img" ] && docker image inspect "$img" >/dev/null 2>&1 || continue
+  rb="${img%:*}:rollback"
+  if docker tag "$img" "$rb"; then ROLLBACK_SVCS+=("$s"); ROLLBACK_IMGS+=("$img"); ROLLBACK_TAGS+=("$rb"); fi
+done
+
+rollback_deploy() {
+  local rc=$? i
+  trap - EXIT
+  if [ "$rc" -eq 0 ] || [ "$ROLLBACK_ARMED" -ne 1 ] || [ "${#ROLLBACK_SVCS[@]}" -eq 0 ]; then exit "$rc"; fi
+  ROLLBACK_ARMED=0
+  printf '\n==> Deploy failed (exit %s): putting the previous version back (%s)\n' "$rc" "${ROLLBACK_SVCS[*]}" >&2
+  for i in "${!ROLLBACK_SVCS[@]}"; do
+    docker tag "${ROLLBACK_TAGS[$i]}" "${ROLLBACK_IMGS[$i]}" || printf 'WARN: could not restore %s\n' "${ROLLBACK_IMGS[$i]}" >&2
+    # The stamp says "built from the current files"; clear it so the next run rebuilds instead of skipping.
+    rm -f "$(build_stamp "${ROLLBACK_SVCS[$i]}")"
+  done
+  compose up -d --no-build --no-deps --force-recreate "${ROLLBACK_SVCS[@]}" >&2 \
+    || printf 'WARN: could not recreate the previous containers; run: ./deploy/redeploy.sh --all\n' >&2
+  for _ in $(seq 1 40); do
+    curl -sf "http://127.0.0.1:${DASHBOARD_PORT}/api/health" >/dev/null 2>&1 \
+      && curl -sf "http://127.0.0.1:${FRONTEND_HOST_PORT}/api/health" >/dev/null 2>&1 && break
+    sleep 3
+  done
+  if curl -sf "http://127.0.0.1:${FRONTEND_HOST_PORT}/api/health" >/dev/null 2>&1; then
+    printf '==> Previous version is serving again. The new build failed: read the log above.\n' >&2
+  else
+    printf '==> Previous containers restarted but the site is not healthy yet: docker logs darex-dashboard\n' >&2
+  fi
+  exit "$rc"
+}
+trap rollback_deploy EXIT
+
 for s in "${ORDERED[@]+"${ORDERED[@]}"}"; do
   free="$(df -BG --output=avail / 2>/dev/null | tail -n 1 | tr -dc '0-9' || true)"
   if [ -n "$free" ] && [ "$free" -lt 6 ]; then
@@ -368,16 +409,12 @@ align_app_role_password
 mem_total_gb="$(awk '/^MemTotal/ {print int($2/1048576)}' /proc/meminfo 2>/dev/null || true)"
 LITE="${LITE:-$([ "${mem_total_gb:-99}" -lt 12 ] && echo 1 || echo 0)}"
 log "Rolling restart of changed containers — volumes and DB untouched"
+ROLLBACK_ARMED=1
 start_stack
 
-# Always refresh the frontend so it serves the newest build. A rebuilt image was already
-# recreated by `up`; otherwise restart it.
-if in_list frontend "${ORDERED[@]+"${ORDERED[@]}"}"; then
-  info "frontend was rebuilt and recreated"
-else
-  log "Restarting the frontend"
-  compose restart frontend
-fi
+# The frontend image is rebuilt whenever its repo commit or inputs change, and `up` recreates it then.
+# An unchanged image gets no restart: that only added downtime.
+if in_list frontend "${ORDERED[@]+"${ORDERED[@]}"}"; then info "frontend was rebuilt and recreated"; else info "frontend unchanged - left running"; fi
 
 # ── migrations (idempotent — skips already-applied) ──────────────────────────
 log "Applying any new migrations (already-applied ones are skipped)"
@@ -389,6 +426,9 @@ wait_http "frontend (and its /api proxy)" "http://127.0.0.1:${FRONTEND_HOST_PORT
 
 PUBLIC="no"
 if [ -n "${NEXT_PUBLIC_APP_URL:-}" ] && curl -sf --max-time 20 "${NEXT_PUBLIC_APP_URL}/api/health" >/dev/null 2>&1; then PUBLIC="yes"; fi
+
+# Everything is healthy: the new version stays, so the rollback is no longer needed.
+ROLLBACK_ARMED=0
 
 # Save what is now live, only after everything above succeeded.
 if [ "$HAVE_GIT" -eq 1 ]; then

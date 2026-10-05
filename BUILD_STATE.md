@@ -1,5 +1,34 @@
 # Darex Build State
 
+## A guard stops Darex from taking another project's ports (2026-10-05)
+
+- The VM also runs mtip (80/443, 47020-47544), WA-AKG (3030, 3306), TrueForge (8085, 8791) and openclaw (18789). Nothing checked Darex's ports against them: `deploy.sh` ignored every Docker proxy, and `redeploy.sh` had no check, so a clash only showed up as a `compose up` failure after images were built.
+- `check_port_ownership` in `deploy/lib.sh` now runs in both scripts before any build or recreate. It reads the real ports from `compose config` and refuses when one is outside Darex's range (10000-19999, set in `deploy/ports.conf`), in `OTHER_PROJECTS_PORTS` (18789 openclaw), used twice, or already held by anything that is not a `darex-*` container (it names the holder). Our own containers holding a port is fine: they are about to be replaced.
+- SearXNG moved from 8088 to 18088 (`SEARXNG_HOST_PORT`) so every Darex port is in the range; nothing on the host used 8088, services reach it as `searxng:8080`. A server `.env` that still sets `DASHBOARD_PORT=3000` or `EVOLUTION_PORT=8086` now fails the guard instead of silently keeping the old ports.
+- `tests/deploy-port-guard.sh` (10 cases against stubbed compose/ss/docker: clean, own containers, below range, above range, reserved, duplicate, other project's container, host process, substring port, `.env` override) runs in CI. Also run against the real prod compose config: passes, and DASHBOARD_PORT=3000, MCP_BRIDGE_HOST_PORT=18789 and EVOLUTION_PORT=47033 are each refused.
+- Not yet verified: the live holder check on the VM itself (it runs on the next redeploy).
+
+## Cognee search skips orgs that have no dataset yet (2026-10-05)
+
+- Every agent turn paid for a slow Cognee `/search` even for an org that has no Cognee dataset. `hasCogneeDataset(orgId)` now reads `/api/v1/datasets` (2 s timeout) and `searchCognee` returns `[]` without searching when Cognee answered and the org has no `org_<id>` dataset.
+- Safety: any doubt searches anyway (HTTP error, timeout, thrown fetch, a list that is not an array of named datasets). A cached "no" is re-checked after 5 s because another process may have created the dataset; a cached "yes" lasts 30 s. `rememberCognee` marks the dataset present at once; `deleteCogneeDataset` only forgets it after the delete succeeded. The check runs before the search timer starts, so it neither eats the search budget nor leaves a timer behind.
+- Rewritten from the server's first version (its early return leaked the search timer, a failed delete hid live memory for 30 s, and a stale "no" from another process hid new memory). Its Hindsight change, a hardcoded `darex-hindsight-dev-key` fallback in `hindsight-client.ts`, was not taken: compose already provides that variable to the worker and dashboard.
+- Verified: 7 new tests in `cognee-client.test.ts` (empty list, exact-name match, search skipped vs reaching Cognee, error / throw / odd shape all search anyway, 5 s recheck, remember, failed delete). Not yet verified: against a live Cognee.
+
+## Unknown Nango connections no longer show as revoked (2026-10-05)
+
+- A 400 or an "unknown connection" answer from Nango counted as `revoked`, so a connector that was never linked told people to reconnect it. `resolveNangoAuth` now treats only 401, `invalid_grant` and revoked or expired tokens as revoked; unknown connection or provider config is `never-configured`, and a token without the needed scope is `never-configured` instead of "no access token".
+- The live probe passes the connector key and resolves the Google Workspace connectors through the umbrella Google login (`resolveGoogleAuth`).
+- Origin: written on the server by an agent and run there; reviewed, re-authored and landed from the `vm-agent-fixes-2026-10-05` branch. Verified: workflows build, 461 tests including the new probe test. Not yet verified: the Connectors tab against a real Google account after redeploy.
+
+## Redeploy rolls back a failed swap and builds the dashboard faster (2026-10-05)
+
+- `next build` had no build cache, so every code change recompiled the whole dashboard (several minutes on the 2 vCPU VM). The dashboard Dockerfile now mounts a persistent `.next/cache` for the build; the install layer was already cached by lockfile and only reruns when `package.json` or the lockfile change.
+- `redeploy.sh` already built every image before touching a running container, so a failed build left the old version serving. New: before building it tags each image it is about to replace as `<image>:rollback`. If anything after the swap fails (compose up, health checks, migrations) it restores those tags, recreates only those containers with `--no-build --no-deps`, waits for the site to answer, clears the "already built" stamp (otherwise the next run would skip the rebuild and redeploy the old image) and still exits non-zero. Migrations are not reversed; they are additive and idempotent.
+- The frontend is no longer restarted on every run, only when its image was rebuilt; the restart was extra downtime for an unchanged image.
+- Not zero downtime: dashboard and frontend are single containers, so a recreate is a gap of the container start time. True zero downtime needs two replicas behind the proxy (not built).
+- Verified: shell syntax; the rollback function run against stubbed docker/compose/curl (restores tags, recreates, clears the stamp on failure; does nothing when disarmed or on success). Not yet verified: a real failing deploy on the VM.
+
 ## Production host ports live in one file, deploy/ports.conf (2026-10-05)
 
 - Host ports were `${NAME:-default}` repeated across `docker-compose.prod.yml`, `deploy.sh`, `redeploy.sh` and `lib.sh`, so a port change meant editing several files and a missed one probed a dead port (Evolution health check defaulted to 8085 while prod binds 18085).

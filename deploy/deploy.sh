@@ -606,6 +606,7 @@ if [ "$LITE" = "1" ]; then
   log "Lite mode (${mem_total_gb:-?} GB RAM): not starting the Langfuse stack (LITE=0 to include it)"
 fi
 
+check_port_ownership
 check_ports
 
 # A 1-2 vCPU server boots the stack slowly: give every health wait 3x.

@@ -1,6 +1,13 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { deleteCogneeDataset, exportCognee, rememberCognee } from './cognee-client.js';
+import {
+  deleteCogneeDataset,
+  exportCognee,
+  hasCogneeDataset,
+  rememberCognee,
+  resetCogneeDatasetCache,
+  searchCognee,
+} from './cognee-client.js';
 
 type Captured = { url: string; init: RequestInit | undefined };
 
@@ -93,6 +100,111 @@ test('exportCognee returns the dataset records, [] without a dataset, and throws
     await assert.rejects(exportCognee(ORG), /Cognee export failed: HTTP 500/);
     datasets = [];
     assert.deepEqual(await exportCognee(ORG), []);
+  } finally {
+    restore();
+  }
+});
+
+const DS_ORG = '22222222-2222-4222-8222-222222222222';
+const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status });
+
+test('hasCogneeDataset: an empty dataset list means no memory yet, and search skips Cognee', async () => {
+  resetCogneeDatasetCache();
+  const { calls, restore } = stubFetch(() => json([]));
+  try {
+    assert.equal(await hasCogneeDataset(DS_ORG), false);
+    assert.deepEqual(await searchCognee({ orgId: DS_ORG, query: 'who is the owner' }), []);
+    assert.ok(calls.every((c) => !c.url.includes('/api/v1/search')), 'no /search call without a dataset');
+  } finally {
+    restore();
+  }
+});
+
+test('hasCogneeDataset: the org dataset is found by exact name, others do not count', async () => {
+  resetCogneeDatasetCache();
+  const { restore } = stubFetch(() => json([{ id: 'a', name: 'org_someone-else' }, { id: 'b', name: `org_${DS_ORG}` }]));
+  try {
+    assert.equal(await hasCogneeDataset(DS_ORG), true);
+    resetCogneeDatasetCache();
+    assert.equal(await hasCogneeDataset('33333333-3333-4333-8333-333333333333'), false);
+  } finally {
+    restore();
+  }
+});
+
+test('hasCogneeDataset: a present dataset lets the search run', async () => {
+  resetCogneeDatasetCache();
+  const { calls, restore } = stubFetch((url) => (url.includes('/api/v1/datasets') ? json([{ id: 'b', name: `org_${DS_ORG}` }]) : json([])));
+  try {
+    await searchCognee({ orgId: DS_ORG, query: 'who is the owner' });
+    assert.ok(calls.some((c) => c.url.includes('/api/v1/search')), 'search must reach Cognee when the dataset exists');
+  } finally {
+    restore();
+  }
+});
+
+test('hasCogneeDataset: any doubt searches anyway (HTTP error, thrown fetch, odd shape)', async () => {
+  for (const responder of [
+    () => json({ detail: 'boom' }, 500),
+    () => { throw new Error('connect ECONNREFUSED'); },
+    () => json(['org_x']),
+    () => json({ datasets: [] }),
+  ]) {
+    resetCogneeDatasetCache();
+    const { restore } = stubFetch(responder as () => Response);
+    try {
+      assert.equal(await hasCogneeDataset(DS_ORG), true);
+    } finally {
+      restore();
+    }
+  }
+});
+
+test('hasCogneeDataset: a cached "no" is re-checked after a few seconds, a cached "yes" is not refetched', async () => {
+  resetCogneeDatasetCache();
+  let listed: Array<{ name: string }> = [];
+  const { calls, restore } = stubFetch(() => json(listed));
+  const realNow = Date.now;
+  let now = 1_000_000;
+  Date.now = () => now;
+  try {
+    assert.equal(await hasCogneeDataset(DS_ORG), false);
+    assert.equal(await hasCogneeDataset(DS_ORG), false);
+    assert.equal(calls.length, 1, 'a fresh "no" is served from the cache');
+    listed = [{ name: `org_${DS_ORG}` }];
+    now += 6_000;
+    assert.equal(await hasCogneeDataset(DS_ORG), true, 'created by another process: found after the recheck window');
+    assert.equal(calls.length, 2);
+    assert.equal(await hasCogneeDataset(DS_ORG), true);
+    assert.equal(calls.length, 2, 'a cached "yes" is not refetched');
+  } finally {
+    Date.now = realNow;
+    restore();
+  }
+});
+
+test('rememberCognee marks the dataset present so the next search is not skipped', async () => {
+  resetCogneeDatasetCache();
+  const { restore } = stubFetch((url) => (url.includes('/api/v1/datasets') ? json([{ name: 'org_other' }]) : json({}, 200)));
+  try {
+    assert.equal(await hasCogneeDataset(DS_ORG), false);
+    assert.equal(await rememberCognee({ orgId: DS_ORG, text: 'The owner is Priya' }), true);
+    assert.equal(await hasCogneeDataset(DS_ORG), true);
+  } finally {
+    restore();
+  }
+});
+
+test('deleteCogneeDataset keeps the dataset marked present when the delete fails', async () => {
+  resetCogneeDatasetCache();
+  const { restore } = stubFetch((url, init) => {
+    if (init?.method === 'DELETE') return json({ detail: 'nope' }, 500);
+    return json([{ id: 'd1', name: `org_${DS_ORG}` }]);
+  });
+  try {
+    assert.equal(await hasCogneeDataset(DS_ORG), true);
+    await assert.rejects(() => deleteCogneeDataset(DS_ORG));
+    assert.equal(await hasCogneeDataset(DS_ORG), true, 'a failed delete must not hide the memory');
   } finally {
     restore();
   }

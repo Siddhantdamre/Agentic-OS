@@ -40,44 +40,6 @@ const COGNEE_URL =
     : (process.env.DB_HOST === 'pgbouncer' ? 'http://cognee:8000' : (rawCogneeUrl || 'http://127.0.0.1:8000'));
 const COGNEE_TIMEOUT_MS = parseInt(process.env.COGNEE_TIMEOUT_MS || '3500', 10);
 
-let _cachedDatasets: Set<string> | null = null;
-let _cachedDatasetsAt = 0;
-const DATASET_CACHE_TTL_MS = 30_000;
-
-export async function hasCogneeDataset(orgId: string): Promise<boolean> {
-  const now = Date.now();
-  if (_cachedDatasets && now - _cachedDatasetsAt < DATASET_CACHE_TTL_MS) {
-    return _cachedDatasets.has(`org_${orgId}`);
-  }
-  try {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 2000);
-    const res = await fetch(`${COGNEE_URL}/api/v1/datasets`, {
-      method: 'GET',
-      headers: cogneeAuthHeaders(),
-      signal: controller.signal,
-    }).finally(() => clearTimeout(timer));
-
-    if (!res.ok) return true;
-    const list = (await res.json()) as any;
-    if (Array.isArray(list)) {
-      if (list.length === 0) {
-        _cachedDatasets = new Set();
-        _cachedDatasetsAt = now;
-        return false;
-      }
-      if (typeof list[0] === 'object' && list[0] !== null && ('name' in list[0] || 'id' in list[0])) {
-        _cachedDatasets = new Set(list.map((d: any) => d.name).filter(Boolean));
-        _cachedDatasetsAt = now;
-        return _cachedDatasets.has(`org_${orgId}`);
-      }
-    }
-    return true;
-  } catch {
-    return true;
-  }
-}
-
 /**
  * Cognee's server accepts either a user API key (`X-Api-Key`, minted via its
  * /api/v1/auth/api-keys router) or a login JWT (`Authorization: Bearer`).
@@ -170,6 +132,46 @@ function parseGraphSnippets(rawText: string): string[] {
   return snippets;
 }
 
+// Which org datasets Cognee holds, so a search for an org with no memory yet skips the slow
+// /search call. A cached "no" is re-checked after DATASET_MISS_RECHECK_MS: another process (the
+// dashboard or a second worker) may have created the dataset since, and a stale "no" would hide
+// real memory from the agent.
+const DATASET_CACHE_TTL_MS = 30_000;
+const DATASET_MISS_RECHECK_MS = 5_000;
+const DATASET_LOOKUP_TIMEOUT_MS = 2_000;
+let datasetNames: Set<string> | null = null;
+let datasetNamesAt = 0;
+
+/** Test hook: forget the cached dataset list. */
+export function resetCogneeDatasetCache(): void {
+  datasetNames = null;
+  datasetNamesAt = 0;
+}
+
+/** False only when Cognee answered the list and the org has no dataset. Any doubt says true, so a search still runs. */
+export async function hasCogneeDataset(orgId: string): Promise<boolean> {
+  const name = `org_${orgId}`;
+  const age = Date.now() - datasetNamesAt;
+  if (datasetNames && age < DATASET_CACHE_TTL_MS) {
+    if (datasetNames.has(name)) return true;
+    if (age < DATASET_MISS_RECHECK_MS) return false;
+  }
+  try {
+    const res = await cogneeCall('/api/v1/datasets', { method: 'GET', headers: cogneeAuthHeaders() }, DATASET_LOOKUP_TIMEOUT_MS);
+    if (!res.ok) return true;
+    const list = (await res.json()) as unknown;
+    if (!Array.isArray(list)) return true;
+    // Names only: an entry we cannot read means the response shape changed, so do not trust "missing".
+    if (list.some((d) => typeof d !== 'object' || d === null || typeof (d as { name?: unknown }).name !== 'string')) return true;
+    datasetNames = new Set(list.map((d) => (d as { name: string }).name));
+    datasetNamesAt = Date.now();
+    return datasetNames.has(name);
+  } catch (err: any) {
+    console.warn('[cognee] dataset lookup failed, searching anyway:', err?.message);
+    return true;
+  }
+}
+
 /**
  * Searches the Cognee Knowledge Graph for an organization dataset.
  * Returns citations with multi-hop relational context.
@@ -177,6 +179,10 @@ function parseGraphSnippets(rawText: string): string[] {
 export async function searchCognee(params: CogneeSearchParams): Promise<MemoryCitation[]> {
   const { orgId, query } = params;
   if (!orgId || !query || !query.trim()) return [];
+
+  // Before the search timer starts: the lookup must not eat the search's time budget, and an
+  // early return must not leave that timer running.
+  if (!(await hasCogneeDataset(orgId))) return [];
 
   const timeoutMs = params.timeoutMs ?? COGNEE_TIMEOUT_MS;
   const controller = new AbortController();
@@ -282,8 +288,8 @@ export async function rememberCognee(params: CogneeRememberParams): Promise<bool
       signal: controller.signal,
     });
 
-    if (res.ok && _cachedDatasets) {
-      _cachedDatasets.add(datasetName);
+    if (res.ok && datasetNames) {
+      datasetNames.add(datasetName);
     }
     return res.ok;
   } catch (err: any) {
@@ -322,8 +328,8 @@ async function findCogneeDatasetId(orgId: string): Promise<string | null> {
 export async function deleteCogneeDataset(orgId: string): Promise<void> {
   const id = await findCogneeDatasetId(orgId);
   if (!id) return;
-  if (_cachedDatasets) {
-    _cachedDatasets.delete(`org_${orgId}`);
+  if (datasetNames) {
+    datasetNames.delete(`org_${orgId}`);
   }
   const res = await cogneeCall(`/api/v1/datasets/${encodeURIComponent(id)}`, { method: 'DELETE', headers: cogneeAuthHeaders() }, 60_000);
   if (res.ok || res.status === 404) return;
