@@ -56,7 +56,7 @@ Idle floor with all containers stopped and those services off: about 750 MB RAM.
 - Public URL comes from `NEXT_PUBLIC_APP_URL` in the server `.env`
   (`darex.135-235-136-6.sslip.io`, which has the IP in its name).
 - HTTPS: `mtip-caddy` holds 80 and 443, so `deploy.sh` does not install Caddy. A
-  route from the Darex host to `127.0.0.1:3100` must exist in that Caddy's config
+  route from the Darex host to `127.0.0.1:13100` must exist in that Caddy's config
   (to check: it is not set up yet).
 - Backups taken before the 2026-10-01 wipe: `~/darex-db-backup.sql.gz` (Postgres
   dump) and `~/darex-repo-backup.bundle` (all branches; `feat/close-109-plan-gaps`

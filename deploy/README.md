@@ -98,13 +98,13 @@ Compose file order (later wins):
    Uncomment the ingest site in `Caddyfile.example` only when a dedicated
    ingest process exists.
 
-6. In Nango (SSH tunnel to `:3003`) paste real OAuth client IDs. Rotate the
+6. In Nango (SSH tunnel to `:13003`) paste real OAuth client IDs. Rotate the
    Meta token. Set `JINA_API_KEY` if you want web search.
 
 ## The frontend (NEW-FRONTEND)
 
 The site users open is `NEW-FRONTEND` (its own repo, `agentic-os-frontend`), served by the
-`frontend` container on `127.0.0.1:3100`. It proxies `/api/*` to the dashboard, so point
+`frontend` container on `127.0.0.1:13100`. It proxies `/api/*` to the dashboard, so point
 Caddy/nginx at **3100**, not 3000. `NEXT_PUBLIC_APP_URL` stays your public https URL, and
 Google/Nango redirect URIs are `https://<your-domain>/api/auth/oauth/callback/<provider>`.
 

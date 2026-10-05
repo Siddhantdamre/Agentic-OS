@@ -21,7 +21,7 @@
 #                                   on the first run that asks questions, or if sudo needs a password)
 #   FORCE_BUILD=1 ./deploy/deploy.sh         rebuild the images even when the commits are unchanged (a rerun at the
 #                                            same commits otherwise skips builds that are already done)
-#   FREE_PORTS=1 ./deploy/deploy.sh          kill host processes holding 3000/3100/5432/8085 (not for systemd
+#   FREE_PORTS=1 ./deploy/deploy.sh          kill host processes holding 13000/13100/15432/18085 (not for systemd
 #                                            services: they restart; disable those with systemctl)
 #   DEPLOY_BRANCH=other ./deploy/deploy.sh   deploy a different backend branch
 #   FRONTEND_BRANCH=other ./deploy/deploy.sh deploy a different frontend branch
@@ -29,7 +29,7 @@
 # The user-facing app is NEW-FRONTEND (its own git repo). Every run pulls its
 # latest FRONTEND_BRANCH (default feat/new-frontend) and rebuilds the frontend
 # image, so the site always matches the newest frontend commit. It listens on
-# 127.0.0.1:${FRONTEND_HOST_PORT:-13100} and proxies /api/* to the dashboard (3000).
+# 127.0.0.1:${FRONTEND_HOST_PORT:-13100} and proxies /api/* to the dashboard (13000).
 #
 # Usage (from a laptop):
 #   DEPLOY_HOST=ubuntu@203.0.113.10 DEPLOY_PATH=/opt/darex ./deploy/deploy.sh
@@ -37,7 +37,7 @@
 # Requires: Docker, Node, pnpm, git (on server)
 # Env file: Copy deploy/env.production.example to .env and fill all secrets
 # Security: DB_USER=darex_app, ALLOW_DEMO_AUTH=false, HTTPS only
-# Proxy: Caddy/nginx in front of loopback :3100 (the frontend; it proxies /api to :3000)
+# Proxy: Caddy/nginx in front of loopback :13100 (the frontend; it proxies /api to :13000)
 
 set -euo pipefail
 set -E
@@ -251,7 +251,7 @@ bootstrap_env() {
   info "✓ .env written (chmod 600). Back it up: CHANNEL_SECRETS_KEY seals stored WhatsApp tokens."
 }
 
-# HTTPS: install Caddy if missing and route the domain to the frontend (3100).
+# HTTPS: install Caddy if missing and route the domain to the frontend (13100).
 setup_proxy() {
   [ "$DO_PROXY" -eq 1 ] || { info "Skipping Caddy (--no-proxy)"; return 0; }
   local host="${NEXT_PUBLIC_APP_URL#https://}"; host="${host%%/*}"
@@ -392,7 +392,7 @@ validate_deployment() {
 
   # Check 4: Evolution API (WhatsApp QR link). Warn only: the official API path works without it.
   checks_total=$((checks_total + 1))
-  if curl -sf -H "apikey: ${EVOLUTION_API_KEY:-}" "http://127.0.0.1:${EVOLUTION_PORT:-8085}/instance/fetchInstances" >/dev/null 2>&1; then
+  if curl -sf -H "apikey: ${EVOLUTION_API_KEY:-}" "http://127.0.0.1:${EVOLUTION_PORT:-18085}/instance/fetchInstances" >/dev/null 2>&1; then
     info "✓ Evolution API responding (WhatsApp QR link)"
     checks_passed=$((checks_passed + 1))
   else
