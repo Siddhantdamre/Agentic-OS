@@ -74,6 +74,7 @@ async function obtainSessionCookie() {
   let res = await makeRequest('http://localhost:3000/api/auth/register', 'POST', {
     email: testEmail,
     password: testPassword,
+    agreedTerms: true,
   });
 
   if (res.statusCode !== 200 || res.body?.status !== 'OK') {
@@ -94,6 +95,13 @@ async function obtainSessionCookie() {
 async function testDirectLibraryExecution() {
   console.log('\n--- 1. Testing Direct runAgentTurn via TrueForge Harness ---');
   const { runAgentTurn } = require('../../services/workflows/dist/agent-client');
+  const { dbPool } = require('../../services/workflows/dist/tools/shared');
+
+  let testOrgId = 'a73d724a-0a0b-4e0e-8c2a-48239809c3e9';
+  try {
+    const orgRes = await dbPool.query('SELECT id FROM orgs LIMIT 1');
+    if (orgRes.rows[0]?.id) testOrgId = orgRes.rows[0].id;
+  } catch {}
 
   let chunksReceived = 0;
   let fullReply = '';
@@ -101,7 +109,7 @@ async function testDirectLibraryExecution() {
 
   const turnResult = await runAgentTurn(
     {
-      orgId: '00000000-0000-0000-0000-000000000001',
+      orgId: testOrgId,
       userMessage: 'What tools are available to you in DareX? Give a 2-sentence summary.',
       employeeName: 'DareX Executive Assistant',
       employeeRole: 'Executive AI',
