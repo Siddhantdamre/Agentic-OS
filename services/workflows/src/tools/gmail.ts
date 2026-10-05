@@ -8,8 +8,11 @@ const ACTIONS = [
   'triage_emails',
   'extract_otp',
   'extract_attachment',
+  'read_email',
   'draft_email',
+  'draft_reply',
   'send_email',
+  'reply_email',
 ] as const;
 
 function riskFor(action: string): ToolRisk {
@@ -138,11 +141,18 @@ async function fetchGmailMessageFull(accessToken: string, msgId: string): Promis
     const from = headers.find((h: any) => h.name === 'From')?.value || 'Unknown Sender';
     const subject = headers.find((h: any) => h.name === 'Subject')?.value || '(No Subject)';
     const date = headers.find((h: any) => h.name === 'Date')?.value || '';
+    const header = (name: string) =>
+      headers.find((h: any) => String(h.name).toLowerCase() === name.toLowerCase())?.value || '';
 
     return {
       id: msgData.id,
       threadId: msgData.threadId,
       from,
+      to: header('To'),
+      cc: header('Cc'),
+      replyTo: header('Reply-To'),
+      messageIdHeader: header('Message-ID'),
+      references: header('References'),
       subject,
       date,
       snippet: msgData.snippet || '',
@@ -303,6 +313,68 @@ export function extractSignatureFields(bodyText: string): { phone?: string; titl
   return { phone, title };
 }
 
+/** Header values come from the model; a CR/LF would let it inject headers. */
+function headerValue(v: unknown): string {
+  return typeof v === 'string' ? v.replace(/[\r\n]+/g, ' ').trim() : '';
+}
+
+/** RFC 2047 encode a non-ASCII subject so Gmail shows it intact. */
+function encodeSubject(subject: string): string {
+  return /^[\x20-\x7e]*$/.test(subject)
+    ? subject
+    : `=?UTF-8?B?${Buffer.from(subject, 'utf8').toString('base64')}?=`;
+}
+
+export interface RawEmailInput {
+  to: string;
+  subject: string;
+  body: string;
+  cc?: unknown;
+  bcc?: unknown;
+  inReplyTo?: string;
+  references?: string;
+}
+
+/** base64url RFC 2822 message for Gmail `messages.send` / `drafts.create`. */
+export function buildRawEmail(input: RawEmailInput): string {
+  const cc = headerValue(input.cc);
+  const bcc = headerValue(input.bcc);
+  const inReplyTo = headerValue(input.inReplyTo);
+  const references = headerValue(input.references);
+  const raw = [
+    `To: ${headerValue(input.to)}`,
+    ...(cc ? [`Cc: ${cc}`] : []),
+    ...(bcc ? [`Bcc: ${bcc}`] : []),
+    `Subject: ${encodeSubject(headerValue(input.subject))}`,
+    ...(inReplyTo ? [`In-Reply-To: ${inReplyTo}`] : []),
+    ...(references ? [`References: ${references}`] : []),
+    'MIME-Version: 1.0',
+    'Content-Type: text/plain; charset=utf-8',
+    'Content-Transfer-Encoding: base64',
+    '',
+    Buffer.from(input.body || '', 'utf8').toString('base64'),
+  ].join('\r\n');
+  return Buffer.from(raw).toString('base64url');
+}
+
+/** "Re: " once, never "Re: Re: ". */
+export function replySubject(subject: string): string {
+  const s = (subject || '').trim();
+  return /^re:/i.test(s) ? s : `Re: ${s || '(No Subject)'}`;
+}
+
+function messageIdFrom(payload: Record<string, any>): string {
+  const v = payload.messageId ?? payload.message_id ?? payload.id;
+  return typeof v === 'string' ? v.trim() : '';
+}
+
+/** Gmail ids are hex; anything else never reaches the URL path. */
+function isGmailId(id: string): boolean {
+  return /^[A-Za-z0-9_-]{6,64}$/.test(id);
+}
+
+const READ_BODY_MAX_CHARS = 20000;
+
 void fetchRealGmailMessages;
 
 async function execute(ctx: ToolActionContext) {
@@ -311,6 +383,96 @@ async function execute(ctx: ToolActionContext) {
   const gmailToken: string | null = _gmailAuth.kind === 'connected' ? _gmailAuth.accessToken : null;
   const _gmailAuthErr = _gmailAuth.kind === 'connected' ? null : nangoAuthError('gmail', actionName, timestamp, _gmailAuth);
   const accessToken = gmailToken;
+
+  if (actionName === 'read_email') {
+    const id = messageIdFrom(payload);
+    if (!isGmailId(id)) {
+      return { tool: 'gmail', action: 'read_email', status: 'error' as const, message: 'A Gmail messageId is required. Find it with gmail_fetch first.', data: null, timestamp };
+    }
+    if (!accessToken) return _gmailAuthErr ?? notConnected('gmail', 'read_email', timestamp);
+    try {
+      const msg = await fetchGmailMessageFull(accessToken, id);
+      if (!msg) return apiError('gmail', 'read_email', timestamp, `No email found with id ${id}.`, { reason: 'not_found' });
+      const body = String(msg.body || '');
+      return {
+        tool: 'gmail',
+        action: 'read_email',
+        status: 'executed' as const,
+        message: `Read "${msg.subject}" from ${msg.from}`,
+        data: {
+          ...msg,
+          body: body.slice(0, READ_BODY_MAX_CHARS),
+          bodyTruncated: body.length > READ_BODY_MAX_CHARS,
+        },
+        timestamp,
+      };
+    } catch (err) {
+      if (err instanceof GmailHttpError) return gmailHttpFailure('read_email', timestamp, err.status);
+      return apiError('gmail', 'read_email', timestamp, 'Gmail request failed.', { reason: 'api_error' });
+    }
+  }
+
+  if (actionName === 'reply_email' || actionName === 'draft_reply') {
+    const isDraft = actionName === 'draft_reply';
+    const id = messageIdFrom(payload);
+    const bodyText = String(payload.body || payload.content || '');
+    if (!isGmailId(id)) {
+      return { tool: 'gmail', action: actionName, status: 'error' as const, message: 'The messageId of the email being replied to is required. Find it with gmail_fetch first.', data: null, timestamp };
+    }
+    if (!bodyText.trim()) {
+      return { tool: 'gmail', action: actionName, status: 'error' as const, message: 'Reply body is required.', data: null, timestamp };
+    }
+    if (!accessToken) return _gmailAuthErr ?? notConnected('gmail', actionName, timestamp);
+    try {
+      const original = await fetchGmailMessageFull(accessToken, id);
+      if (!original) return apiError('gmail', actionName, timestamp, `No email found with id ${id}.`, { reason: 'not_found' });
+      const to = headerValue(payload.to) || original.replyTo || original.from;
+      const subject = replySubject(original.subject);
+      const references = [original.references, original.messageIdHeader].filter(Boolean).join(' ');
+      const raw = buildRawEmail({
+        to,
+        subject,
+        body: bodyText,
+        cc: payload.cc,
+        bcc: payload.bcc,
+        inReplyTo: original.messageIdHeader,
+        references,
+      });
+      const message = { raw, threadId: original.threadId };
+      const res = await fetchWithTimeout(
+        `https://gmail.googleapis.com/gmail/v1/users/me/${isDraft ? 'drafts' : 'messages/send'}`,
+        {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify(isDraft ? { message } : message),
+        },
+      );
+      if (!res.ok) {
+        if (res.status === 401 || res.status === 403) return gmailHttpFailure(actionName, timestamp, res.status);
+        return apiError('gmail', actionName, timestamp, `Gmail ${isDraft ? 'draft' : 'reply'} failed (HTTP ${res.status}).`, { reason: 'api_error', status: res.status });
+      }
+      const out = await res.json();
+      return {
+        tool: 'gmail',
+        action: actionName,
+        status: 'executed' as const,
+        message: isDraft
+          ? `Reply draft saved in the "${original.subject}" thread for ${to} — nothing has been sent yet`
+          : `Replied to ${to} in the "${original.subject}" thread`,
+        data: {
+          ...(isDraft ? { draftId: out.id, messageId: out.message?.id } : { messageId: out.id }),
+          threadId: original.threadId,
+          inReplyTo: id,
+          recipient: to,
+          subject,
+        },
+        timestamp,
+      };
+    } catch (err) {
+      if (err instanceof GmailHttpError) return gmailHttpFailure(actionName, timestamp, err.status);
+      return apiError('gmail', actionName, timestamp, `Gmail ${isDraft ? 'draft' : 'reply'} failed.`, { reason: 'api_error' });
+    }
+  }
 
   if (actionName.includes('fetch') || actionName.includes('read') || actionName.includes('list')) {
     const count = payload.count || 10;
@@ -506,21 +668,7 @@ async function execute(ctx: ToolActionContext) {
     if (!accessToken) return _gmailAuthErr ?? notConnected('gmail', 'draft_email', timestamp);
 
     try {
-      const rawEmail = [
-        `To: ${toEmail}`,
-        `Subject: ${subject}`,
-        ...(payload.cc ? [`Cc: ${payload.cc}`] : []),
-        ...(payload.bcc ? [`Bcc: ${payload.bcc}`] : []),
-        'Content-Type: text/plain; charset=utf-8',
-        '',
-        bodyText,
-      ].join('\r\n');
-
-      const base64EncodedEmail = Buffer.from(rawEmail)
-        .toString('base64')
-        .replace(/\+/g, '-')
-        .replace(/\//g, '_')
-        .replace(/=+$/, '');
+      const base64EncodedEmail = buildRawEmail({ to: toEmail, subject, body: bodyText, cc: payload.cc, bcc: payload.bcc });
 
       const draftRes = await fetchWithTimeout('https://gmail.googleapis.com/gmail/v1/users/me/drafts', {
         method: 'POST',
@@ -590,19 +738,7 @@ async function execute(ctx: ToolActionContext) {
 
   if (accessToken) {
     try {
-      const rawEmail = [
-        `To: ${toEmail}`,
-        `Subject: ${subject}`,
-        'Content-Type: text/plain; charset=utf-8',
-        '',
-        bodyText,
-      ].join('\r\n');
-
-      const base64EncodedEmail = Buffer.from(rawEmail)
-        .toString('base64')
-        .replace(/\+/g, '-')
-        .replace(/\//g, '_')
-        .replace(/=+$/, '');
+      const base64EncodedEmail = buildRawEmail({ to: toEmail, subject, body: bodyText, cc: payload.cc, bcc: payload.bcc });
 
       const sendRes = await fetchWithTimeout('https://gmail.googleapis.com/gmail/v1/users/me/messages/send', {
         method: 'POST',

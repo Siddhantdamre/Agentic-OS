@@ -1,5 +1,11 @@
 # Darex Build State
 
+## Gmail read, reply and reply-draft from Ask AI (2026-10-05)
+
+- Gmail gains `read_email` (one message in full by id), `reply_email` (sent in the original thread with `In-Reply-To`/`References`, `Re:` subject, to the Reply-To/From unless `to` is given; send-risk, approval first) and `draft_reply` (same, saved as a draft). Chat tools: `gmail_read_email`, `gmail_reply`, `gmail_draft_reply`; `gmail_send` takes cc/bcc. Before this, chat could only start new emails, so "reply to that email" produced an unthreaded message or a refusal.
+- All outgoing mail goes through `buildRawEmail`, which strips CR/LF from model-supplied headers (no header injection), RFC 2047-encodes non-ASCII subjects and base64-encodes the body. Message ids are validated before reaching a Gmail URL. Inbound HITL treats `gmail_reply` as a send.
+- Verified: 476 `@darex/workflows` and 625 dashboard tests, including new Gmail cases (header injection, unicode subject, threading headers, `Re:` once, action risks). Not verified: a live read, reply or draft against a real Gmail account, because no local stack was running.
+
 ## Below the skill tier minimum a call asks for approval instead of failing (2026-10-05)
 
 - "Send an email" from chat failed with `Action blocked: autonomy tier 1 is below skill minimum 2 for "gmail"`. The skill-tier check in `tool-gate.ts` refused every non-read call, including drafts, and also ran on the approval executor's re-entry, so even a human-approved send could never execute. Below the skill minimum a call now parks for approval (reason `skill_tier`; sends already park as `confirm_class`), drafts are not tier-checked (they reach nobody), and an approved re-entry skips the check.

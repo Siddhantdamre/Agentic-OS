@@ -63,6 +63,7 @@ function parseSteps(raw: unknown[] | undefined): Array<{
 
 function isSendRisk(blob: string): boolean {
   if (/\bgmail-send\b/.test(blob) || /\bsend-email\b/.test(blob)) return true;
+  if (/\bgmail-reply\b/.test(blob) || /\breply-email\b/.test(blob)) return true;
   if (/\b(microsoft-outlook|outlook).{0,40}send\b/.test(blob)) return true;
   if (/\bslack-send\b/.test(blob) || /\bsend-slack\b/.test(blob)) return true;
   if (/\bintercom-send\b/.test(blob) || /\bsend-intercom\b/.test(blob)) return true;
