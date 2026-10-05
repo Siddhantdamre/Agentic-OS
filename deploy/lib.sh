@@ -10,6 +10,75 @@ set -a
 . "$ROOT/deploy/ports.conf"
 set +a
 
+# The server must deploy exactly what is on origin/<branch> (what CI tested). `git merge --ff-only`
+# says "up to date" when the checkout is AHEAD of origin (commits made on the box, a merge from a
+# `git pull`, edits an agent committed there), so those were built and shipped untested; one such
+# merge kept both sides of a conflict and the image build failed on a duplicate function.
+# ALLOW_LOCAL_COMMITS=1 overrides, for a deliberate hotfix on the server.
+require_in_sync() { # repo-root branch
+  local root="$1" branch="$2" extra
+  extra="$(git -C "$root" log --oneline --max-count=5 "origin/$branch..HEAD" 2>/dev/null || true)"
+  [ -z "$extra" ] && return 0
+  [ "${ALLOW_LOCAL_COMMITS:-0}" = "1" ] && { warn "Deploying commits that are not on origin/$branch (ALLOW_LOCAL_COMMITS=1)"; return 0; }
+  die "This checkout has commits that are not on origin/$branch, so the server would run code CI never saw:
+$extra
+Push them from a clean machine so CI tests them, or discard them here: git branch backup-\$(date +%F) && git reset --hard origin/$branch
+(set ALLOW_LOCAL_COMMITS=1 to deploy them anyway)"
+}
+
+# Pre-built images. CI (.github/workflows/images.yml) builds these services on GitHub's runners and
+# pushes ghcr.io/<owner>/darex-<service>:<commit sha>. For a commit that is on origin/main the VM
+# pulls that image and tags it as the local name instead of compiling (next build took 13+ minutes
+# on this shared 2 vCPU box). Anything that goes wrong falls back to the local build, so this can
+# only save time. Needs a one-time `docker login ghcr.io` with a token that has read:packages.
+#   DEPLOY_PREBUILT=0          never pull, always build locally
+#   DEPLOY_REGISTRY=ghcr.io/x  override the registry path (default: derived from the git origin)
+#   DEPLOY_WAIT_IMAGES_MIN=12  how long to wait for CI to finish a commit's image
+PREBUILT_SERVICES="dashboard worker inbox sandbox"
+
+registry_prefix() {
+  [ -z "${DEPLOY_REGISTRY:-}" ] || { printf '%s' "$DEPLOY_REGISTRY"; return 0; }
+  local owner
+  owner="$(git -C "$ROOT" remote get-url origin 2>/dev/null | sed -nE 's#.*github\.com[:/]([^/]+)/.*#\1#p' | tr 'A-Z' 'a-z')"
+  [ -z "$owner" ] || printf 'ghcr.io/%s' "$owner"
+}
+
+# The commit CI built an image for: only HEAD when it is exactly origin/main. Empty otherwise
+# (local commits, another branch), so a deploy never waits for an image that will never exist.
+prebuilt_sha() {
+  local head main
+  head="$(git -C "$ROOT" rev-parse HEAD 2>/dev/null)" || return 0
+  main="$(git -C "$ROOT" rev-parse origin/main 2>/dev/null)" || return 0
+  [ "$head" = "$main" ] && printf '%s' "$head"
+  return 0
+}
+
+pull_prebuilt() { # service local-image-name commit-sha -> 0: pulled and tagged, 1: build it locally
+  local svc="$1" img="$2" sha="$3" reg ref out waited=0 max
+  case " $PREBUILT_SERVICES " in *" $svc "*) ;; *) return 1 ;; esac
+  [ "${DEPLOY_PREBUILT:-1}" = "1" ] && [ -n "$sha" ] && [ -n "$img" ] || return 1
+  reg="$(registry_prefix)"; [ -n "$reg" ] || return 1
+  ref="$reg/darex-$svc:$sha"
+  max=$(( ${DEPLOY_WAIT_IMAGES_MIN:-12} * 60 ))
+  while :; do
+    if out="$(docker pull --quiet "$ref" 2>&1)"; then
+      docker tag "$ref" "$img" || return 1
+      info "✓ $svc: pulled the pre-built image for ${sha:0:7} (no build on this server)"
+      return 0
+    fi
+    case "$out" in
+      *denied*|*nauthorized*|*"authentication required"*)
+        warn "$svc: not allowed to pull $ref. Run once: docker login ghcr.io (token with read:packages). Building locally."
+        return 1 ;;
+      *"not found"*|*"manifest unknown"*|*"name unknown"*) ;;
+      *) warn "$svc: docker pull $ref failed (${out##*$'\n'}). Building locally."; return 1 ;;
+    esac
+    [ "$waited" -lt "$max" ] || { warn "$svc: no pre-built image for ${sha:0:7} after $((max / 60)) min (CI still running or failed). Building locally."; return 1; }
+    info "$svc: waiting for CI to publish the image for ${sha:0:7} (${waited}s of ${max}s)"
+    sleep 30; waited=$((waited + 30))
+  done
+}
+
 # Host ports are shared with other projects on this VM. Run before anything is built or recreated:
 # every port the stack will publish must be inside Darex's range, not reserved for another project,
 # not used twice, and not already held by something other than a darex-* container (ours are about

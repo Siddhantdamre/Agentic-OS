@@ -478,6 +478,7 @@ sync_repo() {
   fi
   git -C "$ROOT" checkout "$branch"
   git -C "$ROOT" merge --ff-only "origin/$branch"
+  require_in_sync "$ROOT" "$branch"
   after="$(git -C "$ROOT" rev-parse HEAD)"
   info "✓ Checked out $branch at ${after:0:12}"
   if [ "$before" != "$after" ]; then

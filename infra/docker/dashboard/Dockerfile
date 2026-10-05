@@ -54,6 +54,8 @@ RUN touch apps/dashboard/.env.local
 # supplies the real password at container start.
 ENV DB_PASSWORD=build-only-not-a-runtime-secret \
     APP_DB_PASSWORD=build-only-not-a-runtime-secret
+# Type-check and lint run in CI and the pre-push hook; skipping them here saves 5+ minutes on a small box.
+ENV SKIP_NEXT_CHECKS=1
 # The Next build cache survives rebuilds (a mount is not part of the image), so a code-only
 # change recompiles just what changed instead of the whole app.
 RUN --mount=type=cache,id=next-cache,target=/app/apps/dashboard/.next/cache \

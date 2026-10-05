@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState } from 'react';
+import Link from 'next/link';
 import {
   ShieldAlert,
   CheckCircle2,
@@ -223,13 +224,13 @@ export const ActionPermissionCard: React.FC<ActionPermissionCardProps> = ({
                   <p className="text-xs text-amber-800/80 mb-2.5 leading-relaxed">
                     Authorize DareX AI to access this service to execute live actions.
                   </p>
-                  <a
+                  <Link
                     href="/connectors"
                     className="inline-flex items-center space-x-1.5 px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white text-xs font-semibold rounded-lg transition-colors shadow-xs"
                   >
                     <span>Configure Integration</span>
                     <ChevronRight className="w-3.5 h-3.5" />
-                  </a>
+                  </Link>
                 </div>
               </div>
             </div>
