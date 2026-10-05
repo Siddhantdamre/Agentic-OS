@@ -259,7 +259,8 @@ setup_proxy() {
   if ! command -v caddy >/dev/null 2>&1; then
     if [ -n "$($SUDO ss -tlnH '( sport = :80 or sport = :443 )' 2>/dev/null)" ]; then
       warn "Ports 80/443 are already used (another proxy, e.g. a Caddy container) — not installing Caddy."
-      warn "Route $host to 127.0.0.1:${FRONTEND_HOST_PORT} in that proxy (see deploy/Caddyfile.example)."
+      warn "Route $host to that proxy. A Caddy container cannot reach host 127.0.0.1:${FRONTEND_HOST_PORT}: attach it to the darex-net network"
+      warn "and use 'reverse_proxy darex-frontend:3100' (steps in deploy/SERVER.md, HTTPS)."
       return 0
     fi
     if command -v apt-get >/dev/null 2>&1; then

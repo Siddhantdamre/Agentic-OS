@@ -55,9 +55,24 @@ Idle floor with all containers stopped and those services off: about 750 MB RAM.
   (state in `~/.local/state/darex-deploy/`). Status: `--status`. Stop: `--down`.
 - Public URL comes from `NEXT_PUBLIC_APP_URL` in the server `.env`
   (`darex.135-235-136-6.sslip.io`, which has the IP in its name).
-- HTTPS: `mtip-caddy` holds 80 and 443, so `deploy.sh` does not install Caddy. A
-  route from the Darex host to `127.0.0.1:13100` must exist in that Caddy's config
-  (to check: it is not set up yet).
+- HTTPS: `mtip-caddy` (another project's container) holds 80 and 443, so `deploy.sh` does not
+  install Caddy. That Caddy is a container, so `127.0.0.1:13100` on the host is not reachable
+  from it (loopback inside the container is its own). Attach it to Darex's Docker network and
+  proxy by container name:
+
+  ```bash
+  NET=$(docker network ls --format '{{.Name}}' | grep -E 'darex-net$')
+  docker network connect "$NET" mtip-caddy
+  # add to mtip-caddy's Caddyfile (path: docker inspect mtip-caddy, Mounts), then reload:
+  #   darex.135-235-136-6.sslip.io {
+  #       encode gzip
+  #       reverse_proxy darex-frontend:3100
+  #   }
+  docker exec mtip-caddy caddy reload --config /etc/caddy/Caddyfile
+  ```
+
+  `docker network connect` is lost when `mtip-caddy` is recreated; re-run it, or add `darex-net`
+  as an external network in that stack's compose file.
 - Backups taken before the 2026-10-01 wipe: `~/darex-db-backup.sql.gz` (Postgres
   dump) and `~/darex-repo-backup.bundle` (all branches; `feat/close-109-plan-gaps`
   had 30 commits that existed only on the server).
@@ -73,14 +88,20 @@ registry copy and is deleted as soon as no container uses it. Use `docker image 
 
 ## Ports
 
-Darex binds loopback only (`deploy/docker-compose.prod.yml`, `ports: !override`).
-Needed free on the host: 3000 dashboard, 3100 frontend, 5432 Postgres, 6432
-PgBouncer, 6379 Redis, 7233 and 8233 Temporal, 3003 Nango, 3002 Langfuse, 3567
-SuperTokens, 4000 LiteLLM, 3004 inbox, 8085 Evolution, 8787 sandbox, 8790 MCP bridge.
+Every host port is set in one file, `deploy/ports.conf` (loaded by `deploy.sh`, `redeploy.sh`
+and `compose-cmd.sh`; read by `deploy/docker-compose.prod.yml` with `ports: !override`). Darex
+binds loopback only, in the 1xxxx range so it never collides with the other stacks here
+(`mtip-*` uses 47xxx, TrueForge uses 8085/8791). Change a port by editing that file; a
+per-machine `.env` value still overrides it.
 
-Clashes seen: 8085 (TrueForge Google MCP). Set `EVOLUTION_PORT` in `.env` to a free
-port (for example 8086) if both must run. `deploy.sh` stops with the systemd unit's
-name when a host process holds one of these ports.
+Defaults: 13100 frontend, 13000 dashboard, 13003 Nango, 13004 inbox, 13002 Langfuse, 13567
+SuperTokens, 14000 LiteLLM, 15432 Postgres, 16432 PgBouncer, 16379 Redis, 17233 and 18233
+Temporal, 18790 MCP bridge, 18080 sandbox, 18085 Evolution, 18123/19000 ClickHouse, 19090/19091
+MinIO, 19999 Hindsight UI, 8088 SearXNG, 11235 Crawl4AI.
+
+If the server `.env` still sets an old `EVOLUTION_PORT=8086` (a leftover from the 8085 clash),
+it overrides the file; delete that line to use 18085. `deploy.sh` stops with the systemd
+unit's name when a host process holds one of these ports.
 
 ## Risks and tuning, most important first
 
