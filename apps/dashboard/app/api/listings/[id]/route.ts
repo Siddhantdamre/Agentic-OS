@@ -21,9 +21,9 @@ function missingTables(message: string): boolean {
   return /re_listings|re_listing_|does not exist|relation/i.test(message);
 }
 
-export async function GET(_request: Request, context: { params: Promise<Promise<{ id: string }> | { id: string }> }) {
+export async function GET(_request: Request, context: { params: Promise<{ id: string }> }) {
   try {
-    const { id } = await Promise.resolve((await context.params));
+    const { id } = await context.params;
     if (!UUID_RE.test(id)) {
       return NextResponse.json({ error: 'Invalid listing id' }, { status: 400 });
     }
@@ -69,9 +69,9 @@ export async function GET(_request: Request, context: { params: Promise<Promise<
   }
 }
 
-export async function PATCH(request: Request, context: { params: Promise<Promise<{ id: string }> | { id: string }> }) {
+export async function PATCH(request: Request, context: { params: Promise<{ id: string }> }) {
   try {
-    const { id } = await Promise.resolve((await context.params));
+    const { id } = await context.params;
     if (!UUID_RE.test(id)) {
       return NextResponse.json({ error: 'Invalid listing id' }, { status: 400 });
     }
@@ -169,9 +169,9 @@ export async function PATCH(request: Request, context: { params: Promise<Promise
   }
 }
 
-export async function DELETE(_request: Request, context: { params: Promise<Promise<{ id: string }> | { id: string }> }) {
+export async function DELETE(_request: Request, context: { params: Promise<{ id: string }> }) {
   try {
-    const { id } = await Promise.resolve((await context.params));
+    const { id } = await context.params;
     if (!UUID_RE.test(id)) {
       return NextResponse.json({ error: 'Invalid listing id' }, { status: 400 });
     }

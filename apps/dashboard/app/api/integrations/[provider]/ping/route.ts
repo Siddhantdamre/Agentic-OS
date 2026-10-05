@@ -13,10 +13,10 @@ export const dynamic = 'force-dynamic';
  */
 export async function POST(
   _request: Request,
-  context: { params: Promise<Promise<{ provider: string }> | { provider: string }> }
+  context: { params: Promise<{ provider: string }> }
 ) {
   try {
-    const rawParams = await Promise.resolve((await context.params));
+    const rawParams = await context.params;
     const provider = String(rawParams.provider || '').trim();
     if (!provider || !isIntegrationId(provider)) {
       return NextResponse.json({ error: `Unknown provider: ${provider || '(missing)'}` }, { status: 400 });
