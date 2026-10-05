@@ -695,5 +695,16 @@ export function isPublicMetaKey(key: string): key is PublicMetaKey {
 }
 
 export function nangoUiUrl(): string {
-  return process.env.NEXT_PUBLIC_NANGO_HOST || process.env.NANGO_HOST || 'http://localhost:3003';
+  // Browser-facing Nango URL. NEXT_PUBLIC_NANGO_HOST is the public address.
+  // NANGO_HOST is server-to-server (in compose: http://nango-server:3003,
+  // container DNS browsers cannot resolve) — only reuse it when it looks
+  // browser-reachable. Compose passes NEXT_PUBLIC_NANGO_HOST through so the
+  // browser never receives container DNS.
+  const publicHost = process.env.NEXT_PUBLIC_NANGO_HOST?.trim();
+  if (publicHost) return publicHost;
+  const serverUrl = process.env.NANGO_SERVER_URL?.trim();
+  if (serverUrl) return serverUrl;
+  const serverHost = process.env.NANGO_HOST?.trim() || '';
+  if (serverHost && !/nango-server/i.test(serverHost)) return serverHost;
+  return 'http://localhost:3003';
 }

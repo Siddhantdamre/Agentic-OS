@@ -70,10 +70,12 @@ export async function POST(request: Request, context: RouteContext) {
         const provider = row.connector_key;
         let nangoMessage: string;
         let nangoDeleted = false;
+        const isDirectChannel = provider === 'whatsapp' || provider === 'razorpay';
 
-        if (!isNangoSecretConfigured()) {
-          nangoMessage =
-            'NANGO_SECRET_KEY is not set — disconnected locally; OAuth tokens were not revoked in Nango.';
+        if (isDirectChannel || !isNangoSecretConfigured()) {
+          nangoMessage = isDirectChannel
+            ? `${provider} disconnected locally`
+            : 'NANGO_SECRET_KEY is not set — disconnected locally; OAuth tokens were not revoked in Nango.';
         } else {
           const nangoRes = await deleteNangoConnection(orgId, provider);
           if (!nangoRes.deleted && !nangoRes.nothingExisted && nangoRes.error) {

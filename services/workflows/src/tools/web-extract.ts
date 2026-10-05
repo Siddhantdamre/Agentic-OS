@@ -35,6 +35,64 @@ async function extractDirectHtml(url: string, limit = 8000): Promise<string> {
   }
 }
 
+async function extractCrawl4Ai(url: string, limit = 8000): Promise<string> {
+  const crawl4aiUrl = (process.env.CRAWL4AI_URL || 'http://127.0.0.1:11235').replace(/\/+$/, '');
+  const crawl4aiToken = process.env.CRAWL4AI_API_TOKEN || 'darex-crawl4ai-token';
+
+  try {
+    const endpoint = `${crawl4aiUrl}/crawl_direct`;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 20000);
+
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      'Accept': 'application/json',
+    };
+    if (crawl4aiToken) {
+      headers['Authorization'] = `Bearer ${crawl4aiToken}`;
+    }
+
+    const res = await fetch(endpoint, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        urls: [url],
+        priority: 10,
+        crawler_config: {
+          word_count_threshold: 5,
+          scan_full_page: true,
+        },
+      }),
+      signal: controller.signal,
+    });
+    clearTimeout(timer);
+
+    if (!res.ok) {
+      console.warn(`[Web Extract Tool] Crawl4AI returned status ${res.status}: ${res.statusText}`);
+      return '';
+    }
+
+    const data = (await res.json()) as any;
+    let markdown = '';
+    if (Array.isArray(data?.results) && data.results.length > 0) {
+      const item = data.results[0];
+      markdown = item?.markdown || item?.markdown_v2?.raw_markdown || item?.fit_markdown || item?.extracted_content || '';
+    } else if (typeof data?.markdown === 'string') {
+      markdown = data.markdown;
+    } else if (typeof data?.fit_markdown === 'string') {
+      markdown = data.fit_markdown;
+    }
+
+    if (markdown && typeof markdown === 'string') {
+      return markdown.trim().slice(0, limit);
+    }
+    return '';
+  } catch (err) {
+    console.warn(`[Web Extract Tool] Crawl4AI extract of ${url} failed: ${(err as Error).message}`);
+    return '';
+  }
+}
+
 async function execute(ctx: ToolActionContext) {
   const { timestamp } = ctx;
   const payload = (ctx?.payload || (ctx as any)?.params || {}) as Record<string, any>;
@@ -56,6 +114,21 @@ async function execute(ctx: ToolActionContext) {
     };
   }
 
+  // Tier 1: Crawl4AI (Self-hosted open-source full browser & markdown extractor)
+  console.log(`[Web Extract Tool] Extracting web content via Crawl4AI from ${url}...`);
+  const crawl4aiText = await extractCrawl4Ai(url, 8000);
+  if (crawl4aiText.length > 0) {
+    return {
+      tool: 'web_extract',
+      action: 'extract',
+      status: 'executed' as const,
+      message: `Extracted ${crawl4aiText.length} characters of markdown via Crawl4AI from ${url}`,
+      data: { url, content: crawl4aiText, provider: 'crawl4ai' },
+      timestamp,
+    };
+  }
+
+  // Tier 2: Jina AI Reader (Fallback if configured)
   const jinaKey = process.env.JINA_API_KEY || process.env.JINA_READ_API_KEY;
   if (jinaKey) {
     try {
@@ -72,8 +145,8 @@ async function execute(ctx: ToolActionContext) {
           tool: 'web_extract',
           action: 'extract',
           status: 'executed' as const,
-          message: `Extracted ${cleanText.length} characters of clean text from ${url}`,
-          data: { url, content: cleanText },
+          message: `Extracted ${cleanText.length} characters of clean text via Jina from ${url}`,
+          data: { url, content: cleanText, provider: 'jina' },
           timestamp,
         };
       }
@@ -82,7 +155,7 @@ async function execute(ctx: ToolActionContext) {
     }
   }
 
-  // Fallback to direct HTML extract (zero API key required)
+  // Tier 3: Direct HTML extract (zero-dependency fallback)
   console.log(`[Web Extract Tool] Extracting web content directly from ${url}...`);
   const directText = await extractDirectHtml(url, 8000);
   if (directText.length > 0) {
@@ -90,8 +163,8 @@ async function execute(ctx: ToolActionContext) {
       tool: 'web_extract',
       action: 'extract',
       status: 'executed' as const,
-      message: `Extracted ${directText.length} characters of clean text from ${url}`,
-      data: { url, content: directText },
+      message: `Extracted ${directText.length} characters of clean text directly from ${url}`,
+      data: { url, content: directText, provider: 'direct' },
       timestamp,
     };
   }

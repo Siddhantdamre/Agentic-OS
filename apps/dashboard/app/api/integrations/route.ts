@@ -6,7 +6,7 @@ import { recordAuditEvent } from '@/lib/audit-events';
 import { auditConnectorChange, denyUnlessConnectorManager } from '@/lib/connector-rbac';
 import { oauthChannelsToDemote } from '@/lib/channel-reconcile';
 import { getConnectorDef, listConnectorDefs, listOrgConnectors, upsertOrgConnector } from '@/lib/connector-registry';
-import { isPublicMetaKey, nangoUiUrl } from '@/lib/integrations-catalog';
+import { getIntegration, isPublicMetaKey, nangoUiUrl } from '@/lib/integrations-catalog';
 import { listWhatsAppChannels, promoteWhatsAppPrimary, publicWhatsAppNumber } from '@/lib/whatsapp-numbers';
 import {
   deleteNangoConnection,
@@ -151,7 +151,17 @@ export async function GET() {
           let connectionSource: 'nango' | 'byok' | 'env' | null = null;
 
           if (item.authMode === 'oauth') {
-            if (nangoConnectedIds.has(item.id)) {
+            const isGoogleApp =
+              item.id === 'google-workspace' ||
+              item.id === 'google' ||
+              item.id === 'gmail' ||
+              item.id.startsWith('google-');
+            const hasGoogleConnection =
+              nangoConnectedIds.has('google-workspace') ||
+              nangoConnectedIds.has('google') ||
+              nangoConnectedIds.has('gmail');
+
+            if (nangoConnectedIds.has(item.id) || (isGoogleApp && hasGoogleConnection)) {
               isConnected = true;
               connectionSource = 'nango';
             } else if (canProbeNango) {
@@ -329,6 +339,37 @@ export async function POST(request: Request) {
           lastError: null,
         });
 
+        if (provider === 'google-workspace' || provider === 'google' || provider === 'gmail' || provider.startsWith('google-')) {
+          const googleFamily = [
+            'gmail',
+            'google-calendar',
+            'google-drive',
+            'google-docs',
+            'google-sheets',
+            'google-slides',
+            'google-workspace',
+          ];
+          for (const gProvider of googleFamily) {
+            if (gProvider === provider) continue;
+            const gSpec = getIntegration(gProvider);
+            await client.query(
+              `INSERT INTO channels (org_id, channel_type, status, nango_connection_id, connected_at, meta)
+               VALUES ($1, $2, 'connected', $3, NOW(), $4::jsonb)
+               ON CONFLICT (org_id, channel_type, account_key)
+               DO UPDATE SET status = 'connected', nango_connection_id = $3, connected_at = NOW(),
+                 meta = COALESCE(channels.meta, '{}'::jsonb) || $4::jsonb`,
+              [orgId, gProvider, nangoConnId, JSON.stringify(extraMeta)]
+            );
+            await upsertOrgConnector(client, orgId, gProvider, {
+              status: 'connected',
+              nangoConnectionId: nangoConnId,
+              scopes: gSpec?.scopes || [],
+              lastOkAt: new Date(),
+              lastError: null,
+            });
+          }
+        }
+
         try {
           await recordAuditEvent(
             {
@@ -452,7 +493,9 @@ export async function POST(request: Request) {
         }
 
         // BYOK / API-key: clear local secrets; best-effort delete any Nango twin.
-        const nangoRes = qrUnlinked
+        // Direct channels (whatsapp, razorpay) are stored in Postgres only; they have no Nango twin.
+        const isDirectChannel = provider === 'whatsapp' || provider === 'razorpay';
+        const nangoRes = qrUnlinked || isDirectChannel
           ? { deleted: false, nothingExisted: true, error: undefined }
           : await deleteNangoConnection(orgId, provider);
         if (isNangoSecretConfigured() && nangoRes.error && !nangoRes.deleted && !nangoRes.nothingExisted) {

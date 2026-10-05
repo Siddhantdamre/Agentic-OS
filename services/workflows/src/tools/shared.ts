@@ -87,6 +87,14 @@ export async function withOrgScopedClient<T>(orgId: string, fn: (client: PoolCli
       } catch {
         // always release the pool slot
       }
+      try {
+        // Parity with apps/dashboard/lib/db.ts which resets both GUCs.
+        // The worker never sets app.current_user_id today; reset anyway so a
+        // future set_config(user) cannot leak across pooled checkouts.
+        await client.query('RESET app.current_user_id');
+      } catch {
+        // always release the pool slot
+      }
       client.release();
     }
   }

@@ -147,6 +147,7 @@ services:
       - DAREX_PROD_FAILFAST=true
       - DB_USER=darex_app
       - ALLOW_DEMO_AUTH=false
+      - TRUEFORGE_CHAT_MODEL=${TRUEFORGE_CHAT_MODEL:-openrouter/deepseek-v4-1-flash}
 
   # The user-facing app (NEW-FRONTEND). It proxies /api/* to the dashboard, so the reverse
   # proxy (Caddy/nginx) points at 127.0.0.1:${FRONTEND_HOST_PORT:-13100} and the session cookie stays same-origin.
@@ -160,11 +161,15 @@ services:
       dockerfile: ../infra/docker/frontend/Dockerfile
       args:
         DASHBOARD_URL: http://dashboard:3000
+        TRUEFORGE_URL: http://trueforge:8790
     container_name: darex-frontend
     ports: !override
       - "127.0.0.1:${FRONTEND_HOST_PORT:-13100}:3100"
     restart: always
     mem_limit: 512m
+    environment:
+      - DASHBOARD_URL=http://dashboard:3000
+      - TRUEFORGE_URL=http://trueforge:8790
     depends_on:
       dashboard:
         condition: service_started
@@ -182,6 +187,7 @@ services:
       - ALLOW_DEMO_AUTH=false
       - DB_USER=darex_app
       - DAREX_PROD_FAILFAST=true
+      - TRUEFORGE_CHAT_MODEL=${TRUEFORGE_CHAT_MODEL:-openrouter/deepseek-v4-1-flash}
 
   evolution:
     init: true

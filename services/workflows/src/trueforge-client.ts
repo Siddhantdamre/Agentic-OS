@@ -190,6 +190,16 @@ export async function ensureTrueForgeModelProvider(baseUrl = trueforgeUrl()): Pr
               name: 'gemini-2-5-flash-lite',
               properties: { context_length: 1048576, max_output_tokens: turnOutputTokenCap(65536) },
             },
+            {
+              model_id: 'openai/gpt-4o',
+              name: 'gpt-4o',
+              properties: { context_length: 128000, max_output_tokens: turnOutputTokenCap(16384) },
+            },
+            {
+              model_id: 'openai/gpt-4o-mini',
+              name: 'gpt-4o-mini',
+              properties: { context_length: 128000, max_output_tokens: turnOutputTokenCap(16384) },
+            },
           ],
         },
       }),
@@ -234,6 +244,89 @@ export async function ensureTrueForgeMcpServer(baseUrl = trueforgeUrl()): Promis
     }
   } catch (err: any) {
     console.warn('[trueforge] MCP server configuration request failed:', err?.message || err);
+  }
+}
+
+/**
+ * Ensures the named `darex-ai` agent exists in TrueForge with the correct model
+ * and darex MCP server attached. Creates it if absent; updates if the manifest drifts.
+ * Called at startup from the worker and from the agent-client auto-seed path.
+ */
+export async function ensureDarexAgent(baseUrl = trueforgeUrl()): Promise<void> {
+  const AGENT_NAME = 'darex-ai';
+  const agentModel =
+    process.env.TRUEFORGE_CHAT_MODEL ||
+    process.env.TRUEFORGE_MODEL ||
+    'openrouter/deepseek-v4-1-flash';
+  const instructions =
+    process.env.DAREX_AGENT_INSTRUCTIONS ||
+    'You are the DareX AI autonomous workforce assistant. You have full access to connected enterprise tools via the darex MCP server. Help the user orchestrate employees, query data, run multi-step actions, and grow their business. Be concise, professional, and action-oriented.';
+
+  const manifest = {
+    model: { name: agentModel },
+    instructions,
+    mcp_servers: [
+      {
+        name: 'darex',
+        enable_tools: ['@all'],
+        require_approval_for_tools: ['@write', '@destructive'],
+        preload: true,
+      },
+    ],
+    config: {
+      iteration_limit: 100,
+      sandbox: { enabled: false, file_downloads: true },
+      dynamic_sub_agents: { enabled: true },
+      context_management: {
+        compaction: { enabled: true },
+        large_tool_response: { enabled: true },
+      },
+      generative_ui: { enabled: true },
+      ask_user_questions: { enabled: true },
+    },
+  };
+
+  try {
+    // Check if agent already exists
+    const listRes = await fetch(`${baseUrl}/api/v1/agents`, {
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (listRes.ok) {
+      const listJson = (await listRes.json()) as any;
+      const existing = (listJson?.data || []).find((a: any) => a.name === AGENT_NAME);
+      if (existing) {
+        // Update to ensure manifest is current
+        const putRes = await fetch(`${baseUrl}/api/v1/agents/${existing.id}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ manifest }),
+          signal: AbortSignal.timeout(10_000),
+        });
+        if (putRes.ok) {
+          console.info('[trueforge] Successfully ensured darex-ai agent manifest is up to date');
+        } else {
+          const err = await putRes.text().catch(() => '');
+          console.warn(`[trueforge] Failed to update darex-ai agent (${putRes.status}): ${err}`);
+        }
+        return;
+      }
+    }
+
+    // Create if not found
+    const createRes = await fetch(`${baseUrl}/api/v1/agents`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: AGENT_NAME, manifest }),
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (createRes.ok) {
+      console.info('[trueforge] Successfully created darex-ai named agent');
+    } else {
+      const err = await createRes.text().catch(() => '');
+      console.warn(`[trueforge] Failed to create darex-ai agent (${createRes.status}): ${err}`);
+    }
+  } catch (err: any) {
+    console.warn('[trueforge] darex-ai agent seed request failed:', err?.message || err);
   }
 }
 

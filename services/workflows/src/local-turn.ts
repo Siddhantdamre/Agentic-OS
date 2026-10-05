@@ -155,12 +155,12 @@ export function getLocalModelCandidates(): LocalModelCandidate[] {
       model,
     });
     // Add flash-lite fallback candidate for quota exhaustion resilience
-    if (model !== 'gemini-2.5-flash-lite') {
+    if (model !== 'gemini-2.5-flash-lite' && model !== 'gemini-3.5-flash-lite') {
       candidates.push({
         name: 'gemini-lite',
         baseUrl: process.env.GEMINI_BASE_URL || 'https://generativelanguage.googleapis.com/v1beta/openai',
         apiKey: geminiKey,
-        model: 'gemini-2.5-flash-lite',
+        model: 'gemini-3.5-flash-lite',
       });
     }
   }
@@ -197,6 +197,19 @@ export function getLocalModelCandidates(): LocalModelCandidate[] {
       apiKey: process.env.OPENROUTER_API_KEY,
       model,
     });
+  }
+
+  // If TRUEFORGE_MODEL explicitly configures OpenRouter, prioritize it over Gemini/Groq
+  const prefersOpenRouter =
+    process.env.TRUEFORGE_MODEL?.startsWith('openrouter/') ||
+    process.env.TRUEFORGE_CHAT_MODEL?.startsWith('openrouter/');
+  if (prefersOpenRouter) {
+    const orIdx = candidates.findIndex((c) => c.name === 'openrouter');
+    if (orIdx > 0) {
+      const [orCandidate] = candidates.splice(orIdx, 1);
+      const insertAt = candidates[0]?.name === 'override' ? 1 : 0;
+      candidates.splice(insertAt, 0, orCandidate);
+    }
   }
 
   // 5. LiteLLM proxy

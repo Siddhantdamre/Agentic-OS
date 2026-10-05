@@ -94,7 +94,7 @@ infra/terraform/backend.hcl
 .setup-done
 
 # Local tools / submodules
-trueforge/
+/trueforge/
 two-claude-accounts-mac/
 
 # Local agent tooling and personal notes

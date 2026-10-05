@@ -11,6 +11,7 @@
 FROM node:22-bookworm-slim AS deps
 WORKDIR /app
 COPY package.json package-lock.json ./
+COPY scripts/ ./scripts/
 # The npm cache mount keeps downloads between builds; the layer only reruns when the lockfile changes.
 RUN --mount=type=cache,target=/root/.npm npm ci
 
@@ -19,6 +20,8 @@ ENV NEXT_TELEMETRY_DISABLED=1
 COPY . .
 ARG DASHBOARD_URL=http://dashboard:3000
 ENV DASHBOARD_URL=$DASHBOARD_URL
+ARG TRUEFORGE_URL=http://trueforge:8790
+ENV TRUEFORGE_URL=$TRUEFORGE_URL
 # NEXT_PUBLIC_DEMO stays unset: this is the live build.
 RUN npm run build
 

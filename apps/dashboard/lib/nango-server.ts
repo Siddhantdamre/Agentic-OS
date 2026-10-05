@@ -223,8 +223,8 @@ export async function deleteNangoConnection(
         if (res.ok) {
           deleted = true;
           foundAny = true;
-        } else if (res.status === 404) {
-          // Nothing at this key/id pair — not an error, keep looking.
+        } else if (res.status === 404 || res.status === 400) {
+          // Nothing at this key/id pair (404 = connection not found, 400 = provider not configured in Nango) — not an error, keep looking.
         } else {
           foundAny = true;
           lastError = `HTTP ${res.status}`;

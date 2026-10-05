@@ -82,6 +82,11 @@ export function connectionIdsFor(orgId: string, provider: string): string[] {
   for (const key of nangoKeysFor(provider)) {
     ids.add(`${orgId}_${key}`);
   }
+  if (isGoogleWorkspaceService(provider)) {
+    ids.add(`${orgId}_google-workspace`);
+    ids.add(`${orgId}_google`);
+    ids.add(`${orgId}_gmail`);
+  }
   return [...ids];
 }
 
@@ -104,7 +109,7 @@ export function catalogIdsFromConnectionId(orgId: string, connectionId: string):
   if (!connectionId.startsWith(prefix)) return [];
   const suffix = connectionId.slice(prefix.length);
   if (!suffix) return [];
-  if (suffix === 'google' || suffix === 'google-workspace') {
+  if (suffix === 'google' || suffix === 'google-workspace' || suffix === 'gmail') {
     return ['google-workspace', ...GOOGLE_WORKSPACE_SERVICES];
   }
   const matched = new Set<string>();

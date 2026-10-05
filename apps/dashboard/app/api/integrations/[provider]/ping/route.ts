@@ -1,7 +1,8 @@
 import { NextResponse } from 'next/server';
 import { getScopedClient, scopedAuthErrorResponse } from '@/lib/db';
 import { denyUnlessConnectorManager } from '@/lib/connector-rbac';
-import { NangoConnectorClient, pingNangoProvider } from '@darex/connectors';
+import { ConnectionPingResult, NangoConnectorClient, pingNangoProvider, pingRazorpay, pingWhatsApp } from '@darex/connectors';
+import { getEvolutionState, openSecret, providerIdOf } from '@darex/whatsapp-gateway';
 import { isIntegrationId } from '@/lib/integrations-catalog';
 
 export const dynamic = 'force-dynamic';
@@ -26,8 +27,86 @@ export async function POST(
     try {
       const forbidden = await denyUnlessConnectorManager(client, userId);
       if (forbidden) return forbidden;
-      const nango = new NangoConnectorClient();
-      const result = await pingNangoProvider(nango, orgId, provider);
+
+      let result: ConnectionPingResult;
+
+      if (provider === 'whatsapp') {
+        const channelRes = await client.query(
+          `SELECT status, meta FROM channels WHERE org_id = $1 AND channel_type = 'whatsapp' AND account_key = ''`,
+          [orgId]
+        );
+        const channel = channelRes.rows[0] as { status?: string; meta?: Record<string, unknown> } | undefined;
+        if (!channel || (channel.status !== 'connected' && channel.status !== 'active')) {
+          result = {
+            provider: 'whatsapp',
+            ok: false,
+            connected: false,
+            status: 404,
+            message: 'WhatsApp is not connected for this organization. Add an access token and phone number ID.',
+            reconnectUrl: '/integrations',
+          };
+        } else if (providerIdOf(channel.meta) === 'evolution') {
+          const instance = String(channel.meta?.evolution_instance || '');
+          const live = await getEvolutionState(instance);
+          const ok = live.state === 'open';
+          result = {
+            provider: 'whatsapp',
+            ok,
+            connected: ok,
+            status: ok ? 200 : 503,
+            message: ok ? 'WhatsApp Web (QR) session is connected' : `WhatsApp Web state: ${live.state}`,
+            data: { provider: 'evolution', state: live.state },
+            reconnectUrl: ok ? undefined : '/integrations',
+          };
+        } else {
+          // Meta Cloud API
+          const meta = channel.meta || {};
+          let accessToken = String(meta.accessToken || meta.meta_access_token || '');
+          try {
+            accessToken = accessToken ? openSecret(accessToken) : '';
+          } catch {
+            accessToken = '';
+          }
+          const phoneNumberId = String(meta.phoneNumberId || meta.phone_number_id || '');
+          if (!accessToken || !phoneNumberId) {
+            result = {
+              provider: 'whatsapp',
+              ok: false,
+              connected: false,
+              status: 400,
+              message: 'WhatsApp access token or phone number ID is missing or cannot be opened.',
+              reconnectUrl: '/integrations',
+            };
+          } else {
+            result = await pingWhatsApp({ accessToken, phoneNumberId });
+          }
+        }
+      } else if (provider === 'razorpay') {
+        const channelRes = await client.query(
+          `SELECT status, meta FROM channels WHERE org_id = $1 AND channel_type = 'razorpay' AND account_key = ''`,
+          [orgId]
+        );
+        const channel = channelRes.rows[0] as { status?: string; meta?: Record<string, unknown> } | undefined;
+        const meta = channel?.meta || {};
+        const keyId = String(meta.keyId || meta.key_id || process.env.RAZORPAY_KEY_ID || '');
+        const keySecret = String(meta.keySecret || meta.key_secret || process.env.RAZORPAY_KEY_SECRET || '');
+        if (!keyId || !keySecret) {
+          result = {
+            provider: 'razorpay',
+            ok: false,
+            connected: false,
+            status: 404,
+            message: 'Razorpay keys are not configured for this organization.',
+            reconnectUrl: '/integrations',
+          };
+        } else {
+          result = await pingRazorpay({ keyId, keySecret });
+        }
+      } else {
+        const nango = new NangoConnectorClient();
+        result = await pingNangoProvider(nango, orgId, provider);
+      }
+
       const latencyMs = Date.now() - started;
       const health = result.ok ? 'healthy' : result.status === 401 || result.status === 403 ? 'revoked' : 'degraded';
 

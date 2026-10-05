@@ -23,17 +23,16 @@ export async function POST(request: Request) {
       if (!body) {
         return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 });
       }
-      if (body.org_id !== undefined) {
+      if (body.org_id !== undefined || body.orgId !== undefined) {
         return NextResponse.json(
           {
             error:
-              'org_id is not accepted from the client; use targetOrgId and membership is verified server-side.',
+              'org_id/orgId is not accepted from the client; use targetOrgId and membership is verified server-side.',
           },
           { status: 400 }
         );
       }
-
-      const rawTarget = body.targetOrgId ?? body.orgId;
+      const rawTarget = body.targetOrgId;
       if (typeof rawTarget !== 'string' || !UUID_RE.test(rawTarget)) {
         return NextResponse.json({ error: 'targetOrgId must be a valid UUID' }, { status: 400 });
       }

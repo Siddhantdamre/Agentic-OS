@@ -17,7 +17,7 @@ const MESSAGE_ENDPOINT = '/messages';
 // Secret set → unsigned/invalid traffic is rejected. Secret unset → dev-only
 // unsigned mode; production refuses to serve without a secret.
 const BRIDGE_SECRET = process.env.MCP_BRIDGE_SECRET;
-const TENANT_TS_SKEW_MS = 5 * 60 * 1000;
+const TENANT_TS_SKEW_MS = parseInt(process.env.MCP_BRIDGE_TS_SKEW_MS || '3600000', 10);
 const MAX_SESSIONS = 200;
 /** Per-org cap so one tenant can't starve the global pool. LRU-evicts oldest of that org. */
 const MAX_SESSIONS_PER_ORG = parseInt(process.env.MCP_BRIDGE_MAX_SESSIONS_PER_ORG || '20', 10);
@@ -319,9 +319,16 @@ const TOOLS: ToolDef[] = [
   {
     name: 'notion_create_page',
     description: 'Create a page in the org-connected Notion workspace.',
-    schema: { org_id: z.string(), title: z.string(), parentPageId: z.string().optional() },
+    schema: { org_id: z.string(), title: z.string(), parentPageId: z.string().optional(), content: z.string().optional() },
     tool: 'notion',
     action: 'create_page',
+  },
+  {
+    name: 'notion_read_page',
+    description: 'Read page content, properties, and markdown text from an existing page in the org-connected Notion workspace.',
+    schema: { org_id: z.string(), pageId: z.string() },
+    tool: 'notion',
+    action: 'read_page',
   },
   {
     name: 'notion_append_page_content',
@@ -329,6 +336,13 @@ const TOOLS: ToolDef[] = [
     schema: { org_id: z.string(), pageId: z.string(), content: z.string() },
     tool: 'notion',
     action: 'append_page_content',
+  },
+  {
+    name: 'notion_query_database',
+    description: 'Query records and properties from a database in the org-connected Notion workspace.',
+    schema: { org_id: z.string(), databaseId: z.string(), pageSize: z.number().optional() },
+    tool: 'notion',
+    action: 'query_database',
   },
   {
     name: 'notion_search',
@@ -1842,7 +1856,18 @@ const httpServer = http.createServer(async (req, res) => {
     transports[transport.sessionId] = transport;
     sessionContexts[transport.sessionId] = context;
 
+    const keepaliveTimer = setInterval(() => {
+      try {
+        if (!res.writableEnded) {
+          res.write(': keepalive\n\n');
+        }
+      } catch {
+        // Socket closed or error
+      }
+    }, 15000);
+
     res.on('close', () => {
+      clearInterval(keepaliveTimer);
       delete transports[transport.sessionId];
       delete sessionContexts[transport.sessionId];
     });
@@ -1865,11 +1890,13 @@ const httpServer = http.createServer(async (req, res) => {
         ctx.orgId = incomingCtx.orgId;
         ctx.userId = incomingCtx.userId;
         ctx.toolAllowlist = incomingCtx.toolAllowlist;
+        ctx.employeeRole = incomingCtx.employeeRole || ctx.employeeRole;
         ctx.signed = true;
       } else if (incomingCtx.orgId && !BRIDGE_SECRET) {
         ctx.orgId = incomingCtx.orgId;
         ctx.userId = incomingCtx.userId;
         ctx.toolAllowlist = incomingCtx.toolAllowlist;
+        ctx.employeeRole = incomingCtx.employeeRole || ctx.employeeRole;
       }
       ctx.lastSeen = Date.now();
       try {

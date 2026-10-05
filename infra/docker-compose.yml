@@ -259,8 +259,8 @@ services:
       - NANGO_REDIS_URL=redis://redis:6379
       - SERVER_RUN_MODE=PROD
       - NANGO_SECRET_KEY=${NANGO_SECRET_KEY:-cc462f97-125a-4508-bd47-7951c8213b5f}
-      - NANGO_SERVER_URL=${NANGO_SERVER_URL:-https://nango.135-235-136-6.sslip.io}
-      - WEBHOOK_TRACER_URL=${NANGO_SERVER_URL:-https://nango.135-235-136-6.sslip.io}
+      - NANGO_SERVER_URL=${NANGO_SERVER_URL:-http://localhost:3003}
+      - WEBHOOK_TRACER_URL=${NANGO_SERVER_URL:-http://localhost:3003}
       - LOG_LEVEL=info
     volumes:
       - nango-data:/nango
@@ -538,6 +538,43 @@ services:
       start_period: 20s
 
   # ─────────────────────────────────────────────────────────────────────────
+  # SearXNG — Local open-source metasearch engine (Google, Bing, DDG, Wikipedia)
+  # Zero API key required; aggregates search results in clean JSON for AI agents.
+  # ─────────────────────────────────────────────────────────────────────────
+  searxng:
+    image: searxng/searxng:latest
+    container_name: darex-searxng
+    restart: unless-stopped
+    mem_limit: 256m
+    mem_reservation: 64m
+    ports:
+      - "127.0.0.1:8088:8080"
+    volumes:
+      - ./searxng:/etc/searxng:ro
+    environment:
+      - SEARXNG_BASE_URL=http://127.0.0.1:8088/
+    networks:
+      - darex-net
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # Crawl4AI — Local open-source LLM-friendly web crawler & markdown extractor
+  # Zero API key required; renders JavaScript/SPA & extracts clean LLM markdown.
+  # ─────────────────────────────────────────────────────────────────────────
+  crawl4ai:
+    image: unclecode/crawl4ai:basic-amd64
+    container_name: darex-crawl4ai
+    restart: unless-stopped
+    shm_size: '512m'
+    mem_limit: 768m
+    mem_reservation: 256m
+    ports:
+      - "127.0.0.1:11235:11235"
+    environment:
+      - CRAWL4AI_API_TOKEN=darex-crawl4ai-token
+    networks:
+      - darex-net
+
+  # ─────────────────────────────────────────────────────────────────────────
   # Atomic Bridge — MCP SSE connector bridge for the TrueForge agent loop.
   # Exposes the DareX business connectors (WhatsApp, Gmail, Calendar, HubSpot,
   # Meta/Google Ads, Slack, Notion, Stripe, Shopify, Zendesk, Intercom,
@@ -583,6 +620,9 @@ services:
       # signer (worker/dashboard TRUEFORGE turn path). Unset = dev-only
       # unsigned mode; production bridge refuses unsigned traffic.
       - MCP_BRIDGE_SECRET=${MCP_BRIDGE_SECRET:-}
+      - SEARXNG_URL=${SEARXNG_URL:-http://searxng:8080}
+      - CRAWL4AI_URL=${CRAWL4AI_URL:-http://crawl4ai:11235}
+      - CRAWL4AI_API_TOKEN=${CRAWL4AI_API_TOKEN:-darex-crawl4ai-token}
     env_file:
       - path: ../.env
         required: false
@@ -924,7 +964,7 @@ services:
     mem_limit: 256m
     mem_reservation: 128m
     ports:
-      - "3004:3004"
+      - "127.0.0.1:3004:3004"
     environment:
       - PORT=3004
       - DASHBOARD_URL=http://dashboard:3000
@@ -990,6 +1030,7 @@ services:
       # TRUEFORGE_URL=http://host.docker.internal:8791 (recreate to apply).
       - TRUEFORGE_URL=http://trueforge:8790
       - TRUEFORGE_MODEL=${TRUEFORGE_MODEL:-openrouter/deepseek-v4-1-flash}
+      - TRUEFORGE_CHAT_MODEL=${TRUEFORGE_CHAT_MODEL:-openrouter/deepseek-v4-1-flash}
       # Same two-runtime trap as above: root .env holds the host-dev value.
       # Flip to http://cognee:8000 at cutover.
       - COGNEE_URL=${COGNEE_URL:-http://cognee:8000}
@@ -1016,6 +1057,9 @@ services:
       # MCP_BRIDGE_SECRET. In-compose TrueForge reaches the bridge at
       # http://mcp-bridge:8790/sse (host-mode override: http://127.0.0.1:8790/sse).
       - MCP_BRIDGE_SECRET=${MCP_BRIDGE_SECRET:-}
+      - SEARXNG_URL=${SEARXNG_URL:-http://searxng:8080}
+      - CRAWL4AI_URL=${CRAWL4AI_URL:-http://crawl4ai:11235}
+      - CRAWL4AI_API_TOKEN=${CRAWL4AI_API_TOKEN:-darex-crawl4ai-token}
     env_file:
       - path: ../.env
         required: false
@@ -1080,6 +1124,10 @@ services:
       - DB_PASSWORD=${APP_DB_PASSWORD:-darex_app_dev_secret}
       - REDIS_URL=redis://redis:6379
       - NANGO_HOST=http://nango-server:3003
+      # Public browser-facing Nango URL for OAuth popups. Server-to-server
+      # NANGO_HOST above is container DNS browsers cannot resolve — the
+      # dashboard returns this value to the frontend instead.
+      - NEXT_PUBLIC_NANGO_HOST=${NEXT_PUBLIC_NANGO_HOST:-http://localhost:3003}
       - TEMPORAL_ADDRESS=temporal:7233
       - SUPERTOKENS_CONNECTION_URI=http://supertokens:3567
       - USE_TRUEFORGE=true
@@ -1089,6 +1137,7 @@ services:
       # TRUEFORGE_URL=http://host.docker.internal:8791 (recreate to apply).
       - TRUEFORGE_URL=http://trueforge:8790
       - TRUEFORGE_MODEL=${TRUEFORGE_MODEL:-openrouter/deepseek-v4-1-flash}
+      - TRUEFORGE_CHAT_MODEL=${TRUEFORGE_CHAT_MODEL:-openrouter/deepseek-v4-1-flash}
       # Same two-runtime trap as above: root .env holds the host-dev value.
       # Flip to http://cognee:8000 at cutover.
       - COGNEE_URL=${COGNEE_URL:-http://cognee:8000}
@@ -1117,11 +1166,14 @@ services:
       - LITELLM_BASE_URL=http://litellm:4000/v1
       - LITELLM_MASTER_KEY=${LITELLM_MASTER_KEY:-sk-darex-litellm-dev-key}
       - LITELLM_MODEL=${LITELLM_MODEL:-darex-default}
-      - NEXT_PUBLIC_APP_URL=${NEXT_PUBLIC_APP_URL:-https://darex.135-235-136-6.sslip.io}
+      - NEXT_PUBLIC_APP_URL=${NEXT_PUBLIC_APP_URL:-http://localhost:3000}
       # Signs MCP tenant headers (see worker block). Must match bridge secret.
       - MCP_BRIDGE_SECRET=${MCP_BRIDGE_SECRET:-}
       - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID:-${GOOGLE_WORKSPACE_CLIENT_ID:-}}
       - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET:-${GOOGLE_WORKSPACE_CLIENT_SECRET:-}}
+      - SEARXNG_URL=${SEARXNG_URL:-http://searxng:8080}
+      - CRAWL4AI_URL=${CRAWL4AI_URL:-http://crawl4ai:11235}
+      - CRAWL4AI_API_TOKEN=${CRAWL4AI_API_TOKEN:-darex-crawl4ai-token}
     env_file:
       - path: ../.env
         required: false
