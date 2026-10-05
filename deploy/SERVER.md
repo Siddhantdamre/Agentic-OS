@@ -90,18 +90,35 @@ registry copy and is deleted as soon as no container uses it. Use `docker image 
 
 Every host port is set in one file, `deploy/ports.conf` (loaded by `deploy.sh`, `redeploy.sh`
 and `compose-cmd.sh`; read by `deploy/docker-compose.prod.yml` with `ports: !override`). Darex
-binds loopback only, in the 1xxxx range so it never collides with the other stacks here
-(`mtip-*` uses 47xxx, TrueForge uses 8085/8791). Change a port by editing that file; a
-per-machine `.env` value still overrides it.
+binds loopback only. Change a port by editing that file; a per-machine `.env` value still
+overrides it, and the guard below still applies to the result.
+
+This VM is shared. Who owns which ports:
+
+| Project | Ports | Notes |
+|---|---|---|
+| Darex | **10000-19999** | everything in `ports.conf`; loopback only |
+| mtip (mining) | 80, 443, 47020-47544 | `mtip-caddy` holds 80/443; 47033 and 47112 are public |
+| WA-AKG (pm2) | 3030, 3306 | 3030 listens on all interfaces; 3306 is local |
+| TrueForge | 8085, 8791 | host services |
+| openclaw-gateway | 18789 | inside Darex's range, so it is reserved in `ports.conf` |
+| System | 22 ssh, 53 dns, tailscale | |
+
+**Collision guard.** `check_port_ownership` (`deploy/lib.sh`, run by both deploy scripts before
+anything is built or recreated) refuses to deploy when a port the stack will publish is outside
+10000-19999, listed in `OTHER_PROJECTS_PORTS`, used twice, or already held by anything that is not
+a `darex-*` container. It names the owner and touches nothing. `bash tests/deploy-port-guard.sh`
+tests it and runs in CI. To add a port: pick one in 10000-19999 that `ss -tlnp` shows free, add it
+to `ports.conf`, and if another project ever takes a port inside the range, add it to
+`OTHER_PROJECTS_PORTS`.
 
 Defaults: 13100 frontend, 13000 dashboard, 13003 Nango, 13004 inbox, 13002 Langfuse, 13567
 SuperTokens, 14000 LiteLLM, 15432 Postgres, 16432 PgBouncer, 16379 Redis, 17233 and 18233
-Temporal, 18790 MCP bridge, 18080 sandbox, 18085 Evolution, 18123/19000 ClickHouse, 19090/19091
-MinIO, 19999 Hindsight UI, 8088 SearXNG, 11235 Crawl4AI.
+Temporal, 18790 MCP bridge, 18080 sandbox, 18085 Evolution, 18088 SearXNG, 18123/19000
+ClickHouse, 19090/19091 MinIO, 19999 Hindsight UI, 11235 Crawl4AI.
 
-If the server `.env` still sets an old `EVOLUTION_PORT=8086` (a leftover from the 8085 clash),
-it overrides the file; delete that line to use 18085. `deploy.sh` stops with the systemd
-unit's name when a host process holds one of these ports.
+If the server `.env` still sets `DASHBOARD_PORT=3000` or `EVOLUTION_PORT=8086` (leftovers from
+before the move), the guard stops the deploy; delete those lines so `ports.conf` decides.
 
 ## Risks and tuning, most important first
 

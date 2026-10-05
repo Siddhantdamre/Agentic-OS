@@ -1,5 +1,13 @@
 # Darex Build State
 
+## A guard stops Darex from taking another project's ports (2026-10-05)
+
+- The VM also runs mtip (80/443, 47020-47544), WA-AKG (3030, 3306), TrueForge (8085, 8791) and openclaw (18789). Nothing checked Darex's ports against them: `deploy.sh` ignored every Docker proxy, and `redeploy.sh` had no check, so a clash only showed up as a `compose up` failure after images were built.
+- `check_port_ownership` in `deploy/lib.sh` now runs in both scripts before any build or recreate. It reads the real ports from `compose config` and refuses when one is outside Darex's range (10000-19999, set in `deploy/ports.conf`), in `OTHER_PROJECTS_PORTS` (18789 openclaw), used twice, or already held by anything that is not a `darex-*` container (it names the holder). Our own containers holding a port is fine: they are about to be replaced.
+- SearXNG moved from 8088 to 18088 (`SEARXNG_HOST_PORT`) so every Darex port is in the range; nothing on the host used 8088, services reach it as `searxng:8080`. A server `.env` that still sets `DASHBOARD_PORT=3000` or `EVOLUTION_PORT=8086` now fails the guard instead of silently keeping the old ports.
+- `tests/deploy-port-guard.sh` (10 cases against stubbed compose/ss/docker: clean, own containers, below range, above range, reserved, duplicate, other project's container, host process, substring port, `.env` override) runs in CI. Also run against the real prod compose config: passes, and DASHBOARD_PORT=3000, MCP_BRIDGE_HOST_PORT=18789 and EVOLUTION_PORT=47033 are each refused.
+- Not yet verified: the live holder check on the VM itself (it runs on the next redeploy).
+
 ## Cognee search skips orgs that have no dataset yet (2026-10-05)
 
 - Every agent turn paid for a slow Cognee `/search` even for an org that has no Cognee dataset. `hasCogneeDataset(orgId)` now reads `/api/v1/datasets` (2 s timeout) and `searchCognee` returns `[]` without searching when Cognee answered and the org has no `org_<id>` dataset.

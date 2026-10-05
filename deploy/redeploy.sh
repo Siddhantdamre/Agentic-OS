@@ -250,6 +250,7 @@ if [ "$DO_PLAN" -eq 0 ]; then
     [ -n "$val" ] || die "$key is missing in .env. Run ./deploy/deploy.sh once: it adds missing secrets and leaves the rest alone."
   done
   check_compose_version
+  check_port_ownership
 fi
 
 # ── work out what to rebuild ─────────────────────────────────────────────────
