@@ -1,5 +1,12 @@
 # Darex Build State
 
+## A page whose scripts fail to load now says so (2026-10-05)
+
+- A server started before a rebuild kept serving old pages whose script files no longer existed: the page loaded (HTTP 200) and looked normal, then nothing responded to clicks, and nothing on screen said why. Reproduced here: the page's own script file answered 400.
+- `lib/load-guard.ts` is a plain inline script in the server-rendered `<head>` (so it runs even when every other script is missing). It shows a banner with a Reload button when a `/_next/` script or style file fails to load, or when the page has not come alive after 12 s; `<AliveBeacon />` marks the page alive once React takes over and removes the banner if a slow start already raised it. One banner at most, and a failed image or third-party script is ignored.
+- Proof: 9 unit tests; in a real browser the check (healthy, page script 404, all scripts blocked, all scripts delayed 3 s) went from 2 of 6 to 6 of 6. A slow page is not warned.
+- Not verified: Safari and Firefox (Chromium only); a real cached-stale-build incident on a laptop.
+
 ## Gmail read, reply and reply-draft from Ask AI (2026-10-05)
 
 - Gmail gains `read_email` (one message in full by id), `reply_email` (sent in the original thread with `In-Reply-To`/`References`, `Re:` subject, to the Reply-To/From unless `to` is given; send-risk, approval first) and `draft_reply` (same, saved as a draft). Chat tools: `gmail_read_email`, `gmail_reply`, `gmail_draft_reply`; `gmail_send` takes cc/bcc. Before this, chat could only start new emails, so "reply to that email" produced an unthreaded message or a refusal.
