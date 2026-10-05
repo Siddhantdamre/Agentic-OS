@@ -159,6 +159,9 @@ jobs:
       - name: Deploy port guard
         run: bash tests/deploy-port-guard.sh
 
+      - name: Deploy pre-built image pull
+        run: bash tests/deploy-prebuilt.sh
+
       - name: Unit tests
         run: |
           pnpm --filter @darex/workflows test
