@@ -66,6 +66,8 @@ export function BottomTabs() {
             </li>
           ))}
           <li>
+            {/* API endpoint, not a page: a <Link> would prefetch the sign-out. */}
+            {/* eslint-disable-next-line @next/next/no-html-link-for-pages */}
             <a
               href="/api/auth/signout"
               className="block rounded-lg px-3 py-2 text-sm font-semibold text-red-600 hover:bg-red-50"

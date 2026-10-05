@@ -11,10 +11,10 @@ export const dynamic = 'force-dynamic';
  */
 export async function PATCH(
   request: Request,
-  context: { params: Promise<{ id: string }> | { id: string } }
+  context: { params: Promise<Promise<{ id: string }> | { id: string }> }
 ) {
   try {
-    const params = await Promise.resolve(context.params);
+    const params = await Promise.resolve((await context.params));
     const packId = String(params.id || '').trim();
     if (!packId) {
       return NextResponse.json({ error: 'pack id is required' }, { status: 400 });

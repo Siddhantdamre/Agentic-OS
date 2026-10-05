@@ -31,9 +31,9 @@ async function deleteCalendarEvent(orgId: string, eventId: string | null): Promi
   }
 }
 
-export async function PATCH(request: Request, context: { params: Promise<{ id: string }> | { id: string } }) {
+export async function PATCH(request: Request, context: { params: Promise<Promise<{ id: string }> | { id: string }> }) {
   try {
-    const { id } = await Promise.resolve(context.params);
+    const { id } = await Promise.resolve((await context.params));
     if (!UUID_RE.test(id)) {
       return NextResponse.json({ error: 'Invalid showing id' }, { status: 400 });
     }
@@ -179,9 +179,9 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
   }
 }
 
-export async function DELETE(request: Request, context: { params: Promise<{ id: string }> | { id: string } }) {
+export async function DELETE(request: Request, context: { params: Promise<Promise<{ id: string }> | { id: string }> }) {
   try {
-    const { id } = await Promise.resolve(context.params);
+    const { id } = await Promise.resolve((await context.params));
     if (!UUID_RE.test(id)) {
       return NextResponse.json({ error: 'Invalid showing id' }, { status: 400 });
     }

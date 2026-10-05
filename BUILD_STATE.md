@@ -1,5 +1,12 @@
 # Darex Build State
 
+## The dashboard runs on Next 15 and React 19 (2026-10-05)
+
+- Next 14.2.35 carried two critical and eight high advisories (fix needs 15.5.24+), which the CI audit gate had been allowlisting. `apps/dashboard` now uses Next 15.5, React 19 and eslint-config-next 15. The `@next/codemod` async-request-api pass changed `params` to a promise in 11 route/page files (the rest already used `await cookies()`), the obsolete `experimental.instrumentationHook` flag is gone, `BottomTabs` keeps a plain `<a>` for the sign-out endpoint (a `Link` would prefetch it) with a lint exemption, and the connectors link in `ActionPermissionCard` is now a `Link`.
+- The allowlist in `infra/scripts/audit-gate.js` is down to `braces` (no upstream patch). Production advisories: 2 critical and 9 high before, 0 critical and 1 high (`braces`) now.
+- Verified: typecheck, `next build`, all 599 dashboard tests, the audit gate exits 0. `next dev` serves `/login` (200), redirects `/` to login (307) and answers API routes (401 unauthenticated); `next start` without production secrets stops at the `MCP_BRIDGE_SECRET` boot guard, so the instrumentation hook still runs. Not verified: signed-in pages and flows, React 19 behaviour in third-party UI packages beyond the build, and a deployed run.
+- nodemailer 10 (override) is only loaded by supertokens-node's SMTP delivery services, which the dashboard never configures; its `createTransport`/`sendMail` API was exercised with a JSON transport. A real SMTP send is untested because nothing sends through it. A global pnpm 11 prints a harmless "pnpm.overrides ignored" warning but runs the pinned 9.0.0; moving to pnpm 11 was tried and rejected for now (its minimum-release-age policy refuses nodemailer 10.0.15 and nanoid 3.3.20, published under 24 hours ago).
+
 ## CI dependency audit gates on production deps with pinned overrides (2026-10-05)
 
 - CI's `Dependency audit` step (`pnpm audit --audit-level=high`) failed every push with 88 advisories (2 critical, 38 high); typecheck, build, tests, the RLS suite and the deny-list job were already green. Root `package.json` now has `pnpm.overrides` for axios, fast-uri, @grpc/grpc-js, nanoid, postcss, nodemailer (6 to 10, pulled in by supertokens-node), hono, ip-address, qs and yaml, and the lockfile is regenerated. Production advisories drop from 88 to 25 (9 high, 2 critical).
