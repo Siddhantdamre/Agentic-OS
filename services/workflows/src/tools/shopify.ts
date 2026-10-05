@@ -1,6 +1,7 @@
 import type { ToolRisk } from './risk.js';
 import type { ToolActionContext, ToolModule } from './shared.js';
 import { apiError, confirmFromRisk, nangoAuthError, notConnected, resolveNangoAuth, fetchWithTimeout } from './shared.js';
+import { decideHost, normaliseShopifyHost, pickTrusted } from './host-guard.js';
 
 const ACTIONS = ['fetch_products', 'fetch_orders', 'update_order_address'] as const;
 
@@ -17,14 +18,27 @@ async function execute(ctx: ToolActionContext) {
   const shopifyToken = (shopifyConn as any)?.credentials?.raw?.access_token || (shopifyConn as any)?.credentials?.access_token || null;
   if (shopifyToken) {
     try {
-      const shopDomain = payload.shopDomain
-        || process.env.SHOPIFY_SHOP_DOMAIN
-        || (shopifyConn as any)?.connection_config?.shop
-        || (shopifyConn as any)?.metadata?.shop
-        || (shopifyConn as any)?.metadata?.shopDomain;
-      if (!shopDomain) {
-        return apiError('shopify', actionName, timestamp, 'shopDomain is required (payload, SHOPIFY_SHOP_DOMAIN, or Nango connection metadata).');
-      }
+      // The token below belongs to THIS workspace's store. The model-written
+      // payload may name that store but never choose another host to send it to
+      // (see host-guard.ts). The connection's own record comes first.
+      const { trusted, invalid: trustedInvalid } = pickTrusted([
+        (shopifyConn as any)?.connection_config?.shop,
+        (shopifyConn as any)?.connection_config?.subdomain,
+        (shopifyConn as any)?.metadata?.shop,
+        (shopifyConn as any)?.metadata?.shopDomain,
+        process.env.SHOPIFY_SHOP_DOMAIN,
+      ], normaliseShopifyHost);
+      const hostDecision = decideHost({
+        provider: 'Shopify',
+        field: 'shopDomain',
+        trusted,
+        trustedInvalid,
+        requested: payload.shopDomain,
+        normalise: normaliseShopifyHost,
+        missingMessage: 'shopDomain is required (payload, SHOPIFY_SHOP_DOMAIN, or Nango connection metadata).',
+      });
+      if (!hostDecision.ok) return apiError('shopify', actionName, timestamp, hostDecision.message as string);
+      const shopDomain = hostDecision.host;
       if (shopDomain) {
         if (actionName.includes('update') && actionName.includes('address')) {
           const orderId = payload.orderId || payload.order_id || payload.id;
@@ -41,7 +55,7 @@ async function execute(ctx: ToolActionContext) {
           // anyway and just corrupts the record.
           const orderRes = await fetchWithTimeout(
             `https://${shopDomain}/admin/api/2024-01/orders/${encodeURIComponent(String(orderId))}.json`,
-            { headers: { 'X-Shopify-Access-Token': shopifyToken } },
+            { headers: { 'X-Shopify-Access-Token': shopifyToken }, redirect: 'error' },
           );
           const orderBody = await orderRes.json().catch(() => ({}));
           if (!orderRes.ok) {
@@ -65,6 +79,7 @@ async function execute(ctx: ToolActionContext) {
             {
               method: 'PUT',
               headers: { 'X-Shopify-Access-Token': shopifyToken, 'Content-Type': 'application/json' },
+              redirect: 'error',
               body: JSON.stringify({ order: { id: orderId, shipping_address: shippingAddress } }),
             },
           );
@@ -84,7 +99,7 @@ async function execute(ctx: ToolActionContext) {
         if (actionName.includes('product')) {
           const shopifyRes = await fetchWithTimeout(
             `https://${shopDomain}/admin/api/2024-01/products.json?limit=10`,
-            { headers: { 'X-Shopify-Access-Token': shopifyToken } }
+            { headers: { 'X-Shopify-Access-Token': shopifyToken }, redirect: 'error' }
           );
           if (shopifyRes.ok) {
             const data = await shopifyRes.json();
@@ -100,7 +115,7 @@ async function execute(ctx: ToolActionContext) {
         } else {
           const shopifyRes = await fetchWithTimeout(
             `https://${shopDomain}/admin/api/2024-01/orders.json?status=open&limit=50`,
-            { headers: { 'X-Shopify-Access-Token': shopifyToken } }
+            { headers: { 'X-Shopify-Access-Token': shopifyToken }, redirect: 'error' }
           );
           if (shopifyRes.ok) {
             const shopifyData = await shopifyRes.json();

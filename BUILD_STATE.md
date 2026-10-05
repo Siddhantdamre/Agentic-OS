@@ -1,5 +1,11 @@
 # Darex Build State
 
+## Connector tokens go only to the workspace's own host (2026-10-02)
+
+- Connectors: `shopify.ts` and `zendesk.ts` built the request host from the model-written payload first and then attached the workspace's token (`attacker.example/x?` in the Zendesk subdomain redirected it). `tools/host-guard.ts` now makes the connection's own host win, accepts a payload host only if it names that same store, REFUSES a payload host when the workspace has no recorded store (anyone can register a free Shopify or Zendesk store, so a valid-looking host proves nothing; such a workspace must reconnect), treats a recorded but unusual value as an error instead of falling through to the deployment default (`pickTrusted`), and every outbound call uses `redirect: 'error'` (fetch forwards custom headers such as X-Shopify-Access-Token on a cross-origin redirect).
+- Proof: 24 unit tests (`host-guard.test.ts`), listed in the workflows `test` script.
+- Not verified: real Shopify or Zendesk calls.
+
 ## Model-written SQL runs as a restricted, read-only role (2026-10-02)
 
 - Found by running the repo's own migrations (001-206) and the compiled SQL tool as one tenant with fake secrets: `database_query` ran as the full application role behind a keyword filter. It was accepted and returned another tenant's email and password hash (`auth_lookup_user_by_email`, a SECURITY DEFINER helper), the caller's own password hashes, webhook secret (`orgs.meta`) and channel token (`channels.meta`), and hashes through `query_to_xml(...)`. Writes, `set_config`, `pg_*` and multi-statement queries were already refused. 17 of 42 attack queries executed. `database_query` is in the always-allowed core tools (tool-gate.ts), so no approval stood in front of it.
