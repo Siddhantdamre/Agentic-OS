@@ -1157,13 +1157,13 @@ function streamCrewAnswer(args: {
               status: endStatus,
               durationMs: Date.now() - startedAt,
               createdAt,
-              error: failed ? spawn.result.error || spawn.result.replyMessage || 'Specialist failed' : undefined,
+              error: failed ? publicErrorMessage(spawn.result.error || spawn.result.replyMessage, 'Specialist failed') : undefined,
             },
           ];
         });
         for (const spawn of result.spawned || []) {
           const failed = spawn.result.success === false;
-          const errMsg = spawn.result.error || spawn.result.replyMessage || 'Specialist failed';
+          const errMsg = publicErrorMessage(spawn.result.error || spawn.result.replyMessage, 'Specialist failed');
           send('subagent', {
             subagent: {
               threadId: spawn.employeeId || spawn.employeeName,
@@ -1204,7 +1204,7 @@ function streamCrewAnswer(args: {
               action: failed ? 'subagent_error' : 'subagent_done',
               toolUsed: failed ? 'subagent_error' : 'subagent_done',
               result: failed
-                ? spawn.result.error || spawn.result.replyMessage || 'Specialist failed'
+                ? publicErrorMessage(spawn.result.error || spawn.result.replyMessage, 'Specialist failed')
                 : threadId,
               threadId,
             },
@@ -1377,7 +1377,7 @@ function streamSimpleAnswer(args: {
                 action: s.toolUsed || 'reason',
                 observation: s.result,
               })),
-              error: result.error || null,
+              error: result.error ? publicErrorMessage(result.error) : null,
               retryable: result.retryable || false,
               routing: args.routing,
             });
@@ -1429,7 +1429,7 @@ function streamSimpleAnswer(args: {
             observation: s.result,
           })),
           proposedAction: null,
-          error: result.error || null,
+          error: result.error ? publicErrorMessage(result.error) : null,
           retryable: result.retryable || false,
           partialReply: result.partialReply || null,
         });

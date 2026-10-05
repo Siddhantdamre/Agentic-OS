@@ -1,4 +1,5 @@
 import { createHmac } from 'node:crypto';
+import { describeTurnFailure } from './turn-failure.js';
 import type { RetrieveMemoryResult } from '@darex/shared-types';
 import type { AgentTaskInput, AgentTaskResult } from './agent-engine.js';
 import {
@@ -1113,15 +1114,17 @@ export async function runAutonomousAgentDirect(
     // loop (AutonomousAgentWorkflow) and activity mapping can retry instead
     // of saving a failure as final.
     const retryable = /abort|timeout|timed out|ECONNRESET|fetch failed|temporarily/i.test(details);
+    // The reason stays in `error` (logs, retry decisions); the chat gets a plain sentence.
+    const customerFacing = describeTurnFailure(details);
 
     return {
       success: false,
-      replyMessage: `I encountered an issue while processing your request: ${details}`,
+      replyMessage: customerFacing.replyMessage,
       executedSteps: [
         {
           step: 1,
-          action: 'TrueForge Agent Turn',
-          result: `Error: ${details}`,
+          action: customerFacing.stepAction,
+          result: customerFacing.stepResult,
         },
       ],
       usedTools: [],

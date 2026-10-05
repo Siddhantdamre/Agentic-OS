@@ -1,5 +1,11 @@
 # Darex Build State
 
+## Ask AI shows one plain sentence when an AI turn fails (2026-10-05)
+
+- Ask AI: a failed turn used to put "I encountered an issue while processing your request: <internal reason>" and a step named "TrueForge Agent Turn" into the chat, and the route forwarded `result.error` to the browser. `services/workflows/src/turn-failure.ts` now supplies one plain sentence; the reason stays in `error` (retry logic) and in the logs; the route passes any forwarded error through `publicErrorMessage` (`ask-ai-error-forwarding.test.ts`).
+- Proof: 4 workflow tests (all failed first), the route contract (5 offenders before, 0 after), workflows 479 of 479 on a clean copy, and the real-browser first-run journey passes 6 of 6 with a clean answer area.
+- Not verified: a real provider failure; the live site.
+
 ## First-run experience: plain wording and explained failures on every customer screen (2026-10-05)
 
 - Against company main 9d141bc. Customer-facing screens and shared components only.
