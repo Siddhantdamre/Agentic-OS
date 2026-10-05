@@ -82,6 +82,11 @@ export function connectionIdsFor(orgId: string, provider: string): string[] {
   for (const key of nangoKeysFor(provider)) {
     ids.add(`${orgId}_${key}`);
   }
+  if (isGoogleWorkspaceService(provider)) {
+    ids.add(`${orgId}_google-workspace`);
+    ids.add(`${orgId}_google`);
+    ids.add(`${orgId}_gmail`);
+  }
   return [...ids];
 }
 
