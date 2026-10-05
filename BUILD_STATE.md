@@ -1,5 +1,12 @@
 # Darex Build State
 
+## Cognee search skips orgs that have no dataset yet (2026-10-05)
+
+- Every agent turn paid for a slow Cognee `/search` even for an org that has no Cognee dataset. `hasCogneeDataset(orgId)` now reads `/api/v1/datasets` (2 s timeout) and `searchCognee` returns `[]` without searching when Cognee answered and the org has no `org_<id>` dataset.
+- Safety: any doubt searches anyway (HTTP error, timeout, thrown fetch, a list that is not an array of named datasets). A cached "no" is re-checked after 5 s because another process may have created the dataset; a cached "yes" lasts 30 s. `rememberCognee` marks the dataset present at once; `deleteCogneeDataset` only forgets it after the delete succeeded. The check runs before the search timer starts, so it neither eats the search budget nor leaves a timer behind.
+- Rewritten from the server's first version (its early return leaked the search timer, a failed delete hid live memory for 30 s, and a stale "no" from another process hid new memory). Its Hindsight change, a hardcoded `darex-hindsight-dev-key` fallback in `hindsight-client.ts`, was not taken: compose already provides that variable to the worker and dashboard.
+- Verified: 7 new tests in `cognee-client.test.ts` (empty list, exact-name match, search skipped vs reaching Cognee, error / throw / odd shape all search anyway, 5 s recheck, remember, failed delete). Not yet verified: against a live Cognee.
+
 ## Unknown Nango connections no longer show as revoked (2026-10-05)
 
 - A 400 or an "unknown connection" answer from Nango counted as `revoked`, so a connector that was never linked told people to reconnect it. `resolveNangoAuth` now treats only 401, `invalid_grant` and revoked or expired tokens as revoked; unknown connection or provider config is `never-configured`, and a token without the needed scope is `never-configured` instead of "no access token".
