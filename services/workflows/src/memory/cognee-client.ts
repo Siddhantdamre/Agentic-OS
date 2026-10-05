@@ -328,11 +328,11 @@ async function findCogneeDatasetId(orgId: string): Promise<string | null> {
 export async function deleteCogneeDataset(orgId: string): Promise<void> {
   const id = await findCogneeDatasetId(orgId);
   if (!id) return;
-  if (datasetNames) {
-    datasetNames.delete(`org_${orgId}`);
-  }
   const res = await cogneeCall(`/api/v1/datasets/${encodeURIComponent(id)}`, { method: 'DELETE', headers: cogneeAuthHeaders() }, 60_000);
-  if (res.ok || res.status === 404) return;
+  if (res.ok || res.status === 404) {
+    datasetNames?.delete(`org_${orgId}`);
+    return;
+  }
   const detail = await res.text().catch(() => '');
   throw new Error(`Cognee dataset delete failed: HTTP ${res.status}${detail ? ` ${detail.slice(0, 160)}` : ''}`);
 }

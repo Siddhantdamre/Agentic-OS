@@ -1,5 +1,10 @@
 # Darex Build State
 
+## Deleting a Cognee dataset keeps its marker until the delete succeeds (2026-10-05)
+
+- A branch change in `deleteCogneeDataset` removed the org's "dataset present" marker before calling Cognee's delete. If the delete then failed, the marker was gone while the dataset still existed, so search skipped that org's data and the next DSR delete could not find it; `memory/cognee-client.test.ts` ("keeps the dataset marked present when the delete fails") caught it and failed the branch's CI unit-test step. The marker is again removed only after the delete returns ok or 404.
+- Verified: all 468 `@darex/workflows` tests pass after merging main into the branch. Not verified: a delete against a real Cognee instance.
+
 ## A server checkout with commits that are not on origin/main is refused (2026-10-05)
 
 - A redeploy failed in the worker image build with duplicate `hasCogneeDataset` / `DATASET_CACHE_TTL_MS` declarations in `cognee-client.ts`: the server's checkout had both its own agent-written version and the one on `main`, which happens when `main` is merged into a server branch and the conflict is resolved by keeping both sides. `main` itself had one definition and CI was green.
