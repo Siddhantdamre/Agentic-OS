@@ -1,5 +1,13 @@
 # Darex Build State
 
+## Password signups verify their email address (2026-10-05)
+
+- Signup created a working session for any address, typed or not. Migration `209_email_verification.sql` adds `users.email_verified_at` (every existing user is backfilled as verified, so turning enforcement on locks nobody out), a hashed single-use 24h `email_verification_tokens` table, and four SECURITY DEFINER functions (create, consume, mark, check) in the same style as password reset.
+- Signup now emails a link to `/verify-email?token=...` (new page; `POST /api/auth/verify-email` consumes the token and audits `auth.email_verified`; `POST /api/auth/resend-verification` always answers OK so it cannot reveal which accounts exist). A signup that accepts an invite sent to that address is marked verified at once.
+- Enforcement is opt-in: with `REQUIRE_EMAIL_VERIFICATION=true`, signup returns 202 `VERIFY_EMAIL` without a session and password login returns 403 `EMAIL_NOT_VERIFIED` (audited as a denied login). Without the flag the email is still sent but nothing is blocked, because a deploy with no `RESEND_API_KEY` could never verify anyone. OAuth/SSO logins are not gated: the provider verifies the address. Before migration 209 every check degrades to "verified".
+- NEW-FRONTEND still has to handle the `VERIFY_EMAIL` and `EMAIL_NOT_VERIFIED` responses (show "check your inbox" plus a resend button) before the flag is turned on; the dashboard's own login page does not yet either.
+- Verified: dashboard `tsc --noEmit` clean; jest 599/599 including new `email-verification.test.ts` (flag, hashing of the token, bad/expired/used tokens, pre-migration fallback, public paths). Not verified: migration 209 (no Postgres running here), the routes over HTTP, a real mail send, or the login gate end to end.
+
 ## Worker agent turns are traced in Langfuse (2026-10-05)
 
 - Only dashboard routes traced turns. Turns the worker runs (inbound WhatsApp/email/SMS/widget replies via WorkItemWorkflow, crews, sweeps) used a no-op tracer, so the busiest customer-facing traffic never showed in Langfuse (27sept OPS-B03). Spend was already metered (`recordTurnSpend`).
@@ -258,7 +266,7 @@
 Most P0/P1 rows in `docs/new-109-pg-plan/gap26sept/` were already fixed in code and only the docs lagged; each was re-checked and its tracker is current. What changed:
 
 - **Usage cap (billing):** `/api/agent/run`, `/stream` and `/crew` now return 402 `USAGE_CAP_REACHED` before any model work for an over-cap org, and also when the meter read fails (`usageBlockedResponse` in `lib/usage-gate.ts`). Tool calls and Ask AI were already gated. Not gated up front: webhook-started agent turns (WhatsApp, Chatwoot); their tool calls are still blocked by the executor.
-- **Auth:** Google Workspace SSO fails closed when `GOOGLE_WORKSPACE_HD` is unset (set `*` explicitly to allow any domain; operators must now set it to enable Workspace SSO). Password reset bumps `users.session_epoch`; `getScopedClient` and the middleware do not check the epoch yet, so old cookies still pass there.
+- **Auth:** Google Workspace SSO fails closed when `GOOGLE_WORKSPACE_HD` is unset (set `*` explicitly to allow any domain; operators must now set it to enable Workspace SSO). Password reset bumps `users.session_epoch`; `getScopedClient` compares the cookie epoch to `users.session_epoch` (`lib/db.ts`), so old cookies stop working there.
 - **Widget:** `/api/widget/intent` returns 403 until a pack is installed (it used to run IP-reveal enrichment and could create work items).
 - **Conversations:** list, create and patch routes no longer return `err.message` on 500; they log an error id and return a generic body. The new-chat picker offers SMS and Instagram (a new Instagram thread fails honestly without an inbound message in the last 24 h).
 - **Realtime:** `/api/stream/events` polls the database every 10 s when Redis is down instead of a hard 503. New `work_item_updated` and `plan_updated` events; Plans and Work Items pages refresh live through `useRealtimeStream` and show a "Polling fallback" badge. Other tabs are not on the hook yet.

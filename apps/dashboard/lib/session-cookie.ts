@@ -186,6 +186,7 @@ export function isPublicAuthPath(pathname: string): boolean {
     pathname === '/register' ||
     pathname === '/forgot-password' ||
     pathname === '/reset-password' ||
+    pathname === '/verify-email' ||
     pathname.startsWith('/login/') ||
     pathname.startsWith('/register/') ||
     pathname.startsWith('/invite/') ||
@@ -196,7 +197,11 @@ export function isPublicAuthPath(pathname: string): boolean {
 
 /** Pages a signed-in user may still visit (invite accept, password reset). */
 export function isAuthenticatedPublicPath(pathname: string): boolean {
-  return pathname.startsWith('/invite/') || pathname.startsWith('/reset-password');
+  return (
+    pathname.startsWith('/invite/') ||
+    pathname.startsWith('/reset-password') ||
+    pathname === '/verify-email'
+  );
 }
 
 /**
@@ -223,6 +228,7 @@ export function isPublicApiPath(pathname: string): boolean {
   if (pathname === '/api/auth/login' || pathname === '/api/auth/signin') return true;
   if (pathname === '/api/auth/signup' || pathname === '/api/auth/register') return true;
   if (pathname === '/api/auth/forgot-password' || pathname === '/api/auth/reset-password') return true;
+  if (pathname === '/api/auth/verify-email' || pathname === '/api/auth/resend-verification') return true;
   if (pathname === '/api/auth/oauth' || pathname.startsWith('/api/auth/oauth/')) return true;
   if (pathname.startsWith('/api/auth/sso')) return true;
   if (pathname.startsWith('/api/auth/invite/')) return true;

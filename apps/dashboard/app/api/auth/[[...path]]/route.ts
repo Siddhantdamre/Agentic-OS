@@ -40,6 +40,12 @@ import {
   denyAuthIfLimited,
 } from '@/lib/rate-limit';
 import { recordAuditEvent } from '@/lib/audit-events';
+import {
+  emailVerificationRequired,
+  isEmailVerified,
+  markEmailVerified,
+  sendVerificationEmail,
+} from '@/lib/email-verification';
 
 ensureSuperTokensInit();
 
@@ -76,21 +82,45 @@ async function maybeAcceptInvite(
   email: string,
   inviteToken: string | undefined,
   currentOrgId: string
-): Promise<{ orgId: string; onboardingComplete: boolean }> {
+): Promise<{ orgId: string; onboardingComplete: boolean; inviteAccepted: boolean }> {
   if (!inviteToken) {
     const onboardingComplete = await isOnboardingComplete(client, currentOrgId);
-    return { orgId: currentOrgId, onboardingComplete };
+    return { orgId: currentOrgId, onboardingComplete, inviteAccepted: false };
   }
   const invite = await lookupInviteByToken(client, inviteToken);
   if (!invite) {
     const onboardingComplete = await isOnboardingComplete(client, currentOrgId);
-    return { orgId: currentOrgId, onboardingComplete };
+    return { orgId: currentOrgId, onboardingComplete, inviteAccepted: false };
   }
   if (normalizeEmail(invite.email) !== normalizeEmail(email)) {
     throw new Error('INVITE_EMAIL_MISMATCH');
   }
   const accepted = await acceptInviteToken(client, inviteToken, userId);
-  return { orgId: accepted.orgId, onboardingComplete: true };
+  return { orgId: accepted.orgId, onboardingComplete: true, inviteAccepted: true };
+}
+
+/**
+ * After a password signup: an accepted invite proves the address (it was sent
+ * there), so mark it verified; otherwise email a verification link. Returns a
+ * no-session response when verification is enforced, null to continue login.
+ */
+async function afterRegister(
+  client: PoolClient,
+  userId: string,
+  email: string,
+  inviteAccepted: boolean
+) {
+  if (inviteAccepted) {
+    await markEmailVerified(client, userId);
+    return null;
+  }
+  try {
+    await sendVerificationEmail(client, email);
+  } catch (err) {
+    console.error('[auth] verification email failed:', pgErrorMessage(err));
+  }
+  if (!emailVerificationRequired()) return null;
+  return NextResponse.json({ status: 'VERIFY_EMAIL', email }, { status: 202 });
 }
 
 // GET: Handle session check and logout
@@ -181,7 +211,7 @@ export async function GET(
 async function auditLoginDenied(
   orgId: string | null | undefined,
   userId: string,
-  reason: 'wrong_password' | 'bad_mfa' | 'locked'
+  reason: 'wrong_password' | 'bad_mfa' | 'locked' | 'unverified_email'
 ): Promise<void> {
   if (!orgId) return;
   try {
@@ -248,6 +278,13 @@ export async function POST(
         if (locked.locked) {
           await auditLoginDenied(orgId, userId, 'locked');
           return jsonError('Account temporarily locked due to failed sign-in attempts. Try again later.', 423);
+        }
+        if (emailVerificationRequired() && !(await isEmailVerified(client, userId))) {
+          await auditLoginDenied(orgId, userId, 'unverified_email');
+          return NextResponse.json(
+            { status: 'EMAIL_NOT_VERIFIED', message: 'Verify your email address before signing in.' },
+            { status: 403 }
+          );
         }
         const totp = await loadTotpState(client, userId);
         if (totp.enabled && totp.secret) {
@@ -398,6 +435,8 @@ export async function POST(
             } catch {
               // best-effort
             }
+            const verifyGate = await afterRegister(client, sessionUserId, userEmail, scoped.inviteAccepted);
+            if (verifyGate) return verifyGate;
             return issueSession(sessionUserId, userEmail, scoped.orgId, scoped.onboardingComplete, true);
           } catch (err) {
             if (pgErrorCode(err) === '23505') {
@@ -456,6 +495,8 @@ export async function POST(
         } catch {
           // best-effort
         }
+        const verifyGate = await afterRegister(client, userId, email, scoped.inviteAccepted);
+        if (verifyGate) return verifyGate;
         return issueSession(userId, email, scoped.orgId, scoped.onboardingComplete, true);
       } catch (err) {
         if (pgErrorCode(err) === '23505') {
