@@ -165,6 +165,7 @@ if [ "$HAVE_GIT" -eq 1 ]; then
     fi
     git -C "$ROOT" checkout "$BRANCH"
     git -C "$ROOT" merge --ff-only "origin/$BRANCH"
+    require_in_sync "$ROOT" "$BRANCH"
     AFTER="$(git -C "$ROOT" rev-parse HEAD)"
     if [ "$BEFORE" = "$AFTER" ]; then
       info "Backend already up to date at ${AFTER:0:12}"
@@ -387,7 +388,12 @@ rollback_deploy() {
 }
 trap rollback_deploy EXIT
 
+PREBUILT_SHA="$(prebuilt_sha)"
 for s in "${ORDERED[@]+"${ORDERED[@]}"}"; do
+  img=""; i=0
+  for b in "${BUILDABLE[@]}"; do [ "$b" = "$s" ] && img="${IMAGES[$i]}"; i=$((i + 1)); done
+  # CI already built this commit: pull it instead of compiling on this shared 2 vCPU server.
+  if pull_prebuilt "$s" "$img" "$PREBUILT_SHA"; then record_built "$s"; continue; fi
   free="$(df -BG --output=avail / 2>/dev/null | tail -n 1 | tr -dc '0-9' || true)"
   if [ -n "$free" ] && [ "$free" -lt 6 ]; then
     warn "Only ${free} GB disk free before building $s — pruning the build cache"

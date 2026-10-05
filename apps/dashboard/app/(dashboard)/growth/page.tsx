@@ -1,1 +1,2 @@
-export { default } from '../employees/growth/page';
+export { /* @next-codemod-error `default` export is re-exported. Check if this component uses `params` or `searchParams`*/
+default } from '../employees/growth/page';

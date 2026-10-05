@@ -7,14 +7,15 @@ import { dsrArtifactRoot } from '@darex/workflows/dist/dsr/run-export';
 
 export const dynamic = 'force-dynamic';
 
-type RouteParams = { params: { id: string } };
+type RouteParams = { params: Promise<{ id: string }> };
 
 /**
  * GET /api/dsr/:id/download — stream the export JSON artifact for this org.
  * Path is resolved under DSR_ARTIFACT_DIR; traversal outside the org folder is rejected.
  * Org from session via getScopedClient(). RBAC: canExportDsr.
  */
-export async function GET(_request: Request, { params }: RouteParams) {
+export async function GET(_request: Request, props: RouteParams) {
+  const params = await props.params;
   try {
     const dsrRequestId = params.id;
     if (!dsrRequestId || !/^[0-9a-f-]{36}$/i.test(dsrRequestId)) {

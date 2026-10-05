@@ -77,6 +77,28 @@ Idle floor with all containers stopped and those services off: about 750 MB RAM.
   dump) and `~/darex-repo-backup.bundle` (all branches; `feat/close-109-plan-gaps`
   had 30 commits that existed only on the server).
 
+## Builds happen on GitHub, not here
+
+`next build` took 13+ minutes on this shared 2 vCPU box (load average 27). So CI
+(`.github/workflows/images.yml`) builds `dashboard`, `worker`, `inbox` and `sandbox` on GitHub's
+runners on every push to `main` and pushes them to GHCR as `ghcr.io/<owner>/darex-<service>:<commit sha>`.
+`redeploy.sh` pulls the image for the commit it deploys (when HEAD is exactly `origin/main`) and tags
+it as the local image name, so a deploy is a pull plus a restart. If CI is still running it waits up
+to `DEPLOY_WAIT_IMAGES_MIN` (default 12) minutes. If anything fails (no login, no image, a pull error,
+HEAD not on `origin/main`) it builds locally exactly as before, so it can only save time.
+`mcp-bridge` (one `FROM darex-dashboard:local` line) and `frontend` (its own repo) still build here.
+
+One-time setup on the server: create a GitHub token with only `read:packages`, then
+
+```bash
+echo "<token>" | docker login ghcr.io -u <github-username> --password-stdin
+```
+
+`DEPLOY_PREBUILT=0` forces local builds; `DEPLOY_REGISTRY=ghcr.io/<owner>` overrides the registry
+path (it is derived from the git origin otherwise). The first image push makes the packages private
+under the org; if a pull says "denied", check the package's access in GitHub (Packages, the package,
+Package settings) and the token's scope.
+
 ## Local-only images and sibling checkouts
 
 The compose file builds two services from checkouts next to the repo, not from it:

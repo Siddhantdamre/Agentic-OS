@@ -71,10 +71,8 @@ async function syncEmployeeAllowlist(
   );
 }
 
-export async function PATCH(
-  request: Request,
-  { params }: { params: { id: string } },
-) {
+export async function PATCH(request: Request, props: { params: Promise<{ id: string }> }) {
+  const params = await props.params;
   try {
     const skillId = String(params.id || '').trim();
     const skill = skillById(skillId);

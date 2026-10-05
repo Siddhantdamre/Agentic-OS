@@ -1,5 +1,25 @@
 # Darex Build State
 
+## A server checkout with commits that are not on origin/main is refused (2026-10-05)
+
+- A redeploy failed in the worker image build with duplicate `hasCogneeDataset` / `DATASET_CACHE_TTL_MS` declarations in `cognee-client.ts`: the server's checkout had both its own agent-written version and the one on `main`, which happens when `main` is merged into a server branch and the conflict is resolved by keeping both sides. `main` itself had one definition and CI was green.
+- `redeploy.sh` ran `git merge --ff-only origin/main`, which reports "up to date" when the checkout is ahead of origin, so commits made on the box (and merge commits from `git pull`) were built and deployed untested.
+- New `require_in_sync` (`deploy/lib.sh`) runs right after the merge in `redeploy.sh` and `deploy.sh`: if `origin/<branch>..HEAD` has any commit it stops, names up to five of them, and prints the recovery (`git branch backup-<date> && git reset --hard origin/main`). `ALLOW_LOCAL_COMMITS=1` deploys them anyway with a warning, for a deliberate hotfix. A checkout that is only behind origin still fast-forwards.
+- Verified: `tests/deploy-sync-guard.sh` (9 checks on real temporary git repos: in sync, behind, a commit on the server refused and named, override warns, a `git pull` merge commit refused, clean after reset) runs in CI. Not yet verified: on the VM itself.
+
+## The dashboard runs on Next 15 and React 19 (2026-10-05)
+
+- Next 14.2.35 carried two critical and eight high advisories (fix needs 15.5.24+), which the CI audit gate had been allowlisting. `apps/dashboard` now uses Next 15.5, React 19 and eslint-config-next 15. The `@next/codemod` async-request-api pass changed `params` to a promise in 11 route/page files (the rest already used `await cookies()`), the obsolete `experimental.instrumentationHook` flag is gone, `BottomTabs` keeps a plain `<a>` for the sign-out endpoint (a `Link` would prefetch it) with a lint exemption, and the connectors link in `ActionPermissionCard` is now a `Link`.
+- The allowlist in `infra/scripts/audit-gate.js` is down to `braces` (no upstream patch). Production advisories: 2 critical and 9 high before, 0 critical and 1 high (`braces`) now.
+- Verified: typecheck, `next build`, all 599 dashboard tests, the audit gate exits 0. `next dev` serves `/login` (200), redirects `/` to login (307) and answers API routes (401 unauthenticated); `next start` without production secrets stops at the `MCP_BRIDGE_SECRET` boot guard, so the instrumentation hook still runs. Not verified: signed-in pages and flows, React 19 behaviour in third-party UI packages beyond the build, and a deployed run.
+- nodemailer 10 (override) is only loaded by supertokens-node's SMTP delivery services, which the dashboard never configures; its `createTransport`/`sendMail` API was exercised with a JSON transport. A real SMTP send is untested because nothing sends through it. A global pnpm 11 prints a harmless "pnpm.overrides ignored" warning but runs the pinned 9.0.0; moving to pnpm 11 was tried and rejected for now (its minimum-release-age policy refuses nodemailer 10.0.15 and nanoid 3.3.20, published under 24 hours ago).
+
+## CI dependency audit gates on production deps with pinned overrides (2026-10-05)
+
+- CI's `Dependency audit` step (`pnpm audit --audit-level=high`) failed every push with 88 advisories (2 critical, 38 high); typecheck, build, tests, the RLS suite and the deny-list job were already green. Root `package.json` now has `pnpm.overrides` for axios, fast-uri, @grpc/grpc-js, nanoid, postcss, nodemailer (6 to 10, pulled in by supertokens-node), hono, ip-address, qs and yaml, and the lockfile is regenerated. Production advisories drop from 88 to 25 (9 high, 2 critical).
+- The step is now `node infra/scripts/audit-gate.js`: it audits production deps only and fails on any high/critical advisory not in its allowlist. pnpm 9.0.0 (the pinned `packageManager`) ignores `pnpm.auditConfig.ignoreGhsas`, so the allowlist lives in the script. Accepted for now: the Next 14.2.35 advisories (fix is the Next 15.5.24+ major upgrade of apps/dashboard, not done) and `braces` (no upstream patch). Dev-only advisories (jest, eslint) are no longer gated.
+- Verified: the gate exits 0 locally with pnpm 9.0.0 and the new lockfile. Not verified: a CI run after the push, the dashboard build and tests with the overridden versions, and a real email send through nodemailer 10 from supertokens-node.
+
 ## A guard stops Darex from taking another project's ports (2026-10-05)
 
 - The VM also runs mtip (80/443, 47020-47544), WA-AKG (3030, 3306), TrueForge (8085, 8791) and openclaw (18789). Nothing checked Darex's ports against them: `deploy.sh` ignored every Docker proxy, and `redeploy.sh` had no check, so a clash only showed up as a `compose up` failure after images were built.
