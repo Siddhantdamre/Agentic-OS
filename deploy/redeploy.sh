@@ -165,6 +165,7 @@ if [ "$HAVE_GIT" -eq 1 ]; then
     fi
     git -C "$ROOT" checkout "$BRANCH"
     git -C "$ROOT" merge --ff-only "origin/$BRANCH"
+    require_in_sync "$ROOT" "$BRANCH"
     AFTER="$(git -C "$ROOT" rev-parse HEAD)"
     if [ "$BEFORE" = "$AFTER" ]; then
       info "Backend already up to date at ${AFTER:0:12}"

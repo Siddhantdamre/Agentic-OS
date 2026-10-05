@@ -162,6 +162,9 @@ jobs:
       - name: Deploy pre-built image pull
         run: bash tests/deploy-prebuilt.sh
 
+      - name: Deploy checkout sync guard
+        run: bash tests/deploy-sync-guard.sh
+
       - name: Unit tests
         run: |
           pnpm --filter @darex/workflows test

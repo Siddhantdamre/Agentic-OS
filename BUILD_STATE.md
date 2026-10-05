@@ -1,5 +1,12 @@
 # Darex Build State
 
+## A server checkout with commits that are not on origin/main is refused (2026-10-05)
+
+- A redeploy failed in the worker image build with duplicate `hasCogneeDataset` / `DATASET_CACHE_TTL_MS` declarations in `cognee-client.ts`: the server's checkout had both its own agent-written version and the one on `main`, which happens when `main` is merged into a server branch and the conflict is resolved by keeping both sides. `main` itself had one definition and CI was green.
+- `redeploy.sh` ran `git merge --ff-only origin/main`, which reports "up to date" when the checkout is ahead of origin, so commits made on the box (and merge commits from `git pull`) were built and deployed untested.
+- New `require_in_sync` (`deploy/lib.sh`) runs right after the merge in `redeploy.sh` and `deploy.sh`: if `origin/<branch>..HEAD` has any commit it stops, names up to five of them, and prints the recovery (`git branch backup-<date> && git reset --hard origin/main`). `ALLOW_LOCAL_COMMITS=1` deploys them anyway with a warning, for a deliberate hotfix. A checkout that is only behind origin still fast-forwards.
+- Verified: `tests/deploy-sync-guard.sh` (9 checks on real temporary git repos: in sync, behind, a commit on the server refused and named, override warns, a `git pull` merge commit refused, clean after reset) runs in CI. Not yet verified: on the VM itself.
+
 ## The dashboard runs on Next 15 and React 19 (2026-10-05)
 
 - Next 14.2.35 carried two critical and eight high advisories (fix needs 15.5.24+), which the CI audit gate had been allowlisting. `apps/dashboard` now uses Next 15.5, React 19 and eslint-config-next 15. The `@next/codemod` async-request-api pass changed `params` to a promise in 11 route/page files (the rest already used `await cookies()`), the obsolete `experimental.instrumentationHook` flag is gone, `BottomTabs` keeps a plain `<a>` for the sign-out endpoint (a `Link` would prefetch it) with a lint exemption, and the connectors link in `ActionPermissionCard` is now a `Link`.

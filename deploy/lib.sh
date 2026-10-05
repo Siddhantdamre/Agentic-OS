@@ -10,6 +10,22 @@ set -a
 . "$ROOT/deploy/ports.conf"
 set +a
 
+# The server must deploy exactly what is on origin/<branch> (what CI tested). `git merge --ff-only`
+# says "up to date" when the checkout is AHEAD of origin (commits made on the box, a merge from a
+# `git pull`, edits an agent committed there), so those were built and shipped untested; one such
+# merge kept both sides of a conflict and the image build failed on a duplicate function.
+# ALLOW_LOCAL_COMMITS=1 overrides, for a deliberate hotfix on the server.
+require_in_sync() { # repo-root branch
+  local root="$1" branch="$2" extra
+  extra="$(git -C "$root" log --oneline --max-count=5 "origin/$branch..HEAD" 2>/dev/null || true)"
+  [ -z "$extra" ] && return 0
+  [ "${ALLOW_LOCAL_COMMITS:-0}" = "1" ] && { warn "Deploying commits that are not on origin/$branch (ALLOW_LOCAL_COMMITS=1)"; return 0; }
+  die "This checkout has commits that are not on origin/$branch, so the server would run code CI never saw:
+$extra
+Push them from a clean machine so CI tests them, or discard them here: git branch backup-\$(date +%F) && git reset --hard origin/$branch
+(set ALLOW_LOCAL_COMMITS=1 to deploy them anyway)"
+}
+
 # Pre-built images. CI (.github/workflows/images.yml) builds these services on GitHub's runners and
 # pushes ghcr.io/<owner>/darex-<service>:<commit sha>. For a commit that is on origin/main the VM
 # pulls that image and tags it as the local name instead of compiling (next build took 13+ minutes
