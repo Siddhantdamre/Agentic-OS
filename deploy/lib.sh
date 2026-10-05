@@ -3,6 +3,13 @@
 # The caller defines log, info, warn, die and ROOT first; align_app_role_password also needs
 # WAIT_MULT, APP_DB_PASSWORD (from .env) and diagnose_stack is used on failures.
 
+# Host ports live in one file; load it before anything reads a port. A per-machine .env that
+# the caller sources afterwards can still override a value.
+set -a
+# shellcheck source=deploy/ports.env
+. "$ROOT/deploy/ports.env"
+set +a
+
 # The prod overlay uses `ports: !override` (Compose >= 2.24.4). Older Compose appends
 # loopback binds to the kernel's all-interface binds, leaving Postgres/Redis public.
 check_compose_version() {
@@ -177,12 +184,12 @@ wait_http() { # name url container [max_tries]
 # download happens once, not on every deploy.
 run_migrations() {
   if command -v node >/dev/null 2>&1 && { [ -d "$ROOT/apps/dashboard/node_modules/pg" ] || [ -d "$ROOT/node_modules/pg" ]; }; then
-    DB_HOST=127.0.0.1 DB_PORT="${POSTGRES_HOST_PORT:-15432}" DB_USER=darex \
+    DB_HOST=127.0.0.1 DB_PORT="${POSTGRES_HOST_PORT}" DB_USER=darex \
       DB_PASSWORD="${SUPERUSER_DB_PASSWORD:-darex_dev_secret}" DB_NAME="${DB_NAME:-darex}" \
       node "$ROOT/infra/db/migrate.js"
   else
     docker run --rm --network host -v "$ROOT:/app:ro" -v darex-migrate-deps:/tmp/m -w /app \
-      -e DB_HOST=127.0.0.1 -e DB_PORT="${POSTGRES_HOST_PORT:-15432}" -e DB_USER=darex \
+      -e DB_HOST=127.0.0.1 -e DB_PORT="${POSTGRES_HOST_PORT}" -e DB_USER=darex \
       -e DB_PASSWORD="${SUPERUSER_DB_PASSWORD:-darex_dev_secret}" -e DB_NAME="${DB_NAME:-darex}" \
       node:22-bookworm-slim sh -c '{ [ -d /tmp/m/node_modules/pg ] || npm install --no-save --prefix /tmp/m pg@8 >/dev/null; } && NODE_PATH=/tmp/m/node_modules node infra/db/migrate.js'
   fi

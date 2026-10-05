@@ -29,7 +29,7 @@
 # The user-facing app is NEW-FRONTEND (its own git repo). Every run pulls its
 # latest FRONTEND_BRANCH (default feat/new-frontend) and rebuilds the frontend
 # image, so the site always matches the newest frontend commit. It listens on
-# 127.0.0.1:${FRONTEND_HOST_PORT:-13100} and proxies /api/* to the dashboard (13000).
+# 127.0.0.1:${FRONTEND_HOST_PORT} and proxies /api/* to the dashboard (13000).
 #
 # Usage (from a laptop):
 #   DEPLOY_HOST=ubuntu@203.0.113.10 DEPLOY_PATH=/opt/darex ./deploy/deploy.sh
@@ -259,7 +259,7 @@ setup_proxy() {
   if ! command -v caddy >/dev/null 2>&1; then
     if [ -n "$($SUDO ss -tlnH '( sport = :80 or sport = :443 )' 2>/dev/null)" ]; then
       warn "Ports 80/443 are already used (another proxy, e.g. a Caddy container) — not installing Caddy."
-      warn "Route $host to 127.0.0.1:${FRONTEND_HOST_PORT:-13100} in that proxy (see deploy/Caddyfile.example)."
+      warn "Route $host to 127.0.0.1:${FRONTEND_HOST_PORT} in that proxy (see deploy/Caddyfile.example)."
       return 0
     fi
     if command -v apt-get >/dev/null 2>&1; then
@@ -275,8 +275,8 @@ setup_proxy() {
     fi
   fi
   if ! grep -qs "^$host" /etc/caddy/Caddyfile 2>/dev/null; then
-    log "Adding $host to /etc/caddy/Caddyfile -> 127.0.0.1:${FRONTEND_HOST_PORT:-13100}"
-    printf '\n%s {\n\tencode gzip\n\treverse_proxy 127.0.0.1:%s\n}\n' "$host" "${FRONTEND_HOST_PORT:-13100}" | $sudo_cmd tee -a /etc/caddy/Caddyfile >/dev/null
+    log "Adding $host to /etc/caddy/Caddyfile -> 127.0.0.1:${FRONTEND_HOST_PORT}"
+    printf '\n%s {\n\tencode gzip\n\treverse_proxy 127.0.0.1:%s\n}\n' "$host" "${FRONTEND_HOST_PORT}" | $sudo_cmd tee -a /etc/caddy/Caddyfile >/dev/null
   fi
   $sudo_cmd systemctl enable --now caddy >/dev/null 2>&1 || true
   $sudo_cmd systemctl reload caddy || warn "Could not reload Caddy — check: sudo systemctl status caddy"
@@ -342,8 +342,8 @@ migrate() {
 print_status() {
   compose ps
   echo
-  curl -sf "http://127.0.0.1:${DASHBOARD_PORT:-13000}/api/health" && echo "  ✓ dashboard health ok" || echo "  ✗ dashboard health FAIL"
-  curl -sf "http://127.0.0.1:${FRONTEND_HOST_PORT:-13100}/api/health" && echo "  ✓ frontend (and /api proxy) ok" || echo "  ✗ frontend FAIL"
+  curl -sf "http://127.0.0.1:${DASHBOARD_PORT}/api/health" && echo "  ✓ dashboard health ok" || echo "  ✗ dashboard health FAIL"
+  curl -sf "http://127.0.0.1:${FRONTEND_HOST_PORT}/api/health" && echo "  ✓ frontend (and /api proxy) ok" || echo "  ✗ frontend FAIL"
   docker exec darex-postgres pg_isready -U darex -d darex && echo "  ✓ postgres ready" || echo "  ✗ postgres not ready"
 }
 
@@ -354,7 +354,7 @@ validate_deployment() {
 
   # Check 1: Dashboard health
   checks_total=$((checks_total + 1))
-  if curl -sf "http://127.0.0.1:${DASHBOARD_PORT:-13000}/api/health" >/dev/null 2>&1; then
+  if curl -sf "http://127.0.0.1:${DASHBOARD_PORT}/api/health" >/dev/null 2>&1; then
     info "✓ Dashboard /api/health responding"
     checks_passed=$((checks_passed + 1))
   else
@@ -363,7 +363,7 @@ validate_deployment() {
 
   # Check 1b: Frontend page and its /api proxy to the dashboard
   checks_total=$((checks_total + 1))
-  if curl -sf "http://127.0.0.1:${FRONTEND_HOST_PORT:-13100}/sign-in" >/dev/null 2>&1 && curl -sf "http://127.0.0.1:${FRONTEND_HOST_PORT:-13100}/api/health" >/dev/null 2>&1; then
+  if curl -sf "http://127.0.0.1:${FRONTEND_HOST_PORT}/sign-in" >/dev/null 2>&1 && curl -sf "http://127.0.0.1:${FRONTEND_HOST_PORT}/api/health" >/dev/null 2>&1; then
     info "✓ Frontend serving pages and proxying /api to the dashboard"
     checks_passed=$((checks_passed + 1))
   else
@@ -392,7 +392,7 @@ validate_deployment() {
 
   # Check 4: Evolution API (WhatsApp QR link). Warn only: the official API path works without it.
   checks_total=$((checks_total + 1))
-  if curl -sf -H "apikey: ${EVOLUTION_API_KEY:-}" "http://127.0.0.1:${EVOLUTION_PORT:-18085}/instance/fetchInstances" >/dev/null 2>&1; then
+  if curl -sf -H "apikey: ${EVOLUTION_API_KEY:-}" "http://127.0.0.1:${EVOLUTION_PORT}/instance/fetchInstances" >/dev/null 2>&1; then
     info "✓ Evolution API responding (WhatsApp QR link)"
     checks_passed=$((checks_passed + 1))
   else
@@ -635,7 +635,7 @@ align_app_role_password
 log "Bringing stack up with production overlay (loopback binds, frontend rebuilt from the latest NEW-FRONTEND)"
 start_stack
 
-log "Waiting for Postgres on 127.0.0.1:${POSTGRES_HOST_PORT:-15432}"
+log "Waiting for Postgres on 127.0.0.1:${POSTGRES_HOST_PORT}"
 tries=0
 until docker exec darex-postgres pg_isready -U darex -d darex >/dev/null 2>&1; do
   tries=$((tries + 1))
@@ -645,8 +645,8 @@ done
 
 migrate
 
-wait_http "dashboard" "http://127.0.0.1:${DASHBOARD_PORT:-13000}/api/health" darex-dashboard 90
-wait_http "frontend (and its /api proxy to the dashboard)" "http://127.0.0.1:${FRONTEND_HOST_PORT:-13100}/api/health" darex-frontend
+wait_http "dashboard" "http://127.0.0.1:${DASHBOARD_PORT}/api/health" darex-dashboard 90
+wait_http "frontend (and its /api proxy to the dashboard)" "http://127.0.0.1:${FRONTEND_HOST_PORT}/api/health" darex-frontend
 
 print_status
 
@@ -683,23 +683,23 @@ Environment:
   LLM: LiteLLM + OpenRouter
 
 Services (loopback only, use Caddy/nginx reverse proxy):
-  Frontend (the site) http://127.0.0.1:${FRONTEND_HOST_PORT:-13100}   <- point Caddy/nginx here
-  Dashboard API      http://127.0.0.1:${DASHBOARD_PORT:-13000}/api
-  Nango OAuth        http://127.0.0.1:${NANGO_HOST_PORT:-13003}
-  Langfuse Monitor   http://127.0.0.1:${LANGFUSE_HOST_PORT:-13002}  (not started in lite mode)
-  Temporal UI        http://127.0.0.1:${TEMPORAL_UI_HOST_PORT:-18233}
-  LiteLLM            http://127.0.0.1:${LITELLM_HOST_PORT:-14000}
-  Inbox Worker       http://127.0.0.1:${INBOX_HOST_PORT:-13004}
-  Evolution (WhatsApp QR) http://127.0.0.1:${EVOLUTION_PORT:-18085}
+  Frontend (the site) http://127.0.0.1:${FRONTEND_HOST_PORT}   <- point Caddy/nginx here
+  Dashboard API      http://127.0.0.1:${DASHBOARD_PORT}/api
+  Nango OAuth        http://127.0.0.1:${NANGO_HOST_PORT}
+  Langfuse Monitor   http://127.0.0.1:${LANGFUSE_HOST_PORT}  (not started in lite mode)
+  Temporal UI        http://127.0.0.1:${TEMPORAL_UI_HOST_PORT}
+  LiteLLM            http://127.0.0.1:${LITELLM_HOST_PORT}
+  Inbox Worker       http://127.0.0.1:${INBOX_HOST_PORT}
+  Evolution (WhatsApp QR) http://127.0.0.1:${EVOLUTION_PORT}
   Agent Sandbox      http://127.0.0.1:8787
-  MCP Bridge         ws://127.0.0.1:${MCP_BRIDGE_HOST_PORT:-18790}/sse
+  MCP Bridge         ws://127.0.0.1:${MCP_BRIDGE_HOST_PORT}/sse
 
 Next steps:
   1. Configure Caddy/nginx: deploy/Caddyfile.example
-  2. Start reverse proxy pointing to http://127.0.0.1:${FRONTEND_HOST_PORT:-13100} (the frontend proxies /api to the dashboard)
+  2. Start reverse proxy pointing to http://127.0.0.1:${FRONTEND_HOST_PORT} (the frontend proxies /api to the dashboard)
   3. Access ${NEXT_PUBLIC_APP_URL:-https://your-domain} in browser
   4. SSH tunnel for admin UIs:
-     ssh -L 3003:127.0.0.1:${NANGO_HOST_PORT:-13003} -L 3002:127.0.0.1:${LANGFUSE_HOST_PORT:-13002} -L 8233:127.0.0.1:${TEMPORAL_UI_HOST_PORT:-18233} user@host
+     ssh -L 3003:127.0.0.1:${NANGO_HOST_PORT} -L 3002:127.0.0.1:${LANGFUSE_HOST_PORT} -L 8233:127.0.0.1:${TEMPORAL_UI_HOST_PORT} user@host
 
 Monitoring & Operations:
   Status:    ./deploy/deploy.sh --status

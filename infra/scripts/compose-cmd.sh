@@ -47,8 +47,13 @@ fi
 FILES+=("${OVERLAYS[@]+"${OVERLAYS[@]}"}")
 
 ENV_FILE=()
+# The prod overlay reads every host port from deploy/ports.env (single source of truth).
+# Later --env-file wins, so .env can still override a port per machine.
+if [ ${#OVERLAYS[@]} -gt 0 ] && [ -f "$ROOT/deploy/ports.env" ]; then
+  ENV_FILE+=(--env-file "$ROOT/deploy/ports.env")
+fi
 if [ -f "$ROOT/.env" ]; then
-  ENV_FILE=(--env-file "$ROOT/.env")
+  ENV_FILE+=(--env-file "$ROOT/.env")
 fi
 
 if docker compose version >/dev/null 2>&1; then

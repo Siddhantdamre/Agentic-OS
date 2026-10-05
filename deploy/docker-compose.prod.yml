@@ -24,65 +24,65 @@ services:
     init: true
     logging: *default-logging
     ports: !override
-      - "127.0.0.1:${POSTGRES_HOST_PORT:-15432}:5432"
+      - "127.0.0.1:${POSTGRES_HOST_PORT:?POSTGRES_HOST_PORT missing - load deploy/ports.env}:5432"
     restart: always
 
   pgbouncer:
     init: true
     logging: *default-logging
     ports: !override
-      - "127.0.0.1:${PGBOUNCER_HOST_PORT:-16432}:5432"
+      - "127.0.0.1:${PGBOUNCER_HOST_PORT:?PGBOUNCER_HOST_PORT missing - load deploy/ports.env}:5432"
     restart: always
 
   temporal:
     init: true
     logging: *default-logging
     ports: !override
-      - "127.0.0.1:${TEMPORAL_HOST_PORT:-17233}:7233"
+      - "127.0.0.1:${TEMPORAL_HOST_PORT:?TEMPORAL_HOST_PORT missing - load deploy/ports.env}:7233"
     restart: always
 
   temporal-ui:
     init: true
     logging: *default-logging
     ports: !override
-      - "127.0.0.1:${TEMPORAL_UI_HOST_PORT:-18233}:8080"
+      - "127.0.0.1:${TEMPORAL_UI_HOST_PORT:?TEMPORAL_UI_HOST_PORT missing - load deploy/ports.env}:8080"
     restart: always
 
   redis:
     init: true
     logging: *default-logging
     ports: !override
-      - "127.0.0.1:${REDIS_HOST_PORT:-16379}:6379"
+      - "127.0.0.1:${REDIS_HOST_PORT:?REDIS_HOST_PORT missing - load deploy/ports.env}:6379"
     restart: always
 
   nango-server:
     init: true
     logging: *default-logging
     ports: !override
-      - "127.0.0.1:${NANGO_HOST_PORT:-13003}:3003"
+      - "127.0.0.1:${NANGO_HOST_PORT:?NANGO_HOST_PORT missing - load deploy/ports.env}:3003"
     restart: always
 
   langfuse-clickhouse:
     init: true
     logging: *default-logging
     ports: !override
-      - "127.0.0.1:${CLICKHOUSE_HTTP_HOST_PORT:-18123}:8123"
-      - "127.0.0.1:${CLICKHOUSE_NATIVE_HOST_PORT:-19000}:9000"
+      - "127.0.0.1:${CLICKHOUSE_HTTP_HOST_PORT:?CLICKHOUSE_HTTP_HOST_PORT missing - load deploy/ports.env}:8123"
+      - "127.0.0.1:${CLICKHOUSE_NATIVE_HOST_PORT:?CLICKHOUSE_NATIVE_HOST_PORT missing - load deploy/ports.env}:9000"
     restart: always
 
   langfuse-minio:
     init: true
     logging: *default-logging
     ports: !override
-      - "127.0.0.1:${MINIO_API_HOST_PORT:-19090}:9000"
-      - "127.0.0.1:${MINIO_CONSOLE_HOST_PORT:-19091}:9001"
+      - "127.0.0.1:${MINIO_API_HOST_PORT:?MINIO_API_HOST_PORT missing - load deploy/ports.env}:9000"
+      - "127.0.0.1:${MINIO_CONSOLE_HOST_PORT:?MINIO_CONSOLE_HOST_PORT missing - load deploy/ports.env}:9001"
     restart: always
 
   langfuse-server:
     init: true
     logging: *default-logging
     ports: !override
-      - "127.0.0.1:${LANGFUSE_HOST_PORT:-13002}:3000"
+      - "127.0.0.1:${LANGFUSE_HOST_PORT:?LANGFUSE_HOST_PORT missing - load deploy/ports.env}:3000"
     restart: always
     # First boot runs the Postgres and ClickHouse migrations, which takes several minutes on a
     # 2 vCPU VM; the base 45 s + 20 x 15 s window declared it unhealthy mid-migration and
@@ -105,20 +105,20 @@ services:
     init: true
     logging: *default-logging
     ports: !override
-      - "127.0.0.1:${SUPERTOKENS_HOST_PORT:-13567}:3567"
+      - "127.0.0.1:${SUPERTOKENS_HOST_PORT:?SUPERTOKENS_HOST_PORT missing - load deploy/ports.env}:3567"
     restart: always
 
   litellm:
     init: true
     logging: *default-logging
     ports: !override
-      - "127.0.0.1:${LITELLM_HOST_PORT:-14000}:4000"
+      - "127.0.0.1:${LITELLM_HOST_PORT:?LITELLM_HOST_PORT missing - load deploy/ports.env}:4000"
     restart: always
 
   mcp-bridge:
     init: true
     ports: !override
-      - "127.0.0.1:${MCP_BRIDGE_HOST_PORT:-18790}:8790"
+      - "127.0.0.1:${MCP_BRIDGE_HOST_PORT:?MCP_BRIDGE_HOST_PORT missing - load deploy/ports.env}:8790"
     logging: *default-logging
     restart: always
     environment:
@@ -128,7 +128,7 @@ services:
   sandbox:
     init: true
     ports: !override
-      - "127.0.0.1:${SANDBOX_HOST_PORT:-18080}:8080"
+      - "127.0.0.1:${SANDBOX_HOST_PORT:?SANDBOX_HOST_PORT missing - load deploy/ports.env}:8080"
     logging: *default-logging
     restart: always
 
@@ -136,7 +136,7 @@ services:
     init: true
     logging: *default-logging
     ports: !override
-      - "127.0.0.1:${INBOX_HOST_PORT:-13004}:3004"
+      - "127.0.0.1:${INBOX_HOST_PORT:?INBOX_HOST_PORT missing - load deploy/ports.env}:3004"
     restart: always
 
   worker:
@@ -150,7 +150,7 @@ services:
       - TRUEFORGE_CHAT_MODEL=${TRUEFORGE_CHAT_MODEL:-openrouter/deepseek-v4-1-flash}
 
   # The user-facing app (NEW-FRONTEND). It proxies /api/* to the dashboard, so the reverse
-  # proxy (Caddy/nginx) points at 127.0.0.1:${FRONTEND_HOST_PORT:-13100} and the session cookie stays same-origin.
+  # proxy (Caddy/nginx) points at 127.0.0.1:${FRONTEND_HOST_PORT:?FRONTEND_HOST_PORT missing - load deploy/ports.env} and the session cookie stays same-origin.
   # deploy.sh pulls the frontend repo and rebuilds this image on every run.
   frontend:
     init: true
@@ -164,7 +164,7 @@ services:
         TRUEFORGE_URL: http://trueforge:8790
     container_name: darex-frontend
     ports: !override
-      - "127.0.0.1:${FRONTEND_HOST_PORT:-13100}:3100"
+      - "127.0.0.1:${FRONTEND_HOST_PORT:?FRONTEND_HOST_PORT missing - load deploy/ports.env}:3100"
     restart: always
     mem_limit: 512m
     environment:
@@ -180,7 +180,7 @@ services:
     init: true
     logging: *default-logging
     ports: !override
-      - "127.0.0.1:${DASHBOARD_PORT:-13000}:3000"
+      - "127.0.0.1:${DASHBOARD_PORT:?DASHBOARD_PORT missing - load deploy/ports.env}:3000"
     restart: always
     environment:
       - NEXT_PUBLIC_APP_URL=${NEXT_PUBLIC_APP_URL}
@@ -192,7 +192,7 @@ services:
   evolution:
     init: true
     ports: !override
-      - "127.0.0.1:${EVOLUTION_PORT:-18085}:8080"
+      - "127.0.0.1:${EVOLUTION_PORT:?EVOLUTION_PORT missing - load deploy/ports.env}:8080"
     logging: *default-logging
 
   cognee:
@@ -206,7 +206,7 @@ services:
   hindsight-ui:
     init: true
     ports: !override
-      - "127.0.0.1:${HINDSIGHT_UI_HOST_PORT:-19999}:9999"
+      - "127.0.0.1:${HINDSIGHT_UI_HOST_PORT:?HINDSIGHT_UI_HOST_PORT missing - load deploy/ports.env}:9999"
     logging: *default-logging
 
   trueforge:

@@ -1,5 +1,12 @@
 # Darex Build State
 
+## Production host ports live in one file, deploy/ports.env (2026-10-05)
+
+- Host ports were `${NAME:-default}` repeated across `docker-compose.prod.yml`, `deploy.sh`, `redeploy.sh` and `lib.sh`, so a port change meant editing several files and a missed one probed a dead port (Evolution health check defaulted to 8085 while prod binds 18085).
+- New `deploy/ports.env` is the only place a prod host port is set. `lib.sh` loads it for both deploy scripts, `infra/scripts/compose-cmd.sh` passes it to compose whenever a `--overlay` is used, and the prod overlay reads each name with `${NAME:?...}`, so a missing value fails the config instead of publishing a wrong port. A per-machine `.env` still wins because it loads after. SearXNG and Crawl4AI host ports are now `SEARXNG_HOST_PORT` / `CRAWL4AI_HOST_PORT` (dev keeps its 8088 / 11235 fallback).
+- Port values themselves are unchanged. Caddy (the proxy in front of the stack) is not read by compose: its upstream still has to match `FRONTEND_HOST_PORT` by hand (`deploy/Caddyfile.example`).
+- Verified: `compose-cmd.sh --overlay deploy/docker-compose.prod.yml config` renders all 22 published ports on 127.0.0.1 from the file; `FRONTEND_HOST_PORT=23100` overrides; with the file removed, config fails with "POSTGRES_HOST_PORT missing". Not yet verified: a live redeploy on the VM.
+
 ## Password signups verify their email address (2026-10-05)
 
 - Signup created a working session for any address, typed or not. Migration `209_email_verification.sql` adds `users.email_verified_at` (every existing user is backfilled as verified, so turning enforcement on locks nobody out), a hashed single-use 24h `email_verification_tokens` table, and four SECURITY DEFINER functions (create, consume, mark, check) in the same style as password reset.

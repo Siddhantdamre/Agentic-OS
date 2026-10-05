@@ -548,7 +548,7 @@ services:
     mem_limit: 256m
     mem_reservation: 64m
     ports:
-      - "127.0.0.1:8088:8080"
+      - "127.0.0.1:${SEARXNG_HOST_PORT:-8088}:8080"
     volumes:
       - ./searxng:/etc/searxng:ro
     environment:
@@ -568,7 +568,7 @@ services:
     mem_limit: 768m
     mem_reservation: 256m
     ports:
-      - "127.0.0.1:11235:11235"
+      - "127.0.0.1:${CRAWL4AI_HOST_PORT:-11235}:11235"
     environment:
       - CRAWL4AI_API_TOKEN=darex-crawl4ai-token
     networks:
