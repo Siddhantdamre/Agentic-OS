@@ -213,5 +213,14 @@ jobs:
       - name: Apply migrations
         run: node infra/db/migrate.js
 
+      # Migration 119 creates darex_platform with no password. The suite logs in as that role to
+      # exercise its grants and fails in CI without one; this is the throwaway service-container DB.
+      - name: Give the darex_platform role a CI-only password
+        run: |
+          PGPASSWORD="$DB_PASSWORD" psql -h 127.0.0.1 -U darex -d darex -v ON_ERROR_STOP=1 \
+            -c "ALTER ROLE darex_platform PASSWORD 'darex_platform_ci_secret';"
+
       - name: Run multi-tenant isolation tests
+        env:
+          DAREX_PLATFORM_DB_PASSWORD: darex_platform_ci_secret
         run: node tests/e2e-tenant-isolation.test.js
