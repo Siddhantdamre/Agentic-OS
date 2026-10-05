@@ -8,6 +8,7 @@ import {
   parseToolAllowlist,
 } from '@/lib/inbound-agent';
 import { replyTargetFromChannelMeta } from '@/lib/channel-outbound';
+import { isUuid } from '@/lib/session-cookie';
 import { denyWebhookIfLimited, isRateLimitError, responseFromRateLimit } from '@/lib/rate-limit';
 import {
   normalizeChannelKey,
@@ -144,54 +145,53 @@ async function resolveOrgFromRequest(
   const accountId = coerceAccountId(account.id) ?? coerceAccountId(inbox.account_id);
 
   const mapped = await resolveOrgByChatwootInbox(accountId, inboxId);
-  if (mapped) return { orgId: mapped, via: 'inbox_map' };
 
-  const authHeader = request.headers.get('Authorization') || '';
-  const token = authHeader.replace(/^Bearer\s+/i, '').trim();
-  if (token) {
-    try {
-      const res = await pool.query(`SELECT resolve_org_by_webhook_secret($1) AS id`, [token]);
-      if (res.rows[0]?.id) return { orgId: res.rows[0].id as string, via: 'secret' };
-    } catch {
-      const res = await pool.query(
-        `SELECT id FROM orgs WHERE meta->>'webhook_secret' = $1 AND status = 'active' LIMIT 1`,
-        [token]
-      );
-      if (res.rows[0]?.id) return { orgId: res.rows[0].id as string, via: 'secret' };
-    }
-  }
-
-  const orgHeader = request.headers.get('X-Darex-Org-Id');
-  if (orgHeader) {
-    // Header alone must NOT resolve an org — same per-org secret as ?org_id=+?token=.
-    const url = new URL(request.url);
-    const queryToken = url.searchParams.get('token');
-    if (queryToken) {
-      const res = await pool.query(
-        `SELECT id FROM orgs WHERE id = $1 AND status = 'active' AND meta->>'webhook_secret' = $2 LIMIT 1`,
-        [orgHeader, queryToken]
-      );
-      if (res.rows[0]?.id) return { orgId: res.rows[0].id as string, via: 'header' };
-    }
-  }
-
-  // Never fall back to "the only active org" - that bleeds inbound messages across tenants.
-  // Resolve via inbox map, per-org webhook secret, X-Darex-Org-Id+token, or ?org_id=+?token=.
-
-  // `?org_id=` is only trusted alongside a per-org secret (`?token=` matched against
-  // that org's own webhook_secret) - the global CHATWOOT_WEBHOOK_SECRET already
-  // verified in POST() is shared across all orgs, so org_id alone would let anyone
-  // holding it target any org by guessing/enumerating ids.
+  // `orgs` is FORCE ROW LEVEL SECURITY and this request has no org context yet, so a plain
+  // `SELECT ... FROM orgs` on the pool matches nothing — ever. Every lookup below goes through a
+  // SECURITY DEFINER resolver that returns an id only for a valid credential. No raw fallback:
+  // the one that used to sit behind the Bearer lookup was exactly the unscoped read the resolver
+  // exists to prevent, and it opened whenever the function call failed for any reason.
   const url = new URL(request.url);
-  const orgIdParam = url.searchParams.get('org_id');
+  const authHeader = request.headers.get('Authorization') || '';
+  const bearer = authHeader.replace(/^Bearer\s+/i, '').trim();
   const queryToken = url.searchParams.get('token');
-  if (orgIdParam && queryToken) {
-    const res = await pool.query(
-      `SELECT id FROM orgs WHERE id = $1 AND status = 'active' AND meta->>'webhook_secret' = $2 LIMIT 1`,
-      [orgIdParam, queryToken]
-    );
-    if (res.rows[0]?.id) return { orgId: res.rows[0].id as string, via: 'query' };
+  const orgIdParam = url.searchParams.get('org_id');
+  const orgHeader = request.headers.get('X-Darex-Org-Id');
+
+  if (bearer) {
+    const res = await pool.query(`SELECT resolve_org_by_webhook_secret($1) AS id`, [bearer]);
+    const id = (res.rows[0]?.id as string | null) || null;
+    if (id) return { orgId: id, via: 'secret' };
   }
+
+  // The global CHATWOOT_WEBHOOK_SECRET already verified in POST() is shared by every tenant, so
+  // an org id alone would let anyone holding it target any org. An id is only trusted together
+  // with that org's OWN secret (`?token=`), checked against the same row.
+  const claimedOrg = orgIdParam || orgHeader;
+  if (claimedOrg && queryToken && isUuid(claimedOrg)) {
+    const res = await pool.query(`SELECT org_resolve_by_id_and_secret($1::uuid, $2::text) AS id`, [
+      claimedOrg,
+      queryToken,
+    ]);
+    const id = (res.rows[0]?.id as string | null) || null;
+    if (id) return { orgId: id, via: orgIdParam ? 'query' : 'header' };
+  }
+
+  // A per-org credential was PRESENTED and did not validate: stop. The caller chooses the
+  // account/inbox ids in the body, so falling through to the inbox map would turn a failed
+  // login for org B into a successful delivery to whichever org owns that inbox row.
+  if (bearer || orgIdParam || orgHeader || queryToken) {
+    console.warn(
+      '[Chatwoot Webhook] REJECTED — a per-org credential was presented and did not validate ' +
+        `(org_id param=${orgIdParam ? 'present' : 'none'}, header=${orgHeader ? 'present' : 'none'}, ` +
+        `bearer=${bearer ? 'present' : 'none'}, token=${queryToken ? 'present' : 'none'}).`
+    );
+    return { orgId: null, via: null };
+  }
+
+  // No identity was claimed: the Chatwoot inbox map is the only remaining route. Never fall back
+  // to "the only active org" — that bleeds inbound messages across tenants.
+  if (mapped) return { orgId: mapped, via: 'inbox_map' };
 
   return { orgId: null, via: null };
 }

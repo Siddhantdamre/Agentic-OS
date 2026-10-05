@@ -1,5 +1,13 @@
 # Darex Build State
 
+## The per-tenant webhook URL resolves again; a failed credential no longer falls through to the inbox map (2026-10-03)
+
+- `POST /api/webhooks/chatwoot?org_id=<id>&token=<secret>` (the documented per-tenant URL) answered 400 "Cannot resolve organization" for a valid active org, so no message was stored and the agent never replied. `orgs` is FORCE ROW LEVEL SECURITY and the route resolves the tenant before any org context exists, but the `?org_id=` and `X-Darex-Org-Id` branches ran a plain `SELECT ... FROM orgs` on the pool. Measured: 4 orgs as owner, 0 visible to `darex_app`.
+- Migration 210 defines `org_resolve_by_id_and_secret` (SECURITY DEFINER, active orgs only, empty secret refused, execute granted to `darex` and `darex_app`; idempotent, so a no-op replace where the function already exists). The route resolves Bearer, `?org_id=`+`?token=` and `X-Darex-Org-Id`+`?token=` only through definer functions, and a malformed id is a 400.
+- Behaviour change, deliberate: a per-org credential that is presented and does not validate stops the request (400) instead of falling through to the inbox map named in the body (`?org_id=<B>&token=<A's secret>` could land in a third org that owned that inbox row). A tenant whose Chatwoot URL carries a stale token and only worked through the inbox map sees 400 until the URL is corrected.
+- Proof: 10 route tests (4 failed before), 8 database assertions as `darex_app` (3 of 8 before the migration, 8 of 8 after), 11 of 11 over real HTTP, inbound end-to-end 8 of 8.
+- Not verified: a real Chatwoot instance; the migration on a copy of production data.
+
 ## Next 15 upgrade follow-up: codemod leftovers, React 19 peers, params test (2026-10-05)
 
 - The async-request-api codemod left `Promise<Promise<{ id }> | { id }>` types with `await Promise.resolve((await context.params))` in the listings, showings, packs config and integrations ping routes, plus `@next-codemod-error` comments on two re-exports. These are now plain `Promise<{ id }>` with `await context.params`. Both re-export targets (`employees/growth/page`, `api/listings` GET) take no params, so the warnings didn't apply.
