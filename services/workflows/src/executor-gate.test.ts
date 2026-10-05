@@ -191,9 +191,39 @@ test('skill tier minimums do not block reads, so a read reaches the provider', a
   assert.deepEqual(f.invoked, ['gmail.fetch_latest_emails']);
 });
 
-test('skill tier minimums still block sends', async () => {
+test('below the skill tier minimum a send parks for approval instead of being refused', async () => {
   const f = fakeDeps({ skillTierBlock: async () => 'Action blocked: autonomy tier 1 is below skill minimum 2 for "gmail".' });
-  const res = await runToolGate({ tool: 'gmail', action: 'send_email', payload: { to: 'a@b.co', body: 'hi' }, orgId: ORG, employeeId: EMMA.id }, f.deps);
-  assert.equal(res.reason, 'policy_denied');
+  const res = await runToolGate({ tool: 'gmail', action: 'send_email', payload: { to: 'a@b.co', subject: 'Hi', body: 'hi' }, orgId: ORG, employeeId: EMMA.id }, f.deps);
+  assert.equal(res.status, 'pending_approval');
+  assert.notEqual(res.reason, 'policy_denied');
+  assert.deepEqual(f.parked, ['gmail.send_email']);
   assert.deepEqual(f.invoked, []);
+});
+
+test('below the skill tier minimum a non-confirm write parks with reason skill_tier', async () => {
+  const f = fakeDeps({
+    skillTierBlock: async () => 'Action blocked: autonomy tier 1 is below skill minimum 2 for "google-calendar".',
+    riskFor: () => ({ risk: 'execute', confirm: false }),
+  });
+  const res = await runToolGate({ tool: 'google-calendar', action: 'create_event', payload: { summary: 'x' }, orgId: ORG, employeeId: EMMA.id }, f.deps);
+  assert.equal(res.status, 'pending_approval');
+  assert.equal((res.data as any)?.reasonCode, 'skill_tier');
+  assert.deepEqual(f.invoked, []);
+});
+
+test('skill tier minimums do not block drafts', async () => {
+  const f = fakeDeps({ skillTierBlock: async () => 'Action blocked: autonomy tier 1 is below skill minimum 2 for "gmail".' });
+  const res = await runToolGate({ tool: 'gmail', action: 'draft_email', payload: { to: 'a@b.co', subject: 'Hi', body: 'hi' }, orgId: ORG, employeeId: EMMA.id }, f.deps);
+  assert.equal(res.status, 'executed');
+  assert.deepEqual(f.invoked, ['gmail.draft_email']);
+});
+
+test('an approved send runs even when the employee tier is below the skill minimum', async () => {
+  const f = fakeDeps({
+    skillTierBlock: async () => 'Action blocked: autonomy tier 1 is below skill minimum 2 for "gmail".',
+    loadApprovedAction: async () => ({ id: 'pa-1', tool: 'gmail', action: 'send_email', args: { to: 'a@b.co', subject: 'Hi', body: 'hi' } }),
+  });
+  const res = await runToolGate({ tool: 'gmail', action: 'send_email', payload: {}, orgId: ORG, employeeId: EMMA.id, approvedPendingActionId: 'pa-1', actorUserId: 'u-1' }, f.deps);
+  assert.equal(res.status, 'executed');
+  assert.deepEqual(f.invoked, ['gmail.send_email']);
 });

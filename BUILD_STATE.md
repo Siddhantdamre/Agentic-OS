@@ -1,5 +1,16 @@
 # Darex Build State
 
+## Gmail read, reply and reply-draft from Ask AI (2026-10-05)
+
+- Gmail gains `read_email` (one message in full by id), `reply_email` (sent in the original thread with `In-Reply-To`/`References`, `Re:` subject, to the Reply-To/From unless `to` is given; send-risk, approval first) and `draft_reply` (same, saved as a draft). Chat tools: `gmail_read_email`, `gmail_reply`, `gmail_draft_reply`; `gmail_send` takes cc/bcc. Before this, chat could only start new emails, so "reply to that email" produced an unthreaded message or a refusal.
+- All outgoing mail goes through `buildRawEmail`, which strips CR/LF from model-supplied headers (no header injection), RFC 2047-encodes non-ASCII subjects and base64-encodes the body. Message ids are validated before reaching a Gmail URL. Inbound HITL treats `gmail_reply` as a send.
+- Verified: 476 `@darex/workflows` and 625 dashboard tests, including new Gmail cases (header injection, unicode subject, threading headers, `Re:` once, action risks). Not verified: a live read, reply or draft against a real Gmail account, because no local stack was running.
+
+## Below the skill tier minimum a call asks for approval instead of failing (2026-10-05)
+
+- "Send an email" from chat failed with `Action blocked: autonomy tier 1 is below skill minimum 2 for "gmail"`. The skill-tier check in `tool-gate.ts` refused every non-read call, including drafts, and also ran on the approval executor's re-entry, so even a human-approved send could never execute. Below the skill minimum a call now parks for approval (reason `skill_tier`; sends already park as `confirm_class`), drafts are not tier-checked (they reach nobody), and an approved re-entry skips the check.
+- Verified: `@darex/workflows` tests, including new gate cases (below-tier send parks, non-confirm write parks as `skill_tier`, draft runs, approved send runs). Not verified: a live send through the deployed chat, because no local stack was running.
+
 ## Connector tokens go only to the workspace's own host (2026-10-02)
 
 - Connectors: `shopify.ts` and `zendesk.ts` built the request host from the model-written payload first and then attached the workspace's token (`attacker.example/x?` in the Zendesk subdomain redirected it). `tools/host-guard.ts` now makes the connection's own host win, accepts a payload host only if it names that same store, REFUSES a payload host when the workspace has no recorded store (anyone can register a free Shopify or Zendesk store, so a valid-looking host proves nothing; such a workspace must reconnect), treats a recorded but unusual value as an error instead of falling through to the deployment default (`pickTrusted`), and every outbound call uses `redirect: 'error'` (fetch forwards custom headers such as X-Shopify-Access-Token on a cross-origin redirect).

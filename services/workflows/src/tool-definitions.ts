@@ -30,15 +30,58 @@ export const TOOLS: ToolDef[] = [
   },
   {
     name: 'gmail_send',
-    description: 'Send an email from the org-connected Gmail account.',
+    description:
+      'Send a new email from the org-connected Gmail account. Goes to a human for approval first. ' +
+      'To answer an existing email use gmail_reply so it stays in the same thread.',
     schema: {
       org_id: z.string(),
       to: z.string(),
       subject: z.string(),
       body: z.string(),
+      cc: z.string().optional(),
+      bcc: z.string().optional(),
     },
     tool: 'gmail',
     action: 'send_email',
+  },
+  {
+    name: 'gmail_read_email',
+    description:
+      'Read one email in full (body, sender, recipients, attachments list) by its messageId from gmail_fetch.',
+    schema: { org_id: z.string(), messageId: z.string() },
+    tool: 'gmail',
+    action: 'read_email',
+  },
+  {
+    name: 'gmail_reply',
+    description:
+      'Reply to an email in its existing thread (Re: subject, In-Reply-To set). Needs the messageId from gmail_fetch. ' +
+      'Replies to the original sender unless "to" is given. Goes to a human for approval first.',
+    schema: {
+      org_id: z.string(),
+      messageId: z.string(),
+      body: z.string(),
+      to: z.string().optional(),
+      cc: z.string().optional(),
+      bcc: z.string().optional(),
+    },
+    tool: 'gmail',
+    action: 'reply_email',
+  },
+  {
+    name: 'gmail_draft_reply',
+    description:
+      'Save a reply to an email as a Gmail draft in the same thread (does NOT send). Needs the messageId from gmail_fetch.',
+    schema: {
+      org_id: z.string(),
+      messageId: z.string(),
+      body: z.string(),
+      to: z.string().optional(),
+      cc: z.string().optional(),
+      bcc: z.string().optional(),
+    },
+    tool: 'gmail',
+    action: 'draft_reply',
   },
   {
     name: 'gmail_triage',

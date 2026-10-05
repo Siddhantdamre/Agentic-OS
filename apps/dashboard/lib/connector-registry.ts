@@ -96,6 +96,9 @@ export const CONNECTOR_REGISTRY_META: Record<string, ConnectorRegistryMeta> = {
       'gmail_extract_otp',
       'gmail_extract_attachment',
       'gmail_draft_email',
+      'gmail_read_email',
+      'gmail_reply',
+      'gmail_draft_reply',
     ],
   },
   'google-calendar': {
