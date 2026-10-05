@@ -140,6 +140,8 @@ jobs:
         run: |
           pnpm --filter @darex/shared-types exec tsc --noEmit
           pnpm --filter @darex/shared-types build
+          # workflows imports @darex/whatsapp-gateway, which resolves to its dist/ (gitignored).
+          pnpm --filter @darex/whatsapp-gateway build
           pnpm --filter @darex/connectors exec tsc --noEmit
           pnpm --filter @darex/workflows exec tsc --noEmit
           # Dashboard imports @darex/workflows/dist/*; dist/ is gitignored.
