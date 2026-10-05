@@ -138,3 +138,25 @@
   resize: none;
 }
 
+
+/* Keyboard focus.
+ *
+ * Screens clear the browser's focus outline with `outline-none` / `focus:outline-none`. Where nothing replaces it
+ * (the sign-in and sign-up fields, the conversation reply box) a person using the keyboard cannot see where they are.
+ * One rule here instead of editing every screen. `:focus-visible` fires for keyboard focus and for text fields, not
+ * for a mouse click on a button. The doubled pseudo-class raises its specificity above `.focus\:outline-none:focus`,
+ * which a single `:focus-visible` would lose to. Elements focused only by script (tabindex -1) are left alone. */
+:is(a, button, input, select, textarea, summary, [tabindex]:not([tabindex="-1"])):focus-visible:focus-visible {
+  outline: 2px solid #B45309;
+  outline-offset: 2px;
+}
+
+/* Respect a person's reduced-motion setting (an operating-system preference the browser already knows). */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

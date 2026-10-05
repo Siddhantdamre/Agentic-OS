@@ -1,5 +1,12 @@
 # Darex Build State
 
+## Keyboard focus is visible everywhere; reduced motion is honoured (2026-10-05)
+
+- Measured with Tab in a real browser across 11 pages: of 169 keyboard stops, 6 showed no outline or ring (the sign-in and sign-up fields and the conversation reply box), because the screens clear the outline with `outline-none` and nothing replaces it.
+- One rule in `app/globals.css`: a 2 px outline on `:focus-visible` for links, buttons, fields and tabbable elements, with the pseudo-class doubled so it beats `.focus\:outline-none:focus`; script-focused `tabindex="-1"` elements are left alone. A `prefers-reduced-motion` block removes animation and transition time. The skip link already existed in the app shell.
+- Proof: `focus-and-motion.test.ts` (4 tests); the same Tab run now shows 0 of 169 stops without a visible focus.
+- Not verified: Safari and Firefox; contrast ratios and screen-reader flow need a person.
+
 ## A page whose scripts fail to load now says so (2026-10-05)
 
 - A server started before a rebuild kept serving old pages whose script files no longer existed: the page loaded (HTTP 200) and looked normal, then nothing responded to clicks, and nothing on screen said why. Reproduced here: the page's own script file answered 400.
