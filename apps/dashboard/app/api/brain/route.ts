@@ -10,6 +10,7 @@ import {
   searchMemoryHybrid,
 } from '@darex/workflows/dist/memory/retrieve';
 import { hindsightEnabled, listHindsight, searchHindsight } from '@darex/workflows/dist/memory/hindsight-client';
+import { cogneeEnabled, searchCognee } from '@darex/workflows/dist/memory/cognee-client';
 
 export const dynamic = 'force-dynamic';
 
@@ -377,20 +378,45 @@ async function loadGraph(
   orgId: string,
   query: string
 ): Promise<{ graph: BrainGraphFact[]; graphUnavailable: boolean }> {
-  if (!hindsightEnabled()) return { graph: [], graphUnavailable: false };
-  try {
-    if (query) {
-      const hits = await searchHindsight({ orgId, query, topK: 25, timeoutMs: 4000 });
-      return {
-        graph: hits.map((h) => ({ id: h.id, text: h.snippet, type: 'fact', updatedAt: h.updatedAt })),
-        graphUnavailable: false,
-      };
+  const hasHindsight = hindsightEnabled();
+  const hasCognee = cogneeEnabled();
+  if (!hasHindsight && !hasCognee) return { graph: [], graphUnavailable: false };
+
+  const graphFacts: BrainGraphFact[] = [];
+  let graphUnavailable = false;
+
+  if (hasHindsight) {
+    try {
+      if (query) {
+        const hits = await searchHindsight({ orgId, query, topK: 25, timeoutMs: 4000 });
+        for (const h of hits) {
+          graphFacts.push({ id: h.id, text: h.snippet, type: 'fact', updatedAt: h.updatedAt });
+        }
+      } else {
+        const list = await listHindsight(orgId, 25);
+        graphFacts.push(...list);
+      }
+    } catch (err) {
+      console.warn('[brain] hindsight unavailable:', err instanceof Error ? err.message : err);
+      graphUnavailable = true;
     }
-    return { graph: await listHindsight(orgId, 25), graphUnavailable: false };
-  } catch (err) {
-    console.warn('[brain] hindsight unavailable:', err instanceof Error ? err.message : err);
-    return { graph: [], graphUnavailable: true };
   }
+
+  if (hasCognee && query) {
+    try {
+      const cogHits = await searchCognee({ orgId, query, topK: 15, timeoutMs: 4000 });
+      for (const ch of cogHits) {
+        if (!graphFacts.some((f) => f.text === ch.snippet)) {
+          graphFacts.push({ id: ch.id, text: ch.snippet, type: 'fact', updatedAt: ch.updatedAt || '' });
+        }
+      }
+      graphUnavailable = false;
+    } catch (err) {
+      console.warn('[brain] cognee search unavailable:', err instanceof Error ? err.message : err);
+    }
+  }
+
+  return { graph: graphFacts, graphUnavailable: graphUnavailable && graphFacts.length === 0 };
 }
 
 export async function GET(request: Request) {
