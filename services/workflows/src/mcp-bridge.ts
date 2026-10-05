@@ -1856,7 +1856,18 @@ const httpServer = http.createServer(async (req, res) => {
     transports[transport.sessionId] = transport;
     sessionContexts[transport.sessionId] = context;
 
+    const keepaliveTimer = setInterval(() => {
+      try {
+        if (!res.writableEnded) {
+          res.write(': keepalive\n\n');
+        }
+      } catch {
+        // Socket closed or error
+      }
+    }, 15000);
+
     res.on('close', () => {
+      clearInterval(keepaliveTimer);
       delete transports[transport.sessionId];
       delete sessionContexts[transport.sessionId];
     });
