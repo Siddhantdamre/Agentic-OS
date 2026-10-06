@@ -1,5 +1,13 @@
 # Darex Build State
 
+## A person is never shown Node's own network error text (2026-10-06)
+
+- Found while testing what a chat approval card does after the server restarts: the approve route answered `fetch failed`. The chat that was waiting lives in the memory of the server that asked, so after a restart (or on a second replica) it is gone and nothing runs, and the person was shown Node's bare network message because two streamed error events (`ask-ai/approve`, and the crew path in `ask-ai`) sent `err.message` as it was.
+- `publicErrorMessage` now treats the bare network messages (`fetch failed`, `socket hang up`, `terminated`, `other side closed`) as internal text. Both routes use it, with a sentence that says what is true and what to do: "We couldn’t finish that approval, so nothing was run. Please ask again, or approve it from Decisions."
+- Contract test `stream-error-contract.test.ts`: no route may stream an error event whose text is a raw caught error (a string literal or `publicErrorMessage(...)` only). It found exactly those two.
+- Proof: 4 new sanitiser cases and 2 contract tests, red first and naming both routes; harness flow F14.
+- Not fixed: a held chat approval still does not survive a restart; the person is told to ask again or approve it from Decisions (open in `gap26sept/decisions.md`).
+
 ## Approving a held send, payment or signature now runs it, and a failed run is recorded as failed (2026-10-06)
 
 - Found by driving the real stack with a local fake model and provider (entry below). Ask AI wants to send an email, it is held for approval, the owner approves it in Decisions. The API answered "executed", the row was marked executed and the audit log said `decision.approved_and_executed`, but the provider received nothing and a second pending approval had been created. Approving that one did the same again.

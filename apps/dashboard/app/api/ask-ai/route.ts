@@ -1242,8 +1242,8 @@ function streamCrewAnswer(args: {
         });
       } catch (err: unknown) {
         if (args.signal?.aborted) return;
-        const message = err instanceof Error ? err.message : 'Crew failed';
-        send('error', { error: message, retryable: true });
+        console.error('[Ask AI] crew failed:', err);
+        send('error', { error: publicErrorMessage(err, 'The team couldn’t finish that. Please try again.'), retryable: true });
       } finally {
         // Always release the concurrency lease — success, error, and abort.
         lease.release();

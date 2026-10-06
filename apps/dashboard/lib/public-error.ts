@@ -8,6 +8,7 @@ const INTERNAL_TEXT: RegExp[] = [
   /\brelation "[^"]*"|\bcolumn "[^"]*"|\btable "[^"]*"|\bconstraint "[^"]*"|violates [a-z ]*constraint/i,
   /\bSQLSTATE\b|\bduplicate key value\b|\binvalid input syntax\b|\bsyntax error at or near\b|\bpermission denied for\b/i,
   /\b(?:ECONNREFUSED|ECONNRESET|ETIMEDOUT|ENOTFOUND|EAI_AGAIN|EHOSTUNREACH|ENETUNREACH|ENOENT|EACCES|EPIPE)\b/,
+  /^(?:fetch failed|socket hang up|terminated|other side closed|network error|aborted)\.?$/i, // Node's own bare network messages
   /\bpassword authentication failed\b|\bno pg_hba\.conf entry\b|\bconnection terminated\b|\bremaining connection slots\b/i,
   /\b[a-z][a-z0-9+.-]*:\/\/[^\s/@]*:[^\s/@]*@/i, // a URL with credentials in it
   /\b\d{1,3}(?:\.\d{1,3}){3}(?::\d{2,5})?\b/, // an IPv4 address (with a port)

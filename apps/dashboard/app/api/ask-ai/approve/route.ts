@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { publicErrorMessage } from '@/lib/public-error';
 import { getScopedClient, scopedAuthErrorResponse } from '@/lib/db';
 import { readJsonBody } from '@/lib/safe-json';
 import { recordAuditEvent } from '@/lib/audit-events';
@@ -230,8 +231,13 @@ export async function POST(request: Request) {
             retryable: result.retryable || false,
           });
         } catch (err: unknown) {
-          const message = err instanceof Error ? err.message : 'Resume failed';
-          send('error', { error: message, retryable: true });
+          // The chat's held approval lives in the server that asked for it. After a restart it is gone, and the
+          // underlying error is Node's bare "fetch failed": say what is true and what to do, not that.
+          console.error('[Ask AI Approve] resume failed:', err);
+          send('error', {
+            error: publicErrorMessage(err, 'We couldn’t finish that approval, so nothing was run. Please ask again, or approve it from Decisions.'),
+            retryable: true,
+          });
         } finally {
           controller.close();
         }
