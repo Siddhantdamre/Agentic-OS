@@ -30,7 +30,7 @@ F1 a read runs and reaches the provider · F2 a send is held, nothing leaves · 
 truthfully · F4 reject · F5 edit then approve · F6 provider failure is recorded as failed · F7 watching mode records and
 sends nothing · F8 a paused team does nothing · F9 another workspace cannot see or approve · F10 an auditor cannot
 approve · F11 a revoked connection is reported honestly · F12 a customer message through to a stored reply · F13 a
-message that tries to make the agent email an attacker sends nothing · F14 a dead approval card says so plainly.
+message that tries to make the agent email an attacker sends nothing · F14 a dead approval card says so plainly · F15 a call denied in the chat card runs nothing and leaves no approval.
 
 ## What it does not cover
 

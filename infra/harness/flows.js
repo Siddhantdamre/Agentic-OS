@@ -267,6 +267,23 @@ flow('F14 an approval card whose chat is gone says so plainly and runs nothing',
 });
 
 
+// ---- A call the person denied in the chat card ------------------------------------------------------------------
+const rowCount = (s) => count(`SELECT count(*) FROM agent_pending_actions WHERE org_id='${s.orgId}'`);
+const auditCount = (s, kind) => count(`SELECT count(*) FROM audit_events WHERE org_id='${s.orgId}' AND kind='${kind}'`);
+
+flow('F15 denying in the chat card sends nothing and leaves nothing to approve', async () => {
+  const s = seed({ stage: 1, tag: 'f15' }); resetWorld();
+  try {
+    const r = await ask(s, `Confirm the viewing ${SEND()}`);
+    note('showing the card makes no approval row yet', rowCount(s) === 0, `rows=${rowCount(s)}`);
+    const d = await chatApprove(s, { ...r.approval, conversationId: r.done?.conversationId }, 'deny');
+    note('the provider received nothing', providerCalls().length === 0, d.text.slice(0, 300));
+    note('no approval row was made: the denied call never reached the gate', rowCount(s) === 0, `rows=${rowCount(s)}`);
+    note('the audit log has the deny', auditCount(s, 'tool.deny') === 1);
+  } finally { cleanup(s.orgId); }
+});
+
+
 (async () => {
   for (const f of flows) {
     if (ONLY && !f.name.includes(ONLY)) continue;

@@ -1,5 +1,12 @@
 # Darex Build State
 
+## A call the person denied in the chat card no longer runs (2026-10-06)
+
+- Found by flow F15 in the keyless harness while checking what a chat approval leaves behind: after Deny, a pending approval row existed. The in-process tool set (`DarexLocalToolSet`) ignored the second argument the SDK passes to `callTool`, which is the person's answer to the card. So a denied call went to the gate like any other: a send, payment, signature, publish or delete was held as a new approval in Decisions (a request for something the person had just refused), and a write the workspace lets run on its own would have run.
+- Fix: `callTool(params, decision)` returns "The person denied this action, so it was not run" before the tool-call budget and before the gate when `decision.status` is `deny`. Nothing is counted or dispatched.
+- Proof: 2 unit tests, red first (a type error and 2 failures without the fix); harness flow F15 (deny leaves no row and the audit log has the deny).
+- Not changed here: allowing a card still ends in a second approval in Decisions. That is the next entry.
+
 ## Keyless end-to-end flow harness (2026-10-06)
 
 - `infra/harness/` runs 14 flows through the real dashboard server, tool gate and database with a local fake model, connection broker and provider. The model server answers in OpenAI format and is scripted by the prompt; calls to provider hosts are rewritten to the fake by a preloaded script. No keys, no network, no workflow engine: the dashboard runs agent turns in-process when `DAREX_LOCAL_MODEL_BASE_URL` is set.

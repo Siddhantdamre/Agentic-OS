@@ -520,7 +520,22 @@ export class DarexLocalToolSet implements IToolSet {
     };
   }
 
-  async callTool(params: { name: string; arguments?: unknown }) {
+  /**
+   * `decision` is the person's answer to this call's approval card, passed by the SDK with the call. A denied call
+   * must not run: without this check the gate saw a normal call and held it (or, for a write the org lets run
+   * alone, ran it) although the person had said no.
+   */
+  async callTool(params: { name: string; arguments?: unknown }, decision?: { status?: string; reason?: string }) {
+    if (decision?.status === 'deny') {
+      return toolResultResponse({
+        text: JSON.stringify({
+          status: 'error',
+          message: `The person denied this action, so it was not run${decision.reason ? `: ${decision.reason}` : '.'}`,
+          denied: true,
+        }),
+        isError: true,
+      });
+    }
     // Never fall back to the full TOOLS catalog — only tools exposed via the
     // allowlist-filtered availableTools set may execute in-process.
     const def = this.availableTools.find((t) => t.name === params.name);
