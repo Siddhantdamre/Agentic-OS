@@ -1,5 +1,13 @@
 # Darex Build State
 
+## Keyless end-to-end flow harness (2026-10-06)
+
+- `infra/harness/` runs 14 flows through the real dashboard server, tool gate and database with a local fake model, connection broker and provider. The model server answers in OpenAI format and is scripted by the prompt; calls to provider hosts are rewritten to the fake by a preloaded script. No keys, no network, no workflow engine: the dashboard runs agent turns in-process when `DAREX_LOCAL_MODEL_BASE_URL` is set.
+- Flows: a read runs; a send is held; approving sends once and records truthfully; reject; edit then approve; a provider failure is recorded as failed; watching mode records and sends nothing; a paused team does nothing; another workspace cannot see or approve; an auditor cannot approve; a revoked connection is reported honestly; a customer message through to a stored reply; a message that tries to make the agent email an attacker sends nothing; a dead approval card says so plainly.
+- Result: 50 of 50 checks on the final build. It is what found the approval defects in the two entries above; the unit tests could not, because they stub the executor.
+- Observed and not changed: at level 0 a chat send still shows the approval card first and only after Allow does the gate record it as a watching-mode decision. Of five ordinary customer messages sent inbound, four were answered ("email me the brochure", "send me the price list on WhatsApp", "how do I pay the booking amount", a showing-time question) and one was held for a person before the agent could answer ("Can I sign the agreement online?", a plain question about signing).
+- Not covered: real model answers, real providers, workflow-engine workflows (reminders, nurture, sweeps, data erasure), browsers. Not wired into CI (it needs a built dashboard and a database): run `infra/harness/run-flows.sh`.
+
 ## A person is never shown Node's own network error text (2026-10-06)
 
 - Found while testing what a chat approval card does after the server restarts: the approve route answered `fetch failed`. The chat that was waiting lives in the memory of the server that asked, so after a restart (or on a second replica) it is gone and nothing runs, and the person was shown Node's bare network message because two streamed error events (`ask-ai/approve`, and the crew path in `ask-ai`) sent `err.message` as it was.
