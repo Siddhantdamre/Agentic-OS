@@ -1,6 +1,7 @@
 import { createHmac } from 'node:crypto';
 import { describeTurnFailure } from './turn-failure.js';
 import type { RetrieveMemoryResult } from '@darex/shared-types';
+import type { ParkedApprover } from './chat-approval.js';
 import type { AgentTaskInput, AgentTaskResult } from './agent-engine.js';
 import {
   emptyMemoryResult,
@@ -113,6 +114,11 @@ export interface RunAgentOptions {
   onSubagent?: (ev: SubagentEvent) => void;
   /** Prefetched retrieveMemory result (session/workflow org). Retrieved inside the turn if omitted. */
   retrievedMemory?: RetrieveMemoryResult;
+  /**
+   * Resume only: records and runs the approval a person gave by allowing a call in the chat card. The decision path
+   * lives in the dashboard, which depends on this package, so the caller supplies it.
+   */
+  approveParked?: ParkedApprover;
 }
 
 const TRUEFORGE_MODEL = process.env.TRUEFORGE_MODEL || 'openrouter/deepseek-v4-1-flash';
@@ -1007,6 +1013,8 @@ async function resumeTrueForgeTurnInner(
     const local = await resumeLocalTurn(input, opts);
     if (local) return local;
   } catch (e) {
+    // The first answer to this card is still being carried out: do not fall through and ask the sidecar to run it again.
+    if (e instanceof Error && e.name === 'ApprovalInProgressError') throw e;
     console.warn('[trueforge] local resume unavailable, falling back to HTTP:', e instanceof Error ? e.message : e);
   }
   const tenantHeaders = buildMcpTenantHeaders({

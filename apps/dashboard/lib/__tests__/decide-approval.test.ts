@@ -269,4 +269,40 @@ describe('decideApproval', () => {
     expect(res).toMatchObject({ ok: true, status: 'execution_failed', error: 'gmail 401' });
     expect(db.audits).toEqual(['decision.approved', 'decision.execution_failed']);
   });
+
+  // The audit payload is the last parameter of the audit insert.
+  const auditPayloads = (db: ReturnType<typeof fakeDb>, kind: string) =>
+    db.calls.filter((c) => /INSERT INTO audit_events/.test(c.sql) && c.params[1] === kind).map((c) => JSON.parse(String(c.params[18])));
+
+  it('records that an approval came from the chat card, so the log can tell it from one made in Decisions', async () => {
+    const db = fakeDb({ row: {} });
+    const { d } = deps(db);
+    await decideApproval({ pendingActionId: PA, decision: 'approved', actorUserId: USER, orgId: ORG, via: 'chat' }, d);
+    expect(auditPayloads(db, 'decision.approved')[0]).toMatchObject({ via: 'chat' });
+    expect(auditPayloads(db, 'decision.approved_and_executed')[0]).toMatchObject({ via: 'chat' });
+  });
+
+  it('says nothing about a channel when the approval was made in Decisions', async () => {
+    const db = fakeDb({ row: {} });
+    const { d } = deps(db);
+    await decideApproval({ pendingActionId: PA, decision: 'approved', actorUserId: USER, orgId: ORG }, d);
+    expect(auditPayloads(db, 'decision.approved')[0]).not.toHaveProperty('via');
+  });
+
+  it('an audit failure after the tool ran says so, so nobody is told nothing was run', async () => {
+    const db = fakeDb({ row: {}, failAuditKinds: ['decision.approved_and_executed'] });
+    const { d } = deps(db);
+    const err = await decideApproval({ pendingActionId: PA, decision: 'approved', actorUserId: USER, orgId: ORG }, d).catch((e) => e);
+    expect(err).toBeInstanceOf(AuditWriteError);
+    expect((err as AuditWriteError).afterExecution).toBe(true);
+  });
+
+  it('an audit failure before the tool ran is not marked as after it', async () => {
+    const db = fakeDb({ row: {}, failAuditKinds: ['decision.approved'] });
+    const { d, execute } = deps(db);
+    const err = await decideApproval({ pendingActionId: PA, decision: 'approved', actorUserId: USER, orgId: ORG }, d).catch((e) => e);
+    expect(err).toBeInstanceOf(AuditWriteError);
+    expect((err as AuditWriteError).afterExecution).toBeFalsy();
+    expect(execute).not.toHaveBeenCalled();
+  });
 });

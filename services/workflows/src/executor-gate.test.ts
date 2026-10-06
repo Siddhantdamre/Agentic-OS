@@ -244,3 +244,33 @@ test('an approved send runs even when the employee tier is below the skill minim
   assert.equal(res.status, 'executed');
   assert.deepEqual(f.invoked, ['gmail.send_email']);
 });
+
+const SEND_MAIL = { tool: 'gmail', action: 'send_email', payload: { to: 'a@b.co', subject: 'Hi', body: 'x' }, orgId: ORG, employeeId: EMMA.id };
+
+test('a hold made while a person is deciding it is not announced; every other hold is', async () => {
+  const announce: Array<boolean | undefined> = [];
+  const f = fakeDeps({ park: async (p) => { announce.push(p.announce); return { pendingActionId: 'pa-1', workItemId: 'wi-1' }; } });
+  const normal = await runToolGate(SEND_MAIL, f.deps);
+  const inline = await runToolGate({ ...SEND_MAIL, approverPresent: true }, f.deps);
+  assert.equal(normal.status, 'pending_approval');
+  assert.equal(inline.status, 'pending_approval', 'the call is still held: the approval itself is recorded by the decision path, not here');
+  assert.deepEqual(announce, [true, false]);
+  assert.deepEqual(f.invoked, []);
+});
+
+test('approverPresent does not skip watching mode, the kill switch, the card or the persona', async () => {
+  const watching = fakeDeps({}, { run: { runnable: true, stage: 0 } });
+  const w = await runToolGate({ ...SEND_MAIL, approverPresent: true }, watching.deps);
+  assert.equal(w.reason, 'shadow');
+  assert.deepEqual(watching.parked, []);
+
+  const paused = fakeDeps({}, { run: { runnable: false, reason: 'kill_switch', stage: 3 } });
+  const p = await runToolGate({ ...SEND_MAIL, approverPresent: true }, paused.deps);
+  assert.equal(p.reason, 'kill_switch');
+  assert.deepEqual(paused.parked, []);
+
+  const off = fakeDeps();
+  const c = await runToolGate({ tool: 'stripe', action: 'create_refund', payload: {}, orgId: ORG, employeeId: EMMA.id, approverPresent: true }, off.deps);
+  assert.equal(c.reason, 'not_in_allowlist');
+  assert.deepEqual(off.parked, []);
+});

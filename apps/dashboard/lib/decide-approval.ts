@@ -27,6 +27,8 @@ export type DecideApprovalInput = {
   modifiedPayload?: Record<string, unknown> | null;
   /** When set (link/token flows), must hash to agent_pending_actions.token_hash. */
   token?: string | null;
+  /** Where the approval was given, when it was not in Decisions. Recorded in the audit entries. */
+  via?: 'chat';
 };
 
 export type DecideApprovalStatus =
@@ -86,6 +88,8 @@ export const MAX_MODIFIED_PAYLOAD_BYTES = 16 * 1024;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 export class AuditWriteError extends Error {
+  /** True when the approved tool had already run when the audit entry failed: the action happened, only its record is missing. */
+  afterExecution?: boolean;
   constructor(kind: string, cause: unknown) {
     super(
       `audit_events insert for ${kind} failed: ${cause instanceof Error ? cause.message : String(cause)}`
@@ -435,6 +439,7 @@ export async function decideApproval(
       return { ok: true, httpStatus: 200, id: pendingActionId, status: 'rejected' };
     }
 
+    const channel = input.via ? { via: input.via } : {};
     const refund = isRefundAction(actionType, payload);
     const requiredApprovals = Math.max(1, Number(row.required_approvals) || (refund ? 2 : 1));
     const prior: Array<{ userId: string; at: string }> = Array.isArray(row.approvals) ? row.approvals : [];
@@ -473,6 +478,7 @@ export async function decideApproval(
           requiredApprovals,
           final,
           modified: Boolean(modifiedPayload),
+          ...channel,
         });
       return lockedRow;
     });
@@ -513,7 +519,7 @@ export async function decideApproval(
           await setWorkItemStatus(after.client, orgId, workItemId, 'needs_attention');
           if (withAudit) {
             await insertAudit(after.client, orgId, actorUserId, 'decision.execution_failed', 'error',
-              'high', call.tool || null, workItemId, { pendingActionId, error: executionError });
+              'high', call.tool || null, workItemId, { pendingActionId, error: executionError, ...channel });
           }
         } else {
           await after.client.query(
@@ -526,7 +532,7 @@ export async function decideApproval(
           await setWorkItemStatus(after.client, orgId, workItemId, 'done');
           if (withAudit) {
             await insertAudit(after.client, orgId, actorUserId, 'decision.approved_and_executed', 'ok',
-              'high', call.tool, workItemId, { pendingActionId, tool: call.tool, action: call.action });
+              'high', call.tool, workItemId, { pendingActionId, tool: call.tool, action: call.action, ...channel });
           }
         }
       };
@@ -537,6 +543,7 @@ export async function decideApproval(
         // The tool already ran: record the real outcome, then fail loudly.
         await writeOutcome(false);
         console.error('[decide-approval] outcome recorded without audit row:', err.message);
+        err.afterExecution = true;
         throw err;
       }
     } finally {

@@ -36,6 +36,11 @@ export const NEVER_CORE_TOOLS = [
 export interface GateParams extends ToolExecutionParams {
   /** Set only by the approval executor after a human approved this exact row. */
   approvedPendingActionId?: string;
+  /**
+   * A person is deciding this very call right now (they allowed it in the chat card). It changes nothing about what
+   * the gate allows; it only means a hold needs no announcement to managers, since the person is about to decide it.
+   */
+  approverPresent?: boolean;
 }
 
 export type GateResult = ToolExecutionResult & {
@@ -85,6 +90,8 @@ export interface ParkInput {
   action: string;
   payload: Record<string, unknown>;
   reasonCode: string;
+  /** False when a person is deciding the hold as it is made: no push to managers. Default true. */
+  announce?: boolean;
 }
 
 export interface GateDeps {
@@ -293,6 +300,7 @@ export async function runToolGate(params: GateParams, deps: GateDeps): Promise<G
         action: actionName,
         payload: { tool: params.tool, action: actionName, payload, employeeId: employee.id },
         reasonCode,
+        announce: params.approverPresent !== true,
       });
     } catch (err) {
       console.warn(`[tool-gate] park failed: ${err instanceof Error ? err.message : String(err)}`);

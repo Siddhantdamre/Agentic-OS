@@ -420,6 +420,8 @@ export async function parkPendingAction(input: {
   tool?: string;
   action?: string;
   reasonCode?: string;
+  /** Push the card to the managers' Slack channel. Off only when a person is deciding the hold as it is made. */
+  announce?: boolean;
 }): Promise<{ pendingActionId: string; token: string; workItemId?: string; card?: ReturnType<typeof buildDecisionCard> }> {
   const token = randomBytes(32).toString('hex');
   const tokenHash = createHash('sha256').update(token).digest('hex');
@@ -479,7 +481,7 @@ export async function parkPendingAction(input: {
     );
     return { pendingActionId: String(res.rows[0].id), workItemId };
   });
-  if (saved.workItemId) {
+  if (saved.workItemId && input.announce !== false) {
     await notifyManagersOfDecisionCard({
       orgId: input.orgId,
       workItemId: saved.workItemId,
@@ -490,6 +492,45 @@ export async function parkPendingAction(input: {
     });
   }
   return { pendingActionId: saved.pendingActionId, token, workItemId: saved.workItemId, card };
+}
+
+/**
+ * Announce a hold that was made quietly (a person was deciding it) and then stayed open, because it needs another
+ * person or a role the first one lacks. Best-effort, like the original announcement.
+ */
+export async function announceParkedAction(orgId: string, pendingActionId: string): Promise<void> {
+  try {
+    const row = await withOrgClient(orgId, async (client) => {
+      const res = await client.query(
+        `SELECT action_type, employee_role, payload, work_item_id
+           FROM agent_pending_actions
+          WHERE id = $1 AND org_id = $2 AND status = 'pending'`,
+        [pendingActionId, orgId]
+      );
+      return res.rows[0] as { action_type: string; employee_role: string; payload: Record<string, any> | null; work_item_id: string | null } | undefined;
+    });
+    if (!row || !row.work_item_id) return;
+    const stored = row.payload || {};
+    const card = stored.card && typeof stored.card === 'object' && Array.isArray(stored.card.options)
+      ? (stored.card as ReturnType<typeof buildDecisionCard>)
+      : buildDecisionCard({
+          actionType: row.action_type,
+          tool: String(stored.tool || ''),
+          action: String(stored.action || ''),
+          payload: (stored.payload && typeof stored.payload === 'object' ? stored.payload : {}) as Record<string, unknown>,
+          reasonCode: 'org_rule_requires_approval',
+        });
+    await notifyManagersOfDecisionCard({
+      orgId,
+      workItemId: row.work_item_id,
+      actionType: row.action_type,
+      employeeRole: row.employee_role,
+      reasonCode: 'org_rule_requires_approval',
+      card,
+    });
+  } catch (err) {
+    console.warn(`[autonomy] could not announce held action ${pendingActionId}: ${err instanceof Error ? err.message : String(err)}`);
+  }
 }
 
 /**

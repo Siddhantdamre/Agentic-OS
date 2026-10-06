@@ -447,6 +447,7 @@ export const defaultGateDeps: GateDeps = {
       tool: input.tool,
       action: input.action,
       reasonCode: input.reasonCode,
+      announce: input.announce,
     });
     return { pendingActionId: pending.pendingActionId || null, workItemId: pending.workItemId || null };
   },

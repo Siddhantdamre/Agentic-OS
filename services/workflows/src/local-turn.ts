@@ -17,6 +17,9 @@
 import { z } from 'zod';
 import { labelText, readModelText } from './reply-from-tools.js';
 import { bindExternalAbort } from './trueforge-client.js';
+import { toolResultFromApproval, type ChatApprovalContext, type ToolDecision } from './chat-approval.js';
+import { announceParkedAction } from './autonomy.js';
+import type { GateParams, GateResult } from './tool-gate.js';
 import {
   AgentThread,
   AgentThreadOrchestrator,
@@ -64,6 +67,14 @@ export function inprocessTurnsEnabled(): boolean {
   return process.env.DAREX_INPROCESS_TURNS !== 'false';
 }
 
+/** A second answer arrived for a card whose first answer is still being carried out (a double click). */
+export class ApprovalInProgressError extends Error {
+  constructor() {
+    super('This approval is already being handled.');
+    this.name = 'ApprovalInProgressError';
+  }
+}
+
 /** Active in-process orchestrator sessions for approval resumption. */
 interface ActiveLocalSession {
   sessionId: string;
@@ -74,6 +85,10 @@ interface ActiveLocalSession {
   tools: AgentToolStep[];
   subagents: SubagentEvent[];
   callIdToName: Map<string, string>;
+  /** Who is approving right now. Filled in only for the length of a resume; see ChatApprovalContext. */
+  chat: ChatApprovalContext;
+  /** A resume is running. A second one for the same session (a double click) is refused, not run alongside. */
+  resuming: boolean;
   createdAt: number;
 }
 const activeLocalOrchestrators = new Map<string, ActiveLocalSession>();
@@ -480,6 +495,7 @@ export class DarexLocalToolSet implements IToolSet {
   private readonly toolAllowlist?: string[];
   private readonly availableTools: ToolDef[];
   private readonly budget: LocalTurnBudget;
+  private readonly chat: ChatApprovalContext;
 
   constructor(
     orgId: string,
@@ -488,8 +504,10 @@ export class DarexLocalToolSet implements IToolSet {
     employeeRole?: string,
     userMessage?: string,
     budget: LocalTurnBudget = newLocalTurnBudget(),
+    chat: ChatApprovalContext = {},
   ) {
     this.budget = budget;
+    this.chat = chat;
     this.orgId = orgId;
     this.userId = userId;
     this.employeeRole = employeeRole;
@@ -520,12 +538,21 @@ export class DarexLocalToolSet implements IToolSet {
     };
   }
 
+  /** The one door to a side effect. A seam so tests can run the tool set without a database or a provider. */
+  protected runGate(params: GateParams): Promise<GateResult> {
+    return executeAutonomousToolAction(params);
+  }
+
+  protected announceHold(orgId: string, pendingActionId: string): Promise<void> {
+    return announceParkedAction(orgId, pendingActionId);
+  }
+
   /**
    * `decision` is the person's answer to this call's approval card, passed by the SDK with the call. A denied call
-   * must not run: without this check the gate saw a normal call and held it (or, for a write the org lets run
-   * alone, ran it) although the person had said no.
+   * must not run (the gate would otherwise hold or even run what the person refused); an allowed one is the
+   * person's approval of exactly this call, with exactly these arguments.
    */
-  async callTool(params: { name: string; arguments?: unknown }, decision?: { status?: string; reason?: string }) {
+  async callTool(params: { name: string; arguments?: unknown }, decision?: ToolDecision) {
     if (decision?.status === 'deny') {
       return toolResultResponse({
         text: JSON.stringify({
@@ -579,15 +606,41 @@ export class DarexLocalToolSet implements IToolSet {
     }
     if (!riskMeta || riskMeta.risk !== 'read') this.budget.sideEffects.push(def.name);
 
+    // Only a call the person just allowed, in a resume they are carrying out, can be approved on their behalf.
+    const approver =
+      decision?.status === 'allow' && this.chat.approverUserId && this.chat.approveParked
+        ? { userId: this.chat.approverUserId, approveParked: this.chat.approveParked }
+        : null;
+
     try {
-      const result = await executeAutonomousToolAction({
+      const result = await this.runGate({
         tool: def.tool,
         action: invoked.action,
         payload: invoked.payload,
         orgId: this.orgId,
         employeeRole: this.employeeRole,
         toolAllowlist: this.toolAllowlist,
+        ...(approver ? { approverPresent: true } : {}),
       });
+
+      const heldId = result.status === 'pending_approval' ? result.approval?.pendingActionId : null;
+      if (approver && heldId) {
+        // The gate held what the person allowed. Their Allow is the approval: record it and run it, once.
+        try {
+          const outcome = await approver.approveParked({ orgId: this.orgId, pendingActionId: heldId, approverUserId: approver.userId });
+          if (outcome.status === 'waiting') await this.announceHold(this.orgId, heldId);
+          const approved = toolResultFromApproval(outcome);
+          return toolResultResponse({ text: sanitizeToolOutput(approved.text), isError: approved.isError });
+        } catch (err) {
+          console.error('[local-turn] could not record a chat approval:', err instanceof Error ? err.message : err);
+          await this.announceHold(this.orgId, heldId);
+          const failed = toolResultFromApproval({
+            status: 'waiting',
+            message: 'I could not confirm that approval. Check Decisions before asking again, so nothing is sent twice.',
+          });
+          return toolResultResponse({ text: failed.text, isError: false });
+        }
+      }
 
       let dataPayload = result.data;
       let text = JSON.stringify({
@@ -661,6 +714,7 @@ async function executeLocalTurn(
   startTime: number = Date.now(),
   budget: LocalTurnBudget = newLocalTurnBudget(),
 ): Promise<AgentTurnResult> {
+  const chat: ChatApprovalContext = {};
   let memory = opts?.retrievedMemory;
     if (!memory) {
       try {
@@ -707,6 +761,7 @@ async function executeLocalTurn(
           input.employeeRole,
           input.userMessage,
           budget,
+          chat,
         ),
       ],
     };
@@ -951,6 +1006,8 @@ async function executeLocalTurn(
         tools,
         subagents,
         callIdToName,
+        chat,
+        resuming: false,
         createdAt: Date.now(),
       });
     }
@@ -1055,6 +1112,13 @@ export async function resumeLocalTurn(
     return null;
   }
 
+  // A double click sends the same answer twice. The second must not run beside the first: the person's one Allow
+  // would otherwise be able to approve and run the same call twice.
+  if (active.resuming) throw new ApprovalInProgressError();
+  active.resuming = true;
+  active.chat.approverUserId = input.userId;
+  active.chat.approveParked = opts?.approveParked;
+
   const { orchestrator, rootThreadId, rootThread, callIdToName } = active;
   const tools = [...active.tools];
   const approvals: ApprovalRequest[] = [];
@@ -1125,6 +1189,10 @@ export async function resumeLocalTurn(
   } finally {
     clearTimeout(timer);
     unbindAbort();
+    // Nobody is approving once this resume ends, so a later turn on this session starts with no approver.
+    active.chat.approverUserId = undefined;
+    active.chat.approveParked = undefined;
+    active.resuming = false;
     if (approvals.length === 0) {
       activeLocalOrchestrators.delete(input.sessionId);
     }
