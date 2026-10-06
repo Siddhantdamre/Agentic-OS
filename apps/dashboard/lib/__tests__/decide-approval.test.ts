@@ -124,6 +124,95 @@ describe('decideApproval', () => {
     expect(execute).toHaveBeenCalledWith(expect.objectContaining({ payload: { to: 'x@y.z' } }));
   });
 
+  // The gate only runs a held send, payment, signature, publish or delete when the call comes back as the row a human
+  // approved. Without the row id it is a fresh call, is held again, and the approval never does anything.
+  it('re-enters the gate as the approved row: the row id, the approving person and the approval source', async () => {
+    const db = fakeDb({ row: {} });
+    const { d, execute } = deps(db);
+    await decideApproval({ pendingActionId: PA, decision: 'approved', actorUserId: USER, orgId: ORG }, d);
+    expect(execute).toHaveBeenCalledWith(
+      expect.objectContaining({ approvedPendingActionId: PA, actorUserId: USER, source: 'approval', tool: 'gmail', action: 'send_email', orgId: ORG })
+    );
+  });
+
+  it('does not pass the approving person under a name the executor ignores', async () => {
+    const db = fakeDb({ row: {} });
+    const { d, execute } = deps(db);
+    await decideApproval({ pendingActionId: PA, decision: 'approved', actorUserId: USER, orgId: ORG }, d);
+    expect((execute.mock.calls[0] as unknown as [Record<string, unknown>])[0]).not.toHaveProperty('userId');
+  });
+
+  it('runs as the employee that asked, so their tool card still applies', async () => {
+    const EMP = '55555555-5555-4555-8555-555555555555';
+    const db = fakeDb({ row: { payload: { tool: 'gmail', action: 'send_email', payload: { to: 'a@b.c' }, employeeId: EMP } } });
+    const { d, execute } = deps(db);
+    await decideApproval({ pendingActionId: PA, decision: 'approved', actorUserId: USER, orgId: ORG }, d);
+    expect(execute).toHaveBeenCalledWith(expect.objectContaining({ employeeId: EMP }));
+  });
+
+  it('ignores an employee id that is not a valid id', async () => {
+    const db = fakeDb({ row: { payload: { tool: 'gmail', action: 'send_email', payload: {}, employeeId: "x'; DROP TABLE users;--" } } });
+    const { d, execute } = deps(db);
+    await decideApproval({ pendingActionId: PA, decision: 'approved', actorUserId: USER, orgId: ORG }, d);
+    expect((execute.mock.calls[0] as unknown as [Record<string, unknown>])[0]).not.toHaveProperty('employeeId');
+  });
+
+  // A tool that answers with an error did not do the thing the person approved. Recording it as executed (with a
+  // success audit entry) tells them it was sent when it was not.
+  it('records a tool that answers with an error as failed, not executed', async () => {
+    const db = fakeDb({ row: {} });
+    const { d } = deps(db, jest.fn(async () => ({ status: 'error', message: 'Gmail send failed (HTTP 500).' })));
+    const res = await decideApproval({ pendingActionId: PA, decision: 'approved', actorUserId: USER, orgId: ORG }, d);
+    expect(res).toMatchObject({ ok: true, status: 'execution_failed', error: 'Gmail send failed. It did not run.' });
+    expect(db.audits).toEqual(['decision.approved', 'decision.execution_failed']);
+    expect(db.state?.status).toBe('execution_failed');
+  });
+
+  it('records a call that was held for approval again as not run', async () => {
+    const db = fakeDb({ row: {} });
+    const { d } = deps(db, jest.fn(async () => ({ status: 'pending_approval', message: 'Waiting for approval: Send email' })));
+    const res = await decideApproval({ pendingActionId: PA, decision: 'approved', actorUserId: USER, orgId: ORG }, d);
+    expect(res).toMatchObject({ ok: true, status: 'execution_failed' });
+    expect((res as { error?: string }).error).toMatch(/did not run/i);
+    expect(db.audits).toContain('decision.execution_failed');
+    expect(db.audits).not.toContain('decision.approved_and_executed');
+  });
+
+  it('records a refusal by the gate (for example the team is paused) as failed, in the gate’s own plain words', async () => {
+    const db = fakeDb({ row: {} });
+    const { d } = deps(db, jest.fn(async () => ({ status: 'error', reason: 'kill_switch', message: 'Your team is paused.' })));
+    const res = await decideApproval({ pendingActionId: PA, decision: 'approved', actorUserId: USER, orgId: ORG }, d);
+    expect(res).toMatchObject({ status: 'execution_failed', error: 'Your team is paused.' });
+  });
+
+  it('never shows a person the network or database text a tool failed with', async () => {
+    const db = fakeDb({ row: {} });
+    const { d } = deps(db, jest.fn(async () => ({ status: 'error', message: 'connect ECONNREFUSED 10.0.0.5:443' })));
+    const res = await decideApproval({ pendingActionId: PA, decision: 'approved', actorUserId: USER, orgId: ORG }, d);
+    expect((res as { error?: string }).error).not.toMatch(/ECONNREFUSED|10\.0\.0\.5/);
+  });
+
+  it('turns a provider’s status code and raw reply into one plain sentence', async () => {
+    const db = fakeDb({ row: {} });
+    const { d } = deps(db, jest.fn(async () => ({ status: 'error', message: 'Gmail send failed: HTTP 500 {"error":{"code":500,"message":"Backend Error","status":"INTERNAL"}}' })));
+    const res = await decideApproval({ pendingActionId: PA, decision: 'approved', actorUserId: USER, orgId: ORG }, d);
+    expect((res as { error?: string }).error).toBe('Gmail send failed. It did not run.');
+  });
+
+  it('keeps a plain message that has no status code in it as it is', async () => {
+    const db = fakeDb({ row: {} });
+    const { d } = deps(db, jest.fn(async () => ({ status: 'error', message: 'Gmail is not connected. Connect it in Connectors.' })));
+    const res = await decideApproval({ pendingActionId: PA, decision: 'approved', actorUserId: USER, orgId: ORG }, d);
+    expect((res as { error?: string }).error).toBe('Gmail is not connected. Connect it in Connectors.');
+  });
+
+  it('still records a real success as executed, with the tool’s result kept', async () => {
+    const db = fakeDb({ row: {} });
+    const { d } = deps(db, jest.fn(async () => ({ status: 'executed', message: 'Sent', data: { id: 'm-1' } })));
+    const res = await decideApproval({ pendingActionId: PA, decision: 'approved', actorUserId: USER, orgId: ORG }, d);
+    expect(res).toMatchObject({ ok: true, status: 'executed', result: { data: { id: 'm-1' } } });
+  });
+
   it('auditor gets 403 and nothing executes', async () => {
     const db = fakeDb({ row: {}, role: 'auditor' });
     const { d, execute } = deps(db);

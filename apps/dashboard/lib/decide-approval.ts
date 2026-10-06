@@ -14,6 +14,7 @@ import type { PoolClient } from 'pg';
 import { getOrgScopedClient } from '@/lib/db';
 import { canCallPayTools, isPayTool, loadHumanRole, type HumanRole } from '@/lib/rbac';
 import { AUDIT_EVENT_INSERT_SQL, type AuditEventKind } from '@/lib/audit-events';
+import { publicErrorMessage } from '@/lib/public-error';
 
 export type ApprovalDecision = 'approved' | 'rejected';
 
@@ -59,10 +60,19 @@ type ExecuteFn = (input: {
   action: string;
   payload: Record<string, unknown>;
   orgId: string;
-  userId: string;
+  /** The person who approved. The gate reads this for pay permission and to tell a person from a sweep. */
+  actorUserId: string;
   employeeRole?: string;
+  /** The employee that asked, so their tool card still applies. */
+  employeeId?: string;
   workflowId?: string;
   skipAutonomy: true;
+  /**
+   * The row a person approved. Without it the gate sees a brand-new call, holds a send, payment, signature, publish or
+   * delete for approval AGAIN, and the approval never does anything.
+   */
+  approvedPendingActionId: string;
+  source: 'approval';
 }) => Promise<unknown>;
 
 export type DecideApprovalDeps = {
@@ -251,6 +261,24 @@ function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
   });
 }
 
+/**
+ * A tool that answers with an error, or that was held for approval again, did not do what the person approved.
+ * Recording it as executed (with a success audit entry) tells them it was sent when it was not. Null = it ran.
+ * A result with no status is a raw provider answer from an older tool and counts as having run.
+ */
+function failureOf(result: unknown): string | null {
+  if (!result || typeof result !== 'object') return null;
+  const r = result as { status?: unknown; message?: unknown };
+  if (r.status === undefined || r.status === 'executed') return null;
+  if (r.status === 'pending_approval') return 'The action was held for approval again, so it did not run.';
+  const safe = publicErrorMessage(typeof r.message === 'string' ? r.message : '', 'The action did not run.');
+  // A provider's status code and raw reply ("HTTP 500 {...}") mean nothing to the person who clicked Approve.
+  const m = safe.match(/^(.*?)[\s:.-]*\bHTTP\s*\d{3}\b/s);
+  if (!m) return safe;
+  const head = m[1].replace(/[\s([:.-]+$/, '');
+  return head ? `${head}. It did not run.` : 'The action did not run.';
+}
+
 /** The approved agent_pending_actions row as locked by the final approval. */
 type ApprovedRow = {
   id: string;
@@ -274,10 +302,13 @@ async function executeApproved(
   executionResult: unknown;
   executionError: string | null;
 }> {
-  const call = extractToolCall((row.payload || {}) as PendingPayload, row.modified_payload);
+  const stored = (row.payload || {}) as PendingPayload;
+  const call = extractToolCall(stored, row.modified_payload);
   if (!call.tool) {
     return { call, executionResult: undefined, executionError: 'Parked payload missing tool name' };
   }
+  // Only a well-formed id is passed on: the parked payload is stored data, not a trusted request.
+  const employeeId = typeof stored.employeeId === 'string' && UUID_RE.test(stored.employeeId) ? stored.employeeId : undefined;
   try {
     const executionResult = await withTimeout(
       d.execute({
@@ -285,14 +316,17 @@ async function executeApproved(
         action: call.action,
         payload: call.args,
         orgId: actor.orgId,
-        userId: actor.actorUserId,
+        actorUserId: actor.actorUserId,
         employeeRole: row.employee_role || undefined,
+        ...(employeeId ? { employeeId } : {}),
         workflowId: row.workflow_id || undefined,
         skipAutonomy: true,
+        approvedPendingActionId: row.id,
+        source: 'approval',
       }),
       d.executeTimeoutMs
     );
-    return { call, executionResult, executionError: null };
+    return { call, executionResult, executionError: failureOf(executionResult) };
   } catch (err) {
     return { call, executionResult: undefined, executionError: err instanceof Error ? err.message : String(err) };
   }
