@@ -52,7 +52,7 @@ async function write(request: Request) {
     if (typeof enabled !== 'boolean') {
       return NextResponse.json({ error: 'enabled/active must be a boolean' }, { status: 400 });
     }
-    await writeKillSwitch(client, orgId, enabled);
+    await writeKillSwitch(client, orgId, enabled, userId);
     try {
       await recordAuditEvent(
         {

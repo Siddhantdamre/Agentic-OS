@@ -31,6 +31,87 @@ export function gateEmployeeAction(input: EmployeeGateInput): EmployeeGateVerdic
     default: { const _exhaustive: never = stage; return _exhaustive; }
   }
 }
+/**
+ * What a workspace must show before it may move up one stage. One place for the
+ * numbers, so the promotion check and the Trust page can never disagree.
+ */
+export const STAGE_EXIT = {
+  shadowReviewed: 50,
+  shadowAgreement: 0.9,
+  weeksInStage: 2,
+  approvalBandLow: 0.6,
+  /** Above this, nearly everything is being approved without a real look. */
+  approvalBandHigh: 0.9,
+  gatedDecisions: 100,
+  approvalFloor: 0.8,
+} as const;
+
+export type StageRequirementId =
+  | 'shadow_reviewed'
+  | 'shadow_agreement'
+  | 'weeks_in_stage'
+  | 'no_divergences'
+  | 'approval_band'
+  | 'gated_decisions'
+  | 'approval_floor';
+
+export interface StageRequirement {
+  id: StageRequirementId;
+  /** What the workspace has now; null when there is nothing to measure yet. */
+  have: number | null;
+  /** The bar. For `between` this is the lower edge and `upTo` the upper. */
+  need: number;
+  upTo?: number;
+  direction: 'at_least' | 'at_most' | 'between';
+  met: boolean;
+}
+
+export interface StageEvidence {
+  from: RolloutStage;
+  shadowReviewed: number;
+  shadowAgreed: number;
+  weeksInStage: number;
+  stateDivergences: number;
+  approvalRate: number | null;
+  decisionsInStage: number;
+}
+
+export function stageRequirements(args: StageEvidence): StageRequirement[] {
+  const from = parseRolloutStage(args.from);
+  switch (from) {
+    case 0: {
+      const agreement = args.shadowReviewed > 0 ? args.shadowAgreed / args.shadowReviewed : null;
+      return [
+        { id: 'shadow_reviewed', have: args.shadowReviewed, need: STAGE_EXIT.shadowReviewed, direction: 'at_least', met: args.shadowReviewed >= STAGE_EXIT.shadowReviewed },
+        { id: 'shadow_agreement', have: agreement, need: STAGE_EXIT.shadowAgreement, direction: 'at_least', met: agreement !== null && agreement >= STAGE_EXIT.shadowAgreement },
+      ];
+    }
+    case 1: {
+      const rate = args.approvalRate;
+      return [
+        { id: 'weeks_in_stage', have: args.weeksInStage, need: STAGE_EXIT.weeksInStage, direction: 'at_least', met: args.weeksInStage >= STAGE_EXIT.weeksInStage },
+        { id: 'no_divergences', have: args.stateDivergences, need: 0, direction: 'at_most', met: args.stateDivergences <= 0 },
+        {
+          id: 'approval_band',
+          have: rate,
+          need: STAGE_EXIT.approvalBandLow,
+          upTo: STAGE_EXIT.approvalBandHigh,
+          direction: 'between',
+          met: rate !== null && rate >= STAGE_EXIT.approvalBandLow && rate <= STAGE_EXIT.approvalBandHigh,
+        },
+      ];
+    }
+    case 2:
+      return [
+        { id: 'gated_decisions', have: args.decisionsInStage, need: STAGE_EXIT.gatedDecisions, direction: 'at_least', met: args.decisionsInStage >= STAGE_EXIT.gatedDecisions },
+        { id: 'approval_floor', have: args.approvalRate, need: STAGE_EXIT.approvalFloor, direction: 'at_least', met: args.approvalRate !== null && args.approvalRate >= STAGE_EXIT.approvalFloor },
+      ];
+    case 3:
+      return [];
+    default: { const _exhaustive: never = from; return _exhaustive; }
+  }
+}
+
 export function canAdvanceStage(args: {
   from: RolloutStage; shadowReviewed: number; shadowAgreed: number; weeksInStage: number;
   stateDivergences: number; approvalRate: number | null; decisionsInStage: number;

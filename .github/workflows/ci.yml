@@ -259,3 +259,17 @@ jobs:
           DB_RESOLVER_USER: darex
           DB_RESOLVER_PASSWORD: darex_dev_secret
         run: node infra/scripts/check-rls-coverage.js
+
+      # The Trust page's evidence is counted in SQL. This runs those queries against the migrated
+      # database as the application role (row-level security on), with data for two workspaces.
+      - name: Trust evidence queries (real database, as the app role)
+        env:
+          TRUST_DB_TEST: "1"
+          DB_HOST: 127.0.0.1
+          DB_PORT: "5432"
+          DB_NAME: darex
+          DB_USER: darex_app
+          DB_PASSWORD: darex_app_dev_secret
+          DB_RESOLVER_USER: darex
+          DB_RESOLVER_PASSWORD: darex_dev_secret
+        run: pnpm --filter @darex/dashboard exec jest --forceExit lib/__tests__/trust-query.db.test.ts

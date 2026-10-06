@@ -254,13 +254,27 @@ export async function loadRuntimeControls(client: PoolClient, orgId: string) {
   return { killSwitch: Boolean(blob.kill_switch ?? blob.killSwitch), rolloutStage: parseRolloutStage(blob.autonomy_stage), shadowReviewed: num(blob.shadow_reviewed), shadowAgreed: num(blob.shadow_agreed) };
 }
 
-export async function writeKillSwitch(client: PoolClient, orgId: string, enabled: boolean): Promise<void> {
+export async function writeKillSwitch(client: PoolClient, orgId: string, enabled: boolean, actorUserId: string | null = null): Promise<void> {
+  // Pausing returns the team to level 0. That is a change of level, so it goes in the same history
+  // as every other change (read before the write, because the write overwrites the level).
+  let previousStage = 0;
+  if (enabled) {
+    const before = await client.query(`SELECT autonomy_stage FROM org_runtime_controls WHERE org_id = $1`, [orgId]);
+    previousStage = Number(before.rows[0]?.autonomy_stage ?? 0);
+  }
   await client.query(
     `INSERT INTO org_runtime_controls (org_id, kill_switch, autonomy_stage, updated_at) VALUES ($1, $2, 0, NOW())
      ON CONFLICT (org_id) DO UPDATE SET kill_switch = EXCLUDED.kill_switch, autonomy_stage = CASE WHEN EXCLUDED.kill_switch THEN 0 ELSE org_runtime_controls.autonomy_stage END, updated_at = NOW()`,
     [orgId, enabled]
   );
   await client.query(`UPDATE orgs SET meta = COALESCE(meta, '{}'::jsonb) || jsonb_build_object('kill_switch', $2::boolean) WHERE id = $1`, [orgId, enabled]);
+  if (enabled && previousStage > 0) {
+    await client.query(
+      `INSERT INTO org_autonomy_stage_events (org_id, from_stage, to_stage, kind, reason, actor_user_id)
+       VALUES ($1, $2, 0, 'pause', $3, $4)`,
+      [orgId, previousStage, 'The team was paused, which returns it to level 0.', actorUserId],
+    );
+  }
 }
 
 export async function writeRolloutStage(client: PoolClient, orgId: string, stage: RolloutStage): Promise<void> {

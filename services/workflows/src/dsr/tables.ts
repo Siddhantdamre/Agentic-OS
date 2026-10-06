@@ -6,6 +6,7 @@
 /** 023+ employee-state stores. */
 export const EMPLOYEE_STATE_TABLES = [
   'agent_decision_ledger_daily',
+  'agent_shadow_reviews',
   'agent_decision_ledger',
   'agent_pending_actions',
   'agent_open_loops',
@@ -19,6 +20,7 @@ export const EMPLOYEE_STATE_TABLES = [
   'conversational_insights',
   'org_employee_metrics_daily',
   'org_runtime_controls',
+  'org_autonomy_stage_events',
   'org_backfill_jobs',
   'org_first_observations',
   'employee_roi_metrics',

@@ -1,8 +1,9 @@
 import { NextResponse } from 'next/server';
 import { getScopedClient, scopedAuthErrorResponse } from '@/lib/db';
 import { canManageOrgSettings, loadHumanRole } from '@/lib/rbac';
-import { loadRuntimeControls, writeRolloutStage } from '@/lib/employee-metrics-query';
-import { canAdvanceStage, parseRolloutStage } from '@/lib/employee-rollout';
+import { recordAuditEvent } from '@/lib/audit-events';
+import { collectTrustSnapshot } from '@/lib/trust-query';
+import { changeStage } from '@/lib/trust-stage';
 import { jsonBodyOrEmpty } from '@/lib/safe-json';
 
 export const dynamic = 'force-dynamic';
@@ -11,13 +12,13 @@ export async function GET() {
   try {
     const { client, orgId } = await getScopedClient();
     try {
-      const c = await loadRuntimeControls(client, orgId);
+      const snap = await collectTrustSnapshot(client, orgId);
       return NextResponse.json({
         orgId,
-        stage: c.rolloutStage,
-        killSwitch: c.killSwitch,
-        shadowReviewed: c.shadowReviewed,
-        shadowAgreed: c.shadowAgreed,
+        stage: snap.stage,
+        killSwitch: snap.killSwitch,
+        shadowReviewed: snap.workspace.shadowReviewed,
+        shadowAgreed: snap.workspace.shadowAgreed,
       });
     } finally {
       client.release();
@@ -30,6 +31,11 @@ export async function GET() {
   }
 }
 
+/**
+ * Move the workspace to another autonomy level.
+ * Body: { stage: 0-3, force?: boolean, reason?: string }. The evidence for moving up is
+ * measured on the server; any numbers in the body are ignored (see lib/trust-stage.ts).
+ */
 export async function PATCH(request: Request) {
   try {
     const { client, orgId, userId } = await getScopedClient();
@@ -39,45 +45,42 @@ export async function PATCH(request: Request) {
         return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
       }
 
-      const body = (await jsonBodyOrEmpty(request)) as {
-        stage?: number;
-        force?: boolean;
-        orgId?: string;
-        org_id?: string;
-        weeksInStage?: number;
-        stateDivergences?: number;
-        approvalRate?: number | null;
-        decisionsInStage?: number;
-      };
+      const body = (await jsonBodyOrEmpty(request)) as { stage?: unknown; force?: unknown; reason?: unknown; orgId?: string; org_id?: string };
       if (body.orgId || body.org_id) {
         return NextResponse.json(
           { error: 'org_id is not accepted from the client; it is resolved from the session.' },
           { status: 400 }
         );
       }
-      const target = parseRolloutStage(body.stage);
-      const controls = await loadRuntimeControls(client, orgId);
-      if (target <= controls.rolloutStage) {
-        if (target < controls.rolloutStage) await writeRolloutStage(client, orgId, target);
-        return NextResponse.json({ orgId, stage: target, demoted: target < controls.rolloutStage });
+
+      const result = await changeStage(client, orgId, userId, body);
+      if (!result.ok) {
+        return NextResponse.json(
+          { error: result.error, stage: result.stage, requirements: result.requirements },
+          { status: result.status }
+        );
       }
-      if (target !== controls.rolloutStage + 1) {
-        return NextResponse.json({ error: 'Advance one stage at a time' }, { status: 400 });
+      if (result.unchanged) {
+        return NextResponse.json({ orgId, stage: result.stage, demoted: false });
       }
-      const check = canAdvanceStage({
-        from: controls.rolloutStage,
-        shadowReviewed: controls.shadowReviewed,
-        shadowAgreed: controls.shadowAgreed,
-        weeksInStage: Number(body.weeksInStage || 0),
-        stateDivergences: Number(body.stateDivergences || 0),
-        approvalRate: body.approvalRate ?? null,
-        decisionsInStage: Number(body.decisionsInStage || 0),
+
+      await recordAuditEvent(
+        {
+          orgId,
+          kind: 'settings.update',
+          actor: { actorType: 'user', userId },
+          resultStatus: 'ok',
+          payload: { setting: 'autonomy_stage', from: result.from, to: result.stage, kind: result.kind },
+        },
+        { client, orgId }
+      ).catch((err: unknown) => console.warn('rollout audit write failed:', err));
+
+      return NextResponse.json({
+        orgId,
+        stage: result.stage,
+        demoted: result.kind === 'pull_back',
+        reason: result.reason,
       });
-      if (!check.ok && !body.force) {
-        return NextResponse.json({ error: check.reason, stage: controls.rolloutStage }, { status: 409 });
-      }
-      await writeRolloutStage(client, orgId, target);
-      return NextResponse.json({ orgId, stage: target, reason: check.reason });
     } finally {
       client.release();
     }
