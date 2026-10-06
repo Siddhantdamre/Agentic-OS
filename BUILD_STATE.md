@@ -1,5 +1,12 @@
 # Darex Build State
 
+## Watching-mode decisions keep a plain sentence (2026-10-06)
+
+- In watching mode (level 0) a call that would have had a side effect is recorded and not run. The ledger kept only "suppressed via shadow_stage" and the raw call, so there was nothing a person could be asked "would you have done this?" about.
+- The gate already builds one plain sentence for every call (the one on an approval card). It now passes that sentence to the ledger for watching-mode decisions only, and `writeLedgerRow` stores it as `context_payload.summary`. Other ledger rows are unchanged.
+- Proof: 2 new gate tests (the sentence is kept on a watching-mode send; no other decision carries one); the 34 gate and confirm tests pass.
+- Not changed: rows written before this have no sentence; the review list shows the action in words for those.
+
 ## Small controls are big enough to tap on a phone (2026-10-05)
 
 - Measured in a real browser at 375 px wide across 34 pages: no page scrolls sideways, but 143 controls were under the 24 px minimum of WCAG 2.2, and five repeated controls accounted for about 120 of them ("Test & details", "View Details & Test", "Connector Settings", "Connect missing tools", the banner's dismiss button).

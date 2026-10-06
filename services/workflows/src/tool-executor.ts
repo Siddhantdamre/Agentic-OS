@@ -284,7 +284,7 @@ async function writeLedgerRow(entry: Parameters<GateDeps['logLedger']>[0]): Prom
         reasonCode: entry.reasonCode,
         reasonSummary: `${entry.decision} via ${entry.reasonCode}`,
         confidence: 0,
-        contextPayload: { tool: entry.tool, action: entry.action, employeeId: entry.employeeId, payload: entry.payload },
+        contextPayload: { tool: entry.tool, action: entry.action, employeeId: entry.employeeId, payload: entry.payload, ...(entry.summary ? { summary: entry.summary } : {}) },
       });
     });
   } catch (err) {

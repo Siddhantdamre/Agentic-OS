@@ -68,6 +68,11 @@ export interface LedgerEntry {
   decision: 'suppressed' | 'declined' | 'deferred' | 'executed';
   reasonCode: string;
   payload: Record<string, unknown>;
+  /**
+   * One plain sentence about what the call would have done. Kept only on watching-mode
+   * decisions, so the person reviewing them is shown a sentence, not a payload.
+   */
+  summary?: string;
 }
 
 export interface ParkInput {
@@ -333,7 +338,7 @@ export async function runToolGate(params: GateParams, deps: GateDeps): Promise<G
     });
     if (stageVerdict === 'deny_role') return deny('persona_denied', `${employee.name} cannot run ${params.tool}.${actionName}.`);
     if (stageVerdict === 'shadow' && risk !== 'read') {
-      await deps.logLedger({ ...ledgerBase, decision: 'suppressed', reasonCode: 'shadow_stage', payload });
+      await deps.logLedger({ ...ledgerBase, decision: 'suppressed', reasonCode: 'shadow_stage', payload, summary });
       return deny('shadow', `Watching mode (rollout stage ${run.stage}): I recorded "${summary}" but did not run it.`);
     }
 

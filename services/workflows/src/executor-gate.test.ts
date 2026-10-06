@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { resolveTurnAllowlist, runToolGate, CORE_READ_TOOLS, payloadDenial, type GateDeps, type GateEmployee } from './tool-gate.js';
+import { resolveTurnAllowlist, runToolGate, CORE_READ_TOOLS, payloadDenial, type GateDeps, type GateEmployee, type LedgerEntry } from './tool-gate.js';
 import { isToolAllowed, resolveCallRisk, pickEmployeeForRole } from './tool-executor.js';
 import { roleCapabilityDenial } from './tools/role-capability.js';
 import type { OrgRunState } from './tools/gate-hooks.js';
@@ -20,12 +20,15 @@ interface Fake {
   deps: GateDeps;
   invoked: string[];
   ledger: string[];
+  /** The full ledger entries, for tests that care about more than decision:reason. */
+  entries: LedgerEntry[];
   parked: string[];
 }
 
 function fakeDeps(overrides: Partial<GateDeps> = {}, opts: { run?: OrgRunState; employee?: GateEmployee | null } = {}): Fake {
   const invoked: string[] = [];
   const ledger: string[] = [];
+  const entries: LedgerEntry[] = [];
   const parked: string[] = [];
   const run = opts.run ?? { runnable: true, stage: 3 };
   const employee = opts.employee === undefined ? EMMA : opts.employee;
@@ -46,7 +49,7 @@ function fakeDeps(overrides: Partial<GateDeps> = {}, opts: { run?: OrgRunState; 
       escalationScore: 0, reasonCode: 'within_policy', ruleSource: 'default', tier: 2,
     } as any),
     logAutonomy: async () => {},
-    logLedger: async (e) => { ledger.push(`${e.decision}:${e.reasonCode}`); },
+    logLedger: async (e) => { ledger.push(`${e.decision}:${e.reasonCode}`); entries.push(e); },
     park: async (p) => { parked.push(`${p.tool}.${p.action}`); return { pendingActionId: 'pa-1', workItemId: 'wi-1' }; },
     summarize: (tool, action) => `${tool}.${action}`,
     critic: async () => ({ allow: true, reason: 'ok' }),
@@ -57,7 +60,7 @@ function fakeDeps(overrides: Partial<GateDeps> = {}, opts: { run?: OrgRunState; 
     },
     ...overrides,
   };
-  return { deps, invoked, ledger, parked };
+  return { deps, invoked, ledger, entries, parked };
 }
 
 test('omitting employeeId and employeeRole denies with missing_employee', async () => {
@@ -132,6 +135,20 @@ test('stage 0 is shadow for actions with side effects and never calls the provid
   assert.equal(res.reason, 'shadow');
   assert.deepEqual(f.invoked, []);
   assert.deepEqual(f.ledger, ['suppressed:shadow_stage']);
+});
+
+test('a watching-mode decision keeps a plain sentence about what would have been done, for the person reviewing it', async () => {
+  const f = fakeDeps({ summarize: (tool, action, p) => `Send ${tool} ${action} to ${(p.payload as { to?: string })?.to}` }, { run: { runnable: true, stage: 0 } });
+  await runToolGate({ tool: 'gmail', action: 'send_email', payload: { to: 'a@b.co', body: 'hi' }, orgId: ORG, employeeId: EMMA.id }, f.deps);
+  const shadow = f.entries.find((e) => e.reasonCode === 'shadow_stage');
+  assert.ok(shadow, 'the shadow decision must be written to the ledger');
+  assert.equal(shadow.summary, 'Send gmail send_email to a@b.co');
+});
+
+test('the shadow sentence is not stored on decisions that are not watching-mode ones', async () => {
+  const f = fakeDeps({}, { run: { runnable: true, stage: 3 } });
+  await runToolGate({ tool: 'gmail', action: 'fetch_latest_emails', payload: {}, orgId: ORG, employeeId: EMMA.id }, f.deps);
+  for (const e of f.entries) assert.equal(e.summary, undefined);
 });
 
 test('kill switch denies chat, plan, and sweep the same way', async () => {
