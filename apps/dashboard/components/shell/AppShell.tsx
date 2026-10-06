@@ -24,6 +24,7 @@ import {
   Target,
   Sun,
   ShieldCheck,
+  BadgeCheck,
   HeartHandshake,
   CheckSquare,
   Package,
@@ -57,6 +58,7 @@ const NAV_ITEMS = [
   { href: '/billing', label: 'Billing', icon: CreditCard },
   { href: '/skills', label: 'Skills', icon: Wand2 },
   { href: '/settings/autonomy', label: 'Autonomy', icon: ShieldCheck },
+  { href: '/trust', label: 'Trust', icon: BadgeCheck },
 ];
 
 function ProfileAvatar() {

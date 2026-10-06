@@ -1,5 +1,17 @@
 # Darex Build State
 
+## Trust page: how far the team can be trusted to act alone, and the evidence (2026-10-06)
+
+- New page `/trust` (sidebar and phone menu; a test now fails if a sidebar page is missing from the phone menu, which found this page missing at first). It shows the level and what that level lets the team do, what moving up needs with the measured progress, the watching-mode decisions waiting for a yes or no, each employee's last 30 days (a small sample is labelled too small to judge, never shown as a percentage), the history of level changes with who and why, and pause and resume buttons (a customer had no way to pause their own team).
+- `GET /api/trust` is one read of all of it for the session's workspace, with `canManage` and `canReview` so the page hides buttons a role cannot use.
+- The "what each level allows" table is data (`lib/trust-levels.json`) and `trust-levels-parity.test.ts` in the workflows package runs the real gate for every level and every action class and fails if the table is wrong. Writing it caught a mistake in my first draft: at level 0 payments and deletions are sent for approval, not merely recorded, because the gate checks "irreversible" before the level.
+- Findings, stated on the page and in `gap26sept/autonomy.md` (rows 9 to 11), not changed here:
+  - Levels 2 and 3 allow exactly what level 1 allows. Anything that sends, pays, signs, publishes, deletes or runs commands is parked for approval before the level is consulted, so earning a higher level unlocks nothing today. Which actions earned trust should unlock is a product decision. The page says so.
+  - The Health page's "Approval rate" is `executed ÷ escalated`, not approved ÷ decided. The Trust page uses approved ÷ decided by a person and labels it differently.
+  - Nothing writes `outcome_feedback`, so undone actions and complaints cannot count for or against an employee. The page says they are not tracked yet and never shows them as zero.
+- Proof: 16 page tests plus 3 for pause and resume, 5 route tests, 6 level-table tests, 3 gate-parity tests, 2 navigation tests. Real browser against the sandbox database, 34 of 34: level and rows; watching-mode answers saved with who answered and surviving a reload; a forged request with 999 reviews refused; an early move recorded as an override with the reason, the evidence and an audit entry; pause drops to level 0 and is in the history; resume; no sideways scroll at 390 px and no control under 24 px. Dashboard 902 of 902 (plus 11 database tests when a database is present), workflows 549 of 549, `tsc` and lint clean.
+- Not verified: a real model producing real proposals (the evidence in the browser run was seeded), real devices, Safari and Firefox.
+
 ## Earned autonomy: the server counts the evidence and every level change is recorded (2026-10-06)
 
 - What was wrong: `PATCH /api/org/rollout` asked the browser for the evidence (weeks in stage, divergences, approval rate, decisions) and checked the answer, so anyone allowed to change settings could type their way up, and `force` skipped the check. The first stage's evidence (`shadow_reviewed`, `shadow_agreed`) was never written by anything, so leaving level 0 was only possible by forcing it. Nothing recorded who changed a level, and pausing silently reset it to 0.

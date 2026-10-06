@@ -37,6 +37,7 @@ const MORE = [
   { href: '/billing', label: 'Billing' },
   { href: '/skills', label: 'Skills' },
   { href: '/settings/autonomy', label: 'Autonomy' },
+  { href: '/trust', label: 'Trust' },
   { href: '/settings', label: 'Settings' },
 ] as const;
 
