@@ -45,12 +45,14 @@ function decide(body) {
     const txt = typeof last.content === 'string' ? last.content : JSON.stringify(last.content);
     return { kind: 'text', text: `Done. The tool said: ${txt.slice(0, 300)}` };
   }
-  const m = user.match(/\[\[call:([a-zA-Z0-9_.\-]+)(?:\s+(\{.*\}))?\]\]/s);
-  if (m) {
+  // Every [[call:name {json}]] in the prompt is made in the same model turn, in order.
+  const calls = [];
+  for (const m of user.matchAll(/\[\[call:([a-zA-Z0-9_.\-]+)(?:\s+(\{[^\n]*?\}))?\]\]/g)) {
     let args = {};
     try { args = m[2] ? JSON.parse(m[2]) : {}; } catch { /* keep {} */ }
-    return { kind: 'tool', name: m[1], args };
+    calls.push({ name: m[1], args });
   }
+  if (calls.length) return { kind: 'tool', name: calls[0].name, args: calls[0].args, calls };
   if (sc.reply) return { kind: 'text', text: sc.reply };
   return { kind: 'text', text: `I read your message (${user.slice(0, 80)}). Nothing else to do.`, tools };
 }
@@ -60,7 +62,7 @@ function completion(body, d) {
   const model = body.model || 'fake-model';
   if (d.kind === 'tool') {
     return { id, object: 'chat.completion', created: Math.floor(Date.now() / 1000), model,
-      choices: [{ index: 0, finish_reason: 'tool_calls', message: { role: 'assistant', content: null, tool_calls: [{ id: 'call_' + Math.random().toString(36).slice(2, 10), type: 'function', function: { name: d.name, arguments: JSON.stringify(d.args) } }] } }],
+      choices: [{ index: 0, finish_reason: 'tool_calls', message: { role: 'assistant', content: null, tool_calls: (d.calls || [d]).map((c) => ({ id: 'call_' + Math.random().toString(36).slice(2, 10), type: 'function', function: { name: c.name, arguments: JSON.stringify(c.args) } })) } }],
       usage: { prompt_tokens: 100, completion_tokens: 20, total_tokens: 120 } };
   }
   return { id, object: 'chat.completion', created: Math.floor(Date.now() / 1000), model,
@@ -76,9 +78,11 @@ function streamCompletion(res, body, d) {
   const w = (delta, finish = null, extra = {}) => res.write('data: ' + JSON.stringify({ ...base, choices: [{ index: 0, delta, finish_reason: finish }], ...extra }) + '\n\n');
   w({ role: 'assistant', content: '' });
   if (d.kind === 'tool') {
-    const callId = 'call_' + Math.random().toString(36).slice(2, 10);
-    w({ tool_calls: [{ index: 0, id: callId, type: 'function', function: { name: d.name, arguments: '' } }] });
-    w({ tool_calls: [{ index: 0, function: { arguments: JSON.stringify(d.args) } }] });
+    (d.calls || [d]).forEach((c, i) => {
+      const callId = 'call_' + Math.random().toString(36).slice(2, 10);
+      w({ tool_calls: [{ index: i, id: callId, type: 'function', function: { name: c.name, arguments: '' } }] });
+      w({ tool_calls: [{ index: i, function: { arguments: JSON.stringify(c.args) } }] });
+    });
     w({}, 'tool_calls');
   } else {
     const words = d.text.split(/(\s+)/);
@@ -105,6 +109,10 @@ function provider(req, res, host, rest, bodyText) {
       const id = (u.match(/\/messages\/(m\d+)/) || [])[1] || 'm1';
       return send(res, 200, { id, threadId: 't-' + id, snippet: 'Hi, is the flat still available?', payload: { headers: [{ name: 'From', value: 'Priya <priya@example.test>' }, { name: 'Subject', value: 'Flat viewing' }, { name: 'Date', value: 'Mon, 5 Oct 2026 10:00:00 +0000' }] } });
     }
+  }
+  if (host === 'api.stripe.com') {
+    if (/\/v1\/charges\//.test(u) && req.method === 'GET') return send(res, 200, { id: 'ch_test', amount: 4000, currency: 'usd', created: Math.floor(Date.now() / 1000) - 86400 });
+    if (/\/v1\/refunds/.test(u) && req.method === 'POST') return send(res, 200, { id: 're_test', status: 'succeeded', amount: 4000, currency: 'usd' });
   }
   return send(res, 200, { ok: true, note: 'generic fake provider answer', host });
 }

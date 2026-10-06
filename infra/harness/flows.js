@@ -4,7 +4,8 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { seed, cleanup, psql } = require('./seed');
+const { spawnSync } = require('child_process');
+const { seed, cleanup, psql, addUser } = require('./seed');
 
 const BASE = process.env.FLOW_BASE || 'http://127.0.0.1:3011';
 const WORK = process.env.HARNESS_DIR || path.join(os.tmpdir(), 'darex-harness');
@@ -40,6 +41,19 @@ async function decide(s, id, status, extra = {}) {
 }
 const pending = (s, status = 'pending') => psql(`SELECT id FROM agent_pending_actions WHERE org_id='${s.orgId}' AND status='${status}' ORDER BY created_at DESC LIMIT 1`);
 const count = (sql) => Number(psql(sql));
+// A call held for approval by the real gate WITHOUT a chat card, the way a plan step, a crew or a sweep holds one.
+// (A chat card is the person's approval in the moment; see F15 onward.)
+const ROOT = path.resolve(__dirname, '..', '..');
+function holdSend(s, to = 'priya@example.test', body = 'Confirmed for 5pm tomorrow') {
+  const code = `const x=require(${JSON.stringify(path.join(ROOT, 'services/workflows/dist/tool-executor.js'))}).executeAutonomousToolAction;` +
+    `x({tool:'gmail',action:'send_email',payload:${JSON.stringify({ to, subject: 'Your viewing', body })},orgId:${JSON.stringify(s.orgId)},employeeId:${JSON.stringify(s.employeeId)},source:'plan'})` +
+    `.then(r=>{console.log(JSON.stringify({status:r.status,id:r.approval&&r.approval.pendingActionId}));process.exit(0)},e=>{console.error(e);process.exit(1)})`;
+  const r = spawnSync(process.execPath, ['-e', code], { encoding: 'utf8', env: process.env });
+  if (r.status !== 0) throw new Error('holdSend failed: ' + r.stderr.slice(0, 300));
+  const out = JSON.parse(r.stdout.trim().split('\n').pop());
+  if (out.status !== 'pending_approval' || !out.id) throw new Error('the gate did not hold the send: ' + r.stdout.slice(0, 200));
+  return out.id;
+}
 const SEND = (to = 'priya@example.test', body = 'Confirmed for 5pm tomorrow') => `[[call:gmail_send ${JSON.stringify({ to, subject: 'Your viewing', body })}]]`;
 
 
@@ -82,11 +96,8 @@ flow('F2 a send is held for approval and nothing leaves', async () => {
 flow('F3 approving a held send in Decisions actually sends it, once, and records it truthfully', async () => {
   const s = seed({ stage: 1, tag: 'f3' }); resetWorld();
   try {
-    const r = await ask(s, `Confirm the viewing ${SEND()}`);
-    if (r.approval) await chatApprove(s, { ...r.approval, conversationId: r.done?.conversationId }, 'allow');
-    const id = pending(s);
+    const id = holdSend(s);
     note('a durable pending approval exists to approve', !!id, 'none found');
-    if (!id) return;
     resetWorld();
     const d = await decide(s, id, 'approved');
     note('the approval answers success', d.status === 200 && d.body?.status === 'executed', JSON.stringify(d).slice(0, 220));
@@ -105,9 +116,7 @@ flow('F3 approving a held send in Decisions actually sends it, once, and records
 flow('F4 rejecting sends nothing and says so', async () => {
   const s = seed({ stage: 1, tag: 'f4' }); resetWorld();
   try {
-    const r = await ask(s, `Confirm the viewing ${SEND()}`);
-    if (r.approval) await chatApprove(s, { ...r.approval, conversationId: r.done?.conversationId }, 'allow');
-    const id = pending(s); if (!id) return note('a pending approval exists', false);
+    const id = holdSend(s);
     resetWorld();
     const d = await decide(s, id, 'rejected');
     note('rejected answers 200 with status rejected', d.status === 200 && d.body?.status === 'rejected', JSON.stringify(d));
@@ -119,9 +128,7 @@ flow('F4 rejecting sends nothing and says so', async () => {
 flow('F5 editing before approving sends the edited text, not the model’s', async () => {
   const s = seed({ stage: 1, tag: 'f5' }); resetWorld();
   try {
-    const r = await ask(s, `Confirm the viewing ${SEND('priya@example.test', 'ORIGINAL TEXT')}`);
-    if (r.approval) await chatApprove(s, { ...r.approval, conversationId: r.done?.conversationId }, 'allow');
-    const id = pending(s); if (!id) return note('a pending approval exists', false);
+    const id = holdSend(s, 'priya@example.test', 'ORIGINAL TEXT');
     resetWorld();
     const d = await decide(s, id, 'approved', { modifiedPayload: { to: 'priya@example.test', subject: 'Your viewing', body: 'EDITED BY THE OWNER' } });
     const sends = providerCalls(/messages\/send/);
@@ -133,9 +140,7 @@ flow('F5 editing before approving sends the edited text, not the model’s', asy
 flow('F6 a provider failure after approval is recorded as failed, not as sent', async () => {
   const s = seed({ stage: 1, tag: 'f6' }); resetWorld();
   try {
-    const r = await ask(s, `Confirm the viewing ${SEND()}`);
-    if (r.approval) await chatApprove(s, { ...r.approval, conversationId: r.done?.conversationId }, 'allow');
-    const id = pending(s); if (!id) return note('a pending approval exists', false);
+    const id = holdSend(s);
     resetWorld({ providerStatus: { 'gmail.googleapis.com': 500 } });
     const d = await decide(s, id, 'approved');
     note('the person is told it failed (not success)', d.body?.success === false || d.body?.status === 'execution_failed' || d.status >= 400, JSON.stringify(d).slice(0, 240));
@@ -172,9 +177,7 @@ flow('F8 a paused team does nothing, even for a read', async () => {
 flow('F9 another workspace cannot approve, reject or see this one’s approval', async () => {
   const a = seed({ stage: 1, tag: 'f9a' }); const b = seed({ stage: 1, tag: 'f9b' }); resetWorld();
   try {
-    const r = await ask(a, `Confirm the viewing ${SEND()}`);
-    if (r.approval) await chatApprove(a, { ...r.approval, conversationId: r.done?.conversationId }, 'allow');
-    const id = pending(a); if (!id) return note('a pending approval exists', false);
+    const id = holdSend(a);
     resetWorld();
     const d = await decide(b, id, 'approved');
     note('the other workspace gets a refusal (404/409), not a success', d.status === 404 || d.status === 409 || d.status === 403, JSON.stringify(d).slice(0, 160));
@@ -188,9 +191,7 @@ flow('F9 another workspace cannot approve, reject or see this one’s approval',
 flow('F10 an auditor cannot approve; nothing runs', async () => {
   const s = seed({ stage: 1, tag: 'f10' }); resetWorld();
   try {
-    const r = await ask(s, `Confirm the viewing ${SEND()}`);
-    if (r.approval) await chatApprove(s, { ...r.approval, conversationId: r.done?.conversationId }, 'allow');
-    const id = pending(s); if (!id) return note('a pending approval exists', false);
+    const id = holdSend(s);
     psql(`UPDATE users SET role='auditor' WHERE id='${s.userId}' RETURNING 1`);
     psql(`UPDATE organization_memberships SET role='auditor' WHERE user_id='${s.userId}' RETURNING 1`);
     resetWorld();
@@ -280,6 +281,155 @@ flow('F15 denying in the chat card sends nothing and leaves nothing to approve',
     note('the provider received nothing', providerCalls().length === 0, d.text.slice(0, 300));
     note('no approval row was made: the denied call never reached the gate', rowCount(s) === 0, `rows=${rowCount(s)}`);
     note('the audit log has the deny', auditCount(s, 'tool.deny') === 1);
+  } finally { cleanup(s.orgId); }
+});
+
+// ---- Single approval: the chat card IS the approval -------------------------------------------------------------
+const rowOf = (s) => psql(`SELECT status||'|'||COALESCE(decided_by::text,'')||'|'||(executed_at IS NOT NULL)||'|'||COALESCE(execution_error,'') FROM agent_pending_actions WHERE org_id='${s.orgId}' ORDER BY created_at DESC LIMIT 1`);
+const waiting = (s) => count(`SELECT count(*) FROM agent_pending_actions WHERE org_id='${s.orgId}' AND status='pending'`);
+
+flow('F16 allowing a send in the chat card sends it once, needs no second approval, and is recorded durably', async () => {
+  const s = seed({ stage: 1, tag: 'f15' }); resetWorld();
+  try {
+    const r = await ask(s, `Confirm the viewing ${SEND()}`);
+    note('the chat shows a card and nothing has been sent yet', !!r.approval && providerCalls(/messages\/send/).length === 0);
+    const c = await chatApprove(s, { ...r.approval, conversationId: r.done?.conversationId }, 'allow');
+    const sends = providerCalls(/messages\/send/);
+    note('allowing sent exactly one email', sends.length === 1, `sends=${sends.length} ${c.text.slice(0, 200)}`);
+    const text = decodeSend(sends[0]);
+    note('it has the recipient and text the person saw', /priya@example\.test/.test(text) && /Confirmed for 5pm tomorrow/.test(text), text.slice(0, 200));
+    note('nothing is left waiting in Decisions', waiting(s) === 0, `waiting=${waiting(s)}`);
+    note('the approval is a durable row: executed, decided by this person, with a run time', rowOf(s) === `executed|${s.userId}|true|`, rowOf(s));
+    note('the decision card in the inbox is closed', count(`SELECT count(*) FROM work_items WHERE org_id='${s.orgId}' AND type='decision' AND status='open'`) === 0);
+    note('the audit log has the chat allow, the approval and the execution, once each', auditCount(s, 'tool.approve') === 1 && auditCount(s, 'decision.approved') === 1 && auditCount(s, 'decision.approved_and_executed') === 1, `${auditCount(s, 'tool.approve')}/${auditCount(s, 'decision.approved')}/${auditCount(s, 'decision.approved_and_executed')}`);
+    note('the approval says it came from the chat', psql(`SELECT payload->>'via' FROM audit_events WHERE org_id='${s.orgId}' AND kind='decision.approved'`) === 'chat');
+    const answer = String(c.done?.answer || '');
+    note('the answer says it ran, not that it is waiting', /executed/i.test(answer) && !/waiting for approval/i.test(answer), answer.slice(0, 240));
+    const again = await chatApprove(s, { ...r.approval, conversationId: r.done?.conversationId }, 'allow');
+    note('allowing the same card again sends nothing more', providerCalls(/messages\/send/).length === 1, `sends=${providerCalls(/messages\/send/).length} ${again.text.slice(0, 120)}`);
+  } finally { cleanup(s.orgId); }
+});
+
+flow('F17 pausing the team after the card appeared stops the send even though the person allowed it', async () => {
+  const s = seed({ stage: 1, tag: 'f17' }); resetWorld();
+  try {
+    const r = await ask(s, `Confirm the viewing ${SEND()}`);
+    psql(`UPDATE org_runtime_controls SET kill_switch=true WHERE org_id='${s.orgId}' RETURNING 1`);
+    const c = await chatApprove(s, { ...r.approval, conversationId: r.done?.conversationId }, 'allow');
+    note('nothing was sent', providerCalls(/messages\/send/).length === 0);
+    note('no approval was recorded as executed', count(`SELECT count(*) FROM agent_pending_actions WHERE org_id='${s.orgId}' AND status='executed'`) === 0);
+    note('the answer says the team is paused', /paused|kill switch/i.test(String(c.done?.answer || '')), String(c.done?.answer || '').slice(0, 200));
+  } finally { cleanup(s.orgId); }
+});
+
+flow('F18 an Allow covers exactly the call on the card: two sends, one allowed and one denied, send one email', async () => {
+  const s = seed({ stage: 1, tag: 'f18' }); resetWorld();
+  try {
+    const r = await ask(s, `Confirm both ${SEND('first@example.test', 'FIRST')} ${SEND('second@example.test', 'SECOND')}`);
+    const ap = r.approval && r.approval.approvals;
+    note('there are two cards', Array.isArray(ap) && ap.length === 2, JSON.stringify(ap).slice(0, 200));
+    if (!Array.isArray(ap) || ap.length !== 2) return;
+    // Allow the first card, deny the second.
+    const res = await fetch(`${BASE}/api/ask-ai/approve`, { method: 'POST', headers: headers(s), body: JSON.stringify({ sessionId: r.approval.sessionId, conversationId: r.done?.conversationId, decisions: [{ threadId: ap[0].threadId, toolCallId: ap[0].toolCallId, tool: ap[0].toolName, decision: 'allow' }, { threadId: ap[1].threadId, toolCallId: ap[1].toolCallId, tool: ap[1].toolName, decision: 'deny' }] }) });
+    await res.text();
+    const sends = providerCalls(/messages\/send/);
+    note('exactly one email left', sends.length === 1, `sends=${sends.length}`);
+    note('it is the allowed one', /FIRST/.test(decodeSend(sends[0])) && !/SECOND/.test(decodeSend(sends[0])), decodeSend(sends[0]).slice(0, 200));
+    note('one durable row, executed, and nothing waiting', rowCount(s) === 1 && waiting(s) === 0, `rows=${rowCount(s)} waiting=${waiting(s)}`);
+  } finally { cleanup(s.orgId); }
+});
+
+flow('F19 a provider failure after a chat Allow is recorded as failed and the person is not told it was sent', async () => {
+  const s = seed({ stage: 1, tag: 'f19' }); resetWorld();
+  try {
+    const r = await ask(s, `Confirm the viewing ${SEND()}`);
+    resetWorld({ providerStatus: { 'gmail.googleapis.com': 500 } });
+    const c = await chatApprove(s, { ...r.approval, conversationId: r.done?.conversationId }, 'allow');
+    note('the approval row says execution_failed', /^execution_failed\|/.test(rowOf(s)), rowOf(s));
+    note('the audit log has execution_failed and no approved_and_executed', auditCount(s, 'decision.execution_failed') === 1 && auditCount(s, 'decision.approved_and_executed') === 0);
+    const answer = String(c.done?.answer || '');
+    note('the answer does not say it was sent', !/"status":\s*"executed"/.test(answer), answer.slice(0, 240));
+    note('the answer has no raw provider text', !/scripted failure|ECONN|googleapis/i.test(answer), answer.slice(0, 240));
+  } finally { cleanup(s.orgId); }
+});
+
+flow('F20 an auditor allowing in the chat card is refused and nothing runs', async () => {
+  const s = seed({ stage: 1, tag: 'f20' }); resetWorld();
+  try {
+    const r = await ask(s, `Confirm the viewing ${SEND()}`);
+    psql(`UPDATE users SET role='auditor' WHERE id='${s.userId}' RETURNING 1`);
+    psql(`UPDATE organization_memberships SET role='auditor' WHERE user_id='${s.userId}' RETURNING 1`);
+    const c = await chatApprove(s, { ...r.approval, conversationId: r.done?.conversationId }, 'allow');
+    note('refused with 403', c.status === 403, `status=${c.status}`);
+    note('nothing was sent and no row exists', providerCalls(/messages\/send/).length === 0 && rowCount(s) === 0);
+  } finally { cleanup(s.orgId); }
+});
+
+flow('F21 watching mode still sends nothing after a chat Allow, and leaves no approval row behind', async () => {
+  const s = seed({ stage: 0, tag: 'f21' }); resetWorld();
+  try {
+    const r = await ask(s, `Confirm the viewing ${SEND()}`);
+    await chatApprove(s, { ...r.approval, conversationId: r.done?.conversationId }, 'allow');
+    note('the provider received nothing', providerCalls(/messages\/send/).length === 0);
+    note('no approval row was made (the gate recorded it in the ledger instead)', rowCount(s) === 0, `rows=${rowCount(s)}`);
+  } finally { cleanup(s.orgId); }
+});
+
+
+flow('F22 two Allows for the same card at once send one email, not two', async () => {
+  const s = seed({ stage: 1, tag: 'f22' }); resetWorld();
+  try {
+    const r = await ask(s, `Confirm the viewing ${SEND()}`);
+    const ap = { ...r.approval, conversationId: r.done?.conversationId };
+    await Promise.all([chatApprove(s, ap, 'allow'), chatApprove(s, ap, 'allow')]);
+    note('exactly one email left', providerCalls(/messages\/send/).length === 1, `sends=${providerCalls(/messages\/send/).length}`);
+    note('exactly one approval row, executed', rowCount(s) === 1 && /^executed\|/.test(rowOf(s)), `rows=${rowCount(s)} ${rowOf(s)}`);
+  } finally { cleanup(s.orgId); }
+});
+
+const REFUND = `[[call:stripe_create_refund ${JSON.stringify({ chargeId: 'ch_test', reason: 'requested_by_customer' })}]]`;
+const refunds = () => providerCalls(/\/v1\/refunds/);
+
+// Nothing in the product sets required_approvals above its default of 1, so a workspace with a two-approval rule is
+// simulated for this one workspace with a trigger that is dropped again afterwards.
+const twoApprovals = (orgId, on) => {
+  psql('DROP TRIGGER IF EXISTS harness_two_approvals_trg ON agent_pending_actions');
+  if (!on) return;
+  psql(`CREATE OR REPLACE FUNCTION harness_two_approvals() RETURNS trigger AS $$ BEGIN NEW.required_approvals := 2; RETURN NEW; END $$ LANGUAGE plpgsql`);
+  psql(`CREATE TRIGGER harness_two_approvals_trg BEFORE INSERT ON agent_pending_actions FOR EACH ROW WHEN (NEW.org_id = '${orgId}') EXECUTE FUNCTION harness_two_approvals()`);
+};
+
+flow('F23 with a two-approval rule, the chat Allow is the first approval, a second person finishes it in Decisions, and it refunds once', async () => {
+  const s = seed({ stage: 1, tag: 'f23', tools: ['gmail', 'stripe'] }); resetWorld();
+  try {
+    twoApprovals(s.orgId, true);
+    const second = addUser(s.orgId, { role: 'admin', tag: 'f23b' });
+    const r = await ask(s, `Refund the customer ${REFUND}`);
+    note('the chat shows a card', !!r.approval, JSON.stringify(r.events.map((e) => e.type)));
+    if (!r.approval) return;
+    const c = await chatApprove(s, { ...r.approval, conversationId: r.done?.conversationId }, 'allow');
+    note('no money moved on the first approval', refunds().length === 0, `refunds=${refunds().length} ${c.text.slice(0, 200)}`);
+    note('the row is still waiting, with one approval recorded from this person', waiting(s) === 1 && count(`SELECT jsonb_array_length(approvals) FROM agent_pending_actions WHERE org_id='${s.orgId}'`) === 1 && psql(`SELECT approvals->0->>'userId' FROM agent_pending_actions WHERE org_id='${s.orgId}'`) === s.userId);
+    note('the assistant says it is waiting for another approval, not that it is done', /pending_approval|more approval|waiting/i.test(String(c.done?.answer || '')) && !/refunded/i.test(String(c.done?.answer || '')), String(c.done?.answer || '').slice(0, 260));
+    const id = pending(s);
+    const same = await decide(s, id, 'approved');
+    note('the same person cannot approve it a second time', same.status === 409 && refunds().length === 0, JSON.stringify(same).slice(0, 160));
+    const finish = await fetch(`${BASE}/api/decisions`, { method: 'PATCH', headers: headers(second), body: JSON.stringify({ id, status: 'approved' }) });
+    const fb = await finish.json().catch(() => ({}));
+    note('a second person approving finishes it', finish.status === 200 && fb.status === 'executed', JSON.stringify(fb).slice(0, 200));
+    note('exactly one refund reached the provider', refunds().length === 1, `refunds=${refunds().length}`);
+    note('the audit log shows both approvals and one execution', auditCount(s, 'decision.approved') === 2 && auditCount(s, 'decision.approved_and_executed') === 1, `${auditCount(s, 'decision.approved')}/${auditCount(s, 'decision.approved_and_executed')}`);
+  } finally { twoApprovals(s.orgId, false); cleanup(s.orgId); }
+});
+
+flow('F24 a member allowing a refund in the chat card is refused before anything runs', async () => {
+  const s = seed({ stage: 1, tag: 'f24', role: 'member', tools: ['gmail', 'stripe'] }); resetWorld();
+  try {
+    const r = await ask(s, `Refund the customer ${REFUND}`);
+    if (!r.approval) return note('the chat shows a card', false, r.text.slice(0, 200));
+    const c = await chatApprove(s, { ...r.approval, conversationId: r.done?.conversationId }, 'allow');
+    note('refused with 403', c.status === 403, `status=${c.status}`);
+    note('no money moved and no row exists', refunds().length === 0 && rowCount(s) === 0);
   } finally { cleanup(s.orgId); }
 });
 

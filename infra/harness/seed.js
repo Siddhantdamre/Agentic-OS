@@ -12,6 +12,18 @@ function psql(sql) {
   if (r.status !== 0) throw new Error('psql failed: ' + r.stderr + '\n' + sql.slice(0, 200));
   return r.stdout.trim().split('\n')[0];
 }
+function sessionCookie(userId) {
+  const exp = Math.floor(Date.now() / 1000) + 7200;
+  const payload = `${userId}.0.${exp}`;
+  return `${payload}.${crypto.createHmac('sha256', SECRET).update(payload).digest('hex')}`;
+}
+// A second person in the same workspace (for flows that need two approvers).
+function addUser(orgId, { role = 'admin', tag = 'second' } = {}) {
+  const email = `${tag}-${Date.now()}${Math.floor(Math.random() * 1000)}@example.test`;
+  const userId = psql(`INSERT INTO users (org_id, email, role, terms_accepted_at) VALUES ('${orgId}', '${email}', '${role}', now()) RETURNING id`);
+  psql(`INSERT INTO organization_memberships (user_id, org_id, role, is_default) VALUES ('${userId}', '${orgId}', '${role}', true) RETURNING 1`);
+  return { orgId, userId, email, cookie: sessionCookie(userId) };
+}
 function seed({ stage = 1, role = 'owner', tag = 'flow', tools = ['gmail', 'google-calendar', 'customer-ops'] } = {}) {
   const stamp = Date.now() + '' + Math.floor(Math.random() * 1000);
   const orgId = psql(`INSERT INTO orgs (name, slug, status, plan, employees_seeded) VALUES ('Flow ${tag} ${stamp}', 'flow-${tag}-${stamp}', 'active', 'growth', true) RETURNING id`);
@@ -22,11 +34,8 @@ function seed({ stage = 1, role = 'owner', tag = 'flow', tools = ['gmail', 'goog
   psql(`INSERT INTO org_runtime_controls (org_id, autonomy_stage, kill_switch) VALUES ('${orgId}', ${stage}, false) ON CONFLICT (org_id) DO UPDATE SET autonomy_stage=${stage}, kill_switch=false RETURNING 1`);
   const allow = '{' + tools.map((t) => `"${t}"`).join(',') + '}';
   const employeeId = psql(`INSERT INTO ai_employees (org_id, name, role, status, tool_allowlist, persona) VALUES ('${orgId}', 'Emma', 'Customer Support', 'active', '${allow}', '{}'::jsonb) RETURNING id`);
-  const exp = Math.floor(Date.now() / 1000) + 7200;
-  const payload = `${userId}.0.${exp}`;
-  const cookie = `${payload}.${crypto.createHmac('sha256', SECRET).update(payload).digest('hex')}`;
-  return { orgId, userId, email, employeeId, cookie };
+  return { orgId, userId, email, employeeId, cookie: sessionCookie(userId) };
 }
 function cleanup(orgId) { psql(`DELETE FROM orgs WHERE id='${orgId}' RETURNING 1`); }
-module.exports = { seed, cleanup, psql };
+module.exports = { seed, cleanup, psql, addUser };
 if (require.main === module) console.log(JSON.stringify(seed({ stage: Number(process.argv[2] || 1) })));
