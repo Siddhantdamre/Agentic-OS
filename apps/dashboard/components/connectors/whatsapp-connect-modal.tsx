@@ -281,7 +281,7 @@ export default function WhatsAppConnectModal(props: {
               </div>
             )}
             <p className="text-sm text-slate-500">
-              Provide your Meta Developer credentials to connect your WhatsApp Business Account without OAuth App Review.
+              Provide your Meta Developer credentials to connect your WhatsApp Business Account without waiting for Meta’s app review.
             </p>
             <div className="space-y-1">
               <label className="text-xs font-bold text-slate-700">Access Token (System User Token)</label>

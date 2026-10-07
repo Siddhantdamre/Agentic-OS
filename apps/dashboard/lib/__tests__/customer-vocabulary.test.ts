@@ -31,7 +31,10 @@ const VISIBLE_PROPS = new Set([
 const VISIBLE_CALLS = /^(set\w*(Error|Message|Note|Notice|Status|Success|Hint|Warning)|toast(\.\w+)?)$/;
 
 const BANNED =
-  /\b(Nango|TrueForge|Temporal|Chatwoot|LiteLLM|Langfuse|SuperTokens|pgvector|embeddings?|RLS|MCP|JWT|webhooks?|payloads?|endpoints?|tenants?|idempoten\w*|cron|Redis|Postgres|pending row|seeds? a|Cloud API|orchestrat\w+|vector (store|db|database)|SDK|schema|stack trace|undefined|notConnected|from env|env vars?|\(unset\)|Phase \d|self-hosted stack|localhost:\d+|\[object)\b|\(unset\)|localhost:\d+/i;
+  /\b(OAuth|database_query|web_search|web_extract|file_ops|mcp\.[\w-]+|dev-?ese|SoR|org-union|Nango|TrueForge|Temporal|Chatwoot|LiteLLM|Langfuse|SuperTokens|pgvector|embeddings?|RLS|MCP|JWT|webhooks?|payloads?|endpoints?|tenants?|idempoten\w*|cron|Redis|Postgres|pending row|seeds? a|Cloud API|orchestrat\w+|vector (store|db|database)|SDK|schema|stack trace|undefined|notConnected|from env|env vars?|\(unset\)|Phase \d|self-hosted stack|localhost:\d+|\[object)\b|\(unset\)|localhost:\d+/i;
+
+/** A setting's name such as DAREX_ALERT_WEBHOOK_URL: it means something to whoever deploys us, nothing to a customer. */
+const SETTING_NAME = /\b[A-Z][A-Z0-9]*(?:_[A-Z0-9]+){1,}\b/;
 
 /** file (relative, posix) -> terms that may appear there, with the reason. */
 const ALLOWED: Array<{ file: string; term: RegExp; reason: string }> = [
@@ -39,6 +42,11 @@ const ALLOWED: Array<{ file: string; term: RegExp; reason: string }> = [
     file: 'app/(dashboard)/settings/page.tsx',
     term: /webhooks?|Chatwoot|endpoints?/i,
     reason: 'Settings → Webhooks: the customer copies these URLs into Meta/Chatwoot, whose own screens say "webhook".',
+  },
+  {
+    file: 'app/(dashboard)/connectors/[id]/page.tsx',
+    term: /^[A-Z][A-Z0-9]*(_[A-Z0-9]+)+$/,
+    reason: 'The "Settings your administrator needs to provide" list names the exact settings the person who runs the install must set; it is headed as such.',
   },
   {
     file: 'components/re/SchedulePanel.tsx',
@@ -60,6 +68,17 @@ function walk(dir: string, out: string[] = []): string[] {
   return out;
 }
 
+/** The fixed words inside an expression: a literal, a template (its fixed parts), either side of `a ? b : c`, `a || b` or `a + b`. */
+function texts(n: ts.Node | undefined): string[] {
+  if (!n) return [];
+  if (ts.isStringLiteral(n) || ts.isNoSubstitutionTemplateLiteral(n)) return [n.text];
+  if (ts.isTemplateExpression(n)) return [[n.head.text, ...n.templateSpans.map((sp) => sp.literal.text)].join(' ')];
+  if (ts.isParenthesizedExpression(n)) return texts(n.expression);
+  if (ts.isConditionalExpression(n)) return [...texts(n.whenTrue), ...texts(n.whenFalse)];
+  if (ts.isBinaryExpression(n) && ['||', '??', '+', '&&'].includes(n.operatorToken.getText())) return [...texts(n.left), ...texts(n.right)];
+  return [];
+}
+
 type Hit = { file: string; line: number; term: string; text: string };
 
 function scan(): Hit[] {
@@ -70,27 +89,26 @@ function scan(): Hit[] {
       const sf = ts.createSourceFile(abs, fs.readFileSync(abs, 'utf8'), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
       const add = (node: ts.Node, raw: string) => {
         const text = raw.replace(/\s+/g, ' ').trim();
-        const m = text.match(BANNED);
+        const m = text.match(BANNED) ?? text.match(SETTING_NAME);
         if (!m) return;
         hits.push({ file: rel, line: sf.getLineAndCharacterOfPosition(node.getStart()).line + 1, term: m[0], text: text.slice(0, 100) });
       };
-      const isText = (n: ts.Node): n is ts.StringLiteral | ts.NoSubstitutionTemplateLiteral =>
-        ts.isStringLiteral(n) || ts.isNoSubstitutionTemplateLiteral(n);
       const visit = (n: ts.Node): void => {
         if (ts.isJsxText(n)) {
           add(n, n.getText());
-        } else if (ts.isJsxAttribute(n) && n.initializer && VISIBLE_ATTRS.has(n.name.getText()) && ts.isStringLiteral(n.initializer)) {
-          add(n.initializer, n.initializer.text);
-        } else if (ts.isPropertyAssignment(n) && VISIBLE_PROPS.has(n.name.getText().replace(/['"]/g, '')) && isText(n.initializer)) {
-          add(n.initializer, n.initializer.text);
-        } else if (ts.isJsxExpression(n) && n.expression && isText(n.expression)) {
-          add(n.expression, n.expression.text);
+        } else if (ts.isJsxAttribute(n) && n.initializer && VISIBLE_ATTRS.has(n.name.getText())) {
+          const init = n.initializer;
+          for (const t of ts.isJsxExpression(init) ? texts(init.expression) : texts(init)) add(init, t);
+        } else if (ts.isPropertyAssignment(n) && VISIBLE_PROPS.has(n.name.getText().replace(/['"]/g, ''))) {
+          for (const t of texts(n.initializer)) add(n.initializer, t);
+        } else if (ts.isJsxExpression(n) && n.expression && !ts.isJsxAttribute(n.parent)) {
+          for (const t of texts(n.expression)) add(n.expression, t);
         } else if (ts.isCallExpression(n) && VISIBLE_CALLS.test(n.expression.getText())) {
-          for (const a of n.arguments) if (isText(a)) add(a, a.text);
-        } else if (ts.isReturnStatement(n) && n.expression && isText(n.expression)) {
-          add(n.expression, n.expression.text); // label helpers: `return 'Disconnected (notConnected)'`
+          for (const a of n.arguments) for (const t of texts(a)) add(a, t);
+        } else if (ts.isReturnStatement(n) && n.expression) {
+          for (const t of texts(n.expression)) add(n.expression, t); // label helpers: `return 'Disconnected (notConnected)'`
         } else if (ts.isNewExpression(n) && n.expression.getText() === 'Error') {
-          for (const a of n.arguments ?? []) if (isText(a)) add(a, a.text);
+          for (const a of n.arguments ?? []) for (const t of texts(a)) add(a, t);
         }
         ts.forEachChild(n, visit);
       };

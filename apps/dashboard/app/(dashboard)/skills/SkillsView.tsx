@@ -1,5 +1,6 @@
 'use client';
 
+import { channelName } from '@/lib/ask-ai-welcome';
 import React, { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { AlertCircle, CheckCircle2, Layers, Link as LinkIcon, ShieldAlert, Users } from 'lucide-react';
@@ -132,7 +133,6 @@ export function SkillsView() {
               </div>
 
               <p className="text-sm text-slate-600">{skill.description}</p>
-              <p className="text-xs font-mono text-slate-400">{skill.id}</p>
 
               <div className="space-y-2">
                 <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
@@ -141,7 +141,7 @@ export function SkillsView() {
                 <ul className="space-y-1.5">
                   {skill.providerStatuses.map((p) => (
                     <li key={p.provider} className="flex items-center justify-between text-sm">
-                      <span className="font-mono text-xs text-slate-600">{p.provider}</span>
+                      <span className="text-xs font-medium text-slate-600">{channelName(p.provider)}</span>
                       {p.connected ? (
                         <span className="inline-flex items-center gap-1 text-emerald-700 text-xs font-semibold">
                           <CheckCircle2 className="w-3.5 h-3.5" />

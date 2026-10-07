@@ -62,13 +62,13 @@ const CONNECTOR_SPECS: Record<string, ConnectorSpec> = {
   'google-workspace': {
     name: 'Google Workspace (All-in-One)',
     category: 'Productivity',
-    desc: 'Unified Google Workspace connection authorizing Gmail, Calendar, Drive, Docs, Sheets, Slides, Forms, Contacts, and Tasks in a single OAuth flow.',
+    desc: 'Unified Google Workspace connection authorizing Gmail, Calendar, Drive, Docs, Sheets, Slides, Forms, Contacts, and Tasks with a single sign-in.',
     icon: Cloud,
     authMode: 'OAuth 2.0 (Google Workspace)',
     nangoKey: 'google',
     envVars: [
-      { name: 'GOOGLE_CLIENT_ID', desc: 'Google Cloud Console OAuth Client ID' },
-      { name: 'GOOGLE_CLIENT_SECRET', desc: 'Google Cloud Console OAuth Client Secret' },
+      { name: 'GOOGLE_CLIENT_ID', desc: 'Google Cloud Console Client ID' },
+      { name: 'GOOGLE_CLIENT_SECRET', desc: 'Google Cloud Console Client Secret' },
     ],
     scopes: [
       'https://mail.google.com/',
@@ -88,13 +88,13 @@ const CONNECTOR_SPECS: Record<string, ConnectorSpec> = {
   google: {
     name: 'Google Workspace (All-in-One)',
     category: 'Productivity',
-    desc: 'Unified Google Workspace connection authorizing Gmail, Calendar, Drive, Docs, Sheets, Slides, Forms, Contacts, and Tasks in a single OAuth flow.',
+    desc: 'Unified Google Workspace connection authorizing Gmail, Calendar, Drive, Docs, Sheets, Slides, Forms, Contacts, and Tasks with a single sign-in.',
     icon: Cloud,
     authMode: 'OAuth 2.0 (Google Workspace)',
     nangoKey: 'google',
     envVars: [
-      { name: 'GOOGLE_CLIENT_ID', desc: 'Google Cloud Console OAuth Client ID' },
-      { name: 'GOOGLE_CLIENT_SECRET', desc: 'Google Cloud Console OAuth Client Secret' },
+      { name: 'GOOGLE_CLIENT_ID', desc: 'Google Cloud Console Client ID' },
+      { name: 'GOOGLE_CLIENT_SECRET', desc: 'Google Cloud Console Client Secret' },
     ],
     scopes: [
       'https://mail.google.com/',
@@ -139,8 +139,8 @@ const CONNECTOR_SPECS: Record<string, ConnectorSpec> = {
     authMode: 'OAuth 2.0 (Google APIs)',
     nangoKey: 'gmail',
     envVars: [
-      { name: 'GOOGLE_CLIENT_ID', desc: 'Google Cloud Console OAuth Client ID' },
-      { name: 'GOOGLE_CLIENT_SECRET', desc: 'Google Cloud Console OAuth Client Secret' },
+      { name: 'GOOGLE_CLIENT_ID', desc: 'Google Cloud Console Client ID' },
+      { name: 'GOOGLE_CLIENT_SECRET', desc: 'Google Cloud Console Client Secret' },
     ],
     scopes: ['https://www.googleapis.com/auth/gmail.send', 'https://www.googleapis.com/auth/gmail.readonly'],
     testFields: [
@@ -158,8 +158,8 @@ const CONNECTOR_SPECS: Record<string, ConnectorSpec> = {
     authMode: 'OAuth 2.0 (Google APIs)',
     nangoKey: 'google-calendar',
     envVars: [
-      { name: 'GOOGLE_CLIENT_ID', desc: 'Google Cloud Console OAuth Client ID' },
-      { name: 'GOOGLE_CLIENT_SECRET', desc: 'Google Cloud Console OAuth Client Secret' },
+      { name: 'GOOGLE_CLIENT_ID', desc: 'Google Cloud Console Client ID' },
+      { name: 'GOOGLE_CLIENT_SECRET', desc: 'Google Cloud Console Client Secret' },
     ],
     scopes: ['https://www.googleapis.com/auth/calendar', 'https://www.googleapis.com/auth/calendar.events'],
     testFields: [
@@ -235,8 +235,8 @@ const CONNECTOR_SPECS: Record<string, ConnectorSpec> = {
     authMode: 'OAuth 2.0 (Google Ads API)',
     nangoKey: 'google-ads',
     envVars: [
-      { name: 'GOOGLE_CLIENT_ID', desc: 'Google OAuth Client ID' },
-      { name: 'GOOGLE_CLIENT_SECRET', desc: 'Google OAuth Client Secret' },
+      { name: 'GOOGLE_CLIENT_ID', desc: 'Google Client ID' },
+      { name: 'GOOGLE_CLIENT_SECRET', desc: 'Google Client Secret' },
       { name: 'GOOGLE_ADS_DEVELOPER_TOKEN', desc: 'Google Ads Developer Access Token' },
     ],
     scopes: ['https://www.googleapis.com/auth/adwords'],
@@ -258,7 +258,6 @@ export default function ConnectorDetailPage() {
   const [liveAuthMode, setLiveAuthMode] = useState<string>(spec?.authMode || 'oauth');
   const [oauthConfigured, setOauthConfigured] = useState<boolean | null>(null);
   const [operatorHint, setOperatorHint] = useState<string | null>(null);
-  const [nangoUiHref, setNangoUiHref] = useState('http://localhost:3003');
   const [liveName, setLiveName] = useState(spec?.name || connectorId);
   const [liveDesc, setLiveDesc] = useState(spec?.desc || '');
   const [extraConnectFields, setExtraConnectFields] = useState<Array<{ key: string; label: string; placeholder: string; required: boolean; secret?: boolean; type?: string }>>([]);
@@ -302,7 +301,6 @@ export default function ConnectorDetailPage() {
         setLiveAuthMode(current.authMode || 'oauth');
         setOauthConfigured(current.oauthConfigured ?? null);
         setOperatorHint(current.missingConfigReason || current.operatorHint || null);
-        if (current.nangoUiUrl) setNangoUiHref(current.nangoUiUrl);
         setLiveName(current.name || connectorId);
         setLiveDesc(current.desc || '');
         setExtraConnectFields(current.extraConnectFields || []);
@@ -343,7 +341,7 @@ export default function ConnectorDetailPage() {
       }
 
       if (liveAuthMode === 'service_account') {
-        throw new Error(operatorHint || 'This connector is not OAuth and cannot be connected from the dashboard.');
+        throw new Error(operatorHint || 'This app can’t be connected from the dashboard.');
       }
 
       if (liveAuthMode === 'byok' || connectorId === 'whatsapp') {
@@ -365,17 +363,17 @@ export default function ConnectorDetailPage() {
       if (oauthConfigured === false) {
         // The OAuth app is not registered in Nango: the popup can only fail.
         throw new Error(
-          operatorHint || `${liveName} OAuth is not configured yet. Ask your admin to register the app in Nango.`
+          operatorHint || `Connecting ${liveName} isn’t switched on yet. Ask your administrator to set it up.`
         );
       }
 
       const extras: Record<string, string> = { ...connectExtras };
       const result = await startRealNangoOAuth(connectorId, { extraParams: extras });
       if (!result.success) {
-        throw new Error(result.error || 'OAuth was cancelled or failed');
+        throw new Error(result.error || 'The sign-in was cancelled or didn’t work.');
       }
       setConnected(true);
-      setConnectSuccess(`${liveName} connected via Nango OAuth.`);
+      setConnectSuccess(`${liveName} is connected.`);
       await checkConnectionStatus();
     } catch (err: any) {
       setConnected(false);
@@ -523,8 +521,8 @@ export default function ConnectorDetailPage() {
                   : liveAuthMode === 'api_key'
                     ? 'Save API Keys'
                     : liveAuthMode === 'service_account'
-                      ? 'Not OAuth'
-                      : 'Connect via Nango'}
+                      ? 'Can’t connect here'
+                      : 'Connect'}
           </button>
         </div>
       </div>
@@ -532,7 +530,7 @@ export default function ConnectorDetailPage() {
       {operatorHint && !connected && (
         <div className="p-4 rounded-2xl border border-amber-300 bg-amber-50 text-amber-950 text-xs font-medium flex items-start space-x-2">
           <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
-          <span>{operatorHint}{oauthConfigured === false ? ` Nango UI: ${nangoUiHref}` : ''}</span>
+          <span>{operatorHint}</span>
         </div>
       )}
 
@@ -552,7 +550,7 @@ export default function ConnectorDetailPage() {
 
       {!connected && liveAuthMode === 'oauth' && extraConnectFields.length > 0 && (
         <div className="bg-white border border-cream-300 rounded-3xl p-6 space-y-3">
-          <h3 className="text-sm font-bold text-heading">Required before OAuth</h3>
+          <h3 className="text-sm font-bold text-heading">Needed before you sign in</h3>
           {extraConnectFields.map((field) => (
             <input
               key={field.key}

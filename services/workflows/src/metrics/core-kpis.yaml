@@ -9,8 +9,8 @@ metrics:
     description: Inquiries with no outbound reply within 2 hours
     valueKind: count
     packId: core-b2b
-    insightCopy: Unworked inquiries are waiting more than 2 hours for an outbound reply.
-    recommendedAction: Open Conversations and chase threads with no assistant reply.
+    insightCopy: Enquiries have waited more than 2 hours for a reply.
+    recommendedAction: Open Inbox and follow up the conversations nobody has replied to.
     sql: |
       SELECT COUNT(*)::float8 AS value
       FROM conversations c
@@ -43,7 +43,7 @@ metrics:
     description: Conversations currently open or needing attention
     valueKind: count
     packId: core-b2b
-    insightCopy: Open conversation count from SQL, not a forecast.
+    insightCopy: The number of conversations open right now. This is a count, not a forecast.
     sql: |
       SELECT COUNT(*)::float8 AS value
       FROM conversations c
@@ -54,11 +54,11 @@ metrics:
 
   - id: core.needs_attention
     aliases: [needs_attention, "needs attention"]
-    description: Conversations marked needs_attention
+    description: Conversations that need attention
     valueKind: count
     packId: core-b2b
-    insightCopy: These threads are marked needs_attention in SQL.
-    recommendedAction: Open Conversations and take the flagged threads.
+    insightCopy: These conversations are flagged for a person to look at.
+    recommendedAction: Open Inbox and take the flagged conversations.
     sql: |
       SELECT COUNT(*)::float8 AS value
       FROM conversations c
@@ -95,11 +95,11 @@ metrics:
 
   - id: core.revenue_collected_7d
     aliases: [revenue_collected, "revenue collected"]
-    description: Revenue collected in the window (Stripe projection from channel_logs)
+    description: Payments collected in this period
     valueKind: currency
     source: stripe
     packId: core-b2b
-    insightCopy: Sum of stripe.payment_succeeded amounts when those logs exist; otherwise zero.
+    insightCopy: Total of the payments that succeeded. It shows zero until payments are connected.
     sql: |
       SELECT COALESCE(SUM((payload->>'amount')::numeric), 0)::float8 AS value
       FROM channel_logs
@@ -113,8 +113,8 @@ metrics:
     description: Agent plans cancelled or rejected in the window
     valueKind: count
     packId: core-b2b
-    insightCopy: Rejected plans from SQL — high counts may mean prompts need tuning.
-    recommendedAction: Open Decisions and review recent rejected plans.
+    insightCopy: Plans you rejected or cancelled. A high number can mean the instructions need tuning.
+    recommendedAction: Open Plans and review the ones you recently rejected.
     sql: |
       SELECT COUNT(*)::float8 AS value
       FROM agent_plans
@@ -128,8 +128,8 @@ metrics:
     description: Work items blocked on human approval
     valueKind: count
     packId: core-b2b
-    insightCopy: Items waiting for approval are counted from work_items SQL.
-    recommendedAction: Open Morning Brief or Work Items and approve or dismiss blockers.
+    insightCopy: Work items waiting for your approval.
+    recommendedAction: Open the Morning brief or Work Items and approve or dismiss what is waiting.
     sql: |
       SELECT COUNT(*)::float8 AS value
       FROM work_items w
@@ -140,11 +140,11 @@ metrics:
 
   - id: core.agent_plans_pending
     aliases: [pending_plans, "pending plans"]
-    description: Agent plans still pending human confirm
+    description: Plans waiting for your confirmation
     valueKind: count
     packId: core-b2b
-    insightCopy: Pending plans awaiting confirm/reject in the window.
-    recommendedAction: Open Ask AI / Decisions and clear the pending queue.
+    insightCopy: Plans waiting for you to confirm or reject them.
+    recommendedAction: Open Plans and clear the ones that are waiting.
     sql: |
       SELECT COUNT(*)::float8 AS value
       FROM agent_plans

@@ -278,7 +278,7 @@ export default function EmployeesPage() {
             AI Employee Roster
           </h1>
           <p className="text-slate-500 text-sm mt-1">
-            Mention an employee in Ask AI with @Name. Tool allowlist stays org-union.
+            Mention an employee in Ask AI with @Name. Whoever you mention, they share the same connected apps.
           </p>
         </div>
 

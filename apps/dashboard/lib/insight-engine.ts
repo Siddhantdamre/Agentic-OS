@@ -106,6 +106,14 @@ export function recommendedWorkflowForMetric(metricId: string): InsightNamedWork
   }
 }
 
+/** What a card says when a number cannot be shown, without the internal metric id. */
+export function plainGapNarrative(gap: string): string {
+  const base = 'Darex shows a number only when it is real, so this one is left out for now.';
+  return gap.toLowerCase().includes('not connected')
+    ? `Not available yet. Connect the app this comes from and it will fill in. ${base}`
+    : `Not available yet. ${base}`;
+}
+
 export function cardTypeForMetric(metricId: string): InsightCardType {
   if (!isInsightMetricId(metricId)) return 'efficiency';
   switch (metricId) {
@@ -423,7 +431,7 @@ export function buildInsightCards(query: InsightMetricQuery, generatedAt = new D
       orgId: query.orgId,
       metricId,
       title: def ? `${def.description} — not available` : `Metric unavailable`,
-      narrative: `Honest gap: ${gap}. Darex will not invent this KPI.`,
+      narrative: plainGapNarrative(gap),
       value: 0,
       status: 'gap',
       recommendedWorkflow: null,

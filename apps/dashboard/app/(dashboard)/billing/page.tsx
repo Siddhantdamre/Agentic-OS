@@ -378,13 +378,14 @@ export default function BillingPage() {
                 Providers
               </span>
               <div className="text-sm font-semibold text-heading space-y-1">
-                <p>Stripe: {data.providers.stripe ? 'configured' : 'not configured'}</p>
-                <p>Razorpay: {data.providers.razorpay ? 'configured' : 'not configured'}</p>
+                <p>Card payments (Stripe): {data.providers.stripe ? 'ready' : 'not set up yet'}</p>
+                <p>UPI and cards (Razorpay): {data.providers.razorpay ? 'ready' : 'not set up yet'}</p>
                 {data.providerGaps &&
                   (data.providerGaps.stripe.length > 0 || data.providerGaps.razorpay.length > 0) && (
                     <p className="text-xs font-medium text-slate-500 pt-1">
-                      Missing env:{' '}
-                      {[...data.providerGaps.stripe, ...data.providerGaps.razorpay].join(', ')}
+                      Your administrator still needs to finish setting up{' '}
+                      {data.providerGaps.stripe.length + data.providerGaps.razorpay.length} payment{' '}
+                      {data.providerGaps.stripe.length + data.providerGaps.razorpay.length === 1 ? 'setting' : 'settings'}.
                     </p>
                   )}
               </div>
@@ -500,9 +501,9 @@ export default function BillingPage() {
                   <div className="flex items-center justify-between">
                     <span className="text-xs font-bold uppercase text-slate-500">{meterLabel(m.kind)}</span>
                     {m.overHard ? (
-                      <span className="text-xs font-bold text-red-700">hard</span>
+                      <span className="text-xs font-bold text-red-700">Limit reached</span>
                     ) : m.overSoft ? (
-                      <span className="text-xs font-bold text-amber-700">soft</span>
+                      <span className="text-xs font-bold text-amber-700">Nearing limit</span>
                     ) : (
                       <CheckCircle2 className="w-4 h-4 text-emerald-600" />
                     )}
@@ -512,8 +513,8 @@ export default function BillingPage() {
                     <span className="text-xs font-medium text-slate-500 ml-1">{m.unit}</span>
                   </div>
                   <p className="text-xs text-slate-500 mt-1">
-                    soft {m.softLimit ?? '—'} / hard {m.hardLimit ?? '—'} · {m.source}
-                    {m.truncated ? ' · truncated' : ''}
+                    Warning at {m.softLimit ?? '—'} · stops at {m.hardLimit ?? '—'}
+                    {m.truncated ? ' · partial count' : ''}
                   </p>
                 </div>
               ))}

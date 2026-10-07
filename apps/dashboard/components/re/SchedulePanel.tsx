@@ -250,7 +250,7 @@ export function RentChargesPanel() {
       setMessage(
         data.error ||
           data.message ||
-          (data.closed ? 'Unexpected close — charge should stay open without a PSP webhook.' : 'Reminder recorded.')
+          (data.closed ? 'This charge was closed without a confirmed payment. It should stay open until the payment is confirmed.' : 'Reminder recorded.')
       );
       await load();
     } catch {
@@ -267,7 +267,7 @@ export function RentChargesPanel() {
       <div>
         <h2 className="text-sm font-semibold text-heading">Rent reminders</h2>
         <p className="text-xs text-slate-500 mt-0.5">
-          Schedule from SoR charges only. Tenant “I paid” does not close a charge.
+          Schedules come from the charges on record only. Tenant “I paid” does not close a charge.
         </p>
       </div>
       {message ? (

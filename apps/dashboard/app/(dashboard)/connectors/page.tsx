@@ -293,7 +293,7 @@ function ConnectorsScreen() {
       } else if (item.authMode === 'service_account') {
         setStatusNotification({
           type: 'error',
-          message: item.missingConfigReason || item.operatorHint || `${item.name} is not OAuth and cannot be connected from the dashboard.`,
+          message: item.missingConfigReason || item.operatorHint || `${item.name} can’t be connected from the dashboard.`,
         });
       } else if (item.authMode === 'byok' || item.id === 'whatsapp') {
         openWhatsApp('choose');
@@ -306,7 +306,7 @@ function ConnectorsScreen() {
           message:
             item.missingConfigReason ||
             item.operatorHint ||
-            `${item.name} OAuth is not configured yet. Ask your admin to register the app.`,
+            `Connecting ${item.name} isn’t switched on yet. Ask your administrator to set it up.`,
         });
       } else if ((item.extraConnectFields || []).some((f) => f.required)) {
         setExtraModal(item);
@@ -314,11 +314,11 @@ function ConnectorsScreen() {
       } else {
         const oauthResult = await startRealNangoOAuth(item.id);
         if (oauthResult.success) {
-          setStatusNotification({ type: 'success', message: `Successfully connected ${item.name} via OAuth!` });
+          setStatusNotification({ type: 'success', message: `Connected ${item.name}.` });
         } else {
           setStatusNotification({
             type: 'error',
-            message: oauthResult.error || `OAuth flow for ${item.name} was cancelled or closed.`,
+            message: oauthResult.error || `The ${item.name} sign-in was cancelled or closed.`,
           });
         }
         fetchIntegrations();
@@ -412,8 +412,8 @@ function ConnectorsScreen() {
           <div>
             <p className="font-semibold">Connecting tools isn’t switched on yet</p>
             <p className="text-xs mt-1 text-amber-900/80">
-              Ask the person who set this up to add <code className="font-mono">NEXT_PUBLIC_NANGO_PUBLIC_KEY</code> to the dashboard
-              settings. Until then the Connect buttons cannot start — nothing is pretended to be connected.
+              Ask the person who set this up to switch on app connections for your workspace. Until then the Connect
+              buttons cannot start — nothing is pretended to be connected.
             </p>
           </div>
         </div>
@@ -586,7 +586,7 @@ function ConnectorsScreen() {
                 {gwConnecting ? (
                   <>
                     <RefreshCw className="w-4 h-4 animate-spin" />
-                    <span>Opening Google OAuth...</span>
+                    <span>Opening Google sign-in...</span>
                   </>
                 ) : (
                   <>
@@ -670,7 +670,7 @@ function ConnectorsScreen() {
                     </div>
 
                     {!item.connected && item.authMode === 'oauth' && item.oauthConfigured === false ? (
-                      <span title={item.missingConfigReason || 'OAuth app is not registered in Nango yet.'}>
+                      <span title={item.missingConfigReason || 'Connecting this app isn’t switched on yet.'}>
                         <StatusBadge label="Needs setup" tone="warning" icon="warn" />
                       </span>
                     ) : (
@@ -770,7 +770,7 @@ function ConnectorsScreen() {
                             ? 'Disconnecting...'
                             : item.authMode === 'byok' || item.authMode === 'api_key'
                               ? 'Opening form...'
-                              : 'Opening OAuth...'}
+                              : 'Opening sign-in...'}
                         </span>
                       </>
                     ) : item.connected ? (
@@ -784,7 +784,7 @@ function ConnectorsScreen() {
                         <span>
                           {item.authMode === 'byok' || item.authMode === 'api_key'
                             ? 'Connect'
-                            : 'Connect OAuth'}
+                            : 'Connect'}
                         </span>
                       </>
                     )}
@@ -849,7 +849,7 @@ function ConnectorsScreen() {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 backdrop-blur-sm">
           <div className="bg-white p-8 rounded-3xl max-w-lg w-full shadow-2xl space-y-6">
             <h2 className="text-2xl font-serif font-bold text-heading">Connect {extraModal.name}</h2>
-            <p className="text-sm text-slate-500">{extraModal.missingConfigReason || extraModal.operatorHint || 'These fields are required before the Nango OAuth popup.'}</p>
+            <p className="text-sm text-slate-500">{extraModal.missingConfigReason || extraModal.operatorHint || 'Fill these in before you sign in.'}</p>
             <form
               onSubmit={async (e) => {
                 e.preventDefault();
@@ -860,7 +860,7 @@ function ConnectorsScreen() {
                 if (oauthResult.success) {
                   setStatusNotification({ type: 'success', message: `Connected ${extraModal.name}` });
                 } else {
-                  setStatusNotification({ type: 'error', message: oauthResult.error || 'OAuth failed' });
+                  setStatusNotification({ type: 'error', message: oauthResult.error || 'The sign-in didn’t work.' });
                 }
                 fetchIntegrations();
               }}
@@ -881,7 +881,7 @@ function ConnectorsScreen() {
               ))}
               <div className="flex justify-end space-x-3 pt-2">
                 <button type="button" onClick={() => setExtraModal(null)} className="px-5 py-2 text-sm font-semibold text-slate-500">Cancel</button>
-                <button type="submit" className="px-5 py-2 bg-amber-500 text-heading text-sm font-semibold rounded-xl">Continue to OAuth</button>
+                <button type="submit" className="px-5 py-2 bg-amber-500 text-heading text-sm font-semibold rounded-xl">Continue to sign-in</button>
               </div>
             </form>
           </div>
@@ -914,8 +914,8 @@ function ConnectorsScreen() {
             {gwTesting && (
               <div className="flex flex-col items-center justify-center py-10 space-y-3">
                 <RefreshCw className="w-8 h-8 animate-spin text-amber-500" />
-                <p className="text-sm font-semibold text-slate-700">Pinging all 9 Google Workspace APIs...</p>
-                <p className="text-xs text-slate-400">Verifying OAuth token, scopes, and service responses</p>
+                <p className="text-sm font-semibold text-slate-700">Checking all 9 Google Workspace services...</p>
+                <p className="text-xs text-slate-400">Checking your sign-in, the permissions you gave, and that each service answers</p>
               </div>
             )}
 

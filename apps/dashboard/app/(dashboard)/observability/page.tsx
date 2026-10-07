@@ -59,7 +59,7 @@ export default function ObservabilityPage() {
           return;
         }
         if (data.dispatched === false && data.reason === 'not_configured') {
-          setDispatchNote('Alert delivery isn’t set up yet (DAREX_ALERT_WEBHOOK_URL).');
+          setDispatchNote('Alert delivery isn’t set up yet. Ask your administrator to turn it on.');
           return;
         }
         if (data.dispatched === false && data.reason === 'preview') {

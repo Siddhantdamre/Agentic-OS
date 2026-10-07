@@ -1,5 +1,6 @@
 'use client';
 
+import { humanizeId } from '@/lib/humanize-id';
 import React, { useState, useEffect, useCallback } from 'react';
 import { useLiveRefresh } from '@/lib/use-live-refresh';
 import Link from 'next/link';
@@ -192,7 +193,7 @@ export default function InsightPage() {
         <div className="space-y-6">
           {insights.length === 0 ? (
             <p className="text-sm text-slate-500">
-              No insight cards — the registry returned no metric points for this org.
+              No insights yet. They appear once your business has some activity to look at.
             </p>
           ) : null}
           {insights.map((item) => {
@@ -240,7 +241,6 @@ export default function InsightPage() {
                         {item.category}
                       </span>
                       <span className="text-xs font-semibold text-emerald-600">Impact: {item.impact}</span>
-                      <span className="text-[10px] font-mono text-slate-400">{item.metricId}</span>
                     </div>
 
                     <h3 className="text-lg font-serif font-bold text-heading">{item.title}</h3>
@@ -250,7 +250,7 @@ export default function InsightPage() {
                     {queued && (
                       <p className="text-[11px] text-emerald-700 flex items-center gap-1.5">
                         <CheckCircle2 className="w-3.5 h-3.5" />
-                        {queued.namedWorkflow} started — reference {queued.workflowId}
+                        {humanizeId(queued.namedWorkflow)} started.
                       </p>
                     )}
                     {err && <p className="text-[11px] text-red-600">{err}</p>}

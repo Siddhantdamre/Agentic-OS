@@ -180,8 +180,8 @@ export default function PacksMarketplacePage() {
           Industry packs
         </h1>
         <p className="text-slate-500 text-sm mt-1">
-          Pre-configured AI employees, connector recommendations, and SOPs. Connectors are never
-          marked connected until OAuth succeeds.
+          Ready-made AI employees, app recommendations and standard procedures. An app only shows as
+          connected once you have signed in to it.
         </p>
       </div>
 

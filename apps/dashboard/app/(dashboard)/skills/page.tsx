@@ -1,5 +1,6 @@
 'use client';
 
+import { humanizeId } from '@/lib/humanize-id';
 import React, { useEffect, useState, useMemo, useCallback } from 'react';
 import { useLiveRefresh } from '@/lib/use-live-refresh';
 import Link from 'next/link';
@@ -394,7 +395,7 @@ export default function SkillsPage() {
                     {skill.requiresTools.map((tool) => (
                       <li key={tool} className="flex items-center gap-1">
                         <span className="w-1.5 h-1.5 rounded-full bg-slate-300" />
-                        <span>{tool}</span>
+                        <span>{humanizeId(tool)}</span>
                       </li>
                     ))}
                   </ul>

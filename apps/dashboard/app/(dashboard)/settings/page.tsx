@@ -802,7 +802,7 @@ export default function SettingsPage() {
 
               {!mailConfigured && (
                 <p className="text-xs text-slate-500">
-                  Email delivery is off until <code>RESEND_API_KEY</code> (and production <code>MAIL_FROM</code>) are set. You will get a copyable invite link instead.
+                  Email delivery is off until your administrator turns it on. You will get a copyable invite link instead.
                 </p>
               )}
 

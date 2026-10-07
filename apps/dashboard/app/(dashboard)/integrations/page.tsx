@@ -147,7 +147,7 @@ export default function IntegrationsPage() {
 
     try {
       if (app.authMode === 'service_account') {
-        throw new Error(app.missingConfigReason || 'This connector is not OAuth and cannot be connected here.');
+        throw new Error(app.missingConfigReason || 'This app can’t be connected here.');
       }
       if (app.authMode === 'byok' || app.id === 'whatsapp') {
         throw new Error('WhatsApp uses a Meta system-user token. Open /connectors and use the BYOK form — Graph verifies the token before Connected.');
@@ -348,7 +348,7 @@ export default function IntegrationsPage() {
                     disabled={isBusy}
                     className="px-4 py-2 bg-amber-500 hover:bg-amber-600 text-heading text-xs font-bold rounded-xl transition-all shadow-md hover:shadow-lg disabled:opacity-50 flex items-center space-x-1.5"
                   >
-                    <span>{isBusy ? 'Connecting OAuth...' : 'Connect'}</span>
+                    <span>{isBusy ? 'Connecting...' : 'Connect'}</span>
                   </button>
                 )}
               </div>
@@ -391,7 +391,7 @@ export default function IntegrationsPage() {
                   Connection ID: <code className="bg-cream-200 px-1.5 py-0.5 rounded text-amber-800 font-mono">{selectedApp.nangoConnectionId}</code>
                 </p>
                 <p className="text-xs text-slate-500">
-                  OAuth Provider Mode: <span className="font-semibold text-slate-700">{selectedApp.id === 'razorpay' ? 'API Key' : 'OAuth 2.0'}</span>
+                  Connected with: <span className="font-semibold text-slate-700">{selectedApp.id === 'razorpay' ? 'an API key' : 'your account sign-in'}</span>
                 </p>
               </div>
 

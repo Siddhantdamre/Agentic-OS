@@ -1,5 +1,6 @@
 'use client';
 
+import { humanizeId } from '@/lib/humanize-id';
 import React, { useCallback, useEffect, useState } from 'react';
 import { useLiveRefresh } from '@/lib/use-live-refresh';
 import { Shield, Clock, Ban } from 'lucide-react';
@@ -196,7 +197,7 @@ export function AutonomySettings() {
         setError(typeof body.error === 'string' ? body.error : 'Could not update rule');
         return;
       }
-      setLive(`Rule ${rule.actionType} updated`);
+      setLive(`Rule ${humanizeId(rule.actionType)} updated`);
       setRules((prev) =>
         prev.map((row) =>
           row.id === rule.id
@@ -324,7 +325,7 @@ export function AutonomySettings() {
               <li key={rule.id} className="bg-white border border-cream-300 rounded-2xl p-4 flex items-start justify-between gap-3">
                 <div className="min-w-0 flex-1 space-y-2">
                   <div>
-                    <p className="text-sm font-semibold text-heading">{rule.actionType}</p>
+                    <p className="text-sm font-semibold text-heading">{humanizeId(rule.actionType)}</p>
                     <p className="text-xs text-slate-500 mt-1">
                       Tier {rule.autonomyTier}
                       {rule.requiresHumanApproval ? ' · needs you' : ' · auto'}
@@ -341,7 +342,7 @@ export function AutonomySettings() {
                   <label className="flex flex-col gap-1 max-w-xs">
                     <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">Mode</span>
                     <select
-                      aria-label={`Autonomy tier for ${rule.actionType}`}
+                      aria-label={`Autonomy tier for ${humanizeId(rule.actionType)}`}
                       value={rule.autonomyTier}
                       disabled={savingRuleId === rule.id}
                       onChange={(e) => updateTier(rule, Number(e.target.value))}
@@ -362,7 +363,7 @@ export function AutonomySettings() {
                         min={0}
                         max={1}
                         step={0.05}
-                        aria-label={`Confidence threshold for ${rule.actionType}`}
+                        aria-label={`Confidence threshold for ${humanizeId(rule.actionType)}`}
                         value={drafts[rule.id]?.confidence ?? (typeof rule.confidenceThreshold === 'number' ? String(rule.confidenceThreshold) : '')}
                         onChange={(e) => setDrafts((prev) => ({ ...prev, [rule.id]: { ...prev[rule.id], confidence: e.target.value } }))}
                         className="w-28 text-sm border border-cream-300 rounded-xl px-3 py-2 bg-cream-50 text-heading"
@@ -371,7 +372,7 @@ export function AutonomySettings() {
                     <label className="flex flex-col gap-1">
                       <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">Reversibility</span>
                       <select
-                        aria-label={`Reversibility for ${rule.actionType}`}
+                        aria-label={`Reversibility for ${humanizeId(rule.actionType)}`}
                         value={rule.locked ? 'irreversible' : drafts[rule.id]?.reversibility ?? rule.reversibility}
                         disabled={rule.locked}
                         onChange={(e) => setDrafts((prev) => ({ ...prev, [rule.id]: { ...prev[rule.id], reversibility: e.target.value } }))}
@@ -383,7 +384,7 @@ export function AutonomySettings() {
                     </label>
                     <button
                       type="button"
-                      aria-label={`Save details for ${rule.actionType}`}
+                      aria-label={`Save details for ${humanizeId(rule.actionType)}`}
                       disabled={savingRuleId === rule.id || !drafts[rule.id]}
                       onClick={() => saveRuleDetails(rule)}
                       className="px-4 py-2 rounded-xl bg-cream-200 text-heading text-xs font-bold disabled:opacity-60"
@@ -491,7 +492,7 @@ export function AutonomySettings() {
               return (
                 <li key={row.id} className="bg-white border border-cream-300 rounded-2xl p-4 space-y-3">
                   <div>
-                    <p className="text-sm font-semibold text-heading">{row.actionType}</p>
+                    <p className="text-sm font-semibold text-heading">{humanizeId(row.actionType)}</p>
                     <p className="text-xs text-slate-500 mt-1">
                       {row.employeeRole} · {row.ageHours.toFixed(1)} hours old
                       {row.ageHours >= 24 ? ' · overdue for a reminder' : ''}

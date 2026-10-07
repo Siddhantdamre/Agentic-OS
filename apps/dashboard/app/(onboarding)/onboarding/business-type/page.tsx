@@ -44,7 +44,7 @@ export default function OnboardingBusinessTypePage() {
           What type of business do you run?
         </h1>
         <p className="text-sm text-slate-500 mt-1">
-          We recommend a pack and connectors. Nothing is marked connected until you finish OAuth.
+          We recommend a pack and apps to connect. Nothing shows as connected until you sign in to each one.
         </p>
       </div>
 

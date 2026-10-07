@@ -64,10 +64,12 @@ describe('AutonomySettings', () => {
 
     render(<AutonomySettings />);
 
-    expect(await screen.findByLabelText('Autonomy tier for send_email')).toBeInTheDocument();
+    expect(await screen.findByLabelText('Autonomy tier for Send email')).toBeInTheDocument();
     expect(screen.getByText(/2\.5 hours old/)).toBeInTheDocument();
 
-    const tierSelect = screen.getByLabelText('Autonomy tier for send_email');
+    expect(screen.queryByText('send_email')).not.toBeInTheDocument();
+    expect(screen.getAllByText('Send email').length).toBeGreaterThan(0);
+    const tierSelect = screen.getByLabelText('Autonomy tier for Send email');
     fireEvent.change(tierSelect, { target: { value: '3' } });
 
     await waitFor(() => {
@@ -168,9 +170,9 @@ describe('AutonomySettings', () => {
         .map(([, i]) => JSON.parse(String(i?.body)));
 
     render(<AutonomySettings />);
-    fireEvent.change(await screen.findByLabelText('Confidence threshold for send_email'), { target: { value: '0.6' } });
-    fireEvent.change(screen.getByLabelText('Reversibility for send_email'), { target: { value: 'irreversible' } });
-    fireEvent.click(screen.getByLabelText('Save details for send_email'));
+    fireEvent.change(await screen.findByLabelText('Confidence threshold for Send email'), { target: { value: '0.6' } });
+    fireEvent.change(screen.getByLabelText('Reversibility for Send email'), { target: { value: 'irreversible' } });
+    fireEvent.click(screen.getByLabelText('Save details for Send email'));
     await waitFor(() => expect(patches().length).toBe(1));
     expect(patches()[0]).toEqual({
       actionType: 'send_email', employeeRole: 'customer', autonomyTier: 2, reversibility: 'irreversible', confidenceThreshold: 0.6,
