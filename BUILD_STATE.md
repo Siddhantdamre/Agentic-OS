@@ -1,5 +1,13 @@
 # Darex Build State
 
+## Ask AI greets in plain words and offers four useful starters (2026-10-07)
+
+- Found by using the product as a new customer: the first message said "Core tools (no OAuth): `database_query`, `web_search`, `web_extract`, `file_ops`" and "point you to `/connectors` — I will not invent results", the page header said "no OAuth connectors yet", and the only starter was "Ask about our Darex data". The other four starters were hard-coded tasks with made-up addresses ("lead@company.com"), shown only when a matching app was connected.
+- Now the greeting says what the assistant can do for this business, names the connected apps in words ("work with WhatsApp"), says a message is always shown before it is sent, and links to Connectors when nothing is connected. There are always four starters, none needing an app that is not connected, and connected apps come first (WhatsApp: "Catch up on WhatsApp"; Gmail: "Reply to my latest emails"; Calendar: "What is on tomorrow?"). None of them invents an address or contact. The header says "connected: WhatsApp" or "no apps connected yet". `@Name` mode reads "@Sarah will answer this message" instead of "overrides mode … org-union tools".
+- Measured in a real browser on a new workspace with WhatsApp connected, before and after: developer words in the first message 7 -> 0; starters 1 -> 4, each a real task; a request that was not understood on the first screen: 0.
+- Proof: 7 tests in `lib/__tests__/ask-ai-welcome.test.ts` (greeting without and with apps, readable app names, four starters, none with invented contacts, no starter for an unconnected app).
+- Not changed: the model's own wording of answers (needs a real model; the harness model only echoes). NEW-FRONTEND needs the same text.
+
 ## The sidebar names every page and groups them by what a person is doing (2026-10-07)
 
 - Before, measured in a real browser at 1280x800: 23 icon-only links with the name only in a hover tooltip, no grouping, Showings had no way in from the sidebar or the phone tabs, and two items lit up on the Customer page (Employees as well as Customer). On a tablet-width window the icon rail scrolled 840 px with the scrollbar hidden.

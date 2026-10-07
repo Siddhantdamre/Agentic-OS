@@ -31,6 +31,7 @@ import { DraftPanel, DraftState } from '@/components/chat/DraftPanel';
 import { CitationChips } from '@/components/ask-ai/CitationChips';
 import { AgentTrajectory, buildTrajectory, humanToolName } from '@/components/chat/AgentTrajectory';
 import { normalizeApprovals, type ChatApproval } from '@/lib/chat-approvals';
+import { channelName, starterPrompts, welcomeText } from '@/lib/ask-ai-welcome';
 import {
   AskModeLockStrip,
   AskRoutingChip,
@@ -193,14 +194,6 @@ interface Message {
   stopped?: boolean;
 }
 
-const DEFAULT_SUGGESTIONS: Array<{ label: string; prompt: string; requires?: string[] }> = [
-  { label: 'Ask about our Darex data', prompt: 'How many conversations and messages are in our workspace right now?' },
-  { label: '📊 Analyze Google Ads & Meta Ads Performance', prompt: 'Summarize our active advertising metrics, CTR, and ROAS across Google Ads and Meta Ads.', requires: ['google-ads', 'meta-ads'] },
-  { label: '📅 Book Sales Demo on Google Calendar', prompt: 'Can you schedule a product demo call on Google Calendar for tomorrow at 2:00 PM?', requires: ['google-calendar'] },
-  { label: '🗃️ Log Lead into HubSpot CRM', prompt: 'Log a new qualified sales lead into HubSpot CRM with contact email lead@company.com.', requires: ['hubspot'] },
-  { label: '📧 Dispatch Email Follow-Up via Gmail', prompt: 'Draft and dispatch a follow-up email to customer@company.com thanking them for their inquiry.', requires: ['gmail'] },
-];
-
 const formatTs = (raw?: string) => {
   if (!raw) return new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   const d = new Date(raw);
@@ -229,24 +222,7 @@ const mapPlanStatus = (
 const buildWelcome = (name: string, channels: string[]): Message => ({
   id: 'welcome',
   sender: 'ai',
-  text:
-    channels.length > 0
-      ? `### Hello from DareX Executive
-
-I can answer questions about **${name}** and act on the connectors that are actually connected:
-
-${channels.map((c) => `- \`${c}\``).join('\n')}
-
-Core tools (no OAuth): \`database_query\`, \`web_search\`, \`web_extract\`, \`file_ops\`.
-
-If a connector is missing I will say so and point you to \`/connectors\` — I will not invent results.`
-      : `### Hello from DareX Executive
-
-I can answer questions about **${name}** and query your Darex data.
-
-No OAuth connectors are connected yet. I will not invent Gmail, Calendar, CRM, or ads data. Connect tools at \`/connectors\` when you want me to act on them.
-
-Always available: \`database_query\`, \`web_search\`, \`web_extract\`, \`file_ops\`.`,
+  text: welcomeText(name, channels),
   provider: 'TrueForge',
   timestamp: 'Just now',
 });
@@ -367,17 +343,7 @@ function parseThreadMessages(
 }
 
 export default function AskAiPage() {
-  const [messages, setMessages] = useState<Message[]>([
-    {
-      id: 'welcome',
-      sender: 'ai',
-      text: `### Hello from DareX Executive
-
-I can answer questions and query your Darex data. Connector actions only run for tools that are actually connected — I will not invent results.`,
-      provider: 'TrueForge',
-      timestamp: 'Just now',
-    },
-  ]);
+  const [messages, setMessages] = useState<Message[]>([buildWelcome('your business', [])]);
 
   const [inputPrompt, setInputPrompt] = useState('');
   const [loading, setLoading] = useState(false);
@@ -1946,8 +1912,7 @@ I can answer questions and query your Darex data. Connector actions only run for
   };
 
   const handleExecuteToolAction = async (_tool: string, _action: string, label: string) => {
-    const suggestion = DEFAULT_SUGGESTIONS.find((s) => s.label === label);
-    await handleSendMessage(suggestion?.prompt || label);
+    await handleSendMessage(label);
   };
 
   const handleToolExecutionComplete = (result: any) => {
@@ -2071,8 +2036,8 @@ I can answer questions and query your Darex data. Connector actions only run for
               <p className="text-[11px] text-slate-500 truncate">
                 {orgName}
                 {connectedChannels.length > 0
-                  ? ` · connected: ${connectedChannels.join(', ')}`
-                  : ' · no OAuth connectors yet'}
+                  ? ` · connected: ${connectedChannels.map(channelName).join(', ')}`
+                  : ' · no apps connected yet'}
               </p>
             </div>
           </div>
@@ -2395,16 +2360,14 @@ I can answer questions and query your Darex data. Connector actions only run for
 
         {messages.length <= 1 && !loading && (
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pb-3">
-            {DEFAULT_SUGGESTIONS.filter(
-              (s) => !s.requires || s.requires.some((tool) => connectedChannels.includes(tool))
-            ).map((s) => (
+            {starterPrompts(connectedChannels).map((s) => (
               <button
                 key={s.label}
                 type="button"
                 onClick={() => handleSendMessage(s.prompt)}
                 className="text-left px-3.5 py-3 bg-white hover:bg-amber-50/70 border border-cream-300 hover:border-amber-400/60 text-slate-700 rounded-2xl transition-all shadow-xs"
               >
-                <span className="block text-[12px] font-semibold text-heading leading-snug">{s.label.replace(/^[^\w]+/, '')}</span>
+                <span className="block text-[12px] font-semibold text-heading leading-snug">{s.label}</span>
                 <span className="mt-1 block text-[11px] text-slate-500 line-clamp-2 leading-snug">{s.prompt}</span>
               </button>
             ))}
@@ -2439,7 +2402,7 @@ I can answer questions and query your Darex data. Connector actions only run for
               </div>
             )}
             {lockedName ? (
-              <StatusBadge label={`@${lockedName} overrides mode for this message · org-union tools`} tone="info" />
+              <StatusBadge label={`@${lockedName} will answer this message`} tone="info" />
             ) : (
               <AskModeLockStrip
                 mode={askMode}
