@@ -1,5 +1,13 @@
 # Darex Build State
 
+## The Inbox can be read at laptop width, and no longer looks like a test tool (2026-10-07)
+
+- Found by using it at 1280x800: four columns (filters 256 px, list 320 px, conversation, context 288 px) left the conversation 112 px wide, so the header, the status control and the reply buttons were cut off. A conversation from the assistant showed as "ask-ai:97fdee74-209e-4942-b3e3-edb8399840c7", and the reply box offered "Simulate Customer (Triggers Live AI Response)" next to the real reply button.
+- Now the filter column is a drawer opened by a "Filters" button (it stays a column at 1536 px and wider), the context column appears only at 1536 px and wider, the list is narrower (288 px, 320 px from 1280 px), and the header controls wrap on a phone. Names show as the customer's name, a phone number or an email address; an Ask AI chat shows as "Ask AI chat", a website visitor id as "Website visitor", a bare id as "Unnamed contact". A phone number stays beside a name. The reply box has "Reply to customer" and "Private note"; the practice mode is one small "Practise as the customer" link, and says what it does when on.
+- Measured in a real browser, before and after: conversation width at 1280x800 112 -> 656 px (+486%); controls cut off at 1280x800 6 -> 0 and on a phone 1 -> 0; "Simulate" text visible yes -> no; raw ids on screen 0 -> 0 (the Ask AI chat now reads "Ask AI chat").
+- Proof: 6 page tests (4 red first) and 8 name tests. The reply text in the screenshots ("I read your message (CONNECTED INTEGRATIONS …") is the harness's stand-in model echoing its prompt, not the product.
+- Not changed: the Inbox is still a dark theme inside a light app; making it match is a larger visual redesign. The practice mode is still there for people who want it.
+
 ## Home tells a new customer what to do first, and speaks plainly (2026-10-07)
 
 - Found by using the product as a new customer: Home for an empty workspace was four tiles reading "N/A" and "0", a banner reading "Infrastructure: healthy · 1 active channels · 1 AI employees", and the line "Numbers below come from your org stats. Empty queues stay empty." Nothing said what to do first.

@@ -24,6 +24,7 @@ import { FormattedMarkdownResponse } from '@/components/chat/FormattedMarkdownRe
 import { safeHttpUrl } from '@/lib/safe-url';
 import { useRealtimeStream } from '@/lib/use-realtime-stream';
 import { networkErrorMessage } from '@/lib/client-error';
+import { contactDetail, contactLabel } from '@/lib/contact-label';
 
 const INBOX_EVENTS = [
   'needs_attention',
@@ -113,6 +114,8 @@ function ConversationsPageInner() {
   const [assigneeId, setAssigneeId] = useState<string>('all');
   const [workItemConvIds, setWorkItemConvIds] = useState<Set<string> | null>(null);
   const [mobilePane, setMobilePane] = useState<'list' | 'thread'>('list');
+  // The filter column is a drawer below 1536 px, so the conversation keeps room to be read.
+  const [filtersOpen, setFiltersOpen] = useState(false);
 
   // Stats
   const [stats, setStats] = useState({
@@ -522,7 +525,7 @@ function ConversationsPageInner() {
   };
 
   return (
-    <div className="flex h-[calc(100vh-8rem)] md:h-[calc(100vh-4rem)] bg-[#121917] text-[#FAF9F0] overflow-hidden">
+    <div className="relative flex h-[calc(100vh-8rem)] md:h-[calc(100vh-4rem)] bg-[#121917] text-[#FAF9F0] overflow-hidden">
       <LiveRegion message={notifVisible && notif ? `Needs attention: ${notif}` : ''} politeness="assertive" />
       {notifVisible && notif && (
         <div className="fixed top-4 right-4 z-50 bg-amber-950/95 border border-amber-600/40 text-amber-100 rounded-xl px-4 py-3 shadow-2xl max-w-sm flex items-start gap-3">
@@ -541,19 +544,34 @@ function ConversationsPageInner() {
       {/* ───────────────────────────────────────────────────────────── */}
       {/* PANE 1: FILTER & CHANNEL SIDEBAR */}
       {/* ───────────────────────────────────────────────────────────── */}
-      <div className={`${mobilePane === 'thread' ? 'hidden md:flex' : 'flex'} w-full md:w-64 border-r border-emerald-950/60 bg-[#16201D] flex-col shrink-0`}>
+      <div
+        id="inbox-filters"
+        className={`${filtersOpen ? 'flex' : 'hidden'} 2xl:flex absolute inset-y-0 left-0 z-30 w-64 max-w-[85%] shadow-2xl 2xl:static 2xl:shadow-none border-r border-emerald-950/60 bg-[#16201D] flex-col shrink-0`}
+      >
         <div className="p-4 border-b border-emerald-950/60 flex items-center justify-between">
           <div className="flex items-center gap-2">
             <Bot className="w-5 h-5 text-[#F0C05A]" />
             <h2 className="font-bold text-sm tracking-wide">Multi-Channel Inbox</h2>
           </div>
-          <button
-            onClick={() => fetchConversations()}
-            className="p-1.5 hover:bg-emerald-900/40 rounded text-emerald-400 transition"
-            title="Refresh feed"
-          >
-            <RefreshCw className="w-4 h-4" />
-          </button>
+          <div className="flex items-center gap-1">
+            <button
+              onClick={() => fetchConversations()}
+              className="p-1.5 hover:bg-emerald-900/40 rounded text-emerald-400 transition"
+              title="Refresh feed"
+              aria-label="Refresh the inbox"
+            >
+              <RefreshCw className="w-4 h-4" />
+            </button>
+            <button
+              type="button"
+              onClick={() => setFiltersOpen(false)}
+              className="2xl:hidden p-1.5 hover:bg-emerald-900/40 rounded text-emerald-400 transition"
+              aria-label="Close filters"
+              title="Close filters"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
         </div>
 
         <div className="p-3 space-y-6 overflow-y-auto flex-1">
@@ -681,15 +699,27 @@ function ConversationsPageInner() {
       {/* ───────────────────────────────────────────────────────────── */}
       {/* PANE 2: CONVERSATION LIST FEED */}
       {/* ───────────────────────────────────────────────────────────── */}
-      <div className={`${mobilePane === 'thread' ? 'hidden md:flex' : 'flex'} w-full md:w-80 border-r border-emerald-950/60 bg-[#141E1B] flex-col shrink-0`}>
+      <div className={`${mobilePane === 'thread' ? 'hidden md:flex' : 'flex'} w-full md:w-72 xl:w-80 border-r border-emerald-950/60 bg-[#141E1B] flex-col shrink-0`}>
         <div className="p-3 border-b border-emerald-950/60 space-y-2">
-          <button
-            onClick={() => setIsNewChatOpen(true)}
-            className="w-full bg-[#F0C05A] hover:bg-[#e0b04a] text-[#16201D] font-bold text-xs py-2 rounded-lg flex items-center justify-center gap-1.5 transition shadow-md"
-          >
-            <Plus className="w-4 h-4" />
-            <span>New Test Chat</span>
-          </button>
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={() => setFiltersOpen((v) => !v)}
+              aria-expanded={filtersOpen}
+              aria-controls="inbox-filters"
+              className="2xl:hidden shrink-0 flex items-center gap-1.5 rounded-lg border border-emerald-800/50 bg-emerald-950/60 px-3 py-2 text-xs font-semibold text-emerald-200 hover:bg-emerald-900/50"
+            >
+              <Filter className="w-4 h-4" />
+              <span>Filters</span>
+            </button>
+            <button
+              onClick={() => setIsNewChatOpen(true)}
+              className="flex-1 bg-[#F0C05A] hover:bg-[#e0b04a] text-[#16201D] font-bold text-xs py-2 rounded-lg flex items-center justify-center gap-1.5 transition shadow-md"
+            >
+              <Plus className="w-4 h-4" />
+              <span>New Test Chat</span>
+            </button>
+          </div>
 
           <div className="relative">
             <Search className="w-4 h-4 absolute left-3 top-2.5 text-emerald-500" />
@@ -737,6 +767,7 @@ function ConversationsPageInner() {
                 onClick={() => {
                   setSelectedConvId(conv.id);
                   setMobilePane('thread');
+                  setFiltersOpen(false);
                 }}
                 className={`p-3 cursor-pointer transition flex flex-col gap-1.5 ${
                   selectedConvId === conv.id
@@ -748,7 +779,7 @@ function ConversationsPageInner() {
                   <div className="flex items-center gap-2">
                     {getChannelIcon(conv.channel_type)}
                     <span className="font-semibold text-xs text-emerald-100 truncate max-w-[130px]">
-                      {conv.metadata?.sender_name || conv.contact_id}
+                      {contactLabel({ senderName: conv.metadata?.sender_name, contactId: conv.contact_id })}
                     </span>
                     {conv.ai_paused ? (
                       <span className="text-[9px] text-amber-400 bg-amber-500/10 px-1 rounded">AI paused</span>
@@ -816,7 +847,7 @@ function ConversationsPageInner() {
           {/* Main Chat Canvas */}
           <div className="flex-1 flex flex-col bg-[#121917] min-w-0">
             {/* Conversation Header */}
-            <div className="p-4 border-b border-emerald-950/60 bg-[#16201D] flex items-center justify-between gap-2">
+            <div className="p-4 border-b border-emerald-950/60 bg-[#16201D] flex flex-wrap items-center justify-between gap-2">
               <div className="flex items-center gap-3 min-w-0">
                 <button
                   type="button"
@@ -831,17 +862,21 @@ function ConversationsPageInner() {
                 </div>
                 <div>
                   <h3 className="font-bold text-sm text-emerald-50">
-                    {activeConv.metadata?.sender_name || activeConv.contact_id}
+                    {contactLabel({ senderName: activeConv.metadata?.sender_name, contactId: activeConv.contact_id })}
                   </h3>
                   <div className="flex items-center gap-2 text-xs text-emerald-400/70">
-                    <span>{activeConv.contact_id}</span>
-                    <span>•</span>
+                    {contactDetail(activeConv.contact_id) ? (
+                      <>
+                        <span>{contactDetail(activeConv.contact_id)}</span>
+                        <span>•</span>
+                      </>
+                    ) : null}
                     <span className="capitalize">{activeConv.channel_type}</span>
                   </div>
                 </div>
               </div>
 
-              <div className="flex items-center gap-3">
+              <div className="flex flex-wrap items-center gap-2 sm:gap-3 min-w-0">
                 {statusError && (
                   <span className="text-xs text-red-400 font-medium" role="alert">{statusError}</span>
                 )}
@@ -858,7 +893,7 @@ function ConversationsPageInner() {
 
                 <div className="flex items-center gap-1.5 bg-emerald-950/80 px-3 py-1.5 rounded-lg border border-emerald-800/40 text-xs text-emerald-300">
                   <Bot className="w-4 h-4 text-[#F0C05A]" />
-                  <span>AI Assigned: <strong>{activeConv.employee_name || 'Sarah'}</strong></span>
+                  <span>AI: <strong>{activeConv.employee_name || 'Sarah'}</strong></span>
                 </div>
                 <button
                   type="button"
@@ -976,38 +1011,45 @@ function ConversationsPageInner() {
 
             {/* Message Input Box */}
             <form onSubmit={handleSendMessage} className="p-3 border-t border-emerald-950/60 bg-[#16201D] space-y-2">
-              <div className="flex items-center justify-between px-1">
-                <div className="flex items-center space-x-2">
+              <div className="flex flex-wrap items-center justify-between gap-2 px-1">
+                <div role="group" aria-label="Reply type" className="flex items-center gap-0.5 rounded-lg bg-emerald-950 p-0.5">
                   <button
                     type="button"
-                    onClick={() => setReplyAsCustomer(false)}
-                    className={`text-[10px] font-bold px-2 py-0.5 rounded transition ${
-                      !replyAsCustomer ? 'bg-[#F0C05A] text-[#16201D]' : 'bg-emerald-950 text-emerald-400'
+                    aria-pressed={!replyAsCustomer && !isInternalNote}
+                    onClick={() => {
+                      setReplyAsCustomer(false);
+                      setIsInternalNote(false);
+                    }}
+                    className={`text-[11px] font-bold px-2.5 py-1 rounded-md transition ${
+                      !replyAsCustomer && !isInternalNote ? 'bg-[#F0C05A] text-[#16201D]' : 'text-emerald-400 hover:text-emerald-200'
                     }`}
                   >
-                    Send as Human Agent
+                    Reply to customer
                   </button>
                   <button
                     type="button"
-                    onClick={() => setReplyAsCustomer(true)}
-                    className={`text-[10px] font-bold px-2 py-0.5 rounded transition ${
-                      replyAsCustomer ? 'bg-amber-500 text-heading' : 'bg-emerald-950 text-emerald-400'
+                    aria-pressed={!replyAsCustomer && isInternalNote}
+                    onClick={() => {
+                      setReplyAsCustomer(false);
+                      setIsInternalNote(true);
+                    }}
+                    className={`text-[11px] font-bold px-2.5 py-1 rounded-md transition ${
+                      !replyAsCustomer && isInternalNote ? 'bg-amber-700 text-white' : 'text-emerald-400 hover:text-emerald-200'
                     }`}
                   >
-                    Simulate Customer (Triggers Live AI Response)
+                    Private note
                   </button>
-                  {!replyAsCustomer ? (
-                    <button
-                      type="button"
-                      onClick={() => setIsInternalNote((v) => !v)}
-                      className={`text-[10px] font-bold px-2 py-0.5 rounded transition ${
-                        isInternalNote ? 'bg-amber-700 text-white' : 'bg-emerald-950 text-emerald-400'
-                      }`}
-                    >
-                      {isInternalNote ? 'Internal note mode' : 'External reply'}
-                    </button>
-                  ) : null}
                 </div>
+                <button
+                  type="button"
+                  aria-pressed={replyAsCustomer}
+                  onClick={() => setReplyAsCustomer((v) => !v)}
+                  className={`text-[11px] font-semibold px-2 py-1 rounded-md underline-offset-2 transition ${
+                    replyAsCustomer ? 'bg-amber-500 text-heading' : 'text-emerald-500 hover:text-emerald-300 hover:underline'
+                  }`}
+                >
+                  {replyAsCustomer ? 'Stop practising' : 'Practise as the customer'}
+                </button>
               </div>
 
               <div className="flex items-center gap-2">
@@ -1015,10 +1057,10 @@ function ConversationsPageInner() {
                   type="text"
                   placeholder={
                     replyAsCustomer
-                      ? "Simulate customer message (AI employee will reply live)..."
+                      ? "Type as the customer. Your AI employee will reply live..."
                       : isInternalNote
                         ? 'Internal note (team only, not sent to customer)...'
-                        : "Type a response as human agent..."
+                        : "Type your reply to the customer..."
                   }
                   value={replyContent}
                   onChange={(e) => setReplyContent(e.target.value)}
@@ -1037,15 +1079,15 @@ function ConversationsPageInner() {
           </div>
 
           {/* Context Drawer */}
-          <div className="hidden lg:block w-72 border-l border-emerald-950/60 bg-[#16201D] p-4 space-y-6 overflow-y-auto">
+          <div className="hidden 2xl:block w-72 border-l border-emerald-950/60 bg-[#16201D] p-4 space-y-6 overflow-y-auto">
             <div>
               <h4 className="text-xs font-bold text-emerald-400 uppercase tracking-wider mb-3">
                 Customer Context
               </h4>
               <div className="bg-[#1C2825] p-3 rounded-xl border border-emerald-900/60 space-y-2.5 text-xs">
                 <div>
-                  <span className="text-emerald-500 block text-[10px]">Contact Identity</span>
-                  <span className="font-mono text-emerald-200">{activeConv.contact_id}</span>
+                  <span className="text-emerald-500 block text-[10px]">Contact</span>
+                  <span className="text-emerald-200">{contactLabel({ senderName: activeConv.metadata?.sender_name, contactId: activeConv.contact_id })}</span>
                 </div>
                 <div>
                   <span className="text-emerald-500 block text-[10px]">Channel</span>
