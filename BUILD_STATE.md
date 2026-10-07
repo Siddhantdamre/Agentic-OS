@@ -1,5 +1,11 @@
 # Darex Build State
 
+## Chat-answer widget styles load only with an answer that has a widget (2026-10-07)
+
+- Every page, the sign-in page included, downloaded 290 KB of stylesheet (33 KB gzipped) for the answer-widget library, imported in `globals.css`, although only a chat answer containing an `openui` block uses it. The two imports moved into `OpenUiFenceBlock`, which is already loaded on demand. Stylesheet bytes on a page: 376 KB before, 72 KB after (-81%).
+- Proof: contract test `first-load-weight.test.ts` (2 of 3 red first). In a real browser: the first load fetches only the 72 KB stylesheet; after an answer with an `openui` block the two widget stylesheets are fetched.
+- The page-level totals for this and the previous entry are measured together (below).
+
 ## The sidebar no longer loads every page's code on every page (2026-10-07)
 
 - Measured in a real browser on nine pages: every page load fetched 58 static files (~463 KB gzipped) and made 21 prefetch requests, and the file list was the same on every page, because Next prefetches each visible link by default and the sidebar draws 25. A person opening Billing downloaded the code of Ask AI, Settings and every other page, and the server rendered 21 pages it was never asked for.

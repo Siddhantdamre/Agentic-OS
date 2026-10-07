@@ -4,6 +4,9 @@ import React, { Component, ReactNode, useState, useId, useEffect } from 'react';
 import { Renderer } from '@openuidev/react-lang';
 import { ThemeProvider, openuiLibrary } from '@openuidev/react-ui';
 import { LayoutGrid, AlertTriangle, Code2, Sun, Moon } from 'lucide-react';
+// Loaded with this widget, not with every page: 290 KB of styles that only an answer containing an openui block uses.
+import '@openuidev/react-ui/defaults.css';
+import '@openuidev/react-ui/styles/index.css';
 
 interface ErrorBoundaryProps {
   fallback: (error: Error) => ReactNode;
