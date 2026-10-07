@@ -4,6 +4,7 @@ import React, { useState, useEffect, useCallback, Suspense } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { ApprovalsCallout } from '@/components/home/ApprovalsCallout';
+import { GetStarted } from '@/components/home/GetStarted';
 import { Sparkles, AlertTriangle, Send, CheckCircle2, CircleDashed } from 'lucide-react';
 import { LiveRegion, StatusBadge } from '@/components/a11y';
 import { useLiveRefresh } from '@/lib/use-live-refresh';
@@ -250,23 +251,29 @@ function HomeContent() {
         }`}
       >
         <span>
-          Infrastructure:{' '}
-          {infraStatus === 'unknown' ? 'status unchecked' : infraStatus}
-          {stats?.channelCount != null ? ` · ${stats.channelCount} active channels` : ''}
-          {stats?.aiEmployeeCount != null ? ` · ${stats.aiEmployeeCount} AI employees` : ''}
+          {infraStatus === 'healthy'
+            ? 'Everything is running'
+            : infraStatus === 'degraded'
+              ? 'Some services are slow'
+              : infraStatus === 'unhealthy'
+                ? 'Some services are down'
+                : 'Checking status…'}
+          {stats?.channelCount != null ? ` · ${stats.channelCount} ${stats.channelCount === 1 ? 'channel' : 'channels'} connected` : ''}
+          {stats?.aiEmployeeCount != null ? ` · ${stats.aiEmployeeCount} AI ${stats.aiEmployeeCount === 1 ? 'employee' : 'employees'}` : ''}
         </span>
         <Link href="/connectors" className="font-semibold underline-offset-2 hover:underline">
           Manage connectors →
         </Link>
       </div>
       <ApprovalsCallout />
+      <GetStarted channelCount={stats ? (stats.channelCount ?? 0) : null} />
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
         <div>
           <h1 className="text-2xl sm:text-3xl font-serif font-bold text-heading">
             Daily briefing, {firstName}
           </h1>
           <p className="text-slate-500 text-sm mt-1">
-            Numbers below come from your org stats. Empty queues stay empty.
+            What happened in your business, and what needs you.
           </p>
         </div>
         {pendingPlans > 0 ? (
@@ -325,9 +332,8 @@ function HomeContent() {
             <div>
               <h2 className="text-lg font-serif font-bold text-heading">Connect a channel to go live</h2>
               <p className="text-sm text-slate-600 mt-1">
-                Onboarding only seeded pending rows
-                {setupChannel ? ` (next: ${setupChannel})` : ''}. OAuth credentials are required before
-                messages flow — nothing was marked connected.
+                Setup chose your channels{setupChannel ? ` (next: ${setupChannel})` : ''}. No messages arrive until you
+                connect them, and nothing shows as connected before then.
               </p>
             </div>
             <button
@@ -339,8 +345,8 @@ function HomeContent() {
             </button>
           </div>
           <ol className="text-sm text-slate-600 list-decimal pl-5 space-y-1">
-            <li>Open Connectors for WhatsApp/Meta, or Integrations for Gmail OAuth.</li>
-            <li>Complete the provider OAuth (or paste Meta Cloud credentials for WhatsApp on Connectors).</li>
+            <li>Open Connectors to connect WhatsApp, or Integrations to connect Gmail.</li>
+            <li>Sign in to the app when asked (or paste your Meta credentials for WhatsApp on Connectors).</li>
             <li>Confirm the channel status shows connected — not pending.</li>
           </ol>
           <Link

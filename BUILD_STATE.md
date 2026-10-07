@@ -1,5 +1,14 @@
 # Darex Build State
 
+## Home tells a new customer what to do first, and speaks plainly (2026-10-07)
+
+- Found by using the product as a new customer: Home for an empty workspace was four tiles reading "N/A" and "0", a banner reading "Infrastructure: healthy · 1 active channels · 1 AI employees", and the line "Numbers below come from your org stats. Empty queues stay empty." Nothing said what to do first.
+- Now a "Get started" card shows three steps with a tick for each one that is done: Connect your first app, Teach it your business (adds anything to the Brain), Ask your first question (a chat with an answer in it). Each is a link to the page that does it. It shows nothing for an account that has done all three, nothing while the facts are still loading, nothing when a lookup fails (an unknown is not shown as "not done"), and can be hidden, which the browser remembers. Whatever the account has done so far is ticked.
+- The status line reads "Everything is running · 1 channel connected · 1 AI employee" (or "Some services are slow" or "down"), with the plural fixed, and the subtitle reads "What happened in your business, and what needs you." The setup panel after onboarding no longer says "seeded pending rows" and "OAuth credentials".
+- Measured in a real browser on a new workspace, before and after: a first step shown 0 -> 3; developer words on Home 2 -> 0.
+- Proof: 7 component tests in `components/home/__tests__/GetStarted.test.tsx` (steps and links, ticks and count, gone when all done, an empty chat is not a question, a failed lookup shows nothing, hide and remember, waits for the channel count).
+- Not changed: the four tiles still show "N/A" when there is no data. NEW-FRONTEND needs the same card.
+
 ## Ask AI greets in plain words and offers four useful starters (2026-10-07)
 
 - Found by using the product as a new customer: the first message said "Core tools (no OAuth): `database_query`, `web_search`, `web_extract`, `file_ops`" and "point you to `/connectors` — I will not invent results", the page header said "no OAuth connectors yet", and the only starter was "Ask about our Darex data". The other four starters were hard-coded tasks with made-up addresses ("lead@company.com"), shown only when a matching app was connected.
