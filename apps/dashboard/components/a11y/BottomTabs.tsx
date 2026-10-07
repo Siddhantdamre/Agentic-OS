@@ -7,18 +7,20 @@ import {
   LayoutGrid,
   Sparkles,
   MessageSquare,
-  Users,
+  ClipboardCheck,
   MoreHorizontal,
 } from 'lucide-react';
+import { usePendingApprovalCount } from '@/lib/use-pending-approvals';
 
 const TABS = [
   { href: '/', label: 'Home', icon: LayoutGrid },
   { href: '/ask-ai', label: 'Ask AI', icon: Sparkles },
+  { href: '/approvals', label: 'Approvals', icon: ClipboardCheck },
   { href: '/conversations', label: 'Inbox', icon: MessageSquare },
-  { href: '/employees', label: 'Employees', icon: Users },
 ] as const;
 
 const MORE = [
+  { href: '/employees', label: 'Employees' },
   { href: '/brief', label: 'Brief' },
   { href: '/insight', label: 'Insight' },
   { href: '/inquiries', label: 'Inquiries' },
@@ -44,6 +46,7 @@ const MORE = [
 export function BottomTabs() {
   const pathname = usePathname();
   const [moreOpen, setMoreOpen] = useState(false);
+  const pending = usePendingApprovalCount();
   const moreActive = MORE.some(
     (item) => pathname === item.href || pathname?.startsWith(`${item.href}/`)
   );
@@ -88,12 +91,20 @@ export function BottomTabs() {
               <Link
                 href={tab.href}
                 aria-current={isActive ? 'page' : undefined}
+                aria-label={tab.href === '/approvals' && pending && pending > 0 ? `${tab.label}, ${pending} waiting` : undefined}
                 onClick={() => setMoreOpen(false)}
                 className={`flex flex-col items-center justify-center gap-0.5 py-2.5 text-[10px] font-semibold focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-500 ${
                   isActive ? 'text-heading' : 'text-slate-500'
                 }`}
               >
-                <Icon className={`w-5 h-5 ${isActive ? 'text-amber-600' : ''}`} aria-hidden="true" />
+                <span className="relative">
+                  <Icon className={`w-5 h-5 ${isActive ? 'text-amber-600' : ''}`} aria-hidden="true" />
+                  {tab.href === '/approvals' && pending && pending > 0 ? (
+                    <span className="absolute -top-1.5 -right-2.5 min-w-[1.1rem] h-[1.1rem] px-1 rounded-full bg-red-600 text-white text-[10px] font-bold flex items-center justify-center">
+                      {pending > 9 ? '9+' : pending}
+                    </span>
+                  ) : null}
+                </span>
                 <span>{tab.label}</span>
               </Link>
             </li>

@@ -14,6 +14,7 @@ function mapDecisionRow(row: Record<string, unknown>) {
     id: row.id,
     actionType: row.action_type,
     employeeRole: row.employee_role,
+    employeeName: row.employee_name ?? null,
     payload: row.payload,
     status: row.status,
     expiresAt: row.expires_at,
@@ -36,14 +37,30 @@ export async function GET(request: NextRequest) {
         new URL(request.url).searchParams.get('history') === '1' ||
         new URL(request.url).searchParams.get('status') === 'history';
 
+      const params = new URL(request.url).searchParams;
+      if (params.get('count') === '1') {
+        // The sidebar badge: a number, not rows. Expired requests are not waiting for anyone.
+        const res = await client.query(
+          `SELECT count(*)::text AS n FROM agent_pending_actions
+            WHERE org_id = $1 AND status = 'pending' AND (expires_at IS NULL OR expires_at > NOW())`,
+          [orgId]
+        );
+        return NextResponse.json({ pending: Number(res.rows[0]?.n || 0) });
+      }
+
+      // The employee's name is looked up inside the same workspace, so a row can never name someone else's employee.
+      const COLUMNS = `p.id, p.action_type, p.employee_role, e.name AS employee_name, p.payload, p.status, p.expires_at,
+                p.decided_at, p.decided_by, p.executed_at, p.execution_result, p.execution_error,
+                p.required_approvals, p.approvals, p.created_at`;
+      const FROM = `FROM agent_pending_actions p
+           LEFT JOIN ai_employees e ON e.org_id = p.org_id AND e.id::text = p.payload->>'employeeId'`;
+
       if (history) {
         const res = await client.query(
-          `SELECT id, action_type, employee_role, payload, status, expires_at,
-                  decided_at, decided_by, executed_at, execution_result, execution_error,
-                  required_approvals, approvals, created_at
-             FROM agent_pending_actions
-            WHERE org_id = $1 AND status <> 'pending'
-            ORDER BY COALESCE(decided_at, created_at) DESC
+          `SELECT ${COLUMNS}
+             ${FROM}
+            WHERE p.org_id = $1 AND p.status <> 'pending'
+            ORDER BY COALESCE(p.decided_at, p.created_at) DESC
             LIMIT 100`,
           [orgId]
         );
@@ -51,12 +68,10 @@ export async function GET(request: NextRequest) {
       }
 
       const res = await client.query(
-        `SELECT id, action_type, employee_role, payload, status, expires_at,
-                decided_at, decided_by, executed_at, execution_result, execution_error,
-                required_approvals, approvals, created_at
-           FROM agent_pending_actions
-          WHERE org_id = $1 AND status = 'pending'
-          ORDER BY created_at DESC
+        `SELECT ${COLUMNS}
+           ${FROM}
+          WHERE p.org_id = $1 AND p.status = 'pending' AND (p.expires_at IS NULL OR p.expires_at > NOW())
+          ORDER BY p.created_at DESC
           LIMIT 50`,
         [orgId]
       );

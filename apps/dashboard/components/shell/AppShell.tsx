@@ -29,15 +29,18 @@ import {
   CheckSquare,
   Package,
   ScrollText,
+  ClipboardCheck,
 } from 'lucide-react';
 import { BottomTabs } from '@/components/a11y';
 import { SystemDegradationBanner } from '@/components/SystemDegradationBanner';
 import { ImpersonationBanner } from '@/components/platform/ImpersonationBanner';
 import { OrganizationSwitcher } from '@/components/shell/OrganizationSwitcher';
+import { usePendingApprovalCount } from '@/lib/use-pending-approvals';
 
 const NAV_ITEMS = [
   { href: '/', label: 'Home', icon: LayoutGrid },
   { href: '/ask-ai', label: 'Ask AI', icon: Sparkles },
+  { href: '/approvals', label: 'Approvals', icon: ClipboardCheck },
   { href: '/conversations', label: 'Inbox', icon: MessageSquare },
   { href: '/plans', label: 'Plans', icon: ListChecks },
   { href: '/work-items', label: 'Work Items', icon: CheckSquare },
@@ -97,17 +100,21 @@ function NavLink({
   label,
   icon: Icon,
   pathname,
+  badge,
 }: {
   href: string;
   label: string;
   icon: React.ComponentType<{ className?: string }>;
   pathname: string | null;
+  /** A number waiting for the person, shown on the icon. Nothing when zero or unknown. */
+  badge?: number | null;
 }) {
   const isActive = pathname === href || (href !== '/' && pathname?.startsWith(href));
+  const waiting = badge && badge > 0 ? badge : 0;
   return (
     <Link
       href={href}
-      aria-label={label}
+      aria-label={waiting ? `${label}, ${waiting} waiting` : label}
       aria-current={isActive ? 'page' : undefined}
       title={label}
       className={`w-12 h-12 rounded-2xl flex items-center justify-center transition-all group relative focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-500 ${
@@ -117,6 +124,11 @@ function NavLink({
       }`}
     >
       <Icon className="w-5 h-5" />
+      {waiting ? (
+        <span aria-hidden="true" className="absolute -top-1 -right-1 min-w-[1.25rem] h-5 px-1 rounded-full bg-red-600 text-white text-[11px] font-bold flex items-center justify-center">
+          {waiting > 9 ? '9+' : waiting}
+        </span>
+      ) : null}
       <span aria-hidden="true" className="absolute left-full ml-3 px-2.5 py-1.5 bg-slate-900 text-white text-xs rounded-lg opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap font-medium z-50 shadow-lg">
         {label}
       </span>
@@ -128,6 +140,7 @@ export const AppShell: React.FC<{ children: React.ReactNode }> = ({ children }) 
   const pathname = usePathname();
   const [loggingOut, setLoggingOut] = useState(false);
   const [isPlatformAdmin, setIsPlatformAdmin] = useState(false);
+  const pendingApprovals = usePendingApprovalCount();
 
   React.useEffect(() => {
     fetch('/api/auth/session')
@@ -170,7 +183,7 @@ export const AppShell: React.FC<{ children: React.ReactNode }> = ({ children }) 
 
           <nav className="flex flex-col items-center space-y-2 overflow-y-auto overflow-x-hidden w-full px-2 py-1 scrollbar-none" aria-label="Dashboard">
             {NAV_ITEMS.map((item) => (
-              <NavLink key={item.href} {...item} pathname={pathname} />
+              <NavLink key={item.href} {...item} pathname={pathname} badge={item.href === '/approvals' ? pendingApprovals : null} />
             ))}
           </nav>
         </div>
