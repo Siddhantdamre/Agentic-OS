@@ -3,6 +3,7 @@
 import React, { useState, useEffect, useCallback, Suspense } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
+import { ApprovalsCallout } from '@/components/home/ApprovalsCallout';
 import { Sparkles, AlertTriangle, Send, CheckCircle2, CircleDashed } from 'lucide-react';
 import { LiveRegion, StatusBadge } from '@/components/a11y';
 import { useLiveRefresh } from '@/lib/use-live-refresh';
@@ -258,6 +259,7 @@ function HomeContent() {
           Manage connectors →
         </Link>
       </div>
+      <ApprovalsCallout />
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
         <div>
           <h1 className="text-2xl sm:text-3xl font-serif font-bold text-heading">

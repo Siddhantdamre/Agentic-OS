@@ -1,5 +1,11 @@
 # Darex Build State
 
+## Home and the Morning brief no longer say nothing needs you while approvals wait (2026-10-07)
+
+- Found in the same browser pass: with three emails held for approval, the Morning brief said "Nothing needs you. 0 things handled." and the Home "Needs Attention" count was 0. Held actions were counted nowhere a person looks first.
+- `ApprovalsCallout` (Home and Morning brief): "3 approvals are waiting for you" with a Review button, and nothing at all when none are waiting or the count is unknown. The brief's "Nothing needs you." now appears only when that is true.
+- Proof: 3 component tests and 2 page tests (the brief one is red against the old page: it printed "Nothing needs you" with three waiting).
+
 ## An Approvals page: every held action in one place, readable, with edit and approve-together (2026-10-07)
 
 - Before: the only place to approve a held action was the bottom of the "Employee health" page, under ten metric tiles. A held email read as `Send email "About your enquiry" to anita@example.test` with Approve and Reject: no message text, no reason, no way to fix a word. Finding it meant opening 15 sidebar pages (two of them misleading or crashing). Approving 20 routine messages was 20 clicks.

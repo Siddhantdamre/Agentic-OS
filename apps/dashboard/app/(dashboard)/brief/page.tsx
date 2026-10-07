@@ -6,6 +6,8 @@ import { AlertTriangle, Check, CheckCircle2, Clock, XCircle } from 'lucide-react
 import { ExplainDrawer } from '@/components/explain/ExplainDrawer';
 import { LiveRegion } from '@/components/a11y';
 import { networkErrorMessage } from '@/lib/client-error';
+import { ApprovalsCallout } from '@/components/home/ApprovalsCallout';
+import { usePendingApprovalCount } from '@/lib/use-pending-approvals';
 
 type BriefException = {
   id: string;
@@ -31,6 +33,7 @@ const BRIEF_EVENTS = [
 ] as const;
 
 export default function BriefPage() {
+  const approvalsWaiting = usePendingApprovalCount() ?? 0;
   const [brief, setBrief] = useState<MorningBrief | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -104,7 +107,8 @@ export default function BriefPage() {
 
   const exceptions = brief?.exceptions || [];
   const handled = brief?.handledOvernight || 0;
-  const empty = !loading && exceptions.length === 0;
+  // Approvals waiting are something that needs the person, whatever the exception list says.
+  const empty = !loading && exceptions.length === 0 && approvalsWaiting === 0;
 
   return (
     <div className="max-w-3xl mx-auto space-y-6 pb-12">
@@ -116,6 +120,8 @@ export default function BriefPage() {
         </div>
         <ExplainDrawer defaultQuery="" />
       </div>
+
+      <ApprovalsCallout />
 
       {error && (
         <div className="rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-800">{error}</div>
@@ -135,7 +141,7 @@ export default function BriefPage() {
           <h2 className="text-lg font-serif font-bold text-heading">Nothing needs you.</h2>
           <p className="text-sm text-slate-500">{handled} things handled.</p>
         </div>
-      ) : (
+      ) : exceptions.length === 0 ? null : (
         <div className="space-y-3">
           <p className="text-sm font-semibold text-heading">
             {exceptions.length} {exceptions.length === 1 ? 'thing needs' : 'things need'} you.
