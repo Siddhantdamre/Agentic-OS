@@ -304,16 +304,30 @@ export function resolveAskMode(args: ResolveAskModeArgs): AskModeResolveResult {
   };
 }
 
+/** The router's internal notes, in the words a customer would use. Anything not listed is shown as written. */
+const PLAIN_ROUTER_REASONS: Array<[RegExp, string]> = [
+  [/^low confidence — support/i, 'not sure which team fits, so your first point of contact took it'],
+  [/^low confidence — executive/i, 'no clear match, so the Executive took it'],
+  [/^general question/i, 'a general question'],
+  [/^greeting/i, 'a greeting'],
+  [/^about the assistant/i, 'a question about the assistant'],
+  [/^emergency keyword/i, 'an urgent request'],
+  [/^daily brief/i, 'your daily summary'],
+  [/^founder\/company question/i, 'a research question'],
+  [/^keyword match$/i, 'matches their role'],
+];
+
+function plainRouterReason(raw: string): string {
+  for (const [pattern, text] of PLAIN_ROUTER_REASONS) if (pattern.test(raw)) return text;
+  return raw;
+}
+
 /** Reason for auto domain routing (keeps existing router text when present). */
 export function autoRoutingReason(employeeName: string | undefined, routerReason: string | undefined): string {
   if (employeeName && routerReason) {
     if (/^name lock:/i.test(routerReason)) return `Locked to ${employeeName}`;
-    if (/keyword|domain|routed/i.test(routerReason) || routerReason.includes(':')) {
-      return routerReason.startsWith('Routed')
-        ? routerReason
-        : `Routed to ${employeeName}: ${routerReason}`;
-    }
-    return `Routed to ${employeeName}: ${routerReason}`;
+    if (routerReason.startsWith('Routed')) return routerReason;
+    return `Routed to ${employeeName}: ${plainRouterReason(routerReason)}`;
   }
   if (employeeName) return `Routed to ${employeeName}`;
   return 'Auto — DareX Executive';

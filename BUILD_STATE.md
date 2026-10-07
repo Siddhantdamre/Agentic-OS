@@ -1,5 +1,12 @@
 # Darex Build State
 
+## The line saying why a message went to an employee is in plain words (2026-10-07)
+
+- Found in the chat: "Routed to Emma: low confidence — support, not round-robin", the router's internal note, shown to the customer. Others it can produce: "emergency keyword — dispatch, not ISA", "greeting — solo support, no crew".
+- Now the same line reads "Routed to Emma: not sure which team fits, so your first point of contact took it"; the other router notes are mapped the same way (an urgent request, a greeting, a general question, your daily summary, a research question, "matches their role"). A reason that is not in the list is shown as written, so nothing is hidden.
+- Measured in a real browser, before and after, on the same chat message: internal router words on screen (round-robin, ISA, crew, fallback) 1 -> 0.
+- Proof: 1 test over 9 router notes (red against the old code); the 19 other ask-mode tests are unchanged and pass.
+
 ## A plan's steps name the app and the action in words (2026-10-07)
 
 - Found in the chat plan card: each step carried a tag such as `mcp.google-sheets.sheets_read`, `mcp.google-calendar.calendar_list_events`.

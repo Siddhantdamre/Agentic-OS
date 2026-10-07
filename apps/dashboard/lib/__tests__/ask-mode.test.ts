@@ -328,6 +328,26 @@ describe('helpers', () => {
     expect(team[1].employeeId).toBe(GROWTH.id);
   });
 
+  it('autoRoutingReason says why in words a customer uses, not the router\u2019s internal notes', () => {
+    const cases: Array<[string, RegExp]> = [
+      ['low confidence — support, not round-robin', /not sure which team fits/i],
+      ['low confidence — Executive fallback', /no clear match/i],
+      ['general question — executive, not a specialist', /general question/i],
+      ['greeting — solo support, no crew', /greeting/i],
+      ['about the assistant — solo support, no crew', /about the assistant/i],
+      ['emergency keyword — dispatch, not ISA', /urgent/i],
+      ['daily brief — Executive', /daily summary/i],
+      ['founder/company question — Research', /research/i],
+      ['keyword match', /matches/i],
+    ];
+    for (const [raw, want] of cases) {
+      const text = autoRoutingReason('Emma', raw);
+      expect(text).toMatch(/^Routed to Emma: /);
+      expect(text).toMatch(want);
+      expect(text).not.toMatch(/round-robin|ISA|crew|fallback|keyword|confidence|specialist/i);
+    }
+  });
+
   it('autoRoutingReason formats domain routes', () => {
     expect(autoRoutingReason('Finance', 'payment link')).toBe('Routed to Finance: payment link');
   });
