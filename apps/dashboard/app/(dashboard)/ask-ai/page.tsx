@@ -30,6 +30,7 @@ import { ExecutionStrip, StepRunStatus } from '@/components/chat/ExecutionStrip'
 import { DraftPanel, DraftState } from '@/components/chat/DraftPanel';
 import { CitationChips } from '@/components/ask-ai/CitationChips';
 import { AgentTrajectory, buildTrajectory, humanToolName } from '@/components/chat/AgentTrajectory';
+import { normalizeApprovals, type ChatApproval } from '@/lib/chat-approvals';
 import {
   AskModeLockStrip,
   AskRoutingChip,
@@ -153,7 +154,7 @@ interface Message {
   draftBox?: DraftState;
   approvalBox?: {
     sessionId: string;
-    approvals: Array<{ threadId: string; toolCallId: string; toolName: string }>;
+    approvals: ChatApproval[];
     decided?: Record<string, 'allow' | 'deny'>;
     decidedReasons?: Record<string, string>;
     resolving?: boolean;
@@ -1053,13 +1054,7 @@ I can answer questions and query your Darex data. Connector actions only run for
                   (event.sessionId && Array.isArray(event.approvals) && event.approvals.length > 0
                     ? {
                         sessionId: event.sessionId,
-                        approvals: event.approvals
-                          .filter((a: any) => a && a.threadId && a.toolCallId)
-                          .map((a: any) => ({
-                            threadId: String(a.threadId),
-                            toolCallId: String(a.toolCallId),
-                            toolName: String(a.toolName || 'tool'),
-                          })),
+                        approvals: normalizeApprovals(event.approvals),
                       }
                     : undefined),
               }
@@ -1121,13 +1116,7 @@ I can answer questions and query your Darex data. Connector actions only run for
                 statusLine: undefined,
                 approvalBox: {
                   sessionId: event.sessionId,
-                  approvals: event.approvals
-                    .filter((a: any) => a && a.threadId && a.toolCallId)
-                    .map((a: any) => ({
-                      threadId: String(a.threadId),
-                      toolCallId: String(a.toolCallId),
-                      toolName: String(a.toolName || 'tool'),
-                    })),
+                  approvals: normalizeApprovals(event.approvals),
                 },
               }
             : m

@@ -18,7 +18,7 @@ import { z } from 'zod';
 import { labelText, readModelText } from './reply-from-tools.js';
 import { bindExternalAbort } from './trueforge-client.js';
 import { toolResultFromApproval, type ChatApprovalContext, type ToolDecision } from './chat-approval.js';
-import { announceParkedAction } from './autonomy.js';
+import { announceParkedAction, buildActionSummary } from './autonomy.js';
 import type { GateParams, GateResult } from './tool-gate.js';
 import {
   AgentThread,
@@ -85,6 +85,8 @@ interface ActiveLocalSession {
   tools: AgentToolStep[];
   subagents: SubagentEvent[];
   callIdToName: Map<string, string>;
+  /** The arguments each pending call was made with, so a resumed turn can show the next card too. */
+  callIdToArgs: Map<string, unknown>;
   /** Who is approving right now. Filled in only for the length of a resume; see ChatApprovalContext. */
   chat: ChatApprovalContext;
   /** A resume is running. A second one for the same session (a double click) is refused, not run alongside. */
@@ -480,6 +482,69 @@ export function newLocalTurnBudget(): LocalTurnBudget {
 }
 
 /**
+ * Remember each tool call's name and arguments as the model's messages go by. A call's arguments are streamed in
+ * pieces: the first fragment has the call's id and name and empty arguments, and the JSON arrives in later fragments
+ * that carry only the call's index. They are put together here, in order, so the approval card can show the real call.
+ * `indexToId` is per model message: a new message starts the numbering again.
+ */
+export function rememberToolCalls(
+  ev: { type?: unknown; tool_calls?: unknown },
+  names: Map<string, string>,
+  args: Map<string, unknown>,
+  indexToId: Map<number, string>,
+): void {
+  if (ev.type === EventType.MODEL_MESSAGE) indexToId.clear();
+  if (!Array.isArray(ev.tool_calls)) return;
+  const complete = ev.type === EventType.MODEL_MESSAGE;
+  for (const tc of ev.tool_calls as Array<Record<string, unknown>>) {
+    const index = typeof tc.index === 'number' ? tc.index : undefined;
+    const id = typeof tc.id === 'string' && tc.id ? tc.id : '';
+    if (id && index !== undefined) indexToId.set(index, id);
+    const callId = id || (index !== undefined ? indexToId.get(index) ?? '' : '');
+    if (!callId) continue;
+    const fn = tc.function as Record<string, unknown> | undefined;
+    if (typeof fn?.name === 'string' && fn.name) names.set(callId, fn.name);
+    if (typeof fn?.arguments !== 'string') {
+      if (complete && fn?.arguments !== undefined) args.set(callId, fn.arguments);
+      continue;
+    }
+    args.set(callId, complete ? fn.arguments : `${typeof args.get(callId) === 'string' ? (args.get(callId) as string) : ''}${fn.arguments}`);
+  }
+}
+
+const MAX_SHOWN_TEXT = 4000;
+
+/** What the card shows of the arguments: the person's own message, cut to a readable length. Nothing nested or huge. */
+function argsForCard(args: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(args)) {
+    if (typeof value === 'string') out[key] = value.length > MAX_SHOWN_TEXT ? `${value.slice(0, MAX_SHOWN_TEXT)}…` : value;
+    else if (typeof value === 'number' || typeof value === 'boolean') out[key] = value;
+  }
+  return out;
+}
+
+/**
+ * The approval card for a pending call. Allowing a call in the chat is the approval, so the card says what it would do
+ * (a sentence) and carries the call itself (who it goes to, what it says), the same way the Approvals page does. When the
+ * arguments were not seen or cannot be read, the card is the plain one: nothing is invented.
+ */
+export function approvalRequestFor(
+  tools: ReadonlyArray<ToolDef>,
+  ref: ApprovalRequest,
+  rawArgs: unknown,
+): ApprovalRequest {
+  if (rawArgs === undefined) return ref;
+  const def = tools.find((t) => t.name === ref.toolName);
+  if (!def) return ref;
+  const parsed = parseToolArguments(def, rawArgs);
+  if (!parsed.ok) return ref;
+  const invoked = resolveLocalToolInvocation(def, parsed.args);
+  const summary = buildActionSummary(def.tool, invoked.action, { tool: def.tool, action: invoked.action, payload: invoked.payload });
+  return { ...ref, summary, call: { tool: def.tool, action: invoked.action, args: argsForCard(invoked.payload) } };
+}
+
+/**
  * Multi-tenant in-process ToolSet implementation for TrueForge AgentThread.
  * Bound to an orgId and optional userId at construction time.
  */
@@ -847,6 +912,8 @@ async function executeLocalTurn(
     const subagents: SubagentEvent[] = [];
     const subagentStartTimes = new Map<string, { startTime: number; name: string; title: string; input: string; model?: string }>();
     const callIdToName = new Map<string, string>();
+    const callIdToArgs = new Map<string, unknown>();
+    const indexToId = new Map<number, string>();
     const pendingNames: string[] = [];
     const resolveToolName = (ev: Record<string, unknown>): string => {
       const callId = typeof ev.tool_call_id === 'string' ? ev.tool_call_id : '';
@@ -915,6 +982,7 @@ async function executeLocalTurn(
             opts?.onChunk?.(ev.content);
           }
         }
+        if (type === EventType.MODEL_MESSAGE || type === EventType.MODEL_MESSAGE_DELTA) rememberToolCalls(ev, callIdToName, callIdToArgs, indexToId);
         if (type === EventType.MODEL_MESSAGE_DELTA && Array.isArray(ev.tool_calls)) {
           for (const tc of ev.tool_calls as Array<Record<string, unknown>>) {
             const fn = tc.function as Record<string, unknown> | undefined;
@@ -956,7 +1024,7 @@ async function executeLocalTurn(
             const callId = typeof (ref as any)?.id === 'string' ? (ref as any).id : '';
             const name = (callId && callIdToName.get(callId)) || 'tool';
             if (callId) {
-              approvals.push({ threadId: threadId || rootThreadId, toolCallId: callId, toolName: name });
+              approvals.push(approvalRequestFor(TOOLS, { threadId: threadId || rootThreadId, toolCallId: callId, toolName: name }, callIdToArgs.get(callId)));
             }
             const label = `${name} needs approval`;
             tools.push({ tool: 'approval_required', argsLabel: label });
@@ -1006,6 +1074,7 @@ async function executeLocalTurn(
         tools,
         subagents,
         callIdToName,
+        callIdToArgs,
         chat,
         resuming: false,
         createdAt: Date.now(),
@@ -1119,7 +1188,8 @@ export async function resumeLocalTurn(
   active.chat.approverUserId = input.userId;
   active.chat.approveParked = opts?.approveParked;
 
-  const { orchestrator, rootThreadId, rootThread, callIdToName } = active;
+  const { orchestrator, rootThreadId, rootThread, callIdToName, callIdToArgs } = active;
+  const resumeIndexToId = new Map<number, string>();
   const tools = [...active.tools];
   const approvals: ApprovalRequest[] = [];
   const subagents = [...active.subagents];
@@ -1158,6 +1228,8 @@ export async function resumeLocalTurn(
       const threadId = typeof ev.thread_id === 'string' ? ev.thread_id : '';
       const isRoot = !threadId || threadId === rootThreadId;
 
+      // A resumed turn can ask for the next approval: remember the call's name and arguments for its card.
+      if (type === EventType.MODEL_MESSAGE_DELTA || type === EventType.MODEL_MESSAGE) rememberToolCalls(ev, callIdToName, callIdToArgs, resumeIndexToId);
       if (type === EventType.MODEL_MESSAGE_DELTA && typeof ev.content === 'string') {
         if (isRoot) {
           reply += ev.content;
@@ -1175,7 +1247,7 @@ export async function resumeLocalTurn(
         for (const ref of refs) {
           const callId = typeof (ref as any)?.id === 'string' ? (ref as any).id : '';
           const name = (callId && callIdToName.get(callId)) || 'tool';
-          if (callId) approvals.push({ threadId: threadId || rootThreadId, toolCallId: callId, toolName: name });
+          if (callId) approvals.push(approvalRequestFor(TOOLS, { threadId: threadId || rootThreadId, toolCallId: callId, toolName: name }, callIdToArgs.get(callId)));
         }
       } else if (type === 'internal.agent.done' && isRoot) {
         const output = ev.output as { content?: unknown } | undefined;

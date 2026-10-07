@@ -37,6 +37,10 @@ export interface ApprovalRequest {
   threadId: string;
   toolCallId: string;
   toolName: string;
+  /** One plain sentence about what the call would do ("Send email ... to ..."). */
+  summary?: string;
+  /** The call a person is being asked to allow, so the card can show it: who it goes to and what it says. */
+  call?: { tool: string; action: string; args: Record<string, unknown> };
 }
 
 /** One dynamic-subagent lifecycle event (TrueForge thread.created/done). */

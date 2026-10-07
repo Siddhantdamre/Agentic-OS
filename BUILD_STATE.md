@@ -6,6 +6,14 @@
 - Proof: contract test `first-load-weight.test.ts` (2 of 3 red first). In a real browser: the first load fetches only the 72 KB stylesheet; after an answer with an `openui` block the two widget stylesheets are fetched.
 - The page-level totals for this and the previous entry are measured together (below).
 
+## The chat approval card shows what is being approved (2026-10-07)
+
+- Since a chat Allow is the approval (entry below), the card has to show what is being approved. It said only "Tool Approval Required for `gmail_send`" with Approve and Deny: a person approved an email without seeing who it goes to or what it says.
+- Now the card says what the call would do ("Send email "Saturday appointment" to priya@example.test"), shows To, Subject and the message, and "Needs your OK". It uses the same wording code as the Approvals page (`describeHeldAction`). If the call's arguments cannot be read it falls back to the old card; nothing is invented.
+- How: each approval request now carries `summary` and `call` (tool, action, arguments; strings cut to 4,000 characters, nested values dropped). A call's arguments are streamed in fragments (the first has the id and name and empty arguments; the JSON follows in fragments that carry only the call's index), so `rememberToolCalls` assembles them by index; a first attempt read the first fragment and produced an empty card, found only by looking at the real stream. Resumed turns capture them too, so a second approval in the same chat shows its card.
+- Proof: 8 workflow tests (assembling fragments, two calls in one message, unreadable arguments, long messages), 4 card tests, 4 normaliser tests. In a real browser against the real stack: the card shows the recipient, subject and message, and Approve sends that email once.
+- Not changed: the chat's plan card still lists internal ids such as `mcp.google-sheets.sheets_read`, and a request that mentions a showing is turned into a plan by the keyword classifier even when it is one email to send.
+
 ## The sidebar no longer loads every page's code on every page (2026-10-07)
 
 - Measured in a real browser on nine pages: every page load fetched 58 static files (~463 KB gzipped) and made 21 prefetch requests, and the file list was the same on every page, because Next prefetches each visible link by default and the sidebar draws 25. A person opening Billing downloaded the code of Ask AI, Settings and every other page, and the server rendered 21 pages it was never asked for.

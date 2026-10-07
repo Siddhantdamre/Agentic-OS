@@ -43,10 +43,17 @@ import {
   XCircle,
   Square,
 } from 'lucide-react';
+import { describeHeldAction } from '@/lib/approval-view';
 
 export type TrajectoryStatus = 'running' | 'success' | 'error';
 
-export interface ApprovalSlotData {
+/** What the person is being asked to allow: a sentence and the call itself, when the server could read it. */
+export interface ApprovalCallInfo {
+  summary?: string;
+  call?: { tool: string; action: string; args: Record<string, unknown> };
+}
+
+export interface ApprovalSlotData extends ApprovalCallInfo {
   sessionId: string;
   threadId: string;
   toolCallId: string;
@@ -397,6 +404,7 @@ function JsonBlock({ title, content: rawContent }: { title: string; content: str
 
 export function ApprovalBar({
   toolName,
+  request,
   decided,
   reason,
   resolving,
@@ -404,6 +412,8 @@ export function ApprovalBar({
   onDeny,
 }: {
   toolName: string;
+  /** The call being approved. Without it the card can only name the tool. */
+  request?: ApprovalCallInfo | null;
   decided?: 'allow' | 'deny';
   reason?: string;
   resolving?: boolean;
@@ -423,14 +433,36 @@ export function ApprovalBar({
     onDeny(r);
   };
 
+  const held = request?.call
+    ? describeHeldAction({ id: 'chat', payload: { tool: request.call.tool, action: request.call.action, summary: request.summary, payload: request.call.args } })
+    : null;
+
   return (
     <div className="mt-2 rounded-xl border border-amber-500/40 bg-amber-50 p-3">
+      {held ? (
+        <div className="mb-2 space-y-1.5">
+          <p className="text-sm font-semibold text-heading">{held.title}</p>
+          {held.details.length > 0 ? (
+            <dl className="grid grid-cols-[auto,1fr] gap-x-3 gap-y-0.5 text-xs">
+              {held.details.map((d) => (
+                <React.Fragment key={d.label}>
+                  <dt className="text-slate-500">{d.label}</dt>
+                  <dd className="text-heading break-words">{d.value}</dd>
+                </React.Fragment>
+              ))}
+            </dl>
+          ) : null}
+          {held.body ? <p className="whitespace-pre-wrap border-l-2 border-amber-300 pl-2 text-xs text-slate-700">{held.body}</p> : null}
+        </div>
+      ) : null}
       <div className="flex items-center justify-between gap-2 flex-wrap">
         <div className="flex items-center gap-1.5 text-xs font-medium text-amber-900">
-          {decided === 'allow' ? 'Tool Approved' : decided === 'deny' ? 'Tool Approval Denied' : 'Tool Approval Required for'}
-          <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[11px] font-mono text-amber-900 border border-amber-200">
-            {shortToolName(toolName)}
-          </span>
+          {decided === 'allow' ? 'Tool Approved' : decided === 'deny' ? 'Tool Approval Denied' : held ? 'Needs your OK' : 'Tool Approval Required for'}
+          {held ? null : (
+            <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[11px] font-mono text-amber-900 border border-amber-200">
+              {shortToolName(toolName)}
+            </span>
+          )}
           {decided === 'allow' && <Check className="w-3.5 h-3.5 text-emerald-600" />}
           {decided === 'deny' && <CircleX className="w-3.5 h-3.5 text-rose-600" />}
         </div>
@@ -619,6 +651,7 @@ function ToolStepRow({
         {step.approval && (
           <ApprovalBar
             toolName={step.tool}
+            request={step.approval}
             decided={step.approval.decided}
             reason={step.approval.reason}
             resolving={step.approval.resolving}
@@ -812,7 +845,7 @@ export function buildTrajectory(input: {
   toolEvents?: Array<{ tool: string; label?: string }>;
   done: boolean;
   error?: string;
-  approvals?: Array<{ threadId: string; toolCallId: string; toolName: string }>;
+  approvals?: Array<{ threadId: string; toolCallId: string; toolName: string } & ApprovalCallInfo>;
   sessionId?: string;
   decided?: Record<string, 'allow' | 'deny'>;
   decidedReasons?: Record<string, string>;
@@ -833,6 +866,8 @@ export function buildTrajectory(input: {
       sessionId: input.sessionId,
       threadId: a.threadId,
       toolCallId: a.toolCallId,
+      summary: a.summary,
+      call: a.call,
       decided: input.decided?.[key],
       reason: input.decidedReasons?.[key],
       resolving: input.resolving,
@@ -1009,6 +1044,8 @@ export function buildTrajectory(input: {
         sessionId: input.sessionId || '',
         threadId: a.threadId,
         toolCallId: a.toolCallId,
+        summary: a.summary,
+        call: a.call,
         decided: input.decided?.[key],
         reason: input.decidedReasons?.[key],
         resolving: input.resolving,
