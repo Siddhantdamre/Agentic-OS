@@ -7,6 +7,8 @@ import { Building2 } from 'lucide-react';
 import { LiveRegion, StatusBadge } from '@/components/a11y';
 import { isRealEstateBrokerage } from '@/app/(onboarding)/pack-recommendations';
 import { BookShowingControl, RentChargesPanel } from '@/components/re/SchedulePanel';
+import { formatPrice } from '@/lib/format-price';
+import { humanizeId } from '@/lib/humanize-id';
 import { networkErrorMessage } from '@/lib/client-error';
 
 interface ListingRow {
@@ -14,6 +16,7 @@ interface ListingRow {
   title?: string;
   status?: string;
   price?: string | number | null;
+  currency?: string | null;
   area?: string | null;
   source?: string | null;
   sourceRef?: string | null;
@@ -48,6 +51,7 @@ function rowsFromPayload(payload: unknown): ListingRow[] {
         title: typeof row.title === 'string' ? row.title : typeof row.name === 'string' ? row.name : undefined,
         status: typeof row.status === 'string' ? row.status : undefined,
         price: (row.price ?? row.list_price ?? null) as string | number | null,
+        currency: typeof row.currency === 'string' ? row.currency : null,
         area: typeof row.area === 'string' ? row.area : typeof row.locality === 'string' ? row.locality : null,
         source: typeof row.source === 'string' ? row.source : null,
         sourceRef: typeof row.sourceRef === 'string' ? row.sourceRef : typeof row.source_ref === 'string' ? row.source_ref : null,
@@ -436,10 +440,10 @@ export default function ListingsPage() {
                     <td className="px-4 py-3 font-medium text-heading">{row.title || row.id}</td>
                     <td className="px-4 py-3 text-slate-600">{row.area || '—'}</td>
                     <td className="px-4 py-3 text-slate-600">
-                      {row.price == null || row.price === '' ? '—' : String(row.price)}
+                      {formatPrice(row.price, row.currency || 'INR')}
                     </td>
                     <td className="px-4 py-3">
-                      <StatusBadge label={row.status || 'unknown'} tone="neutral" />
+                      <StatusBadge label={humanizeId(row.status || 'unknown')} tone="neutral" />
                     </td>
                     <td className="px-4 py-3 text-slate-500 font-mono text-xs">{row.sourceRef || row.source || '—'}</td>
                     <td className="px-4 py-3">
@@ -470,7 +474,7 @@ export default function ListingsPage() {
                           }}
                         >
                           <option value="active">active</option>
-                          <option value="under_offer">under_offer</option>
+                          <option value="under_offer">Under offer</option>
                           <option value="reserved">reserved</option>
                           <option value="sold">sold</option>
                           <option value="rented">rented</option>

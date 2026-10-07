@@ -1,5 +1,13 @@
 # Darex Build State
 
+## Listing prices read as money (2026-10-07)
+
+- Found by opening Listings with real rows: prices were printed as stored, "9600000" and "14500000", and the status as "under_offer" in the table and its filter.
+- Now prices read in the local way for their currency, rupees grouped as in India ("₹96,00,000", "₹1,45,00,000"), other currencies in their own style, a dash when there is no price, and words such as "On request" kept as written; an unknown currency code does not throw. Status shows as "Under offer".
+- Measured in a real browser on four listing rows, before and after: price cells readable as money 0 of 4 -> 4 of 4.
+- Proof: 6 tests in `lib/__tests__/format-price.test.ts`.
+- Not changed: listing prices in other places (inquiry summaries, chat answers) are as the data or the model writes them.
+
 ## Customer screens use plain words, and a test keeps them that way (2026-10-07)
 
 - Found by reading every page as a customer, in a real browser (35 pages, a new and a busy workspace, counting developer words that a person can see): Billing listed `DAREX_STRIPE_SECRET_KEY` and other setting names; Insight printed metric ids (`channel_logs`, `work_items`, "in SQL") and "Honest gap: core.revenue_collected_7d"; Autonomy titled its rules `answer_faq`, `refund_payment`; Skills listed `mcp.darex.calendar_create_event`; Connectors said "Connect OAuth" on every card and named Nango, a vendor, in messages and a link to its admin screen; Health named `DAREX_ALERT_WEBHOOK_URL`; Settings named `RESEND_API_KEY` and `MAIL_FROM`; Home, Packs and onboarding said "seeded pending rows" and "until you finish OAuth".
