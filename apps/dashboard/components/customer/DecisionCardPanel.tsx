@@ -3,12 +3,29 @@
 import React, { useState } from 'react';
 import { ExternalLink } from 'lucide-react';
 import { networkErrorMessage } from '@/lib/client-error';
+import { describeHeldAction, reasonText } from '@/lib/approval-view';
 
 export type CustomerDecisionCard = {
   title?: string; customer?: string; situation?: string; policy?: string;
-  recommendation?: string; options?: Array<{ id: string; label: string; cost?: string }>;
+  /** Older cards carry plain text; a held action carries { optionId, basis } (the option picked and why). */
+  recommendation?: string | { optionId?: string; basis?: string } | null;
+  options?: Array<{ id: string; label: string; cost?: string }>;
   conversationId?: string | null;
+  /** A held action also carries a sentence about what it would do, why it was held, and the call itself. */
+  summary?: string;
+  reasonCode?: string;
+  payload?: Record<string, unknown> | null;
 };
+
+/** The recommendation in words, whatever shape it arrived in. Never an object: React cannot render one. */
+function recommendationText(card: CustomerDecisionCard, options: Array<{ id: string; label: string }>): string | null {
+  const rec = card.recommendation;
+  if (typeof rec === 'string') return rec.trim() || null;
+  if (rec && typeof rec === 'object' && typeof rec.optionId === 'string') {
+    return options.find((o) => o.id === rec.optionId)?.label || null;
+  }
+  return null;
+}
 
 export function DecisionCardPanel({
   workItemId, card, conversationId, onResolved,
@@ -24,6 +41,10 @@ export function DecisionCardPanel({
     ? card.options
     : [{ id: 'approve', label: 'Approve' }, { id: 'reject', label: 'Hold' }];
   const convoId = conversationId || card.conversationId || null;
+  const held = card.payload && typeof card.payload === 'object' && typeof (card.payload as Record<string, unknown>).tool === 'string'
+    ? describeHeldAction({ id: workItemId, payload: { ...card.payload, summary: card.summary || card.title, reasonCode: card.reasonCode } })
+    : null;
+  const recommended = recommendationText(card, options);
 
   const decide = async (action: 'approve' | 'reject', optionId?: string) => {
     setBusy(true);
@@ -49,11 +70,13 @@ export function DecisionCardPanel({
   return (
     <article className="bg-white border border-cream-300 rounded-2xl p-4 space-y-3">
       <p className="text-[10px] uppercase tracking-wide text-slate-400">Human attention required</p>
-      <h3 className="font-serif font-bold text-heading">{card.title || 'Needs a decision'}</h3>
+      <h3 className="font-serif font-bold text-heading">{card.title || card.summary || held?.title || 'Needs a decision'}</h3>
       {card.customer && <p className="text-sm text-slate-600">Customer: {card.customer}</p>}
       {card.situation && <p className="text-sm text-slate-700">{card.situation}</p>}
       {card.policy && <p className="text-xs text-slate-500">Policy: {card.policy}</p>}
-      {card.recommendation && <p className="text-sm font-medium text-heading">Recommended: {card.recommendation}</p>}
+      {held?.body && <p className="text-sm text-slate-700 whitespace-pre-wrap border-l-2 border-cream-300 pl-3">{held.body}</p>}
+      {card.reasonCode && <p className="text-xs text-slate-500">{reasonText(card.reasonCode, held?.kind ?? 'other')}</p>}
+      {recommended && <p className="text-sm font-medium text-heading">Recommended: {recommended}</p>}
       {convoId && (
         <a
           href={`/conversations?id=${convoId}`}

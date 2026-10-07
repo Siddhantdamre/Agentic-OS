@@ -411,6 +411,31 @@ export function buildActionSummary(
   return label ? `Execute ${label}` : 'Proposed action';
 }
 
+/**
+ * The decision card stored on the inbox work item for a held action. It carries a plain sentence about what the action
+ * would do and why it was held, so the inbox, the board and the approvals page can say which action is which.
+ */
+export function heldActionCard(
+  input: { actionType: string; tool?: string; action?: string; payload: Record<string, unknown>; reasonCode?: string },
+  card: ReturnType<typeof buildDecisionCard>
+) {
+  const summary = buildActionSummary(
+    input.tool || String(input.payload.tool || ''),
+    input.action || String(input.payload.action || ''),
+    input.payload
+  );
+  return {
+    kind: 'decision_card' as const,
+    actionType: input.actionType,
+    title: summary,
+    summary,
+    reasonCode: input.reasonCode || 'org_rule_requires_approval',
+    options: card.options,
+    recommendation: card.recommendation,
+    payload: input.payload,
+  };
+}
+
 export async function parkPendingAction(input: {
   orgId: string;
   workflowId: string;
@@ -439,18 +464,7 @@ export async function parkPendingAction(input: {
         `INSERT INTO work_items (org_id, type, status, priority, metadata)
          VALUES ($1, 'decision', 'open', 'high', $2::jsonb)
          RETURNING id`,
-        [
-          input.orgId,
-          JSON.stringify({
-            card: {
-              kind: 'decision_card',
-              actionType: input.actionType,
-              options: card.options,
-              recommendation: card.recommendation,
-              payload: input.payload,
-            },
-          }),
-        ]
+        [input.orgId, JSON.stringify({ card: heldActionCard(input, card) })]
       );
       workItemId = String(work.rows[0].id);
     } catch {
@@ -469,6 +483,7 @@ export async function parkPendingAction(input: {
         JSON.stringify({
           ...input.payload,
           card,
+          reasonCode: input.reasonCode || 'org_rule_requires_approval',
           summary: buildActionSummary(
             input.tool || String(input.payload.tool || ''),
             input.action || String(input.payload.action || ''),

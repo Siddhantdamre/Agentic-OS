@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { resolveActionType } from '@darex/shared-types';
-import { checkAutonomy, normalizeBlastRadius } from './autonomy.js';
+import { checkAutonomy, normalizeBlastRadius, buildDecisionCard, heldActionCard } from './autonomy.js';
 
 test('read tools execute without a pending row', async () => {
   const v = await checkAutonomy({
@@ -60,4 +60,31 @@ test('read-only tools whose names carry no read verb classify as read, destructi
   }
   assert.equal(resolveActionType('database_query', 'delete_rows').bucket, 'irreversible');
   assert.equal(resolveActionType('unknown_tool', 'run').bucket, 'external_send');
+});
+
+// A held action shows up as a decision card in the inbox and on the work-item board. Without a sentence about what it
+// would do, the board showed three cards all titled "decision" and nobody could tell which email was which.
+test('a held email shows what it would do, in one plain sentence, on its card', () => {
+  const input = {
+    actionType: 'external_send', tool: 'gmail', action: 'send_email', reasonCode: 'confirm_class',
+    payload: { tool: 'gmail', action: 'send_email', payload: { to: 'priya@example.test', subject: 'About your enquiry', body: 'Hi Priya' } },
+  };
+  const card = heldActionCard(input, buildDecisionCard(input));
+  assert.equal(card.summary, 'Send email "About your enquiry" to priya@example.test');
+  assert.equal(card.title, card.summary);
+  assert.equal(card.reasonCode, 'confirm_class');
+  assert.equal(card.kind, 'decision_card');
+  assert.ok(card.options.length >= 2, 'the options a person can pick are kept');
+});
+
+test('a held action with no reason given says it is held by the workspace rules', () => {
+  const input = { actionType: 'update_record', tool: 'hubspot', action: 'update_contact', payload: { tool: 'hubspot', action: 'update_contact', payload: { email: 'a@b.co' } } };
+  assert.equal(heldActionCard(input, buildDecisionCard({ ...input, reasonCode: '' })).reasonCode, 'org_rule_requires_approval');
+});
+
+test('the recommendation stays an object with an option and its basis (the screens render it, they must not assume text)', () => {
+  const input = { actionType: 'external_send', tool: 'gmail', action: 'send_email', reasonCode: 'confirm_class', payload: { tool: 'gmail', action: 'send_email', payload: { to: 'a@b.co' } } };
+  const card = heldActionCard(input, buildDecisionCard(input));
+  assert.equal(typeof card.recommendation, 'object');
+  assert.equal(card.recommendation.optionId, 'approve');
 });

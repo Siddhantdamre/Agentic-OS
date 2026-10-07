@@ -1,5 +1,13 @@
 # Darex Build State
 
+## A held action no longer crashes the Customer tab, and says what it would do (2026-10-07)
+
+- Found by opening every page as a person would, in a real browser, on a workspace with data (the first time the pages were driven with held actions present). `/employees/customer` showed "This tab failed to load" for any workspace with a held send, payment or signature. React error 31: the server stores the card's recommendation as `{ optionId, basis }` and `DecisionCardPanel` typed it as text and rendered it.
+- The same cards were unreadable everywhere: the work-item board listed three cards titled "decision" in Backlog, because the card stored no sentence about what the action would do (the board already looked for `card.summary`).
+- Fix: `heldActionCard` (workflows) stores `title`, `summary` and `reasonCode` on the card; the held row also keeps `reasonCode`. `lib/approval-view.ts` (new, pure) turns a held action into what a person needs to decide: who, what, to whom, the message text as plain text (html stripped, 600 characters), why it was held in plain words, approvals still needed, and time left. Credentials in the arguments are never shown. `DecisionCardPanel` uses it, renders the recommendation as the option's name, and still accepts the older text shape.
+- Proof: 4 component tests (3 red first, one reproducing React error 31), 10 for `approval-view`, 3 for the card builder.
+- Cards already stored before this change have no summary; the card derives one from the stored call, so they read correctly too.
+
 ## Allowing a call in the chat card is the approval: no second one in Decisions (2026-10-06)
 
 - Before: Ask AI shows a card; the person clicks Allow; the gate then held the same send, payment, signature, publish or delete again as a database approval, so the person had to approve it a second time in Decisions. The chat said "Waiting for approval" after they had approved.
