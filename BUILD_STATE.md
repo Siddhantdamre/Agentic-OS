@@ -1,5 +1,12 @@
 # Darex Build State
 
+## The sidebar keeps the page you are on in view (2026-10-07)
+
+- Found by opening pages from the lower groups at 1280x800: with a group open the list is longer than the window and scrolls with no scrollbar, so on Billing, Connectors, Autonomy, Insight, Audit, Trust and Packs the highlighted item was scrolled out of sight, and a person could not see where they were.
+- Now the list scrolls the current page into view when you arrive on it, and again once the account name appears in the footer (which shortens the list). It does not move when you open or fold a group, so a group you just opened stays where you are looking.
+- Measured in a real browser on 9 pages from the lower groups, the highlighted item in view: 2 of 9 -> 9 of 9.
+- Proof: 1 component test, red against the old shell.
+
 ## The line saying why a message went to an employee is in plain words (2026-10-07)
 
 - Found in the chat: "Routed to Emma: low confidence — support, not round-robin", the router's internal note, shown to the customer. Others it can produce: "emergency keyword — dispatch, not ISA", "greeting — solo support, no crew".

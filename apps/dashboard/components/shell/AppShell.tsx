@@ -215,6 +215,14 @@ export const AppShell: React.FC<{ children: React.ReactNode }> = ({ children }) 
   const [closed, setClosed] = useState<string[]>(DEFAULT_CLOSED);
   const current = activeHref(pathname);
   React.useEffect(() => { setClosed(readClosed()); }, []);
+  // The page you are on must be visible in the list: when its group is far down, bring it into view.
+  React.useEffect(() => {
+    const t = setTimeout(() => {
+      const el = document.querySelector('nav[aria-label="Dashboard"] [aria-current="page"]') as HTMLElement | null;
+      if (el && typeof el.scrollIntoView === 'function') el.scrollIntoView({ block: 'nearest' });
+    }, 0);
+    return () => clearTimeout(t);
+  }, [current, session]); // the footer grows once the session arrives, which shortens the list
   const toggleGroup = (id: string) => {
     setClosed((prev) => {
       const next = prev.includes(id) ? prev.filter((g) => g !== id) : [...prev, id];

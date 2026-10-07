@@ -1,5 +1,5 @@
 import React from 'react';
-import { render, screen, fireEvent, within } from '@testing-library/react';
+import { render, screen, fireEvent, within, waitFor } from '@testing-library/react';
 
 let mockPath = '/';
 jest.mock('next/navigation', () => ({ usePathname: () => mockPath, useRouter: () => ({ prefetch: jest.fn(), push: jest.fn() }) }));
@@ -86,6 +86,17 @@ describe('sidebar', () => {
     expect(employees).toHaveAttribute('data-folded', 'false');
     expect(employees.className).not.toMatch(/(^|\s)hidden(\s|$)/);
     expect(within(sidebar()).getByRole('button', { name: 'Hide Your team pages' })).toHaveAttribute('aria-expanded', 'true');
+  });
+
+  it('scrolls the list so the page you are on is in view, however far down its group is', async () => {
+    const spy = jest.fn();
+    Element.prototype.scrollIntoView = spy;
+    mockPath = '/billing';
+    render(<AppShell><div /></AppShell>);
+    await waitFor(() => expect(spy).toHaveBeenCalled());
+    const target = spy.mock.instances[0] as HTMLElement;
+    expect(target).toHaveAttribute('aria-current', 'page');
+    expect(target).toHaveTextContent('Billing');
   });
 
   it('never folds the group you are in', () => {
