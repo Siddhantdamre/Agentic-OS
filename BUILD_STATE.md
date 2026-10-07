@@ -1,5 +1,13 @@
 # Darex Build State
 
+## A plan's steps name the app and the action in words (2026-10-07)
+
+- Found in the chat plan card: each step carried a tag such as `mcp.google-sheets.sheets_read`, `mcp.google-calendar.calendar_list_events`.
+- Now the tag reads "Google Sheets · Read", "Google Calendar · List events", "Gmail · Draft email", from a tool id or from a tool and an action; it never prints `mcp.` or an underscore.
+- Measured in a real browser on a showing request that produces a plan, before and after: internal ids on the plan card 3 -> 0.
+- Proof: 4 label tests and 1 plan card test (`lib/__tests__/plan-step-label.test.ts`, `components/chat/__tests__/PlanCard.test.tsx`).
+- Not changed: a request that mentions a showing is still turned into a plan by the keyword classifier even when it is one email to send.
+
 ## Listing prices read as money (2026-10-07)
 
 - Found by opening Listings with real rows: prices were printed as stored, "9600000" and "14500000", and the status as "under_offer" in the table and its filter.

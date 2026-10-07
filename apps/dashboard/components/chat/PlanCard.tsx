@@ -4,6 +4,7 @@ import React, { useState } from 'react';
 import { motion } from 'framer-motion';
 import { ListChecks, ArrowRight, CheckSquare, Square, Plus, Edit3 } from 'lucide-react';
 import type { PlanStep } from '@darex/shared-types';
+import { planStepLabel } from '@/lib/plan-step-label';
 
 export type { PlanStep };
 
@@ -116,7 +117,7 @@ export const PlanCard: React.FC<PlanCardProps> = ({
       <div className="p-2 space-y-1 bg-white">
         {steps.map((step, idx) => {
           const isSkipped = !step.enabled;
-          const toolTag = step.tool.includes('.') ? step.tool : `mcp.${step.tool}.${step.action}`;
+          const toolTag = planStepLabel(step.tool, step.action);
 
           return (
             <div
@@ -170,7 +171,7 @@ export const PlanCard: React.FC<PlanCardProps> = ({
                   ) : null}
                 </div>
                 <div className="flex items-center space-x-2">
-                  <span className="inline-flex text-[9px] font-mono font-medium text-slate-500 bg-slate-100 border border-slate-200 px-1.5 py-0.5 rounded">
+                  <span className="inline-flex text-[10px] font-medium text-slate-600 bg-slate-100 border border-slate-200 px-1.5 py-0.5 rounded">
                     {toolTag}
                   </span>
                   {isSkipped && <span className="text-[10px] text-slate-400 italic">Skipped</span>}

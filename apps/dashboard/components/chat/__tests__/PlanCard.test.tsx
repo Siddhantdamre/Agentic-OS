@@ -231,4 +231,17 @@ describe('PlanCard', () => {
     const approveBtn = screen.getByRole('button', { name: /Approve & Execute/i });
     expect(approveBtn).toBeDisabled();
   });
+
+  it('names each step\u2019s app in words, not as an internal tool id', () => {
+    const steps: PlanStep[] = [
+      { id: 'a', description: 'Read the sheet', action: 'sheets_read', tool: 'google-sheets', enabled: true },
+      { id: 'b', description: 'Email the result', action: 'gmail_send', tool: 'mcp.gmail.gmail_send', enabled: true },
+    ];
+    const { container } = render(
+      <PlanCard planId="p" summary="s" steps={steps} onApprove={jest.fn()} onCancel={jest.fn()} onToggleStep={jest.fn()} />
+    );
+    expect(screen.getByText('Google Sheets · Read')).toBeInTheDocument();
+    expect(screen.getByText('Gmail · Send')).toBeInTheDocument();
+    expect(container.textContent).not.toMatch(/mcp\./);
+  });
 });
