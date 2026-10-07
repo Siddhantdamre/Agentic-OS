@@ -1,5 +1,13 @@
 # Darex Build State
 
+## The sidebar no longer loads every page's code on every page (2026-10-07)
+
+- Measured in a real browser on nine pages: every page load fetched 58 static files (~463 KB gzipped) and made 21 prefetch requests, and the file list was the same on every page, because Next prefetches each visible link by default and the sidebar draws 25. A person opening Billing downloaded the code of Ask AI, Settings and every other page, and the server rendered 21 pages it was never asked for.
+- Now the sidebar and phone tabs set `prefetch={false}` and load a page ahead of the click only on hover, keyboard focus or touch (`usePrefetchOnIntent`, each page at most once), so clicking is still quick.
+- Measured on the same nine pages, same machine, before and after (with the stylesheet entry above): requests per page load 90 -> 33 (-63%); prefetch requests 21 -> 1; static files 58 -> 22; estimated bytes on the wire (gzip of the files actually fetched) 463 KB -> 204 KB (-56%); stylesheet 376 KB -> 72 KB. Server calls for the page's own data are unchanged (10 on average).
+- Proof: 3 component tests (all red first); the measurement script re-run.
+- Not measured here: how much faster a page feels on a slow phone connection. Bytes and requests fell by more than half; the felt time was not timed on a real device.
+
 ## Home and the Morning brief no longer say nothing needs you while approvals wait (2026-10-07)
 
 - Found in the same browser pass: with three emails held for approval, the Morning brief said "Nothing needs you. 0 things handled." and the Home "Needs Attention" count was 0. Held actions were counted nowhere a person looks first.

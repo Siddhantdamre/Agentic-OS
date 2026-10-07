@@ -36,6 +36,7 @@ import { SystemDegradationBanner } from '@/components/SystemDegradationBanner';
 import { ImpersonationBanner } from '@/components/platform/ImpersonationBanner';
 import { OrganizationSwitcher } from '@/components/shell/OrganizationSwitcher';
 import { usePendingApprovalCount } from '@/lib/use-pending-approvals';
+import { usePrefetchOnIntent } from '@/lib/use-prefetch-on-intent';
 
 const NAV_ITEMS = [
   { href: '/', label: 'Home', icon: LayoutGrid },
@@ -101,11 +102,14 @@ function NavLink({
   icon: Icon,
   pathname,
   badge,
+  onIntent,
 }: {
   href: string;
   label: string;
   icon: React.ComponentType<{ className?: string }>;
   pathname: string | null;
+  /** Called when the person hovers or focuses the link, to load that page ahead of the click. */
+  onIntent?: (href: string) => void;
   /** A number waiting for the person, shown on the icon. Nothing when zero or unknown. */
   badge?: number | null;
 }) {
@@ -114,6 +118,9 @@ function NavLink({
   return (
     <Link
       href={href}
+      prefetch={false}
+      onMouseEnter={() => onIntent?.(href)}
+      onFocus={() => onIntent?.(href)}
       aria-label={waiting ? `${label}, ${waiting} waiting` : label}
       aria-current={isActive ? 'page' : undefined}
       title={label}
@@ -141,6 +148,7 @@ export const AppShell: React.FC<{ children: React.ReactNode }> = ({ children }) 
   const [loggingOut, setLoggingOut] = useState(false);
   const [isPlatformAdmin, setIsPlatformAdmin] = useState(false);
   const pendingApprovals = usePendingApprovalCount();
+  const prefetchOnIntent = usePrefetchOnIntent();
 
   React.useEffect(() => {
     fetch('/api/auth/session')
@@ -173,6 +181,7 @@ export const AppShell: React.FC<{ children: React.ReactNode }> = ({ children }) 
         <div className="flex flex-col items-center space-y-4 min-h-0 w-full flex-1 overflow-hidden">
           <Link
             href="/"
+            prefetch={false}
             className="w-11 h-11 rounded-2xl bg-amber-500 flex items-center justify-center shadow-md hover:bg-amber-600 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-600 shrink-0"
             aria-label="DareX Home"
           >
@@ -183,7 +192,7 @@ export const AppShell: React.FC<{ children: React.ReactNode }> = ({ children }) 
 
           <nav className="flex flex-col items-center space-y-2 overflow-y-auto overflow-x-hidden w-full px-2 py-1 scrollbar-none" aria-label="Dashboard">
             {NAV_ITEMS.map((item) => (
-              <NavLink key={item.href} {...item} pathname={pathname} badge={item.href === '/approvals' ? pendingApprovals : null} />
+              <NavLink key={item.href} {...item} pathname={pathname} badge={item.href === '/approvals' ? pendingApprovals : null} onIntent={prefetchOnIntent} />
             ))}
           </nav>
         </div>
@@ -191,6 +200,9 @@ export const AppShell: React.FC<{ children: React.ReactNode }> = ({ children }) 
         <div className="flex flex-col items-center space-y-2.5 shrink-0 pt-3 border-t border-cream-200/80 w-full px-2">
           <Link
             href="/settings"
+            prefetch={false}
+            onMouseEnter={() => prefetchOnIntent('/settings')}
+            onFocus={() => prefetchOnIntent('/settings')}
             aria-label="Settings"
             title="Settings"
             className={`w-12 h-12 rounded-2xl flex items-center justify-center transition-all group relative focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-500 ${

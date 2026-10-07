@@ -11,6 +11,7 @@ import {
   MoreHorizontal,
 } from 'lucide-react';
 import { usePendingApprovalCount } from '@/lib/use-pending-approvals';
+import { usePrefetchOnIntent } from '@/lib/use-prefetch-on-intent';
 
 const TABS = [
   { href: '/', label: 'Home', icon: LayoutGrid },
@@ -47,6 +48,7 @@ export function BottomTabs() {
   const pathname = usePathname();
   const [moreOpen, setMoreOpen] = useState(false);
   const pending = usePendingApprovalCount();
+  const prefetchOnIntent = usePrefetchOnIntent();
   const moreActive = MORE.some(
     (item) => pathname === item.href || pathname?.startsWith(`${item.href}/`)
   );
@@ -62,6 +64,8 @@ export function BottomTabs() {
             <li key={item.href}>
               <Link
                 href={item.href}
+                prefetch={false}
+                onTouchStart={() => prefetchOnIntent(item.href)}
                 onClick={() => setMoreOpen(false)}
                 className="block rounded-lg px-3 py-2 text-sm font-semibold text-heading hover:bg-cream-100"
               >
@@ -90,6 +94,8 @@ export function BottomTabs() {
             <li key={tab.href}>
               <Link
                 href={tab.href}
+                prefetch={false}
+                onTouchStart={() => prefetchOnIntent(tab.href)}
                 aria-current={isActive ? 'page' : undefined}
                 aria-label={tab.href === '/approvals' && pending && pending > 0 ? `${tab.label}, ${pending} waiting` : undefined}
                 onClick={() => setMoreOpen(false)}
