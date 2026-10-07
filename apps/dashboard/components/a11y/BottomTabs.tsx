@@ -29,6 +29,7 @@ const MORE = [
   { href: '/plans', label: 'Plans' },
   { href: '/work-items', label: 'Work items' },
   { href: '/listings', label: 'Listings' },
+  { href: '/showings', label: 'Showings' },
   { href: '/growth', label: 'Growth' },
   { href: '/employees/customer', label: 'Customer' },
   { href: '/analytics', label: 'Analytics' },

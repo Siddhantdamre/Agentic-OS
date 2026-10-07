@@ -1,5 +1,14 @@
 # Darex Build State
 
+## The sidebar names every page and groups them by what a person is doing (2026-10-07)
+
+- Before, measured in a real browser at 1280x800: 23 icon-only links with the name only in a hover tooltip, no grouping, Showings had no way in from the sidebar or the phone tabs, and two items lit up on the Customer page (Employees as well as Customer). On a tablet-width window the icon rail scrolled 840 px with the scrollbar hidden.
+- Now the wide sidebar (1024 px and up) writes each name next to its icon and groups the pages: Home, Ask AI, Approvals and Inbox on top with no heading, then Work (Work Items, Plans, Inquiries, Listings, Showings), Your team, Knowledge and reports, Oversight and Setup. Work is open and the other four are folded the first time; a person's own choice is kept in the browser (`darex.nav.closed`; a browser that refuses storage just forgets it), and the group you are in never folds. Exactly one item is highlighted: the longest link that matches the address.
+- The narrow icon rail (768-1023 px) uses the same folding with a small chevron between groups, so it shows 11 icons and scrolls 123 px instead of 27 icons and 840 px. Showings is also in the phone "More" sheet.
+- Measured on the same page, same machine: icon-only links 23 -> 0 on the wide sidebar; every group heading visible without scrolling at 1280x800; highlighted items on Customer 2 -> 1; pages with no way in 1 -> 0.
+- Proof: 10 component tests in `components/shell/__tests__/nav.test.tsx`, including folding, remembering, a browser that blocks storage, the badge, and the rail toggle; the contract tests for touch targets, focus and nav parity still pass.
+- Not changed: the separate NEW-FRONTEND repository (not reachable from here) needs the same change. The organisation switcher is still an icon with no text.
+
 ## Chat-answer widget styles load only with an answer that has a widget (2026-10-07)
 
 - Every page, the sign-in page included, downloaded 290 KB of stylesheet (33 KB gzipped) for the answer-widget library, imported in `globals.css`, although only a chat answer containing an `openui` block uses it. The two imports moved into `OpenUiFenceBlock`, which is already loaded on demand. Stylesheet bytes on a page: 376 KB before, 72 KB after (-81%).
