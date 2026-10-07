@@ -30,6 +30,7 @@
 | 24 | The chat plan card tagged every step with an internal id (`mcp.google-sheets.sheets_read`). | P2 | `apps/dashboard/lib/plan-step-label.ts`, `components/chat/PlanCard.tsx` | 🟢 Done | Steps read "Google Sheets · Read"; internal ids on the card 3 -> 0 (real browser). The classifier still plans a single-email request that mentions a showing. |
 | 25 | The chat showed the router's internal note ("low confidence — support, not round-robin") as the reason for a routing. | P2 | `apps/dashboard/lib/ask-mode.ts` | 🟢 Done | Router notes mapped to plain sentences, unknown reasons shown as written; internal router words on screen 1 -> 0 (real browser). |
 | 26 | On pages in the lower sidebar groups the highlighted item was scrolled out of view, so a person could not see where they were. | P2 | `apps/dashboard/components/shell/AppShell.tsx` | 🟢 Done | The list scrolls the current page into view on arrival and when the footer settles; highlighted item in view 2 of 9 -> 9 of 9 pages (real browser). |
+| 27 | Two Insight cards fell back to a sentence saying the number came from "the metrics registry SQL". | P3 | `services/workflows/src/metrics/core-kpis.yaml`, `apps/dashboard/lib/insight-engine.ts` | 🟢 Done | Every metric has its own sentence and the fallback is plain; cards mentioning SQL 1 -> 0 (real browser); contract requires a sentence per metric. |
 
 ## Status: working (approve executes parked tools; autonomy card/summary fixed; RBAC/dual-auth/sweep/history on `/api/decisions`)
 

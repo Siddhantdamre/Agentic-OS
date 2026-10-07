@@ -72,6 +72,7 @@ metrics:
     description: Work items not yet done or cancelled
     valueKind: count
     packId: core-b2b
+    insightCopy: Work items that are still open.
     sql: |
       SELECT COUNT(*)::float8 AS value
       FROM work_items w
@@ -85,6 +86,7 @@ metrics:
     description: Inbound user/customer messages in the window
     valueKind: count
     packId: core-b2b
+    insightCopy: Messages customers sent in this period.
     sql: |
       SELECT COUNT(*)::float8 AS value
       FROM messages m

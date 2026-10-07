@@ -1,5 +1,12 @@
 # Darex Build State
 
+## Every Insight card has its own plain sentence (2026-10-07)
+
+- Found on the Insight page: two metrics had no sentence of their own, so their cards fell back to "Work items not yet done or cancelled = 7 from the metrics registry SQL."
+- Now every metric in `core-kpis.yaml` has its own sentence ("Work items that are still open.", "Messages customers sent in this period."), and the fallback, should a new metric lack one, reads "Counted from your own business data, not estimated."
+- Measured on the Insight page in a real browser: cards mentioning SQL 1 -> 0.
+- Proof: the registry-copy contract (`kpi-copy-plain.test.ts`) now also requires every metric to have its own sentence (3 tests).
+
 ## The sidebar keeps the page you are on in view (2026-10-07)
 
 - Found by opening pages from the lower groups at 1280x800: with a group open the list is longer than the window and scrolls with no scrollbar, so on Billing, Connectors, Autonomy, Insight, Audit, Trust and Packs the highlighted item was scrolled out of sight, and a person could not see where they were.

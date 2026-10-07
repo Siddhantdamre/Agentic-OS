@@ -400,7 +400,7 @@ export function buildInsightCards(query: InsightMetricQuery, generatedAt = new D
     const title = `${formatMetricValue(point.value, point.metricId)} — ${point.description}`;
     const narrative =
       point.insightCopy ||
-      `${point.description} = ${formatMetricValue(point.value, point.metricId)} from the metrics registry SQL.`;
+      'Counted from your own business data, not estimated.';
     cards.push({
       id: `ins-${point.metricId}`,
       orgId: query.orgId,

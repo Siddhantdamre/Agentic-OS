@@ -22,4 +22,11 @@ describe('metric registry copy', () => {
     const bad = lines.filter((x) => DEV_WORDS.test(x.m![2])).map((x) => `${x.n}: ${x.m![2]}`);
     expect(bad).toEqual([]);
   });
+
+  it('gives every metric a sentence of its own, so none falls back to a generic line', () => {
+    const text = fs.readFileSync(FILE, 'utf8');
+    const metrics = (text.match(/^\s*- id: /gm) || []).length;
+    const copies = (text.match(/^\s*insightCopy: /gm) || []).length;
+    expect(copies).toBe(metrics);
+  });
 });
