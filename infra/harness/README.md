@@ -22,6 +22,9 @@ infra/harness/run-flows.sh F3                # only flows whose name contains F3
 
 Needs a migrated Postgres (the same `DB_*` / `DB_RESOLVER_*` variables as the other `infra/scripts/check-*` scripts),
 `psql`, and ports 3011 and 4999 (`HARNESS_PORT`, `WORLD_PORT`). It makes throwaway workspaces and deletes them.
+If something already answers on either port, the run stops with that message: a stand-in or server left over from
+another run would answer instead of the run's own copy, and 22 of the 91 checks failed that way once for reasons
+that were not the product's.
 The values it starts the server with are labelled `harness-only-...` and exist only for the run.
 
 ## What the flows cover

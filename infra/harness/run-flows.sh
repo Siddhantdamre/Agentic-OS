@@ -28,6 +28,16 @@ export WORLD_URL="http://127.0.0.1:${WORLD_PORT}" WORLD_PORT
 export NODE_OPTIONS="--require ${HERE}/intercept.js"
 export FLOW_BASE="http://127.0.0.1:${PORT}"
 
+# A copy of the stand-ins or the dashboard left running on these ports would answer instead of the ones started
+# below, with a different log folder, and the flows would fail for reasons that are not the product's.
+for spec in "fake-world:${WORLD_PORT}:/__health" "dashboard:${PORT}:/login"; do
+  IFS=: read -r _name _port _path <<<"$spec"
+  _code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 2 "http://127.0.0.1:${_port}${_path}" 2>/dev/null || true)"
+  if [ -n "$_code" ] && [ "$_code" != "000" ]; then
+    echo "port ${_port} already answers (${_name}); stop it first so the flows use their own copy"; exit 2
+  fi
+done
+
 PIDS=()
 cleanup() { for p in "${PIDS[@]:-}"; do [ -n "$p" ] && kill "$p" 2>/dev/null || true; done; }
 trap cleanup EXIT
