@@ -129,11 +129,16 @@ const server = http.createServer(async (req, res) => {
       return body.stream ? streamCompletion(res, body, d) : send(res, 200, completion(body, d));
     }
     if (url.startsWith('/v1/models')) return send(res, 200, { object: 'list', data: [{ id: 'fake-model', object: 'model' }] });
+    // The two services the readiness check pings, answered as a healthy install would, so a screen is not
+    // dressed in "unhealthy" banners only because the stand-ins have no health route.
+    if (url === '/nango/health' || url === '/supertokens/hello') return send(res, 200, { status: 'ok' });
     if (url.startsWith('/nango/connection/')) {
       log({ kind: 'nango', url, auth: String(req.headers.authorization || '').replace(/Bearer\s+.+/, 'Bearer ***') });
       const sc = scenario();
       if (sc.nango === 'revoked') return send(res, 401, { error: 'token revoked' });
       if (sc.nango === 'none') return send(res, 404, { error: 'unknown_connection' });
+      // nango: ['google', ...] = only those providers (by provider_config_key) are connected, as for a real workspace.
+      if (Array.isArray(sc.nango) && !sc.nango.includes((url.match(/provider_config_key=([^&]+)/) || [])[1])) return send(res, 404, { error: 'unknown_connection' });
       return send(res, 200, { credentials: { access_token: 'fake-access-token', raw: { access_token: 'fake-access-token', scope: 'https://mail.google.com/ https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.send https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/calendar https://www.googleapis.com/auth/drive' } }, connection_id: decodeURIComponent(url.split('/nango/connection/')[1].split('?')[0]), provider_config_key: 'gmail' });
     }
     const pm = url.match(/^\/provider\/([^/]+)(\/.*)?$/);
