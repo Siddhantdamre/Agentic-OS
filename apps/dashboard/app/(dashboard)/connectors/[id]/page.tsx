@@ -308,7 +308,7 @@ export default function ConnectorDetailPage() {
           setTestFieldsFromApi(current.extraTestFields);
         }
       } else if (!CONNECTOR_SPECS[connectorId]) {
-        setLoadError(`Unknown connector "${connectorId}". Open /connectors for the catalog.`);
+        setLoadError(`Unknown connector "${connectorId}". Go to Connectors to see what you can connect.`);
       }
       if (data.logs) {
         setLogs(data.logs.filter((l: any) => l.channel_type === connectorId));

@@ -150,10 +150,10 @@ export default function IntegrationsPage() {
         throw new Error(app.missingConfigReason || 'This app can’t be connected here.');
       }
       if (app.authMode === 'byok' || app.id === 'whatsapp') {
-        throw new Error('WhatsApp uses a Meta system-user token. Open /connectors and use the BYOK form — Graph verifies the token before Connected.');
+        throw new Error('WhatsApp connects with an access token from Meta. Go to Connectors and paste it there; we check it with Meta before showing it as connected.');
       }
       if (app.authMode === 'api_key' || app.id === 'razorpay') {
-        throw new Error('Razorpay uses API keys. Open /connectors and paste key_id + key_secret (verified against Razorpay).');
+        throw new Error('Razorpay connects with API keys. Go to Connectors and paste your key ID and key secret; we check them with Razorpay before saving.');
       }
       const extras: Record<string, string> = {};
       for (const field of app.extraConnectFields || []) {

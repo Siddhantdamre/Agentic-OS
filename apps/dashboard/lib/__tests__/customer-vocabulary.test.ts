@@ -31,7 +31,7 @@ const VISIBLE_PROPS = new Set([
 const VISIBLE_CALLS = /^(set\w*(Error|Message|Note|Notice|Status|Success|Hint|Warning)|toast(\.\w+)?)$/;
 
 const BANNED =
-  /\b(OAuth|database_query|web_search|web_extract|file_ops|mcp\.[\w-]+|dev-?ese|SoR|org-union|Nango|TrueForge|Temporal|Chatwoot|LiteLLM|Langfuse|SuperTokens|pgvector|embeddings?|RLS|MCP|JWT|webhooks?|payloads?|endpoints?|tenants?|idempoten\w*|cron|Redis|Postgres|pending row|seeds? a|Cloud API|orchestrat\w+|vector (store|db|database)|SDK|schema|stack trace|undefined|notConnected|from env|env vars?|\(unset\)|Phase \d|self-hosted stack|localhost:\d+|\[object)\b|\(unset\)|localhost:\d+/i;
+  /\b(OAuth|database_query|web_search|web_extract|file_ops|mcp\.[\w-]+|dev-?ese|SoR|org-union|Nango|TrueForge|Temporal|Chatwoot|LiteLLM|Langfuse|SuperTokens|pgvector|embeddings?|RLS|MCP|JWT|webhooks?|payloads?|endpoints?|tenants?|idempoten\w*|cron|Redis|Postgres|pending row|seeds? a|Cloud API|orchestrat\w+|vector (store|db|database)|SDK|schema|stack trace|undefined|notConnected|from env|env vars?|\(unset\)|Phase \d|self-hosted stack|localhost:\d+|\[object)\b|\(unset\)|localhost:\d+|real-estate pack|kanban of real|semantic metrics|gated by|open-ended agent|(^|[\s(])\/(connectors|listings|settings|approvals)\b/i;
 
 /** A setting's name such as DAREX_ALERT_WEBHOOK_URL: it means something to whoever deploys us, nothing to a customer. */
 const SETTING_NAME = /\b[A-Z][A-Z0-9]*(?:_[A-Z0-9]+){1,}\b/;

@@ -204,17 +204,17 @@ export default function InquiriesPage() {
       <div>
         <h1 className="text-2xl sm:text-3xl font-serif font-bold text-heading">Inquiries</h1>
         <p className="text-sm text-slate-500 mt-1">
-          Kanban of real inquiry work items. Empty columns stay empty.
+          Every customer enquiry, from new to closed. Nothing is made up: a column stays empty until a real enquiry lands in it.
         </p>
       </div>
 
       {packReady === false ? (
         <div className="bg-cream-50 border border-cream-300 rounded-2xl p-4 text-sm text-slate-600">
-          Inquiry board is part of the real-estate pack. Connect channels on{' '}
+          The enquiry board turns on with the real-estate starter skills. Connect your channels in{' '}
           <Link href="/connectors" className="font-semibold text-amber-800 underline">
-            /connectors
+            Connectors
           </Link>{' '}
-          — recommended is not the same as connected.
+          to start receiving enquiries.
         </div>
       ) : null}
 
@@ -237,7 +237,7 @@ export default function InquiriesPage() {
         <div className="bg-white border border-dashed border-cream-300 rounded-3xl p-10 text-center space-y-2">
           <Inbox className="w-10 h-10 text-slate-300 mx-auto" />
           <h2 className="font-serif font-bold text-heading">No inquiries</h2>
-          <p className="text-sm text-slate-500">There are no inquiry work items for this org yet.</p>
+          <p className="text-sm text-slate-500">No enquiries yet. They appear here when a customer writes in.</p>
         </div>
       ) : (
         <>

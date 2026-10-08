@@ -78,7 +78,7 @@ export default function ShowingsPage() {
       <div>
         <h1 className="text-2xl sm:text-3xl font-serif font-bold text-heading">Showings</h1>
         <p className="text-slate-500 text-sm mt-1">
-          Upcoming property tours. Bookings require a connected Google Calendar — Darex will not book over unknown conflicts.
+          Upcoming property tours. Booking needs a connected Google Calendar, so a showing is never booked over a clash we cannot see.
         </p>
       </div>
 
@@ -105,9 +105,9 @@ export default function ShowingsPage() {
             <p className="text-xs text-slate-500 mt-1">
               Book from{' '}
               <Link href="/listings" className="font-semibold text-amber-800 underline">
-                /listings
+                Listings
               </Link>{' '}
-              after connecting Calendar at /connectors.
+              after connecting your calendar in Connectors.
             </p>
           </div>
         ) : (

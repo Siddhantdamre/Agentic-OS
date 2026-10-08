@@ -197,7 +197,7 @@ export function BookShowingControl(props: {
             <>
               {' '}
               <Link href={result.setupUrl || '/connectors'} className="font-semibold text-amber-800 underline">
-                /connectors
+                Connectors
               </Link>
             </>
           ) : null}

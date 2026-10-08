@@ -136,13 +136,13 @@ export default function InsightPage() {
         <div>
           <h1 className="text-3xl font-serif font-bold text-heading">AI Business Insights</h1>
           <p className="text-slate-500 text-sm mt-1">
-            Insights are worked out on a schedule from your business numbers — not by reading your customers’ messages. “Review action” starts one specific, named routine, not an open-ended agent.
+            These figures are worked out on a schedule from your business numbers, not by reading your customers’ messages. “Review action” starts one specific routine and nothing else.
           </p>
         </div>
 
         <div className="flex items-center space-x-2 px-3 py-1.5 bg-amber-500/10 text-amber-700 rounded-full border border-amber-500/20 text-xs font-bold">
           <Sparkles className="w-4 h-4 text-amber-600" />
-          <span>Semantic metrics</span>
+          <span>Business numbers</span>
         </div>
       </div>
 

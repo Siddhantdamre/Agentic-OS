@@ -1,5 +1,11 @@
 # Darex Build State
 
+## Plain wording on Listings, Showings, Inquiries, Insight and the connect errors (2026-10-08)
+
+- Found by reading the running pages as a customer would: Listings said "This module is gated by the real-estate pack. Recommended connectors stay disconnected until you connect them on /connectors", Inquiries said "Kanban of real inquiry work items" and "recommended is not the same as connected", Showings pointed at "/listings" and "/connectors" as typed paths, Insight was headed "Semantic metrics" and spoke of an "open-ended agent", and two connect errors told the person to "use the BYOK form" and said "Graph verifies the token". The earlier vocabulary check did not know these phrases.
+- Now each says the same thing in business words ("Your properties. Nothing is made up: an empty list means none have been added yet.", "Go to Connectors", "Business numbers"), and the vocabulary contract bans these phrases and any visible typed path to a page, so they cannot return. "Work items" stays: it is a name customers see in the sidebar.
+- Verified: the contract fails on 35 places before the edits and passes after; in a real browser the Listings, Showings, Inquiries and Insight pages show the new sentences, with 0 server errors across 10 pages.
+
 ## The flow harness sets a closed agent-sidecar address (2026-10-08)
 
 - Check-in 28 ran the new flow F25 through `run-flows.sh` and 2 checks failed, although F25 passed against the audit stack. Cause: `run-flows.sh` never set `TRUEFORGE_URL`, and a production start refuses to build the sidecar address without it, so the expired-card path ended in a configuration error instead of a connection error. The audit stack set it, the flow script did not.

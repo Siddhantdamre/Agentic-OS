@@ -188,7 +188,7 @@ export default function ListingsPage() {
         <div>
           <h1 className="text-2xl sm:text-3xl font-serif font-bold text-heading">Listings</h1>
           <p className="text-slate-500 text-sm mt-1">
-            Inventory from the real-estate pack. Empty means no rows — nothing is invented.
+            Your properties. Nothing is made up: an empty list means none have been added yet.
           </p>
         </div>
         <button
@@ -386,10 +386,9 @@ export default function ListingsPage() {
 
       {packReady === false ? (
         <div className="bg-cream-50 border border-cream-300 rounded-2xl p-4 text-sm text-slate-600">
-          This module is gated by the real-estate pack. Recommended connectors stay disconnected until you
-          connect them on{' '}
+          Listings turn on with the real-estate starter skills. Connect your apps in{' '}
           <Link href="/connectors" className="font-semibold text-amber-800 underline">
-            /connectors
+            Connectors
           </Link>
           .
         </div>
