@@ -1,5 +1,11 @@
 # Darex Build State
 
+## Home no longer says the same thing twice (2026-10-08)
+
+- Found in the same read-through: with approvals waiting, the banner at the top of Home said "3 approvals are waiting for you" and the "Today so far" card repeated it twice more ("Something needs you today.", "3 approvals are waiting for you.").
+- The digest now reports only what happened in the last 24 hours (new enquiries, answers given, emails sent, showings coming up) and leaves waiting approvals to the banner. A day with nothing new reads "Quiet so far. Nothing new in the last 24 hours."
+- Verified: 7 unit tests (one new: the lines never mention approvals); in a real browser Home shows the banner once and the card lists the enquiries and answers.
+
 ## Plain wording on Listings, Showings, Inquiries, Insight and the connect errors (2026-10-08)
 
 - Found by reading the running pages as a customer would: Listings said "This module is gated by the real-estate pack. Recommended connectors stay disconnected until you connect them on /connectors", Inquiries said "Kanban of real inquiry work items" and "recommended is not the same as connected", Showings pointed at "/listings" and "/connectors" as typed paths, Insight was headed "Semantic metrics" and spoke of an "open-ended agent", and two connect errors told the person to "use the BYOK form" and said "Graph verifies the token". The earlier vocabulary check did not know these phrases.

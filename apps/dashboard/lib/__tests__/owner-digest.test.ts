@@ -8,6 +8,7 @@ describe('owner digest', () => {
     expect(d.quiet).toBe(true);
     expect(d.lines).toEqual([]);
     expect(d.headline).toMatch(/quiet/i);
+    expect(d.headline).not.toMatch(/needs you/i);
   });
 
   it('counts what the assistant did, with singular and plural right', () => {
@@ -17,11 +18,15 @@ describe('owner digest', () => {
     expect(d.quiet).toBe(false);
   });
 
-  it('puts what needs the owner first', () => {
+  it('does not repeat the waiting approvals, which the Home banner already shows', () => {
     const d = buildDigest({ ...base, answered: 12, waiting: 3, newInquiries: 2, showingsSoon: 1 });
-    expect(d.lines[0]).toBe('3 approvals are waiting for you.');
-    expect(d.headline).toBe('Something needs you today.');
-    expect(d.lines.filter((l) => l === d.headline)).toEqual([]);
+    expect(d.lines.join(' ')).not.toMatch(/approval/i);
+    expect(d.lines[0]).toBe('1 showing starts in the next 24 hours.');
+  });
+
+  it('is not called quiet when something happened, even with approvals waiting', () => {
+    expect(buildDigest({ ...base, waiting: 3 }).quiet).toBe(true);
+    expect(buildDigest({ ...base, waiting: 3, answered: 1 }).quiet).toBe(false);
   });
 
   it('estimates time saved from answered messages and says it is an estimate', () => {

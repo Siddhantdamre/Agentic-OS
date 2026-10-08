@@ -7,7 +7,7 @@ export interface DigestCounts {
   answered: number;
   /** Emails and messages the owner approved that were then sent. */
   sent: number;
-  /** Approvals waiting for the owner right now. */
+  /** Approvals waiting for the owner right now. Reported by the Home banner, not repeated in the lines. */
   waiting: number;
   /** Enquiries that arrived in the last 24 hours. */
   newInquiries: number;
@@ -29,7 +29,6 @@ const n = (count: number, one: string, many: string) => `${count} ${count === 1 
 
 export function buildDigest(c: DigestCounts): Digest {
   const lines: string[] = [];
-  if (c.waiting > 0) lines.push(c.waiting === 1 ? '1 approval is waiting for you.' : `${c.waiting} approvals are waiting for you.`);
   if (c.showingsSoon > 0) lines.push(c.showingsSoon === 1 ? '1 showing starts in the next 24 hours.' : `${c.showingsSoon} showings start in the next 24 hours.`);
   if (c.newInquiries > 0) lines.push(`${n(c.newInquiries, 'new enquiry', 'new enquiries')} came in.`);
   if (c.answered > 0) lines.push(`Answered ${n(c.answered, 'customer message', 'customer messages')}.`);
@@ -37,11 +36,8 @@ export function buildDigest(c: DigestCounts): Digest {
 
   const quiet = lines.length === 0;
   const minutesSaved = Math.max(0, Math.round(c.answered)) * MINUTES_PER_ANSWER;
-  const headline = quiet
-    ? 'A quiet day so far. Nothing needs you.'
-    : c.waiting > 0
-      ? 'Something needs you today.'
-      : 'Nothing is waiting for you. Here is what happened.';
+  // Approvals waiting are shown by the banner above this card on Home, so they are counted but not repeated here.
+  const headline = quiet ? 'Quiet so far. Nothing new in the last 24 hours.' : 'In the last 24 hours';
   const savedNote = minutesSaved > 0
     ? `About ${minutesSaved} minutes of replying saved. This is an estimate of about ${MINUTES_PER_ANSWER} minutes per answer.`
     : '';
