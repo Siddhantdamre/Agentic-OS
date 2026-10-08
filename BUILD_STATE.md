@@ -1,5 +1,12 @@
 # Darex Build State
 
+## Home shows what happened today and what needs the owner (2026-10-08)
+
+- New `GET /api/digest` and a Home card, "Today so far": what is waiting for the owner, showings in the next 24 hours, new enquiries, customer messages answered and approved emails sent in the last 24 hours, and an estimate of reply time saved (about 2 minutes per answer, labelled as an estimate, zero when nothing was answered). The wording lives in `lib/owner-digest.ts` so it is tested without a database.
+- Why: the value of the assistant was invisible unless the owner opened five pages. A quiet day reads "A quiet day so far. Nothing needs you."
+- Verified: 6 unit tests; in a real browser a new workspace shows the quiet sentence, and after one send is held the card shows "Something needs you today." and "1 approval is waiting for you."; a second workspace sees 0 waiting (isolation). Every query is limited to the signed-in workspace.
+- Not verified: the time-saved figure against real usage; it is a fixed estimate.
+
 ## The approval card says what cannot be taken back (2026-10-08)
 
 - Gmail and WhatsApp cannot recall a message, so a true "undo" for a sent email is not possible. Instead of promising one, the approval card now says so before the owner decides: "Once sent, this cannot be taken back." for emails and messages, and "Money moves as soon as you approve." for refunds and payments. Changes that can simply be changed again show nothing.

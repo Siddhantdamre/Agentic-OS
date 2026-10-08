@@ -5,6 +5,7 @@ import { useSearchParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { ApprovalsCallout } from '@/components/home/ApprovalsCallout';
 import { GetStarted } from '@/components/home/GetStarted';
+import { DailyDigest } from '@/components/home/DailyDigest';
 import { Sparkles, AlertTriangle, Send, CheckCircle2, CircleDashed } from 'lucide-react';
 import { LiveRegion, StatusBadge } from '@/components/a11y';
 import { useLiveRefresh } from '@/lib/use-live-refresh';
@@ -267,6 +268,7 @@ function HomeContent() {
       </div>
       <ApprovalsCallout />
       <GetStarted channelCount={stats ? (stats.channelCount ?? 0) : null} />
+      <DailyDigest />
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
         <div>
           <h1 className="text-2xl sm:text-3xl font-serif font-bold text-heading">
