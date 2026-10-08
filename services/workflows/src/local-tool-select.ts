@@ -52,6 +52,7 @@ function intentPriorityKeys(employeeRole?: string, userMessage?: string): Set<st
     [/zendesk|ticket/i, 'zendesk'],
     [/intercom/i, 'intercom'],
     [/whatsapp/i, 'whatsapp'],
+    [/instagram|\bdms?\b/i, 'instagram'],
     [/notion/i, 'notion'],
     [/github|repo|pull request/i, 'github'],
     [/salesforce/i, 'salesforce'],

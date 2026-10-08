@@ -1,5 +1,11 @@
 # Darex Build State
 
+## Instagram DMs read and reply from Ask AI (2026-10-09)
+
+- Chat had no Instagram tools: inbound DMs reached the inbox and the auto-reply agent, but Ask AI could neither read them nor answer one. New `instagram` tool module with `instagram_list_messages` (stored DMs, `messages.channel_key = 'instagram'`, RLS-scoped, optionally one contact by IGSID) and `instagram_send` (Graph `/{ig_user_id}/messages`, send-risk, approval first). Credentials come from the connected `instagram` channel meta (same keys as `channel-outbound.ts`), else `META_ACCESS_TOKEN`; a connected channel puts the tool on the turn allowlist through `mergeRuntimeAllowlist`.
+- The send refuses outside Meta's 24-hour window (no inbound DM from that contact in 24 h) and refuses a recipient id that is not a numeric IGSID before anything reaches a Graph URL. Inbound HITL and dashboard confirm classes treat it as a send.
+- Verified: 487 `@darex/workflows` tests (new cases in `messaging-actions.test.ts`: IGSID validation, risk of both actions, tool-to-action wiring) and 625 dashboard tests, dashboard typecheck. Not verified: a live list or send against a real Instagram account. A chat-sent DM is not written back to `messages` (the WhatsApp chat send behaves the same).
+
 ## Outlook, Slack and WhatsApp read and reply from Ask AI (2026-10-06)
 
 - Chat could send on these channels but not read or answer a conversation. Outlook was list and send only; Slack could post but not see channels or threads; WhatsApp could only send.

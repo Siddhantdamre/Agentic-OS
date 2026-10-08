@@ -69,6 +69,7 @@ function isSendRisk(blob: string): boolean {
   if (/\bslack-send\b/.test(blob) || /\bsend-slack\b/.test(blob)) return true;
   if (/\bintercom-send\b/.test(blob) || /\bsend-intercom\b/.test(blob)) return true;
   if (/\btwilio-send\b/.test(blob) || /\bsend-sms\b/.test(blob)) return true;
+  if (/\binstagram-send\b/.test(blob) || /\bsend-dm\b/.test(blob)) return true;
   return false;
 }
 
