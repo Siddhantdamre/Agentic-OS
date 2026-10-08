@@ -33,6 +33,8 @@ export type ApprovalView = {
   approvalsGiven: number;
   /** "1 of 2 approvals given", only when more than one person is needed. */
   needsText: string | null;
+  /** What cannot be undone once approved. Null when the change can simply be changed again. */
+  finalNote: string | null;
   expiresText: string | null;
   ageText: string;
 };
@@ -169,6 +171,12 @@ export function expiresIn(iso: string | null | undefined, now: number = Date.now
   return `Expires in ${days} day${days === 1 ? '' : 's'}`;
 }
 
+function finalNoteOf(kind: ApprovalKind): string | null {
+  if (kind === 'email' || kind === 'message') return 'Once sent, this cannot be taken back.';
+  if (kind === 'refund' || kind === 'payment') return 'Money moves as soon as you approve.';
+  return null;
+}
+
 export function describeHeldAction(action: HeldAction, now: number = Date.now()): ApprovalView {
   const stored = obj(action.payload);
   const tool = str(stored.tool);
@@ -189,6 +197,7 @@ export function describeHeldAction(action: HeldAction, now: number = Date.now())
     approvalsNeeded: needed,
     approvalsGiven: given,
     needsText: needed > 1 ? `${given} of ${needed} approvals given` : null,
+    finalNote: finalNoteOf(kind),
     expiresText: expiresIn(action.expiresAt, now),
     ageText: relativeTime(action.createdAt, now),
   };

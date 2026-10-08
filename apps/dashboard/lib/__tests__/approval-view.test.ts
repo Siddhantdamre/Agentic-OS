@@ -114,3 +114,18 @@ describe('time words', () => {
     expect(expiresIn(null, NOW)).toBeNull();
   });
 });
+
+describe('finalNote', () => {
+  it('warns before approving that a sent email or message cannot be taken back', () => {
+    expect(describeHeldAction(email(), NOW).finalNote).toBe('Once sent, this cannot be taken back.');
+  });
+  it('warns that money moves as soon as it is approved', () => {
+    const refund = describeHeldAction({ id: 'r', payload: { tool: 'stripe', action: 'refund_payment', payload: { amount: 500 } } }, NOW);
+    expect(refund.finalNote).toBe('Money moves as soon as you approve.');
+  });
+  it('says nothing for a change that can simply be changed again', () => {
+    const rec = describeHeldAction({ id: 'x', payload: { tool: 'hubspot', action: 'update_contact', payload: {} } }, NOW);
+    expect(rec.finalNote).toBeNull();
+  });
+});
+

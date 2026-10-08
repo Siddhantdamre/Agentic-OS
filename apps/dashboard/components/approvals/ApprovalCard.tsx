@@ -104,6 +104,7 @@ export function ApprovalCard({
         <span>{view.whyHeld}</span>
       </p>
       {view.needsText ? <p className="text-xs font-semibold text-amber-800">{view.needsText}</p> : null}
+      {view.finalNote ? <p className="text-xs font-semibold text-slate-700">{view.finalNote}</p> : null}
 
       {outcome ? (
         <p role="status" className={`flex items-center gap-2 rounded-xl border px-3 py-2 text-sm font-medium ${TONE[outcome.tone]}`}>

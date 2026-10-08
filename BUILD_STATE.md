@@ -1,5 +1,10 @@
 # Darex Build State
 
+## The approval card says what cannot be taken back (2026-10-08)
+
+- Gmail and WhatsApp cannot recall a message, so a true "undo" for a sent email is not possible. Instead of promising one, the approval card now says so before the owner decides: "Once sent, this cannot be taken back." for emails and messages, and "Money moves as soon as you approve." for refunds and payments. Changes that can simply be changed again show nothing.
+- Verified: 3 new unit tests on the wording; in a real browser the held email's card shows the sentence. A delayed-send undo window would change when sends happen, which is a product decision and was not built.
+
 ## A soak run and instructions for the checks only the owner's machine can do (2026-10-08)
 
 - Added `infra/harness/soak.js`: steady signed customer messages, plain questions, and held sends approved in chat against a running dashboard, sampling the server's memory and the database connections. It fails on any 5xx, an approval that did not finish, a stuck pending row, unanswered messages, or memory growing more than 60 percent after warm-up.
