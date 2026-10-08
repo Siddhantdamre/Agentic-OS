@@ -36,6 +36,7 @@
 | 30 | Nothing exercised the server for long periods, so slow leaks and stuck approvals would only show up in production. | P1 | `infra/harness/soak.js` | 🟡 Partly | 30-minute soak: 1968 requests, 0 failures, 227 of 227 approvals finished, memory +22 percent. The 24-hour run, Docker build and real-account run are in RUN_ON_YOUR_MACHINE.md and still need the owner. |
 | 31 | Nothing told the owner that a sent email or a refund cannot be reversed, and a real undo is not possible once the provider has sent it. | P2 | `apps/dashboard/lib/approval-view.ts`, `apps/dashboard/components/approvals/ApprovalCard.tsx` | 🟡 Partly | The card now states what is final before approval (real browser). A delayed-send undo window is a product decision and is not built. |
 | 32 | The owner had to open several pages to learn what the assistant did and what needed them. | P2 | `apps/dashboard/app/api/digest/route.ts`, `apps/dashboard/lib/owner-digest.ts`, `apps/dashboard/components/home/DailyDigest.tsx` | 🟢 Done | Home card "Today so far" with counts for the last 24 hours; 6 unit tests; real browser shows quiet and busy states; second workspace sees 0 waiting. |
+| 33 | The flow harness depended on an unset sidecar address, so the expired-card flow could pass on one stack and fail on the other. | P3 | `infra/harness/run-flows.sh`, `infra/harness/flows.js` | 🟢 Done | `run-flows.sh` 95 passed, 0 failed across 25 flows (was 93 and 2 failed). |
 
 ## Status: working (approve executes parked tools; autonomy card/summary fixed; RBAC/dual-auth/sweep/history on `/api/decisions`)
 

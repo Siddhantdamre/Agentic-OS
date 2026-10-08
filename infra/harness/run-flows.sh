@@ -25,6 +25,9 @@ export DAREX_ORG_RATE_LIMIT_PER_MINUTE=1000000 RATE_LIMIT_PER_MINUTE=1000000 RAT
 export DAREX_LOCAL_MODEL_BASE_URL="http://127.0.0.1:${WORLD_PORT}/v1" DAREX_LOCAL_MODEL_API_KEY="harness-only-model-key" DAREX_LOCAL_MODEL="fake-model"
 export NANGO_HOST="http://127.0.0.1:${WORLD_PORT}/nango" NANGO_SECRET_KEY="harness-only-broker-key"
 export WORLD_URL="http://127.0.0.1:${WORLD_PORT}" WORLD_PORT
+# No agent sidecar exists in this harness: a closed port, so a production start does not refuse to run and a card for a
+# session this server no longer holds fails the way it would after a restart.
+export TRUEFORGE_URL="${TRUEFORGE_URL:-http://127.0.0.1:1}"
 export NODE_OPTIONS="--require ${HERE}/intercept.js"
 export FLOW_BASE="http://127.0.0.1:${PORT}"
 

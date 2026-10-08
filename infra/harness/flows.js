@@ -262,7 +262,7 @@ flow('F14 an approval card whose chat is gone says so plainly and runs nothing',
     const err = text.split('\n').filter(Boolean).map((l) => { try { return JSON.parse(l); } catch { return null; } }).find((e) => e && e.type === 'error');
     note('the person gets an error event', !!err, text.slice(0, 200));
     note('it is not Node’s own wording', !!err && !/fetch failed|ECONN|socket|terminated/i.test(err.error), String(err && err.error));
-    note('it says nothing was run and what to do', !!err && /nothing was run/i.test(err.error) && /ask again|Decisions/i.test(err.error), String(err && err.error));
+    note('it says nothing was run or sent and what to do', !!err && /nothing was (run|sent)/i.test(err.error) && /ask again/i.test(err.error), String(err && err.error));
     note('the provider received nothing', providerCalls().length === 0);
   } finally { cleanup(s.orgId); }
 });

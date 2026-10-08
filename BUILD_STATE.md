@@ -1,5 +1,11 @@
 # Darex Build State
 
+## The flow harness sets a closed agent-sidecar address (2026-10-08)
+
+- Check-in 28 ran the new flow F25 through `run-flows.sh` and 2 checks failed, although F25 passed against the audit stack. Cause: `run-flows.sh` never set `TRUEFORGE_URL`, and a production start refuses to build the sidecar address without it, so the expired-card path ended in a configuration error instead of a connection error. The audit stack set it, the flow script did not.
+- `run-flows.sh` now exports `TRUEFORGE_URL=http://127.0.0.1:1` (a closed port; the harness has no sidecar) unless one is given. Flow F14 (an approval card whose chat is gone) expected the old wording that pointed at Decisions; it now expects "nothing was run or sent" and "ask again", the wording the product has since the card-expiry change.
+- Verified: `run-flows.sh` ends with 95 passed, 0 failed (25 flows); it was 93 passed, 2 failed before the change and 94 of 95 after the first half.
+
 ## Home shows what happened today and what needs the owner (2026-10-08)
 
 - New `GET /api/digest` and a Home card, "Today so far": what is waiting for the owner, showings in the next 24 hours, new enquiries, customer messages answered and approved emails sent in the last 24 hours, and an estimate of reply time saved (about 2 minutes per answer, labelled as an estimate, zero when nothing was answered). The wording lives in `lib/owner-digest.ts` so it is tested without a database.
