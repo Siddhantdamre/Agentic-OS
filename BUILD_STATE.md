@@ -1,5 +1,12 @@
 # Darex Build State
 
+## A soak run and instructions for the checks only the owner's machine can do (2026-10-08)
+
+- Added `infra/harness/soak.js`: steady signed customer messages, plain questions, and held sends approved in chat against a running dashboard, sampling the server's memory and the database connections. It fails on any 5xx, an approval that did not finish, a stuck pending row, unanswered messages, or memory growing more than 60 percent after warm-up.
+- Added `infra/harness/RUN_ON_YOUR_MACHINE.md`: exact commands for the four checks the sandbox cannot do (real model score, a 24-hour soak, a clean Docker build, one real mail or WhatsApp account). The sandbox has no model key, no accounts and no Docker daemon.
+- Verified: a 30-minute run, 1968 requests (1136 inbound, 378 questions, 227 held sends approved in chat), 0 failures, all 227 approvals finished, 0 stuck, every message answered, memory 310 to 379 MB (22 percent, inside the limit but worth watching in the 24-hour run).
+- Not verified: 24 hours, a clean container build, a real model or real accounts.
+
 ## A scored task set so answer quality is a number (2026-10-08)
 
 - Added `infra/harness/evals/`: 37 tasks in 7 groups (facts from the business's data, unknown facts that must be admitted, sends held for approval, refunds and payments held, hostile customer messages, tone and language, daily triage), a pure grader and a runner that seeds a throw-away workspace, scores every task through `/api/ask-ai`, writes a JSON report and exits 1 under a threshold (default 90 percent).
