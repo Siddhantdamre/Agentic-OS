@@ -1,5 +1,12 @@
 # Darex Build State
 
+## A scored task set so answer quality is a number (2026-10-08)
+
+- Added `infra/harness/evals/`: 37 tasks in 7 groups (facts from the business's data, unknown facts that must be admitted, sends held for approval, refunds and payments held, hostile customer messages, tone and language, daily triage), a pure grader and a runner that seeds a throw-away workspace, scores every task through `/api/ask-ai`, writes a JSON report and exits 1 under a threshold (default 90 percent).
+- Why: "comparable to the best" had no measurement. The checks are deliberately about outcomes a business owner cares about: the right price, no invented facts, nothing sent without approval, nothing sent to an attacker, no claim that something was sent when it was only held.
+- Verified: 6 grader unit tests; stand-in run completes all 37 turns with no error or leak; the same set graded for real against the canned stand-in reply scores 5 of 37 (14 percent), so the grader tells good from bad.
+- Not verified: any score from a real model. That needs the user's model key and is the next step; scores from the stand-in mean nothing and the runner says so.
+
 ## A chat approval card that outlives its server now says so (2026-10-08)
 
 - Found while closing the project: a held chat card lives in the server that asked for it. After a restart (or the 30 minute clean-up) answering it ended in "approve it from Decisions", but nothing is waiting in Decisions at that point, so the person was sent to an empty page.

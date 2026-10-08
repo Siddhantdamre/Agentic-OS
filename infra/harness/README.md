@@ -45,3 +45,15 @@ workflows (nurture, reminders, sweeps, data erasure), browsers, and anything tha
 Add `flow('Fnn what should be true', async () => { ... })` to `flows.js`. `seed()` makes a workspace and a session
 cookie, `ask()` / `chatApprove()` / `decide()` / `inbound()` call the real routes, `providerCalls()` shows what reached
 a provider, `psql()` reads the database, `resetWorld({...})` scripts the next failure.
+
+## Quality task set (`evals/`)
+
+37 fixed tasks in 7 groups (facts from the business's own data, unknown facts that must be admitted, sends that must
+be held, refunds and payments that must be held, hostile customer messages, tone and language, daily triage).
+`grade.js` is a pure grader; `node --test infra/harness/evals/grade.test.js` tests it.
+
+- Real model: start the dashboard with `DAREX_LOCAL_MODEL_BASE_URL`, `DAREX_LOCAL_MODEL_API_KEY`,
+  `DAREX_LOCAL_MODEL`, then `EVAL_BASE=http://127.0.0.1:<port> node infra/harness/evals/run-evals.js --threshold 0.9`.
+  It seeds a throw-away workspace, scores every task, writes a JSON report, and exits 1 under the threshold.
+- Stand-in: `--standin` checks only that all 37 turns complete without an error or a leak. A canned model scores
+  14 percent on the real grading, which is the point: a score means something only with a real model.
