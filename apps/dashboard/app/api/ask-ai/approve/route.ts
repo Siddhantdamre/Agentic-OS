@@ -241,6 +241,13 @@ export async function POST(request: Request) {
             send('error', { error: 'That approval is already being handled. Give it a moment.', retryable: false });
             return;
           }
+          if (err instanceof Error && err.name === 'ApprovalExpiredError') {
+            send('error', {
+              error: 'This approval card has expired and nothing was sent. Ask again and approve the new card.',
+              retryable: false,
+            });
+            return;
+          }
           send('error', {
             error: publicErrorMessage(err, 'We couldn’t finish that approval, so nothing was run. Please ask again, or approve it from Decisions.'),
             retryable: true,

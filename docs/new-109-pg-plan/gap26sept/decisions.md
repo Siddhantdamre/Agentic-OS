@@ -31,6 +31,7 @@
 | 25 | The chat showed the router's internal note ("low confidence — support, not round-robin") as the reason for a routing. | P2 | `apps/dashboard/lib/ask-mode.ts` | 🟢 Done | Router notes mapped to plain sentences, unknown reasons shown as written; internal router words on screen 1 -> 0 (real browser). |
 | 26 | On pages in the lower sidebar groups the highlighted item was scrolled out of view, so a person could not see where they were. | P2 | `apps/dashboard/components/shell/AppShell.tsx` | 🟢 Done | The list scrolls the current page into view on arrival and when the footer settles; highlighted item in view 2 of 9 -> 9 of 9 pages (real browser). |
 | 27 | Two Insight cards fell back to a sentence saying the number came from "the metrics registry SQL". | P3 | `services/workflows/src/metrics/core-kpis.yaml`, `apps/dashboard/lib/insight-engine.ts` | 🟢 Done | Every metric has its own sentence and the fallback is plain; cards mentioning SQL 1 -> 0 (real browser); contract requires a sentence per metric. |
+| 28 | A chat approval card answered after a server restart sent the person to Decisions, where nothing was waiting. | P2 | `services/workflows/src/trueforge-client.ts`, `apps/dashboard/app/api/ask-ai/approve/route.ts` | 🟡 Partly | The card now says it expired and that nothing was sent; flow F25 4 of 4 (2 of 4 before). Surviving the restart needs a durable record at card time: product decision. |
 
 ## Status: working (approve executes parked tools; autonomy card/summary fixed; RBAC/dual-auth/sweep/history on `/api/decisions`)
 

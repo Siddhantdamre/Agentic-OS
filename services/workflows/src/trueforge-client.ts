@@ -1000,6 +1000,17 @@ export async function resumeTrueForgeTurn(
   return resumeTrueForgeTurnInner(input, opts);
 }
 
+/**
+ * The chat card being answered belongs to a session this server no longer holds (a restart, or the 30 minute
+ * clean-up) and the fallback sidecar does not know it either. Nothing was run and nothing is waiting anywhere.
+ */
+export class ApprovalExpiredError extends Error {
+  constructor() {
+    super('This approval card has expired.');
+    this.name = 'ApprovalExpiredError';
+  }
+}
+
 async function resumeTrueForgeTurnInner(
   input: ResumeTurnInput,
   opts?: RunAgentOptions,
@@ -1047,8 +1058,13 @@ async function resumeTrueForgeTurnInner(
         })),
         stream: true,
       }),
+    }).catch((err: unknown) => {
+      // Nobody is listening there: the card's session went with the process that asked for it.
+      if (controller.signal.aborted) throw err;
+      throw new ApprovalExpiredError();
     });
 
+    if (turnRes.status === 404) throw new ApprovalExpiredError();
     if (!turnRes.ok || !turnRes.body) {
       const errText = await turnRes.text().catch(() => '');
       throw new Error(`TrueForge resume failed (${turnRes.status}): ${errText}`);

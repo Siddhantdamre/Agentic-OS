@@ -434,6 +434,22 @@ flow('F24 a member allowing a refund in the chat card is refused before anything
 });
 
 
+flow('F25 a chat card whose session is gone (a restart) says so plainly and nothing is sent', async () => {
+  const s = seed({ stage: 1, tag: 'f25' }); resetWorld();
+  try {
+    const r = await ask(s, `Email Priya ${SEND()}`);
+    if (!r.approval) return note('the chat shows a card', false, r.text.slice(0, 200));
+    // The server that asked for the card is gone: answer it with a session nobody remembers.
+    const gone = { ...r.approval, conversationId: r.done?.conversationId, sessionId: '11111111-2222-4333-8444-555555555555' };
+    const c = await chatApprove(s, gone, 'allow');
+    const err = c.events.find((e) => e.type === 'error');
+    note('the person is told the card expired', !!err && /expired/i.test(err.error || ''), JSON.stringify(c.events).slice(0, 220));
+    note('the message does not send them to an empty Decisions page', !!err && !/Decisions/.test(err.error || ''));
+    note('nothing reached the provider', providerCalls(/messages\/send/).length === 0);
+    note('no row was created behind their back', rowCount(s) === 0);
+  } finally { cleanup(s.orgId); }
+});
+
 (async () => {
   for (const f of flows) {
     if (ONLY && !f.name.includes(ONLY)) continue;

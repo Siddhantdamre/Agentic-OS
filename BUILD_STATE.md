@@ -1,5 +1,12 @@
 # Darex Build State
 
+## A chat approval card that outlives its server now says so (2026-10-08)
+
+- Found while closing the project: a held chat card lives in the server that asked for it. After a restart (or the 30 minute clean-up) answering it ended in "approve it from Decisions", but nothing is waiting in Decisions at that point, so the person was sent to an empty page.
+- `resumeTrueForgeTurn` now throws a named `ApprovalExpiredError` when the session is unknown here and the fallback sidecar is unreachable or answers 404. The approve route turns it into "This approval card has expired and nothing was sent. Ask again and approve the new card." A genuine timeout still reads as a failure, not as expiry.
+- Verified: new unit test `approval-expired.test.ts`; new flow F25 (card, then answer it with a session the server does not know) fails 2 of 4 checks before and passes 4 of 4 after: person told the card expired, no mention of Decisions, nothing reached the provider, no pending row created.
+- Not done: making the card itself survive a restart would need a durable record at card time, which the single-approval design avoids on purpose (no second approval in Decisions). Left as a product decision.
+
 ## Every Insight card has its own plain sentence (2026-10-07)
 
 - Found on the Insight page: two metrics had no sentence of their own, so their cards fell back to "Work items not yet done or cancelled = 7 from the metrics registry SQL."
