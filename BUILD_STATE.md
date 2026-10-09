@@ -1,5 +1,12 @@
 # Darex Build State
 
+## The API for money owed: import, list, mark paid, remind through approval (2026-10-09)
+
+- `GET /api/dues` lists what is owed with each due's days late, interest and next step, oldest first, plus totals (owed, overdue, interest, paid). `POST /api/dues` imports a pasted list and reports unreadable lines by number while saving the rest. `PATCH /api/dues/[id]` marks a due paid (with a payment reference), disputed or open again. `PUT /api/dues/settings` stores the two facts the interest depends on: the bank rate the owner has checked, and whether the business is a registered small supplier. `POST /api/dues/[id]/remind` previews the draft, or sends it through the same gate as every message to a customer, so it waits in Approvals.
+- Rules: a paid due is never chased; a reminder inside 3 days of the last is refused so the buyer is not pestered; the statutory interest wording appears only for a registered supplier with a bank rate set; changing a due needs an owner, admin or manager; settings need an owner or admin; every query is limited to the signed-in workspace. The reminder goes out as the workspace's customer-facing employee, preferring Customer Support.
+- Verified: new flow F26 passes 16 of 16 against the real server and database (import with one bad line reported, totals 165,500.50, interest for a registered supplier, preview sends nothing, the reminder waits in Approvals, approving sends exactly one email to the buyer, a second reminder inside 3 days refused, paid due never chased, another workspace sees none of it and cannot change it, model SQL cannot read the phone). Found by that flow: the first version asked for an "executive" employee that a normal workspace may not have and silently prepared nothing; fixed. 8 unit tests for the view helper.
+- The four new actions are rows in the chat-coverage matrix at red: they cannot be done from Ask AI yet.
+
 ## Reading a pasted list of dues and writing the reminder (2026-10-09)
 
 - `lib/dues-text.ts`: `parseDuesPaste` reads dues pasted from a spreadsheet or typed one per line (buyer, invoice number, amount, invoice date, credit days, phone), with tabs, pipes, semicolons or commas, amounts like `1,20,000` or `₹ 45,500.50`, dates as `12/08/2026`, `12-08-26` or `2026-08-12`, and a header row skipped. A line it cannot read gets one plain sentence naming the line and the problem ("Line 2: I could not read the amount \"abc\"."); the good lines are still kept. Future-dated invoices, zero amounts and more than 200 lines are refused.

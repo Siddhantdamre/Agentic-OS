@@ -166,7 +166,7 @@ Edit only the status cell; regeneration keeps it.
 | `zoho_list_deals` | zoho-crm.list_deals | read | no | 🔴 |
 | `zoho_update_deal` | zoho-crm.update_deal | draft | no | 🔴 |
 
-## Tab actions (84)
+## Tab actions (88)
 
 Mutating dashboard API routes a tab calls. Webhooks, auth, the chat itself, the public widget and platform admin are excluded.
 
@@ -193,6 +193,10 @@ Mutating dashboard API routes a tab calls. Webhooks, auth, the chat itself, the 
 | `POST /api/decisions/sweep` | 🔴 |
 | `POST /api/dsr/delete` | 🔴 |
 | `POST /api/dsr/export` | 🔴 |
+| `POST /api/dues` | 🔴 |
+| `PATCH /api/dues/[id]` | 🔴 |
+| `POST /api/dues/[id]/remind` | 🔴 |
+| `PUT /api/dues/settings` | 🔴 |
 | `PATCH /api/employees` | 🔴 |
 | `POST /api/employees` | 🔴 |
 | `DELETE /api/employees/[id]` | 🔴 |

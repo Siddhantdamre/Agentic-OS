@@ -450,6 +450,57 @@ flow('F25 a chat card whose session is gone (a restart) says so plainly and noth
   } finally { cleanup(s.orgId); }
 });
 
+flow('F26 money owed: import a list, see the totals, remind through approval, and keep each workspace to itself', async () => {
+  const s = seed({ stage: 1, tag: 'f26', tools: ['gmail', 'whatsapp'] }); const other = seed({ stage: 1, tag: 'f26b' }); resetWorld();
+  const api = async (who, method, path, body) => {
+    const res = await fetch(`${BASE}${path}`, { method, headers: headers(who), body: body === undefined ? undefined : JSON.stringify(body) });
+    let json = null; try { json = await res.json(); } catch { /* none */ }
+    return { status: res.status, json };
+  };
+  try {
+    const set = await api(s, 'PUT', '/api/dues/settings', { bankRatePercent: 5.5, msmeRegistered: true });
+    note('the owner can set the bank rate and say the business is a registered small supplier', set.status === 200 && set.json?.settings?.bankRatePercent === 5.5, JSON.stringify(set.json));
+    const day = (n) => { const d = new Date(Date.now() - n * 86400000); return `${String(d.getUTCDate()).padStart(2, '0')}/${String(d.getUTCMonth() + 1).padStart(2, '0')}/${d.getUTCFullYear()}`; };
+    const text = `Sharma Traders\tINV-118\t1,20,000\t${day(75)}\t30\t9876543210\nPatel Motors\tINV-55\t45500.50\t${day(10)}\t30\nRao Steel\tINV-9\tabc\t${day(5)}`;
+    const add = await api(s, 'POST', '/api/dues', { text });
+    note('two good lines are saved and the bad one is explained by line', add.status === 200 && add.json?.added === 2 && /Line 3/.test((add.json?.problems || [])[0] || ''), JSON.stringify(add.json));
+    const list = await api(s, 'GET', '/api/dues');
+    const dues = list.json?.dues || [];
+    note('the oldest overdue is listed first', dues.length === 2 && dues[0].buyerName === 'Sharma Traders', JSON.stringify(dues.map((d) => d.buyerName)));
+    note('totals add up (owed 165500.50, overdue is the one past its due day)', list.json?.totals?.owed === 165500.5 && list.json?.totals?.overdueCount >= 1, JSON.stringify(list.json?.totals));
+    note('interest appears for the registered supplier', (list.json?.totals?.interest || 0) > 0 && dues[0].interest > 0, String(list.json?.totals?.interest));
+    note('the buyer’s contact details are not in the database for model SQL to read', psql(`SELECT has_column_privilege('darex_sql_reader','org_dues','buyer_phone','SELECT')`) === 'f');
+
+    const first = dues[0];
+    const prev = await api(s, 'POST', `/api/dues/${first.id}/remind`, { preview: true });
+    note('a preview shows the draft and sends nothing', prev.status === 200 && /Sharma Traders/.test(prev.json?.message || '') && providerCalls(/messages\/send/).length === 0 && rowCount(s) === 0, JSON.stringify(prev.json).slice(0, 200));
+    note('a formal reminder for a registered supplier names the interest as a figure to confirm', prev.json?.tone === 'formal' && /MSMED/.test(prev.json?.message || '') && /to be confirmed/.test(prev.json?.message || ''), prev.json?.message);
+
+    psql(`UPDATE org_dues SET buyer_phone = NULL, buyer_email = 'sharma@example.test' WHERE id = '${first.id}' RETURNING 1`);
+    const rem = await api(s, 'POST', `/api/dues/${first.id}/remind`, {});
+    note('the reminder waits for approval and nothing is sent', rem.status === 200 && rem.json?.status === 'waiting_for_approval' && providerCalls(/messages\/send/).length === 0, JSON.stringify(rem.json).slice(0, 200));
+    const held = pending(s);
+    note('it appears in Approvals', !!held, 'no pending row');
+    const again = await api(s, 'POST', `/api/dues/${first.id}/remind`, {});
+    note('a second reminder inside 3 days is refused so the buyer is not pestered', again.status === 409 && /waiting/i.test(again.json?.error || ''), JSON.stringify(again.json));
+    if (held) {
+      const d = await decide(s, held, 'approved');
+      note('approving sends exactly one email to the buyer', d.status === 200 && providerCalls(/messages\/send/).length === 1 && /sharma@example\.test/i.test(decodeSend(providerCalls(/messages\/send/)[0])), JSON.stringify(d).slice(0, 200));
+    }
+
+    const paid = await api(s, 'PATCH', `/api/dues/${first.id}`, { status: 'paid', paymentRef: 'UPI-123' });
+    const after = await api(s, 'GET', '/api/dues');
+    note('marking paid takes it out of what is owed', paid.status === 200 && after.json?.totals?.owed === 45500.5 && after.json?.totals?.paidCount === 1, JSON.stringify(after.json?.totals));
+    const paidRemind = await api(s, 'POST', `/api/dues/${first.id}/remind`, { preview: true });
+    note('a paid due is never chased', paidRemind.status === 409, JSON.stringify(paidRemind.json));
+
+    const theirs = await api(other, 'GET', '/api/dues');
+    note('another workspace sees none of it', theirs.status === 200 && (theirs.json?.dues || []).length === 0);
+    const poke = await api(other, 'PATCH', `/api/dues/${first.id}`, { status: 'open' });
+    note('another workspace cannot change it', poke.status === 404, `status=${poke.status}`);
+  } finally { cleanup(s.orgId); cleanup(other.orgId); }
+});
+
 (async () => {
   for (const f of flows) {
     if (ONLY && !f.name.includes(ONLY)) continue;
