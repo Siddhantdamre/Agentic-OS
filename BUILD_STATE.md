@@ -1,5 +1,12 @@
 # Darex Build State
 
+## First piece of getting paid: the rules for money owed to the owner (2026-10-09)
+
+- Audit as a new owner of a business that is not property (an auto-parts supplier, fresh workspace, real browser): nothing in the product is about getting paid. No sidebar item, no Ask AI starter, no page. The sidebar (Inquiries, Listings, Showings) is shaped for property whatever the business sells, and it has about 25 entries. The tools exist but nothing joins them: `razorpay_create_payment_link`, `whatsapp_send`, `sheets_read`, and a rent-charges table that only knows rent.
+- Added `lib/dues-engine.ts`, the rules for money owed to the owner, as pure functions with 16 tests: the day payment is due (the agreed credit period capped at 45 days, or 15 days if none was agreed), days overdue, interest at three times the bank rate with monthly rests (the bank rate is always an input; the screens must tell the owner to check the current RBI figure), and the next reminder step. A reminder is friendly under 8 days, firm to 30 days, formal with the interest mentioned after that, never closer than 3 days to the last one, never sent for something paid, and a disputed due goes to the owner. After 60 days it prepares an escalation pack for the owner to review. Nothing is ever sent without the owner's approval.
+- Source of the rules: the Act's sections as summarised in the research notes for this feature (a secondary source), not checked against the Gazette. Not legal advice; the interest figure is meant for the owner to review before it is used in any notice.
+- Not built yet: the table for dues, the page, the Ask AI starter and tool, reconciliation against Razorpay payments, and the filing pack. Verified: 16 unit tests, tsc and lint clean.
+
 ## Home no longer says the same thing twice (2026-10-08)
 
 - Found in the same read-through: with approvals waiting, the banner at the top of Home said "3 approvals are waiting for you" and the "Today so far" card repeated it twice more ("Something needs you today.", "3 approvals are waiting for you.").
