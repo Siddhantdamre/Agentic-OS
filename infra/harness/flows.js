@@ -501,6 +501,26 @@ flow('F26 money owed: import a list, see the totals, remind through approval, an
   } finally { cleanup(s.orgId); cleanup(other.orgId); }
 });
 
+flow('F27 asking the chat who owes money answers from the real list, shows no contact details, and sends nothing', async () => {
+  const s = seed({ stage: 1, tag: 'f27', tools: ['gmail', 'operations'] }); const other = seed({ stage: 1, tag: 'f27b', tools: ['gmail', 'operations'] }); resetWorld();
+  try {
+    const day = (n) => { const d = new Date(Date.now() - n * 86400000); return `${String(d.getUTCDate()).padStart(2, '0')}/${String(d.getUTCMonth() + 1).padStart(2, '0')}/${d.getUTCFullYear()}`; };
+    const add = await fetch(`${BASE}/api/dues`, { method: 'POST', headers: headers(s), body: JSON.stringify({ text: `Sharma Traders\tINV-118\t120000\t${day(75)}\t30\t9876543210\nPatel Motors\tINV-55\t45500.50\t${day(10)}\t30` }) });
+    note('two dues are recorded', add.status === 200);
+    const r = await ask(s, 'Who owes me money? [[call:dues_list {}]]');
+    const tool = r.events.find((e) => e.type === 'tool' && e.tool === 'dues_list');
+    const said = String(r.done?.answer || '');
+    note('the tool runs on its own, without a card', !!tool && !r.approval, JSON.stringify(r.events.map((e) => e.type)));
+    note('it reports how many are open and how many are late', /2 open, 1 past the due date/.test(said), said.slice(0, 300));
+    note('it returns the real buyers, oldest first, with days late', /Sharma Traders/.test(said) && /Patel Motors/.test(said) && said.indexOf('Sharma Traders') < said.indexOf('Patel Motors') && /"daysLate":45/.test(said), said.slice(0, 300));
+    note('it never returns a phone number or email', !/9876543210|@/.test(said), said.slice(0, 300));
+    note('nothing was sent and nothing is waiting', providerCalls(/messages\/send/).length === 0 && rowCount(s) === 0);
+    const o = await ask(other, 'Who owes me money? [[call:dues_list {}]]');
+    const otherSaid = String(o.done?.answer || '');
+    note('another workspace is told nothing is owed and sees none of it', /Nothing is recorded/.test(otherSaid) && !/Sharma/.test(otherSaid), otherSaid.slice(0, 200));
+  } finally { cleanup(s.orgId); cleanup(other.orgId); }
+});
+
 (async () => {
   for (const f of flows) {
     if (ONLY && !f.name.includes(ONLY)) continue;

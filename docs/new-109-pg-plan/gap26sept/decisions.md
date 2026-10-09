@@ -44,6 +44,7 @@
 | 38 | An owner with a list of overdue invoices had no way to bring it in or to word a polite reminder. | P1 | `apps/dashboard/lib/dues-text.ts` | 🟡 Partly | Paste reader and reminder wording (3 tones, English and Roman Hindi) are tested (13). The API and page that use them are still to do. |
 | 39 | The dues table had no way in or out. | P1 | `apps/dashboard/app/api/dues/`, `apps/dashboard/lib/dues-view.ts` | 🟡 Partly | Import, list with totals, mark paid, settings and reminder-through-approval work; flow F26 16 of 16. No page, no Ask AI tool yet. |
 | 40 | An owner had no screen to see who owes them money, how late, or to ask politely. | P1 | `apps/dashboard/app/(dashboard)/dues/page.tsx`, `apps/dashboard/components/shell/AppShell.tsx` | 🟡 Partly | Page works end to end in a real browser (paste, totals, interest, Hindi or English draft, approval, one email, mark paid, phone width). Ask AI tool, payment link and automatic payment matching still to do. |
+| 41 | The chat could not answer "who owes me money?" because nothing connected it to the list. | P1 | `services/workflows/src/tools/operations.ts`, `services/workflows/src/tool-definitions.ts`, `apps/dashboard/lib/ask-ai-welcome.ts` | 🟢 Done | `dues_list` read tool plus an always-present starter; flow F27 7 of 7; green in the chat-coverage matrix. The wording a real model gives is not verified. |
 
 ## Status: working (approve executes parked tools; autonomy card/summary fixed; RBAC/dual-auth/sweep/history on `/api/decisions`)
 

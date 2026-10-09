@@ -64,6 +64,8 @@ const ALWAYS: Starter[] = [
   { label: 'What can you do for me?', prompt: 'What can you do for my business today, and what would I need to connect to unlock more?' },
 ];
 
+const WHO_OWES: Starter = { label: 'Who owes me money?', prompt: 'Who owes me money right now? List the oldest unpaid first, with how many days late each one is and the total.' };
+
 const WITH_APP: Array<{ needs: string[]; starter: Starter }> = [
   { needs: ['gmail', 'outlook', 'email'], starter: { label: 'Reply to my latest emails', prompt: 'Show my latest unanswered emails and write a reply to each one for me to approve.' } },
   { needs: ['whatsapp'], starter: { label: 'Catch up on WhatsApp', prompt: 'Show the WhatsApp chats that are waiting for a reply and draft answers for me to approve.' } },
@@ -76,5 +78,7 @@ const WITH_APP: Array<{ needs: string[]; starter: Starter }> = [
 export function starterPrompts(channels: string[]): Starter[] {
   const have = new Set(channels.map((c) => String(c || '').toLowerCase()));
   const app = WITH_APP.filter((s) => s.needs.some((n) => have.has(n))).map((s) => s.starter);
-  return [...app, ...ALWAYS].slice(0, 4);
+  // Two connected-app tasks at most, then "what needs me" and "who owes me money", which every business needs.
+  const [needsMe, ...rest] = ALWAYS;
+  return [...app.slice(0, 2), needsMe, WHO_OWES, ...rest].slice(0, 4);
 }

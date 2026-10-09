@@ -49,6 +49,7 @@ function intentPriorityKeys(employeeRole?: string, userMessage?: string): Set<st
     [/apollo|enrich|lead/i, 'apollo'],
     [/linkedin/i, 'linkedin'],
     [/shopify|product|order/i, 'shopify'],
+    [/owe|owes|overdue|unpaid|dues|receivable|outstanding|payment.*late|late.*payment/i, 'operations'],
     [/zendesk|ticket/i, 'zendesk'],
     [/intercom/i, 'intercom'],
     [/whatsapp/i, 'whatsapp'],

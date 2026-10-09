@@ -1,5 +1,12 @@
 # Darex Build State
 
+## Ask AI can say who owes the owner money (2026-10-09)
+
+- New read-only chat tool `dues_list` (inside the operations tool): open and disputed dues oldest first with days late, plus the totals, in the same words the Money owed page uses. It returns buyer names, invoice numbers, amounts and dates and never a phone number or email. It runs on its own, with no approval card, because it only reads. Sending a reminder stays on the Money owed page and in Approvals.
+- The Ask AI welcome now always offers "Who owes me money?" as one of its four starters, after at most two connected-app tasks and "What needs me today?"; before, a workspace with several apps connected would never have seen it. The chat picks the tool up when a message talks about money owed, overdue or unpaid.
+- Verified: flow F27 passes 7 of 7 against the real server and database (two dues recorded, the tool runs without a card, "2 open, 1 past the due date", buyers oldest first with 45 days late, no phone or email in the answer, nothing sent and nothing waiting, another workspace is told nothing is owed and sees none of it); workflows tests 577 pass; 8 welcome tests (1 new). In the chat-coverage matrix the tool is green because it was probed through the chat; the four Money owed actions that change data stay red.
+- Not verified: how a real model words the answer. The stand-in model repeats the tool result.
+
 ## A page for money owed to you, in the sidebar (2026-10-09)
 
 - New page "Money owed to you" (first item in the Work group of the sidebar and in the phone menu). Three totals at the top (owed, late, interest you may claim), a box to paste a list, a short form for the bank rate and whether the business is a registered small supplier, and one card per due: buyer, invoice, amount, a pill ("45 days late", "Due 29 Oct 2026", Paid, Disputed), the plain next step, and the actions Write a reminder, They paid, They dispute this, Reopen. A reminder opens an editable draft with an English or Hindi (in English letters) switch and the button "Send for my approval"; it lands in Approvals and nothing reaches the buyer before a person says yes.

@@ -32,6 +32,7 @@ const ACTIONS = [
   'work_item_set_priority',
   'list_discrepancies',
   'rent_reminders_list',
+  'dues_list',
 ] as const;
 
 const PRIORITIES = ['low', 'normal', 'high', 'urgent'] as const;
@@ -571,6 +572,63 @@ async function execute(ctx: ToolActionContext) {
       },
       timestamp,
     };
+  }
+
+  if (normalized === 'dues_list') {
+    const limit = Math.min(Math.max(typeof payload.limit === 'number' ? Math.floor(payload.limit) : 20, 1), 50);
+    return withOrgScopedClient(orgId, async (client) => {
+      try {
+        const res = await client.query(
+          `SELECT buyer_name, invoice_no, amount::float8 AS amount, currency, due_date::text AS due_date, status,
+                  GREATEST(0, (CURRENT_DATE - due_date))::int AS days_late
+             FROM org_dues
+            WHERE org_id = $1 AND status <> 'paid'
+            ORDER BY due_date ASC, created_at ASC
+            LIMIT $2`,
+          [orgId, limit]
+        );
+        const totals = await client.query(
+          `SELECT COALESCE(SUM(amount), 0)::float8 AS owed,
+                  COALESCE(SUM(amount) FILTER (WHERE due_date < CURRENT_DATE), 0)::float8 AS overdue,
+                  COUNT(*)::int AS open_count,
+                  COUNT(*) FILTER (WHERE due_date < CURRENT_DATE)::int AS overdue_count
+             FROM org_dues WHERE org_id = $1 AND status <> 'paid'`,
+          [orgId]
+        );
+        const t = totals.rows[0] || { owed: 0, overdue: 0, open_count: 0, overdue_count: 0 };
+        return {
+          tool: 'operations',
+          action: 'dues_list',
+          status: 'executed' as const,
+          message:
+            t.open_count === 0
+              ? 'Nothing is recorded as owed to this business. The owner can add a list on the Money owed page.'
+              : `${t.open_count} open, ${t.overdue_count} past the due date.`,
+          data: {
+            dues: res.rows.map((r) => ({
+              buyer: r.buyer_name,
+              invoiceNo: r.invoice_no,
+              amount: r.amount,
+              currency: r.currency,
+              dueDate: r.due_date,
+              daysLate: r.days_late,
+              status: r.status,
+            })),
+            totalOwed: t.owed,
+            totalOverdue: t.overdue,
+            openCount: t.open_count,
+            overdueCount: t.overdue_count,
+            page: 'Money owed',
+          },
+          timestamp,
+        };
+      } catch (err) {
+        if (isUndefinedTable(err)) {
+          return { tool: 'operations', action: 'dues_list', status: 'executed' as const, message: 'Nothing is recorded as owed to this business.', data: { dues: [], page: 'Money owed' }, timestamp };
+        }
+        throw err;
+      }
+    });
   }
 
   if (normalized === 'rent_reminders_list') {

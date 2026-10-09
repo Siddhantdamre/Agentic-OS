@@ -1650,6 +1650,17 @@ export const TOOLS: ToolDef[] = [
     action: 'rent_reminders_list',
   },
   {
+    name: 'dues_list',
+    description:
+      'Read-only: list what customers owe this business (open and disputed invoices), oldest first, with how many days late each is and the totals. Returns buyer names and amounts only, never phone numbers or emails. To send a reminder the owner uses the Money owed page. Never invents dues.',
+    schema: {
+      org_id: z.string(),
+      limit: z.number().optional(),
+    },
+    tool: 'operations',
+    action: 'dues_list',
+  },
+  {
     name: 'connectors_status',
     description:
       'Read-only: check which connectors this org has connected. Probes the live OAuth connection (connected:true only when verified) and returns a /connectors link for anything not connected. Optional connector key checks one. Cannot connect or disconnect — those stay on the Connectors page.',

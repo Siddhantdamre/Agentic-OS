@@ -54,6 +54,14 @@ describe('starter prompts', () => {
     expect(s.some((x) => /calendar|tomorrow|schedule/i.test(x.label + x.prompt))).toBe(true);
   });
 
+  it('always offers to say who owes the owner money, however many apps are connected', () => {
+    for (const ch of [[], ['gmail'], ['gmail', 'google-calendar', 'hubspot', 'whatsapp', 'google-ads']]) {
+      const s = starterPrompts(ch);
+      expect(s.length).toBe(4);
+      expect(s.some((x) => /owes me money/i.test(x.label))).toBe(true);
+    }
+  });
+
   it('does not offer an app task for an app that is not connected', () => {
     const labels = starterPrompts([]).map((x) => x.label + x.prompt).join(' ');
     expect(labels).not.toMatch(/Gmail|HubSpot|Calendar|Ads/i);
