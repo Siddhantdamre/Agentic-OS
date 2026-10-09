@@ -1,5 +1,11 @@
 # Darex Build State
 
+## Reading a pasted list of dues and writing the reminder (2026-10-09)
+
+- `lib/dues-text.ts`: `parseDuesPaste` reads dues pasted from a spreadsheet or typed one per line (buyer, invoice number, amount, invoice date, credit days, phone), with tabs, pipes, semicolons or commas, amounts like `1,20,000` or `₹ 45,500.50`, dates as `12/08/2026`, `12-08-26` or `2026-08-12`, and a header row skipped. A line it cannot read gets one plain sentence naming the line and the problem ("Line 2: I could not read the amount \"abc\"."); the good lines are still kept. Future-dated invoices, zero amounts and more than 200 lines are refused.
+- `draftReminder` writes the WhatsApp-ready draft in three tones, in English or Roman Hindi. Friendly and firm never threaten, blame or mention legal action. The statutory interest appears only in the formal tone, only when the owner has said the business is a registered small supplier, and as a figure to confirm. The payment link is added only when there is one.
+- Verified: 13 unit tests, tsc and lint clean. No screen uses these yet.
+
 ## A place to record who owes the owner money (2026-10-09)
 
 - Migration 212 adds `org_dues`: one row per amount a buyer owes the workspace (buyer, optional phone and email, invoice number, amount, invoice date, agreed credit days, due date, open / paid / disputed, when last reminded and how many times). Paid is only set by the owner or a matched payment; a buyer saying they paid does not close it, the same rule as rent charges.

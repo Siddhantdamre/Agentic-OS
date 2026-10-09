@@ -41,6 +41,7 @@
 | 35 | Home repeated "approvals are waiting" three times (banner plus the new summary card). | P3 | `apps/dashboard/lib/owner-digest.ts` | 🟢 Done | The summary card reports only what happened; the banner owns waiting approvals. 7 unit tests; real browser shows it once. |
 | 36 | Nothing in the product helps an owner get paid, although late payment is the largest recurring money problem for small suppliers in the research notes. | P1 | `apps/dashboard/lib/dues-engine.ts` | 🔴 Open | The rules (due day, days overdue, interest, next reminder) exist and are tested (16). No table, page, chase flow or reconciliation yet. |
 | 37 | There was nowhere to record who owes the owner money. | P1 | `infra/db/migrations/212_org_dues.sql`, `services/workflows/src/dsr/tables.ts` | 🟡 Partly | Table with forced row-level security, erasure registration and column-limited reader access; isolation check 11 of 11, SQL guard 41 of 41. API, page and chase flow still to do. |
+| 38 | An owner with a list of overdue invoices had no way to bring it in or to word a polite reminder. | P1 | `apps/dashboard/lib/dues-text.ts` | 🟡 Partly | Paste reader and reminder wording (3 tones, English and Roman Hindi) are tested (13). The API and page that use them are still to do. |
 
 ## Status: working (approve executes parked tools; autonomy card/summary fixed; RBAC/dual-auth/sweep/history on `/api/decisions`)
 
