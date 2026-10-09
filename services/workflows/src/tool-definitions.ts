@@ -29,6 +29,22 @@ export const TOOLS: ToolDef[] = [
     action: 'list_messages',
   },
   {
+    name: 'instagram_list_messages',
+    description:
+      'Read recent Instagram DMs received and sent on the org account, newest first. Pass contact_id (numeric IGSID) to read one contact\'s chat.',
+    schema: { org_id: z.string(), contact_id: z.string().optional(), limit: z.number().optional() },
+    tool: 'instagram',
+    action: 'list_messages',
+  },
+  {
+    name: 'instagram_send',
+    description:
+      'Reply to an Instagram DM. contact_id is the numeric IGSID from instagram_list_messages. Only works within 24 hours of the contact\'s last message. Goes to a human for approval first.',
+    schema: { org_id: z.string(), contact_id: z.string(), message: z.string() },
+    tool: 'instagram',
+    action: 'send_dm',
+  },
+  {
     name: 'gmail_fetch',
     description:
       'Fetch or search emails in the org-connected Gmail inbox. Pass query in Gmail search syntax ' +

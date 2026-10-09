@@ -256,6 +256,18 @@
 - One touch-only rule in `app/globals.css` (`@media (pointer: coarse)`, so desktop is unchanged) gives `.touch-target` a 44 px minimum height and width, and those five controls carry the class.
 - Proof: `touch-targets.test.ts` (6 tests); the same browser run now finds 22 controls under 24 px (from 143) and 340 under 44 px (from 461).
 - Not fixed: the remaining 22 (small links in cards, two 13 px checkboxes) and the 340 that are under the comfortable 44 px, mostly dense lists and chips. Not verified: real devices (Chromium touch emulation only).
+## Chat coverage matrix exists and CI keeps it complete (2026-10-09)
+
+- `AGENTS.md` and the ASK-G01 audit row pointed at `gap26sept/chat-coverage.md`, which did not exist, so nothing tracked whether every tool and tab action can be done from Ask AI. `services/workflows/src/scripts/chat-coverage.ts` (`pnpm --filter @darex/workflows chat-coverage`, after a build) now writes it: one row per chat tool (154, with provider action, risk and whether approval is required) and one per mutating dashboard API route a tab calls (83; webhooks, auth, the chat itself, the public widget and platform admin excluded). Regeneration keeps any status cell edited by hand, and new rows start 🔴.
+- `chat-coverage.test.ts` (in the workflows test run) fails when a tool or route has no row or a row is stale, and checks that hand-set statuses survive regeneration.
+- Every row is 🔴: none has been proved live from `/ask-ai` yet. Tab-action rows don't yet name the chat tool that covers them.
+- Verified: workflows tests pass, including the 2 new ones. This change is docs and tooling only; runtime behaviour is unchanged.
+
+## Instagram DMs read and reply from Ask AI (2026-10-09)
+
+- Chat had no Instagram tools: inbound DMs reached the inbox and the auto-reply agent, but Ask AI could neither read them nor answer one. New `instagram` tool module with `instagram_list_messages` (stored DMs, `messages.channel_key = 'instagram'`, RLS-scoped, optionally one contact by IGSID) and `instagram_send` (Graph `/{ig_user_id}/messages`, send-risk, approval first). Credentials come from the connected `instagram` channel meta (same keys as `channel-outbound.ts`), else `META_ACCESS_TOKEN`; a connected channel puts the tool on the turn allowlist through `mergeRuntimeAllowlist`.
+- The send refuses outside Meta's 24-hour window (no inbound DM from that contact in 24 h) and refuses a recipient id that is not a numeric IGSID before anything reaches a Graph URL. Inbound HITL and dashboard confirm classes treat it as a send.
+- Verified: 487 `@darex/workflows` tests (new cases in `messaging-actions.test.ts`: IGSID validation, risk of both actions, tool-to-action wiring) and 625 dashboard tests, dashboard typecheck. Not verified: a live list or send against a real Instagram account. A chat-sent DM is not written back to `messages` (the WhatsApp chat send behaves the same).
 
 ## Outlook, Slack and WhatsApp read and reply from Ask AI (2026-10-06)
 

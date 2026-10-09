@@ -3,6 +3,7 @@ import test from 'node:test';
 import { outlookListUrl, outlookMessagePath } from './microsoft-outlook.js';
 import { slackTs } from './slack.js';
 import { phoneKey } from './whatsapp.js';
+import { igRecipientId } from './instagram.js';
 import { resolveCallRisk } from '../tool-executor.js';
 import { TOOLS } from '../tool-definitions.js';
 
@@ -62,4 +63,19 @@ test('every new chat tool is defined against its provider action', () => {
   assert.equal(byName.get('slack_read_thread'), 'slack.read_thread');
   assert.equal(byName.get('slack_reply_thread'), 'slack.send_reply');
   assert.equal(byName.get('whatsapp_list_messages'), 'whatsapp.list_messages');
+});
+
+test('instagram recipient ids must be numeric IGSIDs', () => {
+  assert.equal(igRecipientId(' 17841400000000001 '), '17841400000000001');
+  assert.equal(igRecipientId('../me/messages'), null);
+  assert.equal(igRecipientId('1234'), null);
+  assert.equal(igRecipientId(undefined), null);
+});
+
+test('instagram chat tools read and send at the right risk', () => {
+  assert.deepEqual(resolveCallRisk('instagram', 'list_messages'), { risk: 'read', confirm: false });
+  assert.deepEqual(resolveCallRisk('instagram', 'send_dm'), { risk: 'send', confirm: true });
+  const byName = new Map(TOOLS.map((t) => [t.name, `${t.tool}.${t.action}`]));
+  assert.equal(byName.get('instagram_list_messages'), 'instagram.list_messages');
+  assert.equal(byName.get('instagram_send'), 'instagram.send_dm');
 });

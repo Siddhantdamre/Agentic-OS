@@ -12,6 +12,7 @@ import { gmail } from './gmail.js';
 import { googleCalendar } from './google-calendar.js';
 import { github } from './github.js';
 import { whatsapp } from './whatsapp.js';
+import { instagram } from './instagram.js';
 import { hubspot } from './hubspot.js';
 import { metaAds } from './meta-ads.js';
 import { googleAds } from './google-ads.js';
@@ -76,6 +77,7 @@ export const TOOL_MODULES = {
   googleCalendar,
   github,
   whatsapp,
+  instagram,
   hubspot,
   metaAds,
   googleAds,
@@ -134,6 +136,7 @@ export const PROVIDER_KEYS = [
   'google-calendar',
   'github',
   'whatsapp',
+  'instagram',
   'hubspot',
   'meta-ads',
   'google-ads',
@@ -233,6 +236,8 @@ export function moduleForProvider(key: ProviderKey): ToolModule {
       return github;
     case 'whatsapp':
       return whatsapp;
+    case 'instagram':
+      return instagram;
     case 'hubspot':
       return hubspot;
     case 'meta-ads':

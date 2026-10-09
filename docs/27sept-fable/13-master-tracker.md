@@ -5,8 +5,8 @@
 > | Status | Count | Percentage |
 > |---|:---:|:---:|
 > | 🟢 **Done (Verified)** | 28 | 4.7% |
-> | 🟡 **Pending / In Progress** | 34 | 5.7% |
-> | 🔴 **Not Done (Open)** | 538 | 89.5% |
+> | 🟡 **Pending / In Progress** | 35 | 5.8% |
+> | 🔴 **Not Done (Open)** | 537 | 89.4% |
 > | ⛔ **Blocked (Human/Infra)** | 1 | 0.2% |
 > | **Total Findings** | **601** | **100.0%** |
 
@@ -47,7 +47,7 @@ Counts at audit time: **600 findings** (ASK 47 · EMP 50 · RT 62 · MEM 51 · C
 | ASK-S08 | P1 | Persona claims connection-gated tools are core; "never ask permission" | `route.ts:83-97` | 4.5 | 🔴 |
 | ASK-S09 | P2 | Any member promotes any plan to playbook | `feedback/route.ts:114-128` | 4.5 | 🔴 |
 | ASK-S10 | P2 | Memory/prior turns injected unfenced | `trueforge-client.ts:281-322` | 4.5 | 🔴 |
-| ASK-G01 | P0 | `chat-coverage.md` does not exist | — | 2.1 | 🔴 |
+| ASK-G01 | P0 | `chat-coverage.md` does not exist | — | 2.1 | 🟡 (2026-10-09: `gap26sept/chat-coverage.md` generated from the tool catalog (154) and mutating tab routes (83) by `services/workflows/src/scripts/chat-coverage.ts`; `chat-coverage.test.ts` fails CI when a tool or route has no row. Every row is 🔴 until proved live from `/ask-ai`) |
 | ASK-G02 | P0 | One "Approve & Execute" for whole plan; no per-step risk/employee/preview | `plan/route.ts:96-163` | 2.2 | 🔴 |
 | ASK-G03 | P1 | Steps execute as org, not assigned employee | `ask-mode.ts:356-392` vs `execute:403` | 1.4 | 🟢 (2026-09-28: `resolvePlanStepActor` resolves stamped `employeeId`/`employeeRole` per step, loading card allowlist and persona filters before executing step) |
 | ASK-G04 | P1 | Auto-crew from chat keyword-only | `route.ts:760-778` | 2.3 | 🔴 |

@@ -5,8 +5,8 @@
 > | Status | Count | Percentage |
 > |---|:---:|:---:|
 > | 🟢 **Done (Verified)** | 10 | 21.3% |
-> | 🟡 **Pending / In Progress** | 1 | 2.1% |
-> | 🔴 **Not Done (Open)** | 36 | 76.6% |
+> | 🟡 **Pending / In Progress** | 2 | 4.3% |
+> | 🔴 **Not Done (Open)** | 35 | 74.5% |
 > | ⛔ **Blocked (Human/Infra)** | 0 | 0.0% |
 > | **Total Findings** | **47** | **100.0%** |
 
@@ -70,7 +70,7 @@ Audit date 2026-09-27, read-only. Scope: `apps/dashboard/app/api/ask-ai/**`, `ap
 
 | ID | Sev | Evidence | Enterprise-complete | Status |
 |---|---|---|---|---|
-| ASK-G01 | P0 | `gap26sept/chat-coverage.md` not found | Matrix: one row per tool (109) and per tab action, each proved live from `/ask-ai`; CI check that new tools add a row. | 🔴 |
+| ASK-G01 | P0 | `gap26sept/chat-coverage.md` not found | Matrix: one row per tool (109) and per tab action, each proved live from `/ask-ai`; CI check that new tools add a row. | 🟡 (2026-10-09: `gap26sept/chat-coverage.md` generated from the tool catalog (154) and mutating tab routes (83) by `services/workflows/src/scripts/chat-coverage.ts`; `chat-coverage.test.ts` fails CI when a tool or route has no row. Every row is 🔴 until proved live from `/ask-ai`) |
 | ASK-G02 | P0 | `plan/route.ts:96-163`; `PlanCard.tsx:224-233` | One "Approve & Execute" for the whole plan; no per-step risk badge, employee badge, or per-step approve with argument preview. | 🔴 |
 | ASK-G03 | P1 | `ask-mode.ts:356-392` stamps `employeeId` per step; `execute/route.ts:403-414`, `orchestration.ts:311-317` ignore it | Steps execute as "org", not as the assigned employee (no persona, allowlist, tier). | 🟢 (2026-09-28: `resolvePlanStepActor` resolves stamped `employeeId`/`employeeRole` per step, loading card allowlist and persona filters before executing step) |
 | ASK-G04 | P1 | `route.ts:760-778` heuristic only; `planCrew` LLM only from `/api/agent/crew` | Auto-crew from chat is keyword-only. | 🔴 |
