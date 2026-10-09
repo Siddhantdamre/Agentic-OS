@@ -76,6 +76,12 @@ describe('draftReminder', () => {
       expect(draftReminder({ ...base, tone })).not.toMatch(/legal action|court|police|fraud|cheat|immediately|final notice/i);
     }
   });
+  it('keeps the whole formal Hindi reminder in Hindi, interest sentence included', () => {
+    const t = draftReminder({ ...base, tone: 'formal', interest: 4170.5, msmeRegistered: true, language: 'hinglish' });
+    expect(t).toMatch(/MSMED Act/);
+    expect(t).toMatch(/₹4,170\.50/);
+    expect(t).not.toMatch(/we are entitled|registered small supplier we/i);
+  });
   it('can be written in Hindi (Roman script) too', () => {
     const t = draftReminder({ ...base, tone: 'friendly', language: 'hinglish' });
     expect(t).toMatch(/Namaste/);

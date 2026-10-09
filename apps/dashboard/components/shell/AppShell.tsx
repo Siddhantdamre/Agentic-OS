@@ -32,6 +32,7 @@ import {
   ClipboardCheck,
   CalendarDays,
   ChevronDown,
+  HandCoins,
 } from 'lucide-react';
 import { BottomTabs } from '@/components/a11y';
 import { SystemDegradationBanner } from '@/components/SystemDegradationBanner';
@@ -58,6 +59,7 @@ const NAV_GROUPS: Array<{ id: string; label: string | null; items: NavItem[] }> 
     id: 'work',
     label: 'Work',
     items: [
+      { href: '/dues', label: 'Money owed', icon: HandCoins },
       { href: '/work-items', label: 'Work Items', icon: CheckSquare },
       { href: '/plans', label: 'Plans', icon: ListChecks },
       { href: '/inquiries', label: 'Inquiries', icon: Inbox },

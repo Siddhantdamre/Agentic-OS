@@ -21,6 +21,7 @@ const TABS = [
 ] as const;
 
 const MORE = [
+  { href: '/dues', label: 'Money owed' },
   { href: '/employees', label: 'Employees' },
   { href: '/brief', label: 'Brief' },
   { href: '/insight', label: 'Insight' },

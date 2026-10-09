@@ -121,9 +121,12 @@ export function draftReminder(i: ReminderInput): string {
   const amt = formatRupees(i.amount);
   const due = formatDay(i.dueDate);
   const link = i.payLink ? (i.language === 'hinglish' ? `Payment yahan kar sakte hain: ${i.payLink}` : `You can pay here: ${i.payLink}`) : '';
-  const interestLine = i.tone === 'formal' && i.msmeRegistered && i.interest > 0
-    ? `As a registered small supplier we are entitled to interest under the MSMED Act, 2006. On this invoice it comes to about ${formatRupees(i.interest)} so far (to be confirmed).`
-    : '';
+  const interestOwed = i.tone === 'formal' && i.msmeRegistered && i.interest > 0;
+  const interestLine = !interestOwed
+    ? ''
+    : i.language === 'hinglish'
+      ? `Registered chhote supplier hone ke naate hum MSMED Act, 2006 ke tahat byaaj ke haqdaar hain. Is invoice par ab tak lagbhag ${formatRupees(i.interest)} banta hai (pushti baaki).`
+      : `As a registered small supplier we are entitled to interest under the MSMED Act, 2006. On this invoice it comes to about ${formatRupees(i.interest)} so far (to be confirmed).`;
 
   if (i.language === 'hinglish') {
     const body =

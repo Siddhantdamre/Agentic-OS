@@ -43,6 +43,7 @@
 | 37 | There was nowhere to record who owes the owner money. | P1 | `infra/db/migrations/212_org_dues.sql`, `services/workflows/src/dsr/tables.ts` | 🟡 Partly | Table with forced row-level security, erasure registration and column-limited reader access; isolation check 11 of 11, SQL guard 41 of 41. API, page and chase flow still to do. |
 | 38 | An owner with a list of overdue invoices had no way to bring it in or to word a polite reminder. | P1 | `apps/dashboard/lib/dues-text.ts` | 🟡 Partly | Paste reader and reminder wording (3 tones, English and Roman Hindi) are tested (13). The API and page that use them are still to do. |
 | 39 | The dues table had no way in or out. | P1 | `apps/dashboard/app/api/dues/`, `apps/dashboard/lib/dues-view.ts` | 🟡 Partly | Import, list with totals, mark paid, settings and reminder-through-approval work; flow F26 16 of 16. No page, no Ask AI tool yet. |
+| 40 | An owner had no screen to see who owes them money, how late, or to ask politely. | P1 | `apps/dashboard/app/(dashboard)/dues/page.tsx`, `apps/dashboard/components/shell/AppShell.tsx` | 🟡 Partly | Page works end to end in a real browser (paste, totals, interest, Hindi or English draft, approval, one email, mark paid, phone width). Ask AI tool, payment link and automatic payment matching still to do. |
 
 ## Status: working (approve executes parked tools; autonomy card/summary fixed; RBAC/dual-auth/sweep/history on `/api/decisions`)
 
