@@ -136,51 +136,6 @@ WhatsApp inbound → persist message + conversation (fast) → return 200 immedi
 
 ---
 
-## 6. Git Commit Workflow & Mandatory Policy
+## 6. Git Commit Workflow
 
-You must create **frequent, meaningful Git commits** throughout development.
-Do **NOT** wait until the entire feature, task, or project is finished before committing.
-The goal is to keep the Git history clean, traceable, and easy to revert.
-
-### 1. Commit After Every Completed Feature
-Whenever you complete a distinct feature, functionality, module, fix, or meaningful implementation step, create a Git commit immediately. Each commit should represent **one logical change**.
-
-### 2. Do Not Combine Unrelated Changes
-Avoid large commits containing multiple unrelated features. Split them into logical conventional commits.
-
-### 3. Commit Naming Convention
-Use Conventional Commits: `<type>(<scope>): <short description>`.
-Types: `feat`, `fix`, `refactor`, `test`, `docs`, `chore`, `perf`, `style`, `build`, `ci`.
-
-### 4. Before Every Commit
-Inspect changes via `git status` and `git diff`. Make sure:
-- Only relevant files are included.
-- No secrets or credentials (`.env`, `*.pem`, `*.key`, tokens, passwords) are committed.
-- Temporary / debug files are omitted.
-- Stage specific files via `git add <relevant-files>`, avoiding blind `git add .`.
-
-### 5. Verify Before Committing
-Run project checks before committing (`npm test`, `npm run lint`, `npm run build`, etc.). Do not commit known broken code unless specifically designated as a WIP checkpoint.
-
-### 6. Commit Immediately After the Feature
-Once verified: `git add <files>` && `git commit -m "feat(scope): description"`. Do not accumulate completed features.
-
-### 7. Keep Commits Atomic
-A commit must answer: *"What single logical change does this commit introduce?"*
-
-### 8. Multi-Part Features
-Break multi-part implementations into granular commits (e.g. models → API → provider integration → UI → tests → edge case fixes).
-
-### 9. Do Not Rewrite Existing History
-No destructive Git operations (`git reset --hard`, `git push --force`, history squashing/rewriting) unless explicitly requested.
-
-### 10. Check Git State Before Starting Work
-Check `git status`, `git branch --show-current`, and `git log --oneline -10`. Never overwrite or discard existing uncommitted user changes.
-
-### 11. Never Commit Secrets
-Never commit `.env*`, keys, tokens, credentials, or certificates. Handle discovered secrets safely.
-
-### 12. End-of-Task Git Check
-Confirm `git status` and `git log --oneline -10`: all completed logical features have clean, well-described commits and the tree is clean.
-
-**Core Rule: One meaningful feature/fix = one meaningful Git commit.**
+Full rules live in `CLAUDE.md` §1-3 (attribution, one concern per commit, branch and push). Short form: Conventional Commits `<type>(<scope>): <what>`, one feature per commit, stage paths explicitly, never commit secrets, never rewrite shared history.
