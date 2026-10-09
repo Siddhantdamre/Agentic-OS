@@ -1,5 +1,12 @@
 # Darex Build State
 
+## A place to record who owes the owner money (2026-10-09)
+
+- Migration 212 adds `org_dues`: one row per amount a buyer owes the workspace (buyer, optional phone and email, invoice number, amount, invoice date, agreed credit days, due date, open / paid / disputed, when last reminded and how many times). Paid is only set by the owner or a matched payment; a buyer saying they paid does not close it, the same rule as rent charges.
+- Tenant isolation: row-level security forced with the usual hardened policy. It holds personal data, so it is registered in the erasure list (`dsr/tables.ts`), and model-written SQL may read only the business columns (name, amount, dates, status); phone, email and the note are withheld at column level.
+- Verified: applies to the sandbox database and re-runs as a no-op; `check-rls-coverage.js` 11 of 11 (it failed 1 of 11 until the reader-role decision was made, which is what it exists to force); `check-database-query.js` 41 of 41; the erasure-list test passes; the reader role can see `buyer_name` and cannot see `buyer_phone`.
+- Nothing reads or writes the table yet: the API, page and chase flow follow.
+
 ## First piece of getting paid: the rules for money owed to the owner (2026-10-09)
 
 - Audit as a new owner of a business that is not property (an auto-parts supplier, fresh workspace, real browser): nothing in the product is about getting paid. No sidebar item, no Ask AI starter, no page. The sidebar (Inquiries, Listings, Showings) is shaped for property whatever the business sells, and it has about 25 entries. The tools exist but nothing joins them: `razorpay_create_payment_link`, `whatsapp_send`, `sheets_read`, and a rent-charges table that only knows rent.

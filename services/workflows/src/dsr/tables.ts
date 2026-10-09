@@ -80,6 +80,7 @@ export const CUSTOMER_DATA_TABLES = [
   're_listings',
   'pm_charges',
   'pm_leases',
+  'org_dues',
 ] as const;
 
 /**

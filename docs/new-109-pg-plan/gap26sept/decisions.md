@@ -40,6 +40,7 @@
 | 34 | Several pages spoke in developer language ("gated by the real-estate pack", "Kanban of real inquiry work items", typed paths like /connectors, "Semantic metrics", "use the BYOK form"). | P2 | `apps/dashboard/app/(dashboard)/{listings,showings,inquiries,insight,integrations}/page.tsx`, `apps/dashboard/components/re/SchedulePanel.tsx` | 🟢 Done | Contract flagged 35 places and now passes; the pages read in business words in a real browser; the contract keeps them out. |
 | 35 | Home repeated "approvals are waiting" three times (banner plus the new summary card). | P3 | `apps/dashboard/lib/owner-digest.ts` | 🟢 Done | The summary card reports only what happened; the banner owns waiting approvals. 7 unit tests; real browser shows it once. |
 | 36 | Nothing in the product helps an owner get paid, although late payment is the largest recurring money problem for small suppliers in the research notes. | P1 | `apps/dashboard/lib/dues-engine.ts` | 🔴 Open | The rules (due day, days overdue, interest, next reminder) exist and are tested (16). No table, page, chase flow or reconciliation yet. |
+| 37 | There was nowhere to record who owes the owner money. | P1 | `infra/db/migrations/212_org_dues.sql`, `services/workflows/src/dsr/tables.ts` | 🟡 Partly | Table with forced row-level security, erasure registration and column-limited reader access; isolation check 11 of 11, SQL guard 41 of 41. API, page and chase flow still to do. |
 
 ## Status: working (approve executes parked tools; autonomy card/summary fixed; RBAC/dual-auth/sweep/history on `/api/decisions`)
 
