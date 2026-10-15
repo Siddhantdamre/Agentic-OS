@@ -812,6 +812,7 @@ function ConversationsPageInner() {
                   </span>
                   <StatusBadge
                     label={conv.status.replace(/_/g, ' ')}
+                    className={conv.status === 'open' ? '!text-emerald-300' : ''}
                     tone={
                       conv.status === 'open'
                         ? 'success'
@@ -956,7 +957,7 @@ function ConversationsPageInner() {
                                 ? 'Human Agent'
                                 : `AI (${activeConv.employee_name || 'Sarah'})`}
                         </span>
-                        <span suppressHydrationWarning className="text-[10px] text-emerald-600 font-mono">
+                        <span suppressHydrationWarning className="text-[10px] text-emerald-700 font-mono">
                           {new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                         </span>
                       </div>
@@ -1119,7 +1120,7 @@ function ConversationsPageInner() {
       ) : (
         <div className="flex-1 flex items-center justify-center text-center p-8 bg-[#121917]">
           <div className="max-w-md space-y-4">
-            <MessageSquare className="w-12 h-12 text-emerald-600 mx-auto" />
+            <MessageSquare className="w-12 h-12 text-emerald-700 mx-auto" />
             <h3 className="text-lg font-bold text-emerald-100 font-serif">No Conversation Selected</h3>
             <p className="text-xs text-emerald-500">
               Select a conversation from the list or start a new test chat to test live AI responses.

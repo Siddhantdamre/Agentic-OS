@@ -181,7 +181,7 @@ function RegisterForm() {
 
         <div className="relative flex py-0.5 items-center">
           <div className="flex-grow border-t border-emerald-950"></div>
-          <span className="flex-shrink mx-3 text-[10px] text-emerald-600 font-semibold uppercase">Or register with email</span>
+          <span className="flex-shrink mx-3 text-[10px] text-emerald-400 font-semibold uppercase">Or register with email</span>
           <div className="flex-grow border-t border-emerald-950"></div>
         </div>
       </div>

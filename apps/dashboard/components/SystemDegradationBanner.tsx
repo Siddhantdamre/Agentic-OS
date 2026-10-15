@@ -64,7 +64,7 @@ export function SystemDegradationBanner() {
       className="bg-amber-50 border-b border-amber-200 px-4 py-2 text-xs text-amber-900 flex items-center justify-between gap-3"
     >
       <div className="flex items-center gap-2 min-w-0">
-        <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" aria-hidden="true" />
+        <AlertTriangle className="w-4 h-4 text-amber-700 shrink-0" aria-hidden="true" />
         <span className="truncate">{message}</span>
       </div>
       <button

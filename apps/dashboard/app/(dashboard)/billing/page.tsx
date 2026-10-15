@@ -505,7 +505,7 @@ export default function BillingPage() {
                     ) : m.overSoft ? (
                       <span className="text-xs font-bold text-amber-700">Nearing limit</span>
                     ) : (
-                      <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                      <CheckCircle2 className="w-4 h-4 text-emerald-700" />
                     )}
                   </div>
                   <div className="text-2xl font-bold text-heading mt-1">

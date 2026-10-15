@@ -211,7 +211,7 @@ function LoginForm() {
               </span>
             </button>
           ))}
-          <p className="text-[10px] text-emerald-600 text-center">
+          <p className="text-[10px] text-emerald-700 text-center">
             SSO is optional. Email and password still work.
           </p>
         </div>
@@ -301,7 +301,7 @@ function LoginForm() {
 
         <div className="relative flex py-1 items-center">
           <div className="flex-grow border-t border-emerald-950"></div>
-          <span className="flex-shrink mx-3 text-[10px] text-emerald-600 font-semibold uppercase">
+          <span className="flex-shrink mx-3 text-[10px] text-emerald-400 font-semibold uppercase">
             Or sign in with email
           </span>
           <div className="flex-grow border-t border-emerald-950"></div>

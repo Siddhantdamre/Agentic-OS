@@ -1,5 +1,13 @@
 # Darex Build State
 
+## Every page passes the automated WCAG 2.1 AA scan (2026-10-15)
+
+- Found by running axe-core (WCAG 2.1 A and AA) in a real browser over all 40 pages: 150 elements failed. 144 were text contrast (muted text at 2.4 to 4.3 against the 4.5 minimum, on the cream and white pages), 2 icon-only back buttons and the team-size slider had no name, the organisation-name field had a label not tied to it, and 2 links inside sentences were told apart by colour alone.
+- Fixed at the source: `slate-400` and `slate-500` in `tailwind.config.js` are now 4.6:1 or better on every light surface; `text-amber-600` and `text-emerald-600` became the next shade down (43 files); the two back buttons are named "Back", the slider "Team size"; the organisation-name and invite-email fields are tied to their labels; the two in-sentence links are underlined. My own change made the sign-in "Or sign in with email" divider and the conversations "open" badge worse on dark cards, so those use a light green there.
+- Verified: axe went from 150 failing elements to 0 on 40 pages (same scan, same signed-in owner); 2 new name tests failed first; dashboard 1120 tests, tsc and lint clean; the 36-page click-through and focus check still pass.
+- Not verified: a person with a screen reader, Safari or Firefox, the pages that need an id in the address, and anything inside modals that are closed on load.
+- Visual change to know about: secondary grey text is a little darker everywhere on the light pages, and the two grey levels are now close to each other.
+
 ## A request id on every response (2026-10-15)
 
 - Before this, a customer who hit an error could tell support only "something went wrong around 3 pm"; nothing tied a screen to a log line. The middleware now puts an `X-Request-Id` on every response, redirects and refusals included. An id sent by a proxy is kept when it is 1 to 64 plain characters (`A-Z a-z 0-9 _ -`) so one request has one id end to end; anything else is replaced with a fresh UUID, because the value ends up in logs.

@@ -78,7 +78,7 @@ export default function AuditLogPage() {
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
         <div>
           <h1 className="text-2xl sm:text-3xl font-serif font-bold text-heading flex items-center gap-2">
-            <ShieldCheck className="w-7 h-7 text-amber-600" aria-hidden="true" />
+            <ShieldCheck className="w-7 h-7 text-amber-700" aria-hidden="true" />
             Audit log
           </h1>
           <p className="text-sm text-slate-500 mt-1">

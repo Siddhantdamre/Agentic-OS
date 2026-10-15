@@ -45,7 +45,7 @@ function ResetForm() {
     return (
       <p className="text-sm text-red-300 text-center">
         Missing reset token. Request a new link from{' '}
-        <Link href="/forgot-password" className="text-[#F0C05A]">forgot password</Link>.
+        <Link href="/forgot-password" className="text-[#F0C05A] underline underline-offset-2">forgot password</Link>.
       </p>
     );
   }

@@ -152,7 +152,7 @@ function RequirementList({ items }: { items: Requirement[] }) {
         return (
           <li key={r.id} className="flex items-start gap-2 text-sm text-slate-700">
             {r.met ? (
-              <Check className="w-4 h-4 mt-0.5 text-emerald-600 shrink-0" aria-label="Done" role="img" />
+              <Check className="w-4 h-4 mt-0.5 text-emerald-700 shrink-0" aria-label="Done" role="img" />
             ) : (
               <CircleDashed className="w-4 h-4 mt-0.5 text-slate-400 shrink-0" aria-label="Still needed" role="img" />
             )}

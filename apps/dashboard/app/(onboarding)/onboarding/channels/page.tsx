@@ -130,7 +130,7 @@ export default function OnboardingChannelsPage() {
               }`}
             >
               <div className="flex items-center justify-between">
-                <Icon className={`w-5 h-5 ${isSelected ? 'text-amber-600' : 'text-slate-400'}`} />
+                <Icon className={`w-5 h-5 ${isSelected ? 'text-amber-700' : 'text-slate-400'}`} />
                 {isSelected && (
                   <span className="w-5 h-5 rounded-full bg-amber-500 text-heading flex items-center justify-center">
                     <Check className="w-3.5 h-3.5" />

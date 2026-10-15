@@ -424,7 +424,7 @@ export function EmployeeModeSelector({
         }`}
       >
         {mode === 'auto' ? (
-          <Sparkles className="w-3.5 h-3.5 text-amber-600 shrink-0" aria-hidden />
+          <Sparkles className="w-3.5 h-3.5 text-amber-700 shrink-0" aria-hidden />
         ) : mode === 'team' ? (
           <Users className="w-3.5 h-3.5 text-amber-700 shrink-0" aria-hidden />
         ) : (
@@ -542,7 +542,7 @@ export function AskRoutingChip({
       {reason ? (
         <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
           <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-amber-900 bg-amber-50 border border-amber-200/80 px-2 py-0.5 rounded-lg">
-            <Sparkles className="w-3 h-3 text-amber-600 shrink-0" aria-hidden />
+            <Sparkles className="w-3 h-3 text-amber-700 shrink-0" aria-hidden />
             <span className="truncate">{reason}</span>
           </span>
           {onPickSomeone ? (

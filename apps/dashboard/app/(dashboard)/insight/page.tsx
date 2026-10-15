@@ -141,7 +141,7 @@ export default function InsightPage() {
         </div>
 
         <div className="flex items-center space-x-2 px-3 py-1.5 bg-amber-500/10 text-amber-700 rounded-full border border-amber-500/20 text-xs font-bold">
-          <Sparkles className="w-4 h-4 text-amber-600" />
+          <Sparkles className="w-4 h-4 text-amber-700" />
           <span>Business numbers</span>
         </div>
       </div>
@@ -209,9 +209,9 @@ export default function InsightPage() {
                   <div
                     className={`p-3.5 rounded-2xl shrink-0 ${
                       item.type === 'growth'
-                        ? 'bg-emerald-500/10 text-emerald-600 border border-emerald-500/20'
+                        ? 'bg-emerald-500/10 text-emerald-700 border border-emerald-500/20'
                         : item.type === 'efficiency'
-                          ? 'bg-amber-500/10 text-amber-600 border border-amber-500/20'
+                          ? 'bg-amber-500/10 text-amber-700 border border-amber-500/20'
                           : item.type === 'attention'
                             ? 'bg-red-500/10 text-red-600 border border-red-500/20'
                             : 'bg-blue-500/10 text-blue-600 border border-blue-500/20'
@@ -240,7 +240,7 @@ export default function InsightPage() {
                       <span className="text-[11px] font-bold uppercase tracking-wider px-2.5 py-0.5 rounded-full bg-cream-200 text-slate-700">
                         {item.category}
                       </span>
-                      <span className="text-xs font-semibold text-emerald-600">Impact: {item.impact}</span>
+                      <span className="text-xs font-semibold text-emerald-700">Impact: {item.impact}</span>
                     </div>
 
                     <h3 className="text-lg font-serif font-bold text-heading">{item.title}</h3>

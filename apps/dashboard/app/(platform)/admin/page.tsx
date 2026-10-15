@@ -165,7 +165,7 @@ export default function PlatformAdminDirectoryPage() {
       <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
         <div>
           <h1 className="text-2xl sm:text-3xl font-serif font-bold text-heading flex items-center gap-2">
-            <Shield className="w-7 h-7 text-amber-600" aria-hidden="true" />
+            <Shield className="w-7 h-7 text-amber-700" aria-hidden="true" />
             Platform directory
           </h1>
           <p className="text-sm text-slate-500 mt-1">

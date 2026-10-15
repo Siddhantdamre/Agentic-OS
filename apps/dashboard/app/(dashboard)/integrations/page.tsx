@@ -252,7 +252,7 @@ export default function IntegrationsPage() {
           notification.type === 'success' ? 'bg-emerald-50 border-emerald-200 text-emerald-800' : 'bg-red-50 border-red-200 text-red-800'
         }`}>
           <div className="flex items-center space-x-2">
-            {notification.type === 'success' ? <CheckCircle2 className="w-5 h-5 text-emerald-600" /> : <AlertCircle className="w-5 h-5 text-red-600" />}
+            {notification.type === 'success' ? <CheckCircle2 className="w-5 h-5 text-emerald-700" /> : <AlertCircle className="w-5 h-5 text-red-600" />}
             <span>{notification.message}</span>
           </div>
           <button onClick={() => setNotification(null)} className="text-slate-400 hover:text-slate-600">
@@ -266,13 +266,13 @@ export default function IntegrationsPage() {
         <div className="bg-cream-200/70 border border-cream-300 p-5 rounded-2xl space-y-1 shadow-sm">
           <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Connected Tools</span>
           <div className="text-3xl font-bold text-heading">{stats.connectedApps} / {integrations.length}</div>
-          <span className="text-xs text-emerald-600 font-medium">Secure sign-in</span>
+          <span className="text-xs text-emerald-700 font-medium">Secure sign-in</span>
         </div>
 
         <div className="bg-cream-200/70 border border-cream-300 p-5 rounded-2xl space-y-1 shadow-sm">
           <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Total Syncs Today</span>
           <div className="text-3xl font-bold text-heading">{stats.totalSyncsToday}</div>
-          <span className="text-xs text-emerald-600 font-medium">Updates received automatically</span>
+          <span className="text-xs text-emerald-700 font-medium">Updates received automatically</span>
         </div>
 
         <div className="bg-cream-200/70 border border-cream-300 p-5 rounded-2xl space-y-1 shadow-sm">
@@ -284,7 +284,7 @@ export default function IntegrationsPage() {
         <div className="bg-cream-200/70 border border-cream-300 p-5 rounded-2xl space-y-1 shadow-sm">
           <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">API Quota Used</span>
           <div className="text-3xl font-bold text-heading">{stats.apiQuotaUsed}</div>
-          <span className="text-xs text-emerald-600 font-medium">Rate limits healthy</span>
+          <span className="text-xs text-emerald-700 font-medium">Rate limits healthy</span>
         </div>
       </div>
 
@@ -384,7 +384,7 @@ export default function IntegrationsPage() {
               {/* Credentials Summary */}
               <div className="p-4 bg-cream-100 rounded-2xl border border-cream-300 space-y-2">
                 <div className="flex items-center space-x-2 text-xs font-semibold text-slate-600">
-                  <ShieldCheck className="w-4 h-4 text-emerald-600" />
+                  <ShieldCheck className="w-4 h-4 text-emerald-700" />
                   <span>Your connection</span>
                 </div>
                 <p className="text-xs text-slate-600">

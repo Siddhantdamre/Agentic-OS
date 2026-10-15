@@ -292,7 +292,7 @@ function HomeContent() {
         <div className="bg-white border-2 border-amber-500/30 rounded-3xl p-6 sm:p-8 shadow-lg relative overflow-hidden">
           <div className="flex items-start space-x-5">
             <div className="p-4 bg-amber-500/20 rounded-2xl shrink-0">
-              <Sparkles className="w-8 h-8 text-amber-600 animate-spin" />
+              <Sparkles className="w-8 h-8 text-amber-700 animate-spin" />
             </div>
             <div className="space-y-3 flex-1 min-w-0">
               <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
@@ -312,7 +312,7 @@ function HomeContent() {
                 {warmupSteps.map((step) => (
                   <li key={step.id} className="flex items-center space-x-2">
                     {step.done ? (
-                      <CheckCircle2 className="w-4 h-4 text-emerald-600" aria-hidden="true" />
+                      <CheckCircle2 className="w-4 h-4 text-emerald-700" aria-hidden="true" />
                     ) : (
                       <CircleDashed className="w-4 h-4 text-slate-400" aria-hidden="true" />
                     )}
@@ -477,7 +477,7 @@ function HomeContent() {
           }
         }}
       >
-        <Sparkles className="w-6 h-6 text-amber-600 shrink-0 ml-2" aria-hidden="true" />
+        <Sparkles className="w-6 h-6 text-amber-700 shrink-0 ml-2" aria-hidden="true" />
         <input
           type="text"
           value={askQuery}

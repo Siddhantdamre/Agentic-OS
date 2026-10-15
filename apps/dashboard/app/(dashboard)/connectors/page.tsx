@@ -353,12 +353,12 @@ function ConnectorsScreen() {
 
   const renderIcon = (iconName: string) => {
     switch (iconName) {
-      case 'MessageSquare': return <MessageSquare className="w-6 h-6 text-emerald-600" />;
+      case 'MessageSquare': return <MessageSquare className="w-6 h-6 text-emerald-700" />;
       case 'Mail': return <Mail className="w-6 h-6 text-blue-600" />;
       case 'Calendar': return <Calendar className="w-6 h-6 text-sky-600" />;
       case 'BarChart2': return <BarChart2 className="w-6 h-6 text-red-600" />;
       case 'Megaphone': return <Megaphone className="w-6 h-6 text-purple-600" />;
-      case 'Database': return <Database className="w-6 h-6 text-amber-600" />;
+      case 'Database': return <Database className="w-6 h-6 text-amber-700" />;
       case 'CreditCard': return <CreditCard className="w-6 h-6 text-indigo-600" />;
       case 'BookOpen': return <BookOpen className="w-6 h-6 text-stone-700" />;
       case 'Slack': return <Slack className="w-6 h-6 text-fuchsia-600" />;
@@ -378,9 +378,9 @@ function ConnectorsScreen() {
       case 'Search': return <Search className="w-6 h-6 text-slate-700" />;
       case 'Store': return <Store className="w-6 h-6 text-amber-800" />;
       case 'Cloud': return <Cloud className="w-6 h-6 text-slate-600" />;
-      case 'Activity': return <Activity className="w-6 h-6 text-amber-600" />;
-      case 'Sparkles': return <Sparkles className="w-6 h-6 text-amber-600" />;
-      default: return <Plug className="w-6 h-6 text-amber-600" />;
+      case 'Activity': return <Activity className="w-6 h-6 text-amber-700" />;
+      case 'Sparkles': return <Sparkles className="w-6 h-6 text-amber-700" />;
+      default: return <Plug className="w-6 h-6 text-amber-700" />;
     }
   };
 
@@ -430,9 +430,9 @@ function ConnectorsScreen() {
         >
           <div className="flex items-center space-x-2">
             {statusNotification.type === 'success' ? (
-              <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+              <CheckCircle2 className="w-4 h-4 text-emerald-700 shrink-0" />
             ) : (
-              <AlertCircle className="w-4 h-4 text-amber-600 shrink-0" />
+              <AlertCircle className="w-4 h-4 text-amber-700 shrink-0" />
             )}
             <span>{statusNotification.message}</span>
           </div>
@@ -464,8 +464,8 @@ function ConnectorsScreen() {
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <div className="bg-cream-200/70 border border-cream-300 p-5 rounded-2xl space-y-2 shadow-sm">
           <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Connected Tools</span>
-          <div className="text-3xl font-bold text-emerald-600">{stats.connectedApps} / {integrations.length}</div>
-          <span className="text-xs text-emerald-600 font-medium">Securely signed in</span>
+          <div className="text-3xl font-bold text-emerald-700">{stats.connectedApps} / {integrations.length}</div>
+          <span className="text-xs text-emerald-700 font-medium">Securely signed in</span>
         </div>
 
         <div className="bg-cream-200/70 border border-cream-300 p-5 rounded-2xl space-y-2 shadow-sm">
@@ -477,13 +477,13 @@ function ConnectorsScreen() {
         <div className="bg-cream-200/70 border border-cream-300 p-5 rounded-2xl space-y-2 shadow-sm">
           <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Connection service</span>
           <div className="text-3xl font-bold text-heading">Ready</div>
-          <span className="text-xs text-emerald-600 font-medium">Running</span>
+          <span className="text-xs text-emerald-700 font-medium">Running</span>
         </div>
 
         <div className="bg-cream-200/70 border border-cream-300 p-5 rounded-2xl space-y-2 shadow-sm">
           <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Sign-in security</span>
           <div className="text-3xl font-bold text-heading">Secure</div>
-          <span className="text-xs text-emerald-600 font-medium">Renews automatically</span>
+          <span className="text-xs text-emerald-700 font-medium">Renews automatically</span>
         </div>
       </div>
 
@@ -500,7 +500,7 @@ function ConnectorsScreen() {
               </span>
               {isGoogleWorkspaceConnected && (
                 <span className="inline-flex items-center space-x-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-200">
-                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-700" />
                   <span>{googleConnectedCount > 0 ? `${googleConnectedCount} Google Apps Active` : 'Connected'}</span>
                 </span>
               )}
@@ -775,7 +775,7 @@ function ConnectorsScreen() {
                       </>
                     ) : item.connected ? (
                       <>
-                        <Check className="w-3.5 h-3.5 text-emerald-600" />
+                        <Check className="w-3.5 h-3.5 text-emerald-700" />
                         <span>Disconnect</span>
                       </>
                     ) : (
@@ -895,7 +895,7 @@ function ConnectorsScreen() {
             <div className="flex items-start justify-between">
               <div>
                 <h2 className="text-xl sm:text-2xl font-serif font-bold text-heading flex items-center space-x-2">
-                  <Activity className="w-5 h-5 text-amber-600" />
+                  <Activity className="w-5 h-5 text-amber-700" />
                   <span>Google Workspace Diagnostic</span>
                 </h2>
                 <p className="text-xs sm:text-sm text-slate-500 mt-1">
@@ -958,7 +958,7 @@ function ConnectorsScreen() {
                     >
                       <div className="flex items-center space-x-2.5">
                         {svc.ok ? (
-                          <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                          <CheckCircle2 className="w-4 h-4 text-emerald-700 shrink-0" />
                         ) : (
                           <AlertCircle className="w-4 h-4 text-red-500 shrink-0" />
                         )}

@@ -47,7 +47,7 @@ export const ReasoningStrip: React.FC<ReasoningStripProps> = ({
         className="w-full flex items-center justify-between px-3.5 py-2 text-[11px] text-slate-600 hover:text-slate-900 transition-colors focus:outline-none group select-none"
       >
         <div className="flex items-center gap-2 min-w-0">
-          <BrainCircuit className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+          <BrainCircuit className="w-3.5 h-3.5 text-amber-700 shrink-0" />
           <span className="font-semibold text-slate-700 truncate">
             {headerLabel}
           </span>

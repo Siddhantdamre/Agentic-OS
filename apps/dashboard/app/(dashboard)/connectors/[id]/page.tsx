@@ -473,7 +473,7 @@ export default function ConnectorDetailPage() {
                     : 'bg-slate-100 text-slate-500'
                 }`}
               >
-                {connected && <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />}
+                {connected && <CheckCircle2 className="w-3.5 h-3.5 text-emerald-700" />}
                 <span>{connected ? 'Connected' : 'Disconnected'}</span>
               </span>
             </div>

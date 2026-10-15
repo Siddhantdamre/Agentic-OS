@@ -42,13 +42,13 @@ function VerifyStatus() {
   if (state === 'ok') {
     return (
       <p className="text-sm text-emerald-100 text-center">
-        Email verified. <Link href="/login" className="text-[#F0C05A]">Sign in</Link>.
+        Email verified. <Link href="/login" className="text-[#F0C05A] underline underline-offset-2">Sign in</Link>.
       </p>
     );
   }
   return (
     <p className="text-sm text-red-300 text-center">
-      {message} <Link href="/login" className="text-[#F0C05A]">Back to sign in</Link>.
+      {message} <Link href="/login" className="text-[#F0C05A] underline underline-offset-2">Back to sign in</Link>.
     </p>
   );
 }

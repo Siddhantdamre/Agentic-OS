@@ -215,7 +215,7 @@ export function AskAiHistoryDrawer({
         <div className="flex-1 overflow-y-auto p-2.5 space-y-4">
           {loading && conversations.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-12 text-slate-400 text-xs space-y-2">
-              <RefreshCw className="w-4 h-4 animate-spin text-amber-600" />
+              <RefreshCw className="w-4 h-4 animate-spin text-amber-700" />
               <span>Loading conversations…</span>
             </div>
           ) : filtered.length === 0 ? (
@@ -309,11 +309,11 @@ export function AskAiHistoryDrawer({
                           <div className="min-w-0 flex-1 space-y-1">
                             <div className="flex items-center gap-1.5">
                               {isSwitching ? (
-                                <RefreshCw className="w-3.5 h-3.5 text-amber-600 animate-spin shrink-0" />
+                                <RefreshCw className="w-3.5 h-3.5 text-amber-700 animate-spin shrink-0" />
                               ) : (
                                 <MessageSquare
                                   className={`w-3.5 h-3.5 shrink-0 ${
-                                    isActive ? 'text-amber-600' : 'text-slate-400 group-hover:text-slate-600'
+                                    isActive ? 'text-amber-700' : 'text-slate-400 group-hover:text-slate-600'
                                   }`}
                                 />
                               )}

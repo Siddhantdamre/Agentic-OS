@@ -137,7 +137,7 @@ export default function BriefPage() {
         <div className="h-32 bg-cream-200/50 rounded-2xl animate-pulse border border-cream-300" />
       ) : empty ? (
         <div className="bg-white border border-cream-300 rounded-3xl p-10 text-center space-y-2">
-          <CheckCircle2 className="w-10 h-10 text-emerald-600 mx-auto" />
+          <CheckCircle2 className="w-10 h-10 text-emerald-700 mx-auto" />
           <h2 className="text-lg font-serif font-bold text-heading">Nothing needs you.</h2>
           <p className="text-sm text-slate-500">{handled} things handled.</p>
         </div>
@@ -149,7 +149,7 @@ export default function BriefPage() {
           {exceptions.map((item) => (
             <article key={item.id} className="bg-white border border-cream-300 rounded-2xl p-4 shadow-sm">
               <div className="flex items-start gap-3">
-                <AlertTriangle className="w-4 h-4 text-amber-600 mt-0.5 shrink-0" />
+                <AlertTriangle className="w-4 h-4 text-amber-700 mt-0.5 shrink-0" />
                 <div className="flex-1 min-w-0">
                   <h3 className="font-semibold text-heading text-sm">{item.title}</h3>
                   <p className="text-xs text-slate-600 mt-1">{item.detail}</p>

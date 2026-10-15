@@ -301,8 +301,8 @@ export default function EmployeesPage() {
 
         <div className="bg-cream-200/70 border border-cream-300 p-5 rounded-2xl space-y-2 shadow-sm">
           <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Active Status</span>
-          <div className="text-3xl font-bold text-emerald-600">{activeCount}</div>
-          <span className="text-xs text-emerald-600 font-medium">Ready for messages</span>
+          <div className="text-3xl font-bold text-emerald-700">{activeCount}</div>
+          <span className="text-xs text-emerald-700 font-medium">Ready for messages</span>
         </div>
 
         <div className="bg-cream-200/70 border border-cream-300 p-5 rounded-2xl space-y-2 shadow-sm">
@@ -396,7 +396,7 @@ export default function EmployeesPage() {
                   <div className="flex items-start justify-between">
                     <div className="flex items-center space-x-3">
                       <div className="w-12 h-12 rounded-2xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center shrink-0">
-                        <Bot className="w-6 h-6 text-amber-600" />
+                        <Bot className="w-6 h-6 text-amber-700" />
                       </div>
                       <div>
                         <h3 className="font-bold font-serif text-lg text-heading">
@@ -476,7 +476,7 @@ export default function EmployeesPage() {
                       </>
                     ) : (
                       <>
-                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-700" />
                         <span>Activate</span>
                       </>
                     )}
@@ -519,7 +519,7 @@ export default function EmployeesPage() {
             <div className="flex items-center justify-between border-b border-cream-200 pb-4">
               <div className="flex items-center space-x-3">
                 <div className="w-10 h-10 rounded-xl bg-amber-500/20 flex items-center justify-center">
-                  <Sparkles className="w-5 h-5 text-amber-600" />
+                  <Sparkles className="w-5 h-5 text-amber-700" />
                 </div>
                 <div>
                   <h2 className="text-xl font-serif font-bold text-heading">Hire AI Employee</h2>
@@ -602,7 +602,7 @@ export default function EmployeesPage() {
                         }`}
                       >
                         <span>{t.label}</span>
-                        {isChecked && <CheckCircle2 className="w-3.5 h-3.5 text-amber-600" />}
+                        {isChecked && <CheckCircle2 className="w-3.5 h-3.5 text-amber-700" />}
                       </button>
                     );
                   })}

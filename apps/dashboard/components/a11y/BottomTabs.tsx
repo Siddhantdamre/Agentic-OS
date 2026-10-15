@@ -106,7 +106,7 @@ export function BottomTabs() {
                 }`}
               >
                 <span className="relative">
-                  <Icon className={`w-5 h-5 ${isActive ? 'text-amber-600' : ''}`} aria-hidden="true" />
+                  <Icon className={`w-5 h-5 ${isActive ? 'text-amber-700' : ''}`} aria-hidden="true" />
                   {tab.href === '/approvals' && pending && pending > 0 ? (
                     <span className="absolute -top-1.5 -right-2.5 min-w-[1.1rem] h-[1.1rem] px-1 rounded-full bg-red-600 text-white text-[10px] font-bold flex items-center justify-center">
                       {pending > 9 ? '9+' : pending}
@@ -127,7 +127,7 @@ export function BottomTabs() {
               moreActive || moreOpen ? 'text-heading' : 'text-slate-500'
             }`}
           >
-            <MoreHorizontal className={`w-5 h-5 ${moreActive || moreOpen ? 'text-amber-600' : ''}`} aria-hidden="true" />
+            <MoreHorizontal className={`w-5 h-5 ${moreActive || moreOpen ? 'text-amber-700' : ''}`} aria-hidden="true" />
             <span>More</span>
           </button>
         </li>

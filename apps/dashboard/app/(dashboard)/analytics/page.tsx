@@ -262,9 +262,9 @@ export default function AnalyticsPage() {
                 <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">
                   Conversation Automation
                 </span>
-                <Zap className="w-4 h-4 text-emerald-600" />
+                <Zap className="w-4 h-4 text-emerald-700" />
               </div>
-              <div className="text-3xl font-bold text-emerald-600">
+              <div className="text-3xl font-bold text-emerald-700">
                 {loading || !metrics ? '—' : metrics.automationRate}
               </div>
               <span className="text-xs text-slate-500 font-medium">
@@ -291,7 +291,7 @@ export default function AnalyticsPage() {
                 </span>
                 <Star className="w-4 h-4 text-amber-500" />
               </div>
-              <div className="text-3xl font-bold text-amber-600">
+              <div className="text-3xl font-bold text-amber-700">
                 {loading || !metrics ? '—' : metrics.csatScore}
               </div>
               <span className="text-xs text-slate-500 font-medium">Resolved ratio — not a survey</span>
@@ -360,7 +360,7 @@ export default function AnalyticsPage() {
                     <div key={cb.channel} className="space-y-1.5">
                       <div className="flex items-center justify-between text-xs font-semibold text-slate-700 capitalize">
                         <span className="flex items-center space-x-2">
-                          <Layers className="w-4 h-4 text-amber-600" />
+                          <Layers className="w-4 h-4 text-amber-700" />
                           <span>{cb.channel}</span>
                         </span>
                         <span>{cb.count}</span>

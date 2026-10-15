@@ -63,7 +63,7 @@ export default function OnboardingBusinessTypePage() {
                   : 'border-cream-300 bg-cream-50 hover:bg-cream-100 text-slate-700'
               }`}
             >
-              <Briefcase className={`w-4 h-4 mt-0.5 shrink-0 ${isSelected ? 'text-amber-600' : 'text-slate-400'}`} />
+              <Briefcase className={`w-4 h-4 mt-0.5 shrink-0 ${isSelected ? 'text-amber-700' : 'text-slate-400'}`} />
               <span>{type}</span>
             </button>
           );
@@ -96,6 +96,7 @@ export default function OnboardingBusinessTypePage() {
         <button
           type="button"
           onClick={() => router.push('/onboarding/team-size')}
+          aria-label="Back"
           className="py-4 px-5 bg-cream-200 hover:bg-cream-300 text-heading font-semibold rounded-2xl transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
         >
           <ArrowLeft className="w-5 h-5" />

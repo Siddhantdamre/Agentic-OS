@@ -275,7 +275,7 @@ function renderMarkdownLines(lines: string[]) {
     if (trimmed.startsWith('> ') || trimmed.toLowerCase().includes('recommendation:') || trimmed.toLowerCase().includes('action:')) {
       elements.push(
         <div key={i} className="my-2 p-3.5 bg-amber-500/10 border-l-4 border-amber-500 rounded-r-2xl text-slate-800 text-xs font-medium flex items-start space-x-2.5">
-          <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+          <AlertCircle className="w-4 h-4 text-amber-700 shrink-0 mt-0.5" />
           <div className="flex-1">
             {parseFormattedText(trimmed.replace(/^>\s*/, ''))}
           </div>
@@ -322,7 +322,7 @@ function renderStandaloneLinkCard(text: string, href: string, key: React.Key) {
   const badgeConfig = isSlides
     ? {
         label: 'Google Slides Presentation',
-        icon: <Presentation className="w-5 h-5 text-amber-600 shrink-0" />,
+        icon: <Presentation className="w-5 h-5 text-amber-700 shrink-0" />,
         bg: 'bg-amber-500/10 border-amber-500/30 hover:bg-amber-500/15',
         buttonBg: 'bg-amber-600 hover:bg-amber-700 text-white',
         accentColor: 'text-amber-950',
@@ -338,7 +338,7 @@ function renderStandaloneLinkCard(text: string, href: string, key: React.Key) {
     : isSheets
     ? {
         label: 'Google Sheets Spreadsheet',
-        icon: <Table className="w-5 h-5 text-emerald-600 shrink-0" />,
+        icon: <Table className="w-5 h-5 text-emerald-700 shrink-0" />,
         bg: 'bg-emerald-500/10 border-emerald-500/30 hover:bg-emerald-500/15',
         buttonBg: 'bg-emerald-600 hover:bg-emerald-700 text-white',
         accentColor: 'text-emerald-950',

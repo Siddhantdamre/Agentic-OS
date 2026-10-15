@@ -172,7 +172,7 @@ export default function ApprovalsPage() {
 
           {waiting !== null && items.length === 0 && !error ? (
             <div className="rounded-2xl border border-dashed border-cream-300 bg-white p-8 text-center space-y-2">
-              <CheckCircle2 className="mx-auto h-8 w-8 text-emerald-600" aria-hidden="true" />
+              <CheckCircle2 className="mx-auto h-8 w-8 text-emerald-700" aria-hidden="true" />
               <p className="font-serif text-lg text-heading">Nothing is waiting for you.</p>
               <p className="text-sm text-slate-600">When an AI employee wants to send a message, move money or change something, it asks here first.</p>
               <p className="text-sm text-slate-600">

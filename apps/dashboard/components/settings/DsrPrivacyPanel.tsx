@@ -126,7 +126,7 @@ export function DsrPrivacyPanel({ orgSlug, orgName, viewerRole = null }: Props) 
     <div className="space-y-6 max-w-2xl">
       <div className="bg-white border border-cream-300 rounded-3xl p-8 space-y-4 shadow-sm">
         <h2 className="text-lg font-serif font-bold text-heading flex items-center gap-2">
-          <ShieldAlert className="w-5 h-5 text-amber-600" />
+          <ShieldAlert className="w-5 h-5 text-amber-700" />
           Privacy &amp; data subject requests
         </h2>
         <p className="text-sm text-slate-600">

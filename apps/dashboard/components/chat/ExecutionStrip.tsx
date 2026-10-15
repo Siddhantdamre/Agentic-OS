@@ -39,9 +39,9 @@ export const ExecutionStrip: React.FC<ExecutionStripProps> = ({ steps, statuses,
       <div className="flex items-center justify-between px-4 py-3 border-b border-cream-200/80 bg-cream-50/70 flex-wrap gap-2">
         <div className="flex items-center space-x-2.5">
           {running ? (
-            <RefreshCw className="w-4 h-4 text-amber-600 animate-spin shrink-0" />
+            <RefreshCw className="w-4 h-4 text-amber-700 animate-spin shrink-0" />
           ) : isFullyComplete && !hasError ? (
-            <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+            <CheckCircle2 className="w-4 h-4 text-emerald-700 shrink-0" />
           ) : (
             <XCircle className="w-4 h-4 text-rose-600 shrink-0" />
           )}
@@ -101,9 +101,9 @@ export const ExecutionStrip: React.FC<ExecutionStripProps> = ({ steps, statuses,
                   {(() => {
                     switch (st) {
                       case 'done':
-                        return <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />;
+                        return <CheckCircle2 className="w-3.5 h-3.5 text-emerald-700" />;
                       case 'running':
-                        return <RefreshCw className="w-3.5 h-3.5 text-amber-600 animate-spin" />;
+                        return <RefreshCw className="w-3.5 h-3.5 text-amber-700 animate-spin" />;
                       case 'error':
                         return <XCircle className="w-3.5 h-3.5 text-rose-600" />;
                       case 'skipped':

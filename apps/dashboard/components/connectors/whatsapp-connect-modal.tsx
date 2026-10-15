@@ -185,7 +185,7 @@ export default function WhatsAppConnectModal(props: {
               onClick={beginQr}
               className="w-full text-left p-4 border rounded-2xl hover:border-emerald-500 hover:bg-emerald-50/40 flex gap-3"
             >
-              <QrCode className="w-6 h-6 text-emerald-600 shrink-0 mt-0.5" />
+              <QrCode className="w-6 h-6 text-emerald-700 shrink-0 mt-0.5" />
               <span>
                 <span className="block text-sm font-bold text-heading">Scan a QR code</span>
                 <span className="block text-xs text-slate-500">
@@ -199,7 +199,7 @@ export default function WhatsAppConnectModal(props: {
               onClick={() => setMode('api')}
               className="w-full text-left p-4 border rounded-2xl hover:border-emerald-500 hover:bg-emerald-50/40 flex gap-3"
             >
-              <ShieldCheck className="w-6 h-6 text-emerald-600 shrink-0 mt-0.5" />
+              <ShieldCheck className="w-6 h-6 text-emerald-700 shrink-0 mt-0.5" />
               <span>
                 <span className="block text-sm font-bold text-heading">Official WhatsApp Business API</span>
                 <span className="block text-xs text-slate-500">
@@ -255,7 +255,7 @@ export default function WhatsAppConnectModal(props: {
                     Or link with a phone number and enter code <span className="font-mono font-bold">{pairingCode}</span>
                   </p>
                 )}
-                {qrError && <p className="text-xs text-amber-600 text-center">{qrError}</p>}
+                {qrError && <p className="text-xs text-amber-700 text-center">{qrError}</p>}
                 <p className="text-xs text-slate-400 text-center flex items-center justify-center gap-2">
                   <RefreshCw className="w-3 h-3 animate-spin" /> Waiting for the scan. The code refreshes on its own.
                 </p>

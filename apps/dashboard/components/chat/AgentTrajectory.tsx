@@ -321,10 +321,10 @@ function SearchingPulse({ query }: { query?: string }) {
 
 function StatusIcon({ status, spinning }: { status: TrajectoryStatus; spinning?: boolean }) {
   if (spinning || status === 'running') {
-    return <Loader2 className="w-3.5 h-3.5 text-amber-600 animate-spin shrink-0" />;
+    return <Loader2 className="w-3.5 h-3.5 text-amber-700 animate-spin shrink-0" />;
   }
   if (status === 'error') return <XCircle className="w-3.5 h-3.5 text-rose-600 shrink-0" />;
-  return <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />;
+  return <CheckCircle2 className="w-3.5 h-3.5 text-emerald-700 shrink-0" />;
 }
 
 function JsonBlock({ title, content: rawContent }: { title: string; content: string }) {
@@ -388,7 +388,7 @@ function JsonBlock({ title, content: rawContent }: { title: string; content: str
             onClick={handleCopy}
             className="flex items-center gap-1 text-[10px] font-normal text-slate-500 hover:text-slate-800 px-1.5 py-0.5 rounded hover:bg-slate-200/60 transition-colors shrink-0"
           >
-            {copied ? <Check className="w-3 h-3 text-emerald-600" /> : <Copy className="w-3 h-3 text-slate-400" />}
+            {copied ? <Check className="w-3 h-3 text-emerald-700" /> : <Copy className="w-3 h-3 text-slate-400" />}
             <span>{copied ? 'Copied' : 'Copy'}</span>
           </button>
         )}
@@ -463,7 +463,7 @@ export function ApprovalBar({
               {shortToolName(toolName)}
             </span>
           )}
-          {decided === 'allow' && <Check className="w-3.5 h-3.5 text-emerald-600" />}
+          {decided === 'allow' && <Check className="w-3.5 h-3.5 text-emerald-700" />}
           {decided === 'deny' && <CircleX className="w-3.5 h-3.5 text-rose-600" />}
         </div>
         {!decided && !denyOpen && (
@@ -766,7 +766,7 @@ export function AgentTrajectory({
           {data.running ? (
             <span className="flex items-center gap-2">
               <span className="flex items-center gap-1">
-                <Loader2 className="w-3 h-3 text-amber-600 animate-spin" />
+                <Loader2 className="w-3 h-3 text-amber-700 animate-spin" />
                 <span className="text-amber-700">running</span>
               </span>
               {onStop && (
@@ -788,7 +788,7 @@ export function AgentTrajectory({
             </>
           ) : (
             <>
-              <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+              <CheckCircle2 className="w-3 h-3 text-emerald-700" />
               <span className="text-emerald-700">
                 {doneCount < data.steps.length ? 'waiting' : 'done'}
               </span>

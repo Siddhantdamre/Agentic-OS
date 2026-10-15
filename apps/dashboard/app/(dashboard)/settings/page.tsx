@@ -387,10 +387,11 @@ export default function SettingsPage() {
 
               <form onSubmit={handleSaveOrg} className="space-y-4">
                 <div>
-                  <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">
+                  <label htmlFor="org-name" className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">
                     Business / Organization Name
                   </label>
                   <input
+                    id="org-name"
                     type="text"
                     required
                     value={orgName}
@@ -408,7 +409,7 @@ export default function SettingsPage() {
                     {savingOrg ? 'Saving...' : 'Save Changes'}
                   </button>
                   {savedSuccess && (
-                    <span className="text-xs font-bold text-emerald-600 flex items-center space-x-1">
+                    <span className="text-xs font-bold text-emerald-700 flex items-center space-x-1">
                       <Check className="w-4 h-4" />
                       <span>Updated successfully</span>
                     </span>
@@ -419,7 +420,7 @@ export default function SettingsPage() {
               {viewerRole === 'owner' && (
                 <div className="pt-6 border-t border-cream-200 space-y-3">
                   <h3 className="text-sm font-serif font-bold text-heading flex items-center space-x-2">
-                    <Shield className="w-4 h-4 text-amber-600" />
+                    <Shield className="w-4 h-4 text-amber-700" />
                     <span>Darex support access</span>
                   </h3>
                   <p className="text-xs text-slate-500">
@@ -439,7 +440,7 @@ export default function SettingsPage() {
                         checked={supportAccessEnabled}
                         disabled={supportAccessBusy}
                         onChange={(e) => handleSupportAccessToggle(e.target.checked)}
-                        className="mt-0.5 h-4 w-4 rounded border-cream-300 text-amber-600 focus:ring-amber-500 disabled:opacity-50"
+                        className="mt-0.5 h-4 w-4 rounded border-cream-300 text-amber-700 focus:ring-amber-500 disabled:opacity-50"
                       />
                       <span className="text-sm font-medium text-heading">
                         Allow Darex support to access this organization with my consent
@@ -549,7 +550,7 @@ export default function SettingsPage() {
                     {members.map((member) => (
                       <tr key={member.id} className="hover:bg-cream-50/50">
                         <td className="p-4 font-semibold text-heading flex items-center space-x-2">
-                          <Mail className="w-4 h-4 text-amber-600" />
+                          <Mail className="w-4 h-4 text-amber-700" />
                           <span>{member.email}</span>
                         </td>
                         <td className="p-4">
@@ -626,7 +627,7 @@ export default function SettingsPage() {
                         onClick={() => handleCopy(webhooks.metaWebhookUrl, 'metaUrl')}
                         className="p-2 bg-cream-200 hover:bg-cream-300 rounded-xl border border-cream-300 text-slate-700"
                       >
-                        {copiedKey === 'metaUrl' ? <Check className="w-4 h-4 text-emerald-600" /> : <Copy className="w-4 h-4" />}
+                        {copiedKey === 'metaUrl' ? <Check className="w-4 h-4 text-emerald-700" /> : <Copy className="w-4 h-4" />}
                       </button>
                     </div>
                   </div>
@@ -646,7 +647,7 @@ export default function SettingsPage() {
                         onClick={() => handleCopy(webhooks.chatwootWebhookUrl, 'chatwootUrl')}
                         className="p-2 bg-cream-200 hover:bg-cream-300 rounded-xl border border-cream-300 text-slate-700"
                       >
-                        {copiedKey === 'chatwootUrl' ? <Check className="w-4 h-4 text-emerald-600" /> : <Copy className="w-4 h-4" />}
+                        {copiedKey === 'chatwootUrl' ? <Check className="w-4 h-4 text-emerald-700" /> : <Copy className="w-4 h-4" />}
                       </button>
                     </div>
                   </div>
@@ -668,7 +669,7 @@ export default function SettingsPage() {
                         onClick={() => webhooks.verifyToken && handleCopy(webhooks.verifyToken, 'verifyToken')}
                         className="p-2 bg-cream-200 hover:bg-cream-300 rounded-xl border border-cream-300 text-slate-700 disabled:opacity-40"
                       >
-                        {copiedKey === 'verifyToken' ? <Check className="w-4 h-4 text-emerald-600" /> : <Copy className="w-4 h-4" />}
+                        {copiedKey === 'verifyToken' ? <Check className="w-4 h-4 text-emerald-700" /> : <Copy className="w-4 h-4" />}
                       </button>
                     </div>
                   </div>
@@ -703,7 +704,7 @@ export default function SettingsPage() {
                         onClick={() => handleCopy(widget.snippet || '', 'widgetSnippet')}
                         className="p-2 bg-cream-200 hover:bg-cream-300 rounded-xl border border-cream-300 text-slate-700"
                       >
-                        {copiedKey === 'widgetSnippet' ? <Check className="w-4 h-4 text-emerald-600" /> : <Copy className="w-4 h-4" />}
+                        {copiedKey === 'widgetSnippet' ? <Check className="w-4 h-4 text-emerald-700" /> : <Copy className="w-4 h-4" />}
                       </button>
                     </div>
                     {widget.siteKey && (
@@ -768,10 +769,11 @@ export default function SettingsPage() {
 
             <form onSubmit={handleInviteMember} className="space-y-4">
               <div>
-                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">
+                <label htmlFor="invite-email" className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">
                   Email Address *
                 </label>
                 <input
+                  id="invite-email"
                   type="email"
                   required
                   value={inviteEmail}

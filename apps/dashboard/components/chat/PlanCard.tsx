@@ -138,7 +138,7 @@ export const PlanCard: React.FC<PlanCardProps> = ({
                 {isSkipped ? (
                   <Square className="w-4 h-4" />
                 ) : (
-                  <CheckSquare className="w-4 h-4 fill-amber-500/20 text-amber-600" />
+                  <CheckSquare className="w-4 h-4 fill-amber-500/20 text-amber-700" />
                 )}
               </button>
 
