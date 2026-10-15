@@ -4,7 +4,7 @@
   "private": true,
   "main": "dist/worker.js",
   "scripts": {
-    "build": "tsc && mkdir -p dist/metrics && cp src/metrics/core-kpis.yaml dist/metrics/core-kpis.yaml",
+    "build": "tsc && node scripts/copy-assets.js",
     "dev": "tsc -w",
     "start": "node dist/worker.js",
     "chat-coverage": "node dist/scripts/chat-coverage.js",

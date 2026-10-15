@@ -1,5 +1,11 @@
 # Darex Build State
 
+## The workflows build no longer needs a POSIX shell (2026-10-15)
+
+- `pnpm build` in the workflows service ended with `mkdir -p dist/metrics && cp ...`, which does not exist in a Windows command prompt, so a clean checkout on a Windows machine failed at the last step of the build. It now runs `scripts/copy-assets.js`, plain Node, which creates the folder and copies `core-kpis.yaml` the same way on Windows, macOS and Linux.
+- Verified: the script run on a throwaway copy copies the file byte for byte and is safe to run twice; `pnpm --filter @darex/workflows build` puts `dist/metrics/core-kpis.yaml` in place; 577 of 577 workflow tests.
+- Not verified: an actual Windows machine. The change removes the one POSIX-only command found in the build scripts; `setup.bat` and `start.bat` exist but were not run.
+
 ## Every page passes the automated WCAG 2.1 AA scan (2026-10-15)
 
 - Found by running axe-core (WCAG 2.1 A and AA) in a real browser over all 40 pages: 150 elements failed. 144 were text contrast (muted text at 2.4 to 4.3 against the 4.5 minimum, on the cream and white pages), 2 icon-only back buttons and the team-size slider had no name, the organisation-name field had a label not tied to it, and 2 links inside sentences were told apart by colour alone.
