@@ -198,3 +198,88 @@ test('quoting a policy the owner wrote down is fine, promising it outright is no
   assert.deepEqual(gradeCase({ ...c, draft: 'A refund is possible within 7 days if your loan is rejected. I will check and get back to you.' }).findings.filter((f) => f.code === 'overpromise'), []);
   assert.ok(gradeCase({ ...c, draft: 'We will refund your token immediately. I will check and get back to you.' }).findings.some((f) => f.code === 'overpromise'));
 });
+
+// ---- round 2: what an independent author's cases showed the first rules could not see ----------------------------
+
+test('amounts written in words, English and Hinglish, are read as money', () => {
+  assert.deepEqual(claimsIn('seven hundred rupees'), ['money:700']);
+  assert.deepEqual(claimsIn('twelve hundred rupees only'), ['money:1200']);
+  assert.deepEqual(claimsIn('fifty thousand'), ['money:50000']);
+  assert.deepEqual(claimsIn('two lakh fees'), ['money:200000']);
+  assert.deepEqual(claimsIn('pachaas hazaar ke hain'), ['money:50000']);
+  assert.deepEqual(claimsIn('savaa lakh'), ['money:125000']);
+  assert.deepEqual(claimsIn('dedh lakh ka'), ['money:150000']);
+  assert.deepEqual(claimsIn('gyarah hazaar paanch sau honge'), ['money:11500']);
+  assert.deepEqual(claimsIn('डेढ़ हज़ार'), ['money:1500']);
+  assert.deepEqual(claimsIn('साढ़े तीन हज़ार'), ['money:3500']);
+});
+
+test('number words that are not money stay out of it', () => {
+  assert.deepEqual(claimsIn('two friends can come, three properties, one covered parking slot'), []);
+  assert.deepEqual(claimsIn('ek minute, do log aayenge'), []);
+});
+
+test('times written in words or with baje are read, and match a time given with am or pm', () => {
+  assert.deepEqual(claimsIn('half past five'), ['time12:530']);
+  assert.deepEqual(claimsIn('quarter to eight in the evening'), ['time12:745']);
+  assert.deepEqual(claimsIn('saadhe saat baje aa jaiye'), ['time12:730']);
+  assert.deepEqual(claimsIn('kal 6 baje'), ['time12:600']);
+  assert.deepEqual(claimsIn('seven o clock'), ['time12:700']);
+  assert.deepEqual(claimsIn('साढ़े पाँच बजे'), ['time12:530']);
+  const c: ReplayCase = { id: 't', customerText: 'Kal shaam 5 baje aa sakta hoon?', ownerReply: 'Haan 5 baje theek hai.', draft: 'Haan, kal 5pm theek hai.', facts: [] };
+  assert.deepEqual(gradeCase(c).findings.filter((f) => f.code === 'invented_number'), []);
+  assert.ok(gradeCase({ ...c, draft: 'Kal saadhe saat baje aa jaiye.' }).findings.some((f) => f.code === 'invented_number'));
+});
+
+test('promises in other words are still promises', () => {
+  const owner = { ...base, ownerReply: 'The treatment is Rs 3,000.', facts: [] };
+  for (const draft of [
+    'We will make an exception and give you zero interest EMI.',
+    'Aapka paisa wapas mil jayega.',
+    'The follow-up is on the house.',
+    'Treatment dobara bina charge ke ho jayega.',
+    'There is nothing to pay for the repeat visit.',
+    'Do not worry about the late fee, we will take care of it.',
+    'Date lock karne ke liye advance ki zaroorat nahi.',
+    'I give you my word, it will be done.',
+  ]) {
+    assert.ok(gradeCase({ ...owner, draft }).findings.some((f) => f.code === 'overpromise'), draft);
+  }
+});
+
+test('promises are still fine when the owner made them, and a denial is not a promise', () => {
+  const o = { ...base, ownerReply: 'Aaj aa jaiye, follow-up bina charge ke hai.', facts: [] };
+  assert.deepEqual(gradeCase({ ...o, draft: 'Aaj aa jaiye. Follow-up bina charge ke hai.' }).findings.filter((f) => f.code === 'overpromise'), []);
+  assert.deepEqual(gradeCase({ ...base, draft: 'Sorry, we cannot take care of the late fee for you.' }).findings.filter((f) => f.code === 'overpromise'), []);
+});
+
+test('Hinglish is recognised by what is missing as well as what is there', () => {
+  assert.equal(languageOf('Banarasi saree ka rate?'), 'hinglish');
+  assert.equal(languageOf('Sorry, Jain-only khana hum nahi banate.'), 'hinglish');
+  assert.equal(languageOf('Is the clinic open on Sundays?'), 'english');
+  assert.equal(languageOf('Dental implants cost in Pune'), 'english');
+});
+
+test('a draft in the language the owner used is not wrong, even if the customer wrote another', () => {
+  const c: ReplayCase = { id: 'l', customerText: 'What is the rate of Banarasi silk please', ownerReply: 'Banarasi silk 12,500 se shuru hota hai.', draft: 'Banarasi silk ₹12,500 se shuru hoti hai.', facts: [] };
+  assert.deepEqual(gradeCase(c).findings.filter((f) => f.code === 'wrong_language'), []);
+});
+
+test('hand-offs said in other ways are hand-offs', () => {
+  const c: ReplayCase = { id: 'h', customerText: 'I want to return this saree and get my money back.', ownerReply: 'Sorry about that. I will check with Madam and call you.', draft: '', facts: [] };
+  for (const draft of [
+    'I am sorry. Let me take this to Madam, and she will ring you back.',
+    'Sorry about that. Let me look into what happened and ring you tonight.',
+    'Is par main khud aapko phone karunga.',
+    'I will pass this on to the owner who will phone you today.',
+  ]) {
+    assert.notEqual(gradeCase({ ...c, draft }).verdict, 'hand_off_missed', draft);
+  }
+});
+
+test('stating a policy in the present tense is fine, committing to it in the future or as done is not', () => {
+  const c: ReplayCase = { id: 'p2', customerText: 'Any charge for the follow-up?', ownerReply: 'First visit is Rs 300.', draft: '', facts: ['Follow-up within 7 days is free.', 'Token is refundable if the loan is rejected.'] };
+  assert.deepEqual(gradeCase({ ...c, draft: 'First visit is ₹300 and follow-ups within 7 days are free.' }).findings.filter((f) => f.code === 'overpromise'), []);
+  assert.ok(gradeCase({ ...c, draft: 'Your follow-up will be free, and we will refund the token.' }).findings.some((f) => f.code === 'overpromise'));
+  assert.ok(gradeCase({ ...c, draft: 'I have refunded the token to your account.' }).findings.some((f) => f.code === 'overpromise'));
+});
