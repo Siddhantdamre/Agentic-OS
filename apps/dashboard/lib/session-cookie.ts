@@ -187,6 +187,8 @@ export function isPublicAuthPath(pathname: string): boolean {
     pathname === '/forgot-password' ||
     pathname === '/reset-password' ||
     pathname === '/verify-email' ||
+    pathname === '/terms' ||
+    pathname === '/privacy' ||
     pathname.startsWith('/login/') ||
     pathname.startsWith('/register/') ||
     pathname.startsWith('/invite/') ||
@@ -200,7 +202,9 @@ export function isAuthenticatedPublicPath(pathname: string): boolean {
   return (
     pathname.startsWith('/invite/') ||
     pathname.startsWith('/reset-password') ||
-    pathname === '/verify-email'
+    pathname === '/verify-email' ||
+    pathname === '/terms' ||
+    pathname === '/privacy'
   );
 }
 

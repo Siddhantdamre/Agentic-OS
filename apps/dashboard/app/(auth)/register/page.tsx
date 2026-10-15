@@ -13,7 +13,7 @@ function RegisterForm() {
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
-  const [agreedTerms, setAgreedTerms] = useState(true);
+  const [agreedTerms, setAgreedTerms] = useState(false);
   const [loading, setLoading] = useState(false);
   const [oauthLoading, setOauthLoading] = useState<string | null>(null);
   const [error, setError] = useState('');
@@ -274,7 +274,7 @@ function RegisterForm() {
               className="mt-0.5 rounded bg-[#1C2825] border-emerald-800 text-[#F0C05A] focus:ring-0"
             />
             <span className="text-[11px] leading-tight">
-              I agree to the DareX <a href="#" onClick={(e) => e.preventDefault()} className="text-[#F0C05A] hover:underline">Terms of Service</a> & <a href="#" onClick={(e) => e.preventDefault()} className="text-[#F0C05A] hover:underline">Privacy Policy</a>
+              I agree to the DareX <a href="/terms" target="_blank" rel="noopener" className="text-[#F0C05A] hover:underline">Terms of Service</a> & <a href="/privacy" target="_blank" rel="noopener" className="text-[#F0C05A] hover:underline">Privacy Policy</a>
             </span>
           </label>
         </div>

@@ -1,5 +1,12 @@
 # Darex Build State
 
+## Sign-up consent is a real choice, and Terms and Privacy pages exist (2026-10-15)
+
+- Found by reading the sign-up page: the "I agree to the Terms of Service and Privacy Policy" box was ticked before the person touched it, and both links were dead (`href="#"` with the click cancelled). A pre-ticked box is not agreement, and there was nothing to agree to.
+- Now the box starts unticked (the server already refuses sign-up without it), and the links open `/terms` and `/privacy` in a new tab so a half-filled form is not lost. Both pages are public, readable by someone already signed in, and server-rendered with no script. They say in plain words what the product does today: employees prepare actions and sensitive ones wait for approval, each workspace is kept apart in the database, text goes to the configured AI model service, connected apps can be disconnected, and data can be exported or deleted from Settings.
+- Verified: 5 new tests (written before the pages existed): unticked by default, links go to the real pages, both paths public for signed-out and signed-in, content mentions approval/export/delete. The 36-page browser run now includes both pages.
+- Needs you before launch: the pages say, in a visible note, that no lawyer has reviewed them, and they contain `[add your contact email before launch]` twice. The text is a starting draft, not legal advice; the company name, governing law and refund terms are yours to add.
+
 ## Browser security headers on every response (2026-10-15)
 
 - Found by reading the live response headers: nothing the dashboard sent carried a browser protection (no framing block, no content-type lock, no referrer policy, no HTTPS-only hint) and every page announced `X-Powered-By: Next.js`. The proxy example in `deploy/` adds none either, so a launch behind it would have shipped the same.
