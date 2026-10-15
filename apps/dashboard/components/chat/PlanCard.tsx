@@ -200,7 +200,7 @@ export const PlanCard: React.FC<PlanCardProps> = ({
                       <button
                         type="button"
                         onClick={savePayloadEdit}
-                        className="px-2.5 py-1 text-[11px] font-semibold rounded-lg bg-emerald-600 text-white"
+                        className="px-2.5 py-1 text-[11px] font-semibold rounded-lg bg-emerald-700 text-white"
                       >
                         Save params
                       </button>

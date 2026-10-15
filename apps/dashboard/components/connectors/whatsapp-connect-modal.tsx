@@ -228,7 +228,7 @@ export default function WhatsAppConnectModal(props: {
             {qrPhase === 'error' && (
               <div className="space-y-3">
                 <p className="text-sm text-red-600">{qrError}</p>
-                <button type="button" onClick={beginQr} className="px-4 py-2 text-sm font-semibold bg-emerald-600 text-white rounded-xl">
+                <button type="button" onClick={beginQr} className="px-4 py-2 text-sm font-semibold bg-emerald-700 text-white rounded-xl">
                   Try again
                 </button>
               </div>
@@ -300,7 +300,7 @@ export default function WhatsAppConnectModal(props: {
               <button type="button" onClick={onClose} className="px-5 py-2 text-sm font-semibold text-slate-500 hover:text-slate-700">
                 Cancel
               </button>
-              <button type="submit" disabled={busy} className="px-5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-semibold rounded-xl flex items-center space-x-2">
+              <button type="submit" disabled={busy} className="px-5 py-2 bg-emerald-700 hover:bg-emerald-800 text-white text-sm font-semibold rounded-xl flex items-center space-x-2">
                 {busy && <RefreshCw className="w-4 h-4 animate-spin" />}
                 <span>Secure Connect</span>
               </button>

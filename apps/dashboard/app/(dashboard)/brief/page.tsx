@@ -177,7 +177,7 @@ export default function BriefPage() {
                       type="button"
                       disabled={actingId === item.id}
                       onClick={() => void triage(item.id, 'approve')}
-                      className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-semibold rounded-lg bg-emerald-600 text-white hover:bg-emerald-500 disabled:opacity-40"
+                      className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-semibold rounded-lg bg-emerald-700 text-white hover:bg-emerald-500 disabled:opacity-40"
                     >
                       <Check className="w-3.5 h-3.5" /> Approve
                     </button>

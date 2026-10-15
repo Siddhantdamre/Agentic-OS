@@ -1,5 +1,10 @@
 # Darex Build State
 
+## Green buttons with white text meet the contrast minimum (2026-10-15)
+
+- The accessibility scan of the harness found one more failure the first axe run did not reach: white 12 px bold text on `bg-emerald-600` is 3.8:1 (the minimum is 4.5). It showed only on the Connectors page once the gateway card is visible. The same pair is used on 9 buttons and badges in 7 files (brief, connectors, work items, plan card, two WhatsApp forms, the markdown reply); all are now `emerald-700` (hover `emerald-800`), 5.5:1 or better.
+- Verified: the scan reports 0 failing elements on 40 pages after a production rebuild.
+
 ## Production dependency audit: 8 known vulnerabilities down to 2 (2026-10-15)
 
 - `pnpm audit --prod` reported 8 known vulnerabilities (2 critical, 4 high, 2 low), all in packages pulled in by other packages. Six are closed with overrides in the root `package.json`, in the same style as the existing ones: `proxy-addr` (critical, IP spoofing through the forwarded-for list), `shell-quote` (critical, command injection through a line break), `source-map-js` (high, event-loop denial of service), `katex` (low), and `@modelcontextprotocol/sdk` raised from 1.29.0 to 1.32.1 (high, an OAuth client could send credentials to the wrong server; the transitive copies are forced up too).

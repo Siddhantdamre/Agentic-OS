@@ -340,7 +340,7 @@ function renderStandaloneLinkCard(text: string, href: string, key: React.Key) {
         label: 'Google Sheets Spreadsheet',
         icon: <Table className="w-5 h-5 text-emerald-700 shrink-0" />,
         bg: 'bg-emerald-500/10 border-emerald-500/30 hover:bg-emerald-500/15',
-        buttonBg: 'bg-emerald-600 hover:bg-emerald-700 text-white',
+        buttonBg: 'bg-emerald-700 hover:bg-emerald-800 text-white',
         accentColor: 'text-emerald-950',
       }
     : {

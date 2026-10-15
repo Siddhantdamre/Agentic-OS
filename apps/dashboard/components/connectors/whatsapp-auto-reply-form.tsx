@@ -514,7 +514,7 @@ export default function WhatsAppAutoReplyForm(props: {
           type="button"
           onClick={save}
           disabled={saving}
-          className="px-5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-semibold rounded-xl flex items-center space-x-2"
+          className="px-5 py-2 bg-emerald-700 hover:bg-emerald-800 text-white text-sm font-semibold rounded-xl flex items-center space-x-2"
         >
           {saving && <RefreshCw className="w-4 h-4 animate-spin" />}
           <span>Save</span>

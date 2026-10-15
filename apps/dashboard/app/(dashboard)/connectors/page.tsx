@@ -550,7 +550,7 @@ function ConnectorsScreen() {
                   type="button"
                   onClick={handleTestGoogleWorkspace}
                   disabled={gwTesting}
-                  className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-2xl flex items-center justify-center space-x-2 text-xs shadow-sm transition-all"
+                  className="px-5 py-2.5 bg-emerald-700 hover:bg-emerald-800 text-white font-bold rounded-2xl flex items-center justify-center space-x-2 text-xs shadow-sm transition-all"
                 >
                   <Activity className={`w-4 h-4 ${gwTesting ? 'animate-spin' : ''}`} />
                   <span>{gwTesting ? 'Testing Services...' : 'Test All Services (Diagnostic)'}</span>

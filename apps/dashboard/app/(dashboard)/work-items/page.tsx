@@ -264,7 +264,7 @@ function WorkItemCard({
             type="button"
             disabled={busy}
             onClick={() => onDecide(item.id, 'approve')}
-            className="flex-1 inline-flex items-center justify-center gap-1 px-2 py-1.5 rounded-lg bg-emerald-600 text-white text-[11px] font-semibold disabled:opacity-50"
+            className="flex-1 inline-flex items-center justify-center gap-1 px-2 py-1.5 rounded-lg bg-emerald-700 text-white text-[11px] font-semibold disabled:opacity-50"
           >
             <CheckCircle2 className="w-3 h-3" /> Approve
           </button>
@@ -608,7 +608,7 @@ export default function WorkItemsPage() {
                             type="button"
                             disabled={busyId === item.id}
                             onClick={() => void onDecide(item.id, 'approve')}
-                            className="px-2 py-1 rounded-lg bg-emerald-600 text-white text-[11px] font-semibold disabled:opacity-50"
+                            className="px-2 py-1 rounded-lg bg-emerald-700 text-white text-[11px] font-semibold disabled:opacity-50"
                           >
                             Approve
                           </button>
