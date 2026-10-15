@@ -1,5 +1,11 @@
 # Darex Build State
 
+## A request id on every response (2026-10-15)
+
+- Before this, a customer who hit an error could tell support only "something went wrong around 3 pm"; nothing tied a screen to a log line. The middleware now puts an `X-Request-Id` on every response, redirects and refusals included. An id sent by a proxy is kept when it is 1 to 64 plain characters (`A-Z a-z 0-9 _ -`) so one request has one id end to end; anything else is replaced with a fresh UUID, because the value ends up in logs.
+- Verified: 4 unit tests; on the running production build `/login` returns a generated id and `/api/health` with `x-request-id: abc-123` returns `abc-123`.
+- Not done: the id is not yet printed in the server's error logs or shown on the error screens. That is the next small step, and needs a pass over about 150 route handlers.
+
 ## Sign-up consent is a real choice, and Terms and Privacy pages exist (2026-10-15)
 
 - Found by reading the sign-up page: the "I agree to the Terms of Service and Privacy Policy" box was ticked before the person touched it, and both links were dead (`href="#"` with the click cancelled). A pre-ticked box is not agreement, and there was nothing to agree to.

@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 import { denyOrgApiIfLimited } from '@/lib/rate-limit-core';
+import { REQUEST_ID_HEADER, requestIdFor } from '@/lib/request-id';
 import {
   ONBOARDING_COOKIE,
   ORG_COOKIE,
@@ -27,7 +28,7 @@ function isHealthApiPath(pathname: string): boolean {
   return pathname === '/api/health' || pathname === '/api/health/ready';
 }
 
-export async function middleware(request: NextRequest) {
+async function handle(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
   const isApiRoute = pathname.startsWith('/api/');
@@ -102,6 +103,13 @@ export async function middleware(request: NextRequest) {
   }
 
   return NextResponse.next();
+}
+
+/** Every answer, including redirects and refusals, carries an id the person can quote to support. */
+export async function middleware(request: NextRequest) {
+  const response = await handle(request);
+  response.headers.set(REQUEST_ID_HEADER, requestIdFor(request.headers.get(REQUEST_ID_HEADER)));
+  return response;
 }
 
 export const config = {
