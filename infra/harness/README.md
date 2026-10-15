@@ -57,3 +57,16 @@ be held, refunds and payments that must be held, hostile customer messages, tone
   It seeds a throw-away workspace, scores every task, writes a JSON report, and exits 1 under the threshold.
 - Stand-in: `--standin` checks only that all 37 turns complete without an error or a leak. A canned model scores
   14 percent on the real grading, which is the point: a score means something only with a real model.
+
+## Accessibility scan
+
+```bash
+# the harness server and the fake world start as for the flows; the script is chosen with the last line of run-flows.sh,
+# or run it by hand against any running dashboard:
+FLOW_BASE=http://127.0.0.1:3011 PLAYWRIGHT_MODULE=<path to playwright> node infra/harness/a11y-scan.js
+```
+
+Opens every static page in a real browser as a throwaway owner and runs axe-core (WCAG 2.1 A and AA). It prints each
+failing element and exits 1 if there is any. It cannot judge things a person must: reading order with a screen reader,
+whether wording is clear, Safari and Firefox. Pages that need an id in the address, and anything inside a dialog that
+is closed on load, are not reached.

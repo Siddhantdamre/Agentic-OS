@@ -1,5 +1,12 @@
 # Darex Build State
 
+## A repeatable accessibility check (2026-10-15)
+
+- New `infra/harness/a11y-scan.js`: opens every static page (40) in a real browser as a throwaway owner and runs axe-core (WCAG 2.1 A and AA); prints each failing element and exits 1 on any. It reuses the harness's seed and session cookie, finds Playwright through `PLAYWRIGHT_MODULE` and Chromium through `CHROMIUM_PATH`, so it is not tied to this machine. `axe-core` 4.13.0 is a dev dependency of the dashboard (an addition of one package; nothing in production changes).
+- Why: the first scan (150 failing elements) was a one-off run from a scratch script; without a repeatable check the contrast and naming fixes would drift back as screens are added.
+- Verified: 0 failing elements on 40 pages against the production build; the first run of the committed script caught one more failure (see the previous entry), so it does find things.
+- Limits are written in the README: it cannot judge screen-reader flow or wording, does not reach pages that need an id, and does not open dialogs.
+
 ## Green buttons with white text meet the contrast minimum (2026-10-15)
 
 - The accessibility scan of the harness found one more failure the first axe run did not reach: white 12 px bold text on `bg-emerald-600` is 3.8:1 (the minimum is 4.5). It showed only on the Connectors page once the gateway card is visible. The same pair is used on 9 buttons and badges in 7 files (brief, connectors, work items, plan card, two WhatsApp forms, the markdown reply); all are now `emerald-700` (hover `emerald-800`), 5.5:1 or better.
