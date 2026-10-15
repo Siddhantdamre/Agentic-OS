@@ -1,5 +1,12 @@
 # Darex Build State
 
+## Browser security headers on every response (2026-10-15)
+
+- Found by reading the live response headers: nothing the dashboard sent carried a browser protection (no framing block, no content-type lock, no referrer policy, no HTTPS-only hint) and every page announced `X-Powered-By: Next.js`. The proxy example in `deploy/` adds none either, so a launch behind it would have shipped the same.
+- Now `security-headers.js` (plain CommonJS so `next.config.js` can share it) sends on every path: `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`, `Referrer-Policy: strict-origin-when-cross-origin`, `Permissions-Policy` turning camera, microphone and location off, and `Strict-Transport-Security` in production only. The content policy is deliberately small (`frame-ancestors 'none'; base-uri 'self'; object-src 'none'`): it says nothing about scripts, styles, connections or forms, so it cannot break the inline load guard or the sign-in redirects. The chat widget customers embed is a script, not a framed page, so nothing here blocks it. `poweredByHeader` is off.
+- Verified: 5 contract tests (written first, failed on a missing module); production build; `curl -D -` on the running build shows all six headers on `/login`; the 36-page browser run, the 27 flows and the dead-click guard still pass.
+- Not done: a full script policy (`script-src`). It needs a nonce for the inline load guard and a pass over every page; the small policy above is the part that is safe without that.
+
 ## Ask AI can say who owes the owner money (2026-10-09)
 
 - New read-only chat tool `dues_list` (inside the operations tool): open and disputed dues oldest first with days late, plus the totals, in the same words the Money owed page uses. It returns buyer names, invoice numbers, amounts and dates and never a phone number or email. It runs on its own, with no approval card, because it only reads. Sending a reminder stays on the Money owed page and in Approvals.

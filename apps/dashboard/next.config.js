@@ -1,6 +1,12 @@
+const { securityHeaders } = require('./security-headers');
+
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
+  poweredByHeader: false,
+  async headers() {
+    return [{ source: '/:path*', headers: securityHeaders({ production: process.env.NODE_ENV === 'production' }) }];
+  },
   // The Docker image build sets SKIP_NEXT_CHECKS=1. `next build` otherwise re-runs ESLint and a full
   // type-check, which CI (`tsc --noEmit` and `pnpm lint` on every push) and the pre-push hook already
   // do; on the shared 2 vCPU production VM that step alone took over 5 minutes.
