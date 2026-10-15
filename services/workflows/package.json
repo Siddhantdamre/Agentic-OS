@@ -16,7 +16,7 @@
     "@agent-infra/sandbox": "^1.0.17",
     "@darex/shared-types": "workspace:*",
     "@darex/whatsapp-gateway": "workspace:*",
-    "@modelcontextprotocol/sdk": "1.29.0",
+    "@modelcontextprotocol/sdk": "1.32.1",
     "@temporalio/activity": "^1.10.0",
     "@temporalio/client": "^1.10.0",
     "@temporalio/worker": "^1.10.0",

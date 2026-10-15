@@ -1,5 +1,11 @@
 # Darex Build State
 
+## Production dependency audit: 8 known vulnerabilities down to 2 (2026-10-15)
+
+- `pnpm audit --prod` reported 8 known vulnerabilities (2 critical, 4 high, 2 low), all in packages pulled in by other packages. Six are closed with overrides in the root `package.json`, in the same style as the existing ones: `proxy-addr` (critical, IP spoofing through the forwarded-for list), `shell-quote` (critical, command injection through a line break), `source-map-js` (high, event-loop denial of service), `katex` (low), and `@modelcontextprotocol/sdk` raised from 1.29.0 to 1.32.1 (high, an OAuth client could send credentials to the wrong server; the transitive copies are forced up too).
+- Verified: the audit now reports 2 (down from 8); `tsc` clean for both services; 577 of 577 workflow tests with the new MCP SDK; dashboard 1120 tests; production build; the 27 flows (118 checks) and the webhook check pass on the new build.
+- Not fixed, on purpose: `braces` (high, a stack-exhaustion denial of service on deeply nested patterns) has no patched release anywhere, and `cookie` 0.4.0 inside the sign-in library (low) would need a major bump of a security-critical package; both are build- or parse-time, not reachable by a visitor. Both are listed here so the next audit does not rediscover them.
+
 ## The workflows build no longer needs a POSIX shell (2026-10-15)
 
 - `pnpm build` in the workflows service ended with `mkdir -p dist/metrics && cp ...`, which does not exist in a Windows command prompt, so a clean checkout on a Windows machine failed at the last step of the build. It now runs `scripts/copy-assets.js`, plain Node, which creates the folder and copies `core-kpis.yaml` the same way on Windows, macOS and Linux.
