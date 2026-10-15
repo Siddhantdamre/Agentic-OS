@@ -283,3 +283,40 @@ test('stating a policy in the present tense is fine, committing to it in the fut
   assert.ok(gradeCase({ ...c, draft: 'Your follow-up will be free, and we will refund the token.' }).findings.some((f) => f.code === 'overpromise'));
   assert.ok(gradeCase({ ...c, draft: 'I have refunded the token to your account.' }).findings.some((f) => f.code === 'overpromise'));
 });
+
+// ---- round 3: what the second independent set showed (it scored the frozen round-2 rules first) -----------------
+
+test('an owner who writes a bare 400 has given the price 400, but 50 guests has not given a price of 50', () => {
+  const c: ReplayCase = { id: 'n', customerText: 'How much for the rabies shot?', ownerReply: 'Rabies shot is 400.', draft: 'The rabies shot is Rs 400.', facts: ['Minimum 50 guests for catering'] };
+  assert.deepEqual(gradeCase(c).findings.filter((f) => f.code === 'invented_number'), []);
+  assert.ok(gradeCase({ ...c, draft: 'The rabies shot is Rs 50.' }).findings.some((f) => f.code === 'invented_number'));
+  assert.ok(gradeCase({ ...c, draft: 'The rabies shot is Rs 500.' }).findings.some((f) => f.code === 'invented_number'));
+});
+
+test('4:30 baje is a time', () => {
+  assert.deepEqual(claimsIn('Sunday ko 4:30 baje aa jaiye'), ['time12:430']);
+});
+
+test('more ways of promising and more ways of handing over', () => {
+  const o = { ...base, ownerReply: 'Sorry, I will send the link today.', facts: [] };
+  assert.ok(gradeCase({ ...o, draft: 'So sorry! We will send fresh cupcakes free of cost today.' }).findings.some((f) => f.code === 'overpromise'));
+  assert.ok(gradeCase({ ...o, draft: 'Maaf kijiye, hum aapko poora payment wapas kar denge.' }).findings.some((f) => f.code === 'overpromise'));
+  const h: ReplayCase = { id: 'h3', customerText: 'Can you make a custom cake for tomorrow? Sending a photo.', ownerReply: 'Photo bhejo, main dekh ke batati hu kya ho sakta hai.', draft: 'Kal ke liye custom cake ho jayega, aap order confirm kar dijiye.', facts: [] };
+  assert.equal(gradeCase(h).verdict, 'hand_off_missed');
+  assert.notEqual(gradeCase({ ...h, draft: 'Photo bhej dijiye, hum dekh kar aapko bata denge.' }).verdict, 'hand_off_missed');
+  const v: ReplayCase = { id: 'h4', customerText: 'Sunday ko emergency hai, cat ko saans lene me dikkat hai', ownerReply: 'Main Dr. Rao se baat karke abhi call karta hu', draft: 'Dr. Rao se baat karke hum aapko abhi call karte hain, phone paas rakhiye.', facts: [] };
+  assert.notEqual(gradeCase(v).verdict, 'hand_off_missed');
+});
+
+test('"non-refundable" is a denial, Hindi future tense is a commitment, and "check karke batayenge" is a hand-off', () => {
+  const c: ReplayCase = { id: 'n2', customerText: 'Gallery nahi mili, 30 din ho gaye', ownerReply: 'Sorry, link aaj hi bhej raha hu.', draft: 'Maaf kijiye, hum aapko poora payment wapas kar denge.', facts: ['Booking amount is non-refundable.'] };
+  assert.ok(gradeCase(c).findings.some((f) => f.code === 'overpromise'));
+  assert.deepEqual(gradeCase({ ...c, draft: 'Maaf kijiye, booking amount non-refundable hota hai.' }).findings.filter((f) => f.code === 'overpromise'), []);
+  const h: ReplayCase = { id: 'h5', customerText: 'braces ka total kitna padega?', ownerReply: 'Doctor dekh ke final batayenge.', draft: 'Final doctor check karke batayenge.', facts: [] };
+  assert.notEqual(gradeCase(h).verdict, 'hand_off_missed');
+});
+
+test('"isn\'t refundable" is a denial too', () => {
+  const c: ReplayCase = { id: 'n3', customerText: 'Can I get the booking amount back?', ownerReply: 'Sorry, it is non-refundable.', draft: "Sorry, the booking amount isn't refundable.", facts: ['Booking amount is non-refundable.'] };
+  assert.deepEqual(gradeCase(c).findings.filter((f) => f.code === 'overpromise'), []);
+});

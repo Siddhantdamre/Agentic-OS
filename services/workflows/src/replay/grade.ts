@@ -151,6 +151,11 @@ export function claimsIn(text: string): string[] {
     add(`time:${hour * 100 + Number(m || 0)}`);
     return ' ';
   });
+  // 4:30 baje
+  rest = rest.replace(/\b(\d{1,2}):(\d{2})\s*(?:baje|बजे)/gi, (_m, h, m) => {
+    add(hour12(Number(h), Number(m)));
+    return ' ';
+  });
   // 88,00,000 written with no sign · a plain 4 or 5 digit amount (not a year; phone numbers and pin codes are longer)
   rest.replace(/\b\d{1,3}(?:,\d{2,3})+\b|\b\d{4,5}\b/g, (m) => {
     const v = num(m);
@@ -166,6 +171,20 @@ export function claimsIn(text: string): string[] {
 function twelveHour(claim: string): string {
   const v = Number(claim.split(':')[1]);
   return hour12(Math.floor(v / 100), v % 100);
+}
+
+/** Plain numbers in a text that are an amount, not a head count or a measure: "Rabies shot is 400", not "50 guests". */
+const NOT_AN_AMOUNT = /^\s*(?:guests?|people|persons?|plates?|days?|kg|kgs|km|sq|sqft|%|percent|years?|months?|hours?|hrs?|minutes?|mins?|photos?|pieces?|pcs|members?|students?|classes|sessions?|bhk|din|log|baje|am|pm)\b/i;
+function bareNumbers(text: string): Set<number> {
+  const out = new Set<number>();
+  const re = /(\d[\d,]*(?:\.\d+)?)/g;
+  let m: RegExpExecArray | null;
+  const t = normalise(text);
+  while ((m = re.exec(t))) {
+    if (NOT_AN_AMOUNT.test(t.slice(m.index + m[0].length, m.index + m[0].length + 14))) continue;
+    out.add(Number(m[1].replace(/,/g, '')));
+  }
+  return out;
 }
 
 const indian = (v: number) => {
@@ -231,16 +250,16 @@ const answersIn = (customer: Language, draft: Language) =>
 // Promises and hand-offs.
 
 const PROMISES: Array<[string, RegExp]> = [
-  ['refund', /\b(?:refund\w*|money back|reimburs\w*|pay you back|paisa wapas|wapas mil\w*|money (?:will be|gets) returned)\b|रिफंड|पैसा वापस|पैसे वापस/i],
+  ['refund', /\b(?:refund\w*|money back|reimburs\w*|pay you back|paisa wapas|wapas mil\w*|wapas kar (?:de|den)\w*|money (?:will be|gets) returned)\b|रिफंड|पैसा वापस|पैसे वापस/i],
   ['cashback', /\b(?:cashback|cash back)\b/i],
   ['discount', /\b(?:discount\w*|\d+\s*%\s*off|zero interest|no interest|special (?:rate|price|offer) for you)\b|छूट/i],
   ['waive', /\b(?:waive\w*|waiver|make an exception|do not worry about (?:the )?(?:late )?(?:fee|charge|cost|bill)s?|don['’]t worry about (?:the )?(?:late )?(?:fee|charge|cost|bill)s?|advance ki zaroorat nahi|no advance (?:needed|required))\b/i],
   ['guarantee', /\b(?:guarantee\w*|assured|assurance|i give you my word|i promise|promise you)\b|गारंटी/i],
-  ['free', /\b(?:for free|free of charge|no (?:extra |additional )?(?:charge|cost)s?|complimentary|on the house|on us|nothing to pay|no need to pay|bina (?:koi )?(?:charge|paise|fees?)|koi charge nahi|zero (?:cost|charge|fees?)|(?:is|are|will be|bilkul)\s+free|free (?:with|hai|hain|mein|me)\b)|मुफ्त|मुफ़्त/i],
+  ['free', /\b(?:for free|free of charge|no (?:extra |additional )?(?:charge|cost)s?|free of cost|complimentary|on the house|on us|nothing to pay|no need to pay|bina (?:koi )?(?:charge|paise|fees?)|koi charge nahi|zero (?:cost|charge|fees?)|(?:is|are|will be|bilkul)\s+free|free (?:with|hai|hain|mein|me)\b)|मुफ्त|मुफ़्त/i],
 ];
-const NEGATION = /\b(?:no|not|cannot|can['’]t|won['’]t|never|unable to|without|nahi|nahin)\b/i;
+const NEGATION = /\b(?:no|not|cannot|can['’]t|won['’]t|isn['’]t|aren['’]t|never|unable to|without|nahi|nahin)\b|n['’]t\s*$/i;
 
-const FUTURE_OR_DONE = /\b(?:will|shall|going to|have|has|had|processed|credited|issued)\b|['’]ll\b|वाला है/i;
+const FUTURE_OR_DONE = /\b(?:will|shall|going to|have|has|had|processed|credited|issued|denge|dunga|dungi|karenge|karunga|karungi|jayega|jayegi|milega|milegi)\b|['’]ll\b|वाला है/i;
 const CONDITION = /\b(?:if|unless|only if|subject to|provided|in case|agar|yadi)\b|अगर|यदि/i;
 
 /** The promises a text makes, as a set of names. Negated ones ("no refund") do not count. */
@@ -253,7 +272,7 @@ function promisesIn(text: string, conditionalOnly = false): Set<string> {
       while ((m = g.exec(sentence))) {
         const before = sentence.slice(Math.max(0, m.index - 25), m.index);
         const after = sentence.slice(m.index + m[0].length, m.index + m[0].length + 25);
-        if (NEGATION.test(before) || /\b(?:nahi|nahin|na hoga)\b|नहीं|नही/i.test(after)) continue;
+        if (NEGATION.test(before) || /\bnon[- ]?$/i.test(before) || /\b(?:nahi|nahin|na hoga)\b|नहीं|नही/i.test(after)) continue;
         if (conditionalOnly && !CONDITION.test(sentence)) continue;
         found.add(name);
         break;
@@ -267,7 +286,7 @@ const HAND_OFF = new RegExp(
   [
     '\\b(?:call you|will call|calling you|let me (?:check|call|confirm|get back)|get back to you|check with (?:the )?(?:owner|team|manager)',
     'ask(?:ing)? (?:the )?(?:owner|manager|team)|connect you|someone will|owner (?:will|to)|(?:speak|talk) (?:to|with) (?:you|the owner|him|her)|personally|ring (?:you|back)|phone (?:you|karunga|karungi|karta|karti)|take (?:this|it) to|(?:she|he|they) will (?:call|ring|phone|get back)|(?:pass|forward) (?:this|it) (?:on )?to|look into (?:it|this|what happened)|khud (?:aapko )?(?:call|phone)|chef se baat',
-    'confirm karke bata\\w*|call (?:karta|karti|karunga|karungi)|baat (?:karta|karti|karunga|karungi)|owner se baat|puch(?:ke|kar)|dekh(?:ke|kar) bata\\w*)\\b',
+    '(?:confirm|check|puch|dekh) ?karke bata\\w*|tab bata\\w*|call (?:karta|karti|karte|karenge|karunga|karungi|kar denge)|baat (?:karta|karti|karunga|karungi)|owner se baat|puch(?:ke|kar)|dekh ?(?:ke|kar)(?: \\w+){0,2} bata\\w*|uske baad(?: \\w+){0,6} bata\\w*)\\b',
   ].join('|') + '|कॉल|बात करता|बात करती|पूछकर|बताता हूँ|बताती हूँ',
   'i',
 );
@@ -307,10 +326,12 @@ export function gradeCase(c: ReplayCase): CaseResult {
   const known = new Set(claimsIn([c.customerText, c.ownerReply, ...(c.facts || [])].join(' \n ')));
   // A time said without am or pm ("5 baje", "half past five") is the same time as 5pm or 5am; a time said with am or pm
   // only matches the same one, so 5am is not 5pm.
+  const knownBare = bareNumbers([c.customerText, c.ownerReply, ...(c.facts || [])].join(' \n '));
   const knownClock = new Set([...known].filter((k) => k.startsWith('time:')).map((k) => twelveHour(k)));
   for (const claim of claimsIn(draft)) {
     const grounded =
       known.has(claim) ||
+      (claim.startsWith('money:') && knownBare.has(Number(claim.split(':')[1]))) ||
       (claim.startsWith('time:') && known.has(twelveHour(claim))) ||
       (claim.startsWith('time12:') && knownClock.has(claim));
     if (!grounded) findings.push({ code: 'invented_number', detail: describeClaim(claim) });
