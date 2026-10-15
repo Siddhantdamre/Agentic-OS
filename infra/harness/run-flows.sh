@@ -28,6 +28,9 @@ export WORLD_URL="http://127.0.0.1:${WORLD_PORT}" WORLD_PORT
 # No agent sidecar exists in this harness: a closed port, so a production start does not refuse to run and a card for a
 # session this server no longer holds fails the way it would after a restart.
 export TRUEFORGE_URL="${TRUEFORGE_URL:-http://127.0.0.1:1}"
+# Same idea for the sign-in service: a production start refuses to run sign-in without an address, and the dashboard
+# falls back to its own database when the service does not answer, which is what the demo's real sign-in form uses.
+export SUPERTOKENS_CONNECTION_URI="${SUPERTOKENS_CONNECTION_URI:-http://127.0.0.1:1}"
 export NODE_OPTIONS="--require ${HERE}/intercept.js"
 export FLOW_BASE="http://127.0.0.1:${PORT}"
 
@@ -55,4 +58,9 @@ done
 curl -sf "http://127.0.0.1:${WORLD_PORT}/__health" > /dev/null || { echo "fake world did not start; see $HARNESS_DIR/world.out"; exit 2; }
 [ "$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:${PORT}/login")" = "200" ] || { echo "dashboard did not start; see $HARNESS_DIR/dashboard.out"; exit 2; }
 
-node "$HERE/flows.js" "${1:-}"
+if [ -n "${HARNESS_SCRIPT:-}" ]; then
+  # Same servers and stand-ins, a different script on top (a11y-scan.js, soak.js, demo.js ...).
+  node "$HERE/$HARNESS_SCRIPT" ${HARNESS_ARGS:-}
+else
+  node "$HERE/flows.js" "${1:-}"
+fi

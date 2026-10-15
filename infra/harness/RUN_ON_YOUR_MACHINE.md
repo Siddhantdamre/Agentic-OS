@@ -39,3 +39,18 @@ send the last 30 lines.
 Connect one test Gmail or one WhatsApp number through the connection broker, set `NANGO_HOST` and
 `NANGO_SECRET_KEY` to your own broker, and send only to addresses you own. Ask the assistant to email one of them,
 approve the card, and confirm it arrives. Tell me what you saw: I cannot see your accounts.
+
+## 5. Open the demo (see the product on your own screen)
+A small demo business ("Sharma Realty (demo)": enquiries, two customer chats, a viewing tomorrow, money owed, two emails
+waiting for your approval) with the real dashboard and a scripted stand-in for the model and for Gmail. Nothing real is
+connected and no email or message leaves your machine.
+
+    pnpm install && pnpm --filter @darex/workflows build && pnpm --filter @darex/dashboard build
+    DB_PORT=5432 HARNESS_SCRIPT=demo.js infra/harness/run-flows.sh
+
+Use the same database variables as step 1. When it prints `DEMO READY`, open http://127.0.0.1:3011/login and sign in with
+`owner@demo.test` and `demo-owner-2026`. Try: Approvals (approve the viewing email), Ask AI ("What needs me today?"),
+Money owed, Trust. Press Ctrl-C to stop; the demo workspace is deleted.
+
+`run-flows.sh` is a bash script: macOS and Linux run it directly, Windows needs WSL or Git Bash. The answers you see in
+the chat are scripted, so they say nothing about real answer quality; that is step 1.

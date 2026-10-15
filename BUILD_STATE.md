@@ -1,5 +1,13 @@
 # Darex Build State
 
+## A demo business to sign in to (2026-10-15)
+
+- New `infra/harness/demo-seed.js` and `demo.js`: with the harness servers up, `HARNESS_SCRIPT=demo.js infra/harness/run-flows.sh` fills a labelled demo business through the product's own API (2 listings, 3 enquiries, money owed, 2 customer chats answered by the stand-in model) plus a viewing for tomorrow and two emails held for approval by the real gate, prints `DEMO READY` with the sign-in (`owner@demo.test`), and removes everything on Ctrl-C. `run-flows.sh` now takes `HARNESS_SCRIPT` and `HARNESS_ARGS` so the same servers can run any script (flows, soak, accessibility scan, demo) and sets a dead address for the sign-in service, as it already did for TrueForge, because a production start refuses to serve sign-in without one and falls back to its own database when nothing answers.
+- Found while building it: the showings API refuses to book while no calendar is connected (right, it cannot know about conflicts), so the demo writes its viewing straight into the table; and signing in through the form needs `provisioning_completed_at` set, not a wizard step.
+- Verified: a real browser signed in through the form and walked 17 screens (sign-up, sign-in, Home, Ask AI answer, Approvals with an approve, Inbox, Inquiries, Showings, Money owed, Trust, Autonomy, Connectors, Terms, two phone views); the approved email reached the fake Gmail exactly once.
+- Seen on those screens and not changed: the owner's own Ask AI conversation also appears in the Inbox as a "Customer" thread, and Home shows "Some background features are running slowly" because the demo has no workflow engine or tracing service (it is the honest degraded banner).
+- Not tried: a laptop. `run-flows.sh` is bash, so Windows needs WSL or Git Bash; the steps are in `RUN_ON_YOUR_MACHINE.md` section 5.
+
 ## A repeatable accessibility check (2026-10-15)
 
 - New `infra/harness/a11y-scan.js`: opens every static page (40) in a real browser as a throwaway owner and runs axe-core (WCAG 2.1 A and AA); prints each failing element and exits 1 on any. It reuses the harness's seed and session cookie, finds Playwright through `PLAYWRIGHT_MODULE` and Chromium through `CHROMIUM_PATH`, so it is not tied to this machine. `axe-core` 4.13.0 is a dev dependency of the dashboard (an addition of one package; nothing in production changes).
