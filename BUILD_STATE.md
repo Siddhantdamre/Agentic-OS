@@ -1,5 +1,12 @@
 # Darex Build State
 
+## Safety rules for governed self-improvement
+
+- New `services/workflows/src/improve/`: the pure rules for letting an AI employee propose a change to itself safely. Nothing is wired into a running agent yet and nothing is stored in the database (in-memory registry only).
+- `guard.ts` refuses a candidate that adds a tool, raises the autonomy stage, drops an approval requirement or deletes a protected clause (approval before sending, never promise refunds, escalate complaints). `gate.ts` promotes only on a held-out set with enough cases (10 total, 5 per topic), no topic losing, a real overall gain and no new invented number or over-promise. `rollout.ts` moves draft to shadow to 10% canary to active one step at a time, needs a named person for canary and active, and recommends rollback on an approval drop, failed actions or more complaints. `propose.ts` picks the ONE best-evidenced failure cluster and writes the owner a plain note.
+- Verified: 16 tests including four attacks (sneaked-in tool, deleted approval clause, win on the author's own data, overall win that loses on payments).
+- Known limits: protected clauses are phrase matches, so a reworded deletion can slip past (human diff review stays essential); `heldOut` is a trusted flag; margins and rollback thresholds are untuned starting values; the direction of `autonomyStage` versus `AutonomyTier` (1-4) in `autonomy.ts` must be checked before wiring.
+
 ## Quality tiers for the model router
 
 - New `model-tier.ts`: picks fast / standard / deep per turn. Anything touching money, refunds, complaints, tax, legal or contracts (English, Hinglish and Devanagari) goes to the deep model, because a wrong answer there costs a person; analysis, long messages and attachments go to standard; plain lookups stay fast. When a workspace's model budget is used up a money question steps down one level and says so, never silently.
