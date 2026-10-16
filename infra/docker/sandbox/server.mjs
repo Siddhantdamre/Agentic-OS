@@ -14,10 +14,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 const PORT = parseInt(process.env.SANDBOX_PORT || '8080', 10);
-const MAX_CONCURRENT = parseInt(process.env.SANDBOX_MAX_CONCURRENT || '2', 10);
+const MAX_CONCURRENT = parseInt(process.env.SANDBOX_MAX_CONCURRENT || '10', 10);
+const PER_TENANT_MAX_CONCURRENT = parseInt(process.env.SANDBOX_PER_TENANT_CONCURRENT || '2', 10);
 const DEFAULT_TIMEOUT_MS = parseInt(process.env.SANDBOX_DEFAULT_TIMEOUT_MS || '10000', 10);
 
 let inFlight = 0;
+const tenantInFlight = new Map();
 
 function json(res, status, body) {
   const payload = JSON.stringify(body);
@@ -144,16 +146,24 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  if (inFlight >= MAX_CONCURRENT) {
-    json(res, 429, { result: { ok: false, stdout: '', stderr: '', exitCode: 1, error: 'sandbox busy' } });
-    return;
-  }
-
   let parsed;
   try {
     parsed = JSON.parse(await readBody(req));
   } catch {
     json(res, 400, { result: { ok: false, stdout: '', stderr: '', exitCode: 1, error: 'invalid json' } });
+    return;
+  }
+
+  const orgId = String(parsed.orgId || req.headers['x-org-id'] || 'default');
+
+  if (inFlight >= MAX_CONCURRENT) {
+    json(res, 429, { result: { ok: false, stdout: '', stderr: '', exitCode: 1, error: 'sandbox busy (cluster concurrency limit reached)' } });
+    return;
+  }
+
+  const tenantCount = tenantInFlight.get(orgId) || 0;
+  if (tenantCount >= PER_TENANT_MAX_CONCURRENT) {
+    json(res, 429, { result: { ok: false, stdout: '', stderr: '', exitCode: 1, error: `tenant sandbox concurrency limit reached (max ${PER_TENANT_MAX_CONCURRENT} concurrent runs per organization)` } });
     return;
   }
 
@@ -169,11 +179,18 @@ const server = http.createServer(async (req, res) => {
   );
 
   inFlight += 1;
+  tenantInFlight.set(orgId, tenantCount + 1);
   try {
     const result = await executeCode(parsed.language, code, timeoutMs);
     json(res, 200, { result });
   } finally {
-    inFlight -= 1;
+    inFlight = Math.max(0, inFlight - 1);
+    const cur = tenantInFlight.get(orgId) || 0;
+    if (cur <= 1) {
+      tenantInFlight.delete(orgId);
+    } else {
+      tenantInFlight.set(orgId, cur - 1);
+    }
   }
 });
 

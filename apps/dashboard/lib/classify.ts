@@ -11,6 +11,7 @@
 import { chatCompletion } from './litellm-client';
 import type { ClassifyResult, ClassifyType } from '@darex/shared-types';
 import { getPlaybook, matchPlaybook, PLAYBOOK_IDS, PLAYBOOK_MATCH_THRESHOLD } from './playbook-matcher';
+import { DAILY_BRIEF_RE } from '@darex/workflows/dist/route-employee';
 
 export type { ClassifyResult, ClassifyType };
 
@@ -47,10 +48,34 @@ const SIMPLE_HINTS = new RegExp(
 type AgentClassify = 'simple' | 'complex' | 'unknown';
 
 function parseClassifierJson(content: string): { type: AgentClassify; playbookId?: string } {
-  const playbookHit = PLAYBOOK_IDS.find((id) => content.includes(id));
+  const cleaned = content.replace(/```(?:json)?/g, '').replace(/```/g, '').trim();
+  const jsonMatch = cleaned.match(/\{[\s\S]*?\}/);
+  if (jsonMatch) {
+    try {
+      const parsed = JSON.parse(jsonMatch[0]) as { type?: unknown; playbook?: unknown };
+      const rawType = typeof parsed.type === 'string' ? parsed.type.trim().toUpperCase() : '';
+      const rawPlaybook = typeof parsed.playbook === 'string' ? parsed.playbook.trim() : undefined;
+      const playbookHit = rawPlaybook ? PLAYBOOK_IDS.find((id) => id === rawPlaybook) : undefined;
+      const playbookId = playbookHit && getPlaybook(playbookHit) ? playbookHit : undefined;
+      if (rawType === 'COMPLEX') return { type: 'complex', playbookId };
+      if (rawType === 'SIMPLE') return { type: 'simple' };
+    } catch {
+      // JSON parse failed, proceed to disciplined fallback
+    }
+  }
+
+  // Look specifically for key-value pair "type": "COMPLEX" or "type": "SIMPLE"
+  const typeMatch = content.match(/"type"\s*:\s*"(COMPLEX|SIMPLE)"/i);
+  const playbookHit = PLAYBOOK_IDS.find((id) => content.includes(`"${id}"`) || content.includes(id));
   const playbookId = playbookHit && getPlaybook(playbookHit) ? playbookHit : undefined;
-  if (/COMPLEX/i.test(content)) return { type: 'complex', playbookId };
-  if (/SIMPLE/i.test(content)) return { type: 'simple' };
+  if (typeMatch) {
+    const matchedType = typeMatch[1].toUpperCase();
+    if (matchedType === 'COMPLEX') return { type: 'complex', playbookId };
+    if (matchedType === 'SIMPLE') return { type: 'simple' };
+  }
+
+  if (/\bCOMPLEX\b/i.test(content) && !/\bSIMPLE\b/i.test(content)) return { type: 'complex', playbookId };
+  if (/\bSIMPLE\b/i.test(content) && !/\bCOMPLEX\b/i.test(content)) return { type: 'simple' };
   return { type: 'unknown', playbookId };
 }
 
@@ -93,6 +118,10 @@ async function classifyWithAgent(
 export async function classifyRequest(prompt: string, orgId: string): Promise<ClassifyResult> {
   const trimmed = (prompt || '').trim();
   if (trimmed.length === 0) return { type: 'simple', confidence: 1, usedFallback: true };
+
+  // A daily/executive brief is one read-only daily_brief turn for Executive.
+  // Left to the model router it gets a look-alike playbook (stale deal chase).
+  if (DAILY_BRIEF_RE.test(trimmed)) return { type: 'simple', confidence: 0.9, usedFallback: true };
 
   const complex = COMPLEX_HINTS.test(trimmed);
   const simple = SIMPLE_HINTS.test(trimmed);

@@ -18,6 +18,8 @@ const CONNECT_TIMEOUT_MS = 5_000;
 const COMMAND_TIMEOUT_MS = 5_000;
 const RECONNECT_MAX_MS = 5_000;
 const MAX_RESP_BUFFER = 1024 * 1024;
+/** Keep half-open TCP links honest — PING after handshake, not only at connect. */
+const HEARTBEAT_MS = 20_000;
 
 type RespValue = string | number | null | RespValue[] | { error: string };
 
@@ -76,7 +78,7 @@ export function parseRedisTarget(urlString: string): RedisTarget {
   };
 }
 
-function encodeCommand(args: string[]): Buffer {
+export function encodeCommand(args: string[]): Buffer {
   const parts: Buffer[] = [Buffer.from(`*${args.length}\r\n`)];
   for (const arg of args) {
     const data = Buffer.from(arg, 'utf8');
@@ -85,7 +87,12 @@ function encodeCommand(args: string[]): Buffer {
   return Buffer.concat(parts);
 }
 
-function parseResp(buf: Buffer, pos: { i: number }): RespValue | undefined {
+/**
+ * RESP2 frame parser. Returns `undefined` when the buffer is incomplete so
+ * callers can wait for the next TCP chunk (fragmentation-safe).
+ * Exported for unit tests that feed split frames deliberately.
+ */
+export function parseResp(buf: Buffer, pos: { i: number }): RespValue | undefined {
   const start = pos.i;
   if (pos.i >= buf.length) return undefined;
   const type = buf[pos.i];
@@ -109,17 +116,20 @@ function parseResp(buf: Buffer, pos: { i: number }): RespValue | undefined {
   }
   if (type === 0x3a /* : */) {
     const value = Number(buf.subarray(pos.i + 1, headerEnd).toString('ascii'));
+    if (!Number.isFinite(value)) return reset();
     pos.i = headerEnd + 2;
     return value;
   }
   if (type === 0x24 /* $ */) {
     const len = Number(buf.subarray(pos.i + 1, headerEnd).toString('ascii'));
+    if (!Number.isFinite(len)) return reset();
     if (len < 0) {
       pos.i = headerEnd + 2;
       return null;
     }
     const dataStart = headerEnd + 2;
     const dataEnd = dataStart + len;
+    // Wait for full bulk payload + trailing CRLF across TCP chunks.
     if (buf.length < dataEnd + 2) return reset();
     const value = buf.subarray(dataStart, dataEnd).toString('utf8');
     pos.i = dataEnd + 2;
@@ -127,6 +137,7 @@ function parseResp(buf: Buffer, pos: { i: number }): RespValue | undefined {
   }
   if (type === 0x2a /* * */) {
     const count = Number(buf.subarray(pos.i + 1, headerEnd).toString('ascii'));
+    if (!Number.isFinite(count)) return reset();
     pos.i = headerEnd + 2;
     if (count < 0) return null;
     const items: RespValue[] = [];
@@ -138,6 +149,20 @@ function parseResp(buf: Buffer, pos: { i: number }): RespValue | undefined {
     return items;
   }
   throw new Error(`[event-bus] unknown RESP type 0x${type.toString(16)}`);
+}
+
+/** Drain zero or more complete RESP frames from an accumulating buffer. */
+export function consumeRespFrames(buf: Buffer): { values: RespValue[]; rest: Buffer } {
+  const values: RespValue[] = [];
+  let rest = buf;
+  while (rest.length > 0) {
+    const pos = { i: 0 };
+    const value = parseResp(rest, pos);
+    if (value === undefined) break;
+    values.push(value);
+    rest = rest.subarray(pos.i);
+  }
+  return { values, rest: Buffer.from(rest) };
 }
 
 function respError(value: RespValue): string | null {
@@ -189,6 +214,7 @@ class RedisLink {
   private closed = false;
   private handshakeDone = false;
   private everConnected = false;
+  private heartbeat: ReturnType<typeof setInterval> | null = null;
   private readonly push = new EventEmitter();
 
   constructor(
@@ -217,9 +243,30 @@ class RedisLink {
   destroy(): void {
     this.closed = true;
     this.handshakeDone = false;
+    this.stopHeartbeat();
     this.failPending(new Error(`[event-bus] ${this.name} closed`));
     this.socket?.destroy();
     this.socket = null;
+  }
+
+  private startHeartbeat(): void {
+    this.stopHeartbeat();
+    this.heartbeat = setInterval(() => {
+      if (!this.handshakeDone || !this.socket || this.socket.destroyed) return;
+      this.commandInternal(['PING']).catch((err: unknown) => {
+        const message = err instanceof Error ? err.message : String(err);
+        console.error(`[event-bus] ${this.name} heartbeat PING failed:`, message);
+        this.socket?.destroy();
+      });
+    }, HEARTBEAT_MS);
+    this.heartbeat.unref?.();
+  }
+
+  private stopHeartbeat(): void {
+    if (this.heartbeat) {
+      clearInterval(this.heartbeat);
+      this.heartbeat = null;
+    }
   }
 
   private commandInternal(args: string[]): Promise<RespValue> {
@@ -252,6 +299,7 @@ class RedisLink {
       });
       socket.on('close', () => {
         this.handshakeDone = false;
+        this.stopHeartbeat();
         this.socket = null;
         this.failPending(new Error(`[event-bus] ${this.name} disconnected`));
         this.scheduleReconnect();
@@ -271,6 +319,7 @@ class RedisLink {
 
       this.handshakeDone = true;
       this.reconnectDelay = 250;
+      this.startHeartbeat();
       if (this.everConnected) {
         this.push.emit('reconnected', []);
       }
@@ -278,6 +327,7 @@ class RedisLink {
     } catch (err) {
       this.connecting = null;
       this.handshakeDone = false;
+      this.stopHeartbeat();
       this.socket?.destroy();
       this.socket = null;
       throw err;
@@ -287,25 +337,22 @@ class RedisLink {
   }
 
   private onData(chunk: Buffer): void {
+    // Accumulate across TCP fragments — never assume one chunk == one RESP frame.
     this.buf = Buffer.concat([this.buf, chunk]);
     if (this.buf.length > MAX_RESP_BUFFER) {
       console.error(`[event-bus] ${this.name} RESP buffer overflow — resetting socket`);
       this.socket?.destroy();
       return;
     }
-    while (this.buf.length > 0) {
-      const pos = { i: 0 };
-      let value: RespValue | undefined;
-      try {
-        value = parseResp(this.buf, pos);
-      } catch (err) {
-        console.error(`[event-bus] ${this.name} RESP parse error:`, err);
-        this.socket?.destroy();
-        return;
+    try {
+      const drained = consumeRespFrames(this.buf);
+      this.buf = Buffer.from(drained.rest);
+      for (const value of drained.values) {
+        this.dispatch(value);
       }
-      if (value === undefined) break;
-      this.buf = this.buf.subarray(pos.i);
-      this.dispatch(value);
+    } catch (err) {
+      console.error(`[event-bus] ${this.name} RESP parse error:`, err);
+      this.socket?.destroy();
     }
   }
 
@@ -383,6 +430,12 @@ class EventBus {
       console.error(`[event-bus] PUBLISH failed on ${channel} — event not delivered:`, message);
       throw err;
     }
+  }
+
+  /** Publisher-link Redis command (SETEX/GET/HSET for presence). Not for SUBSCRIBE. */
+  async command(args: string[]): Promise<RespValue> {
+    await this.publisher.ready();
+    return this.publisher.command(args);
   }
 
   async subscribe(channel: string, handler: EventBusHandler): Promise<() => void> {

@@ -1,14 +1,13 @@
 import { NextResponse } from 'next/server';
 import { getOrgScopedClient } from '@/lib/db';
-import { assertMetaWebhookSignature, verifyMetaSubscribeToken } from '@/lib/webhook-crypto';
-import { recordAuditEvent } from '@/lib/inbound-confirm';
+import { assertMetaWebhookSignature } from '@/lib/webhook-crypto';
+import { recordAuditEvent } from '@/lib/audit-events';
 import { replyTargetFromChannelMeta, sendChannelReply } from '@/lib/channel-outbound';
 import {
   isRegisteredOwnerPhone,
   parseOwnerCommand,
   persistInboundMessage,
   resolveChannelByMeta,
-  resolveSingleOrgChannel,
   type OwnerCommand,
 } from '@/lib/channel-normalize';
 import { denyWebhookIfLimited, isRateLimitError, responseFromRateLimit } from '@/lib/rate-limit';
@@ -17,7 +16,7 @@ import { signalPlanDecision, startOwnerBriefingWorkflow } from '@darex/workflows
 /**
  * GET /api/webhooks/owner-whatsapp
  * Distinct number from customer WABA (H5). Mixing numbers is a security bug.
- * H1 token rotation: infra/scripts/OPERATOR_HYGIENE.md §4.
+ * H1 token rotation: infra/scripts/OPERATOR_HYGIENE.md -4.
  */
 export async function GET(req: Request) {
   try {
@@ -28,7 +27,7 @@ export async function GET(req: Request) {
     const verifyToken =
       process.env.OWNER_WHATSAPP_VERIFY_TOKEN || process.env.VERIFY_TOKEN;
 
-    if (mode === 'subscribe' && verifyMetaSubscribeToken(token, verifyToken)) {
+    if (mode === 'subscribe' && verifyToken && token === verifyToken) {
       return new NextResponse(challenge, {
         status: 200,
         headers: { 'Content-Type': 'text/plain' },
@@ -143,6 +142,70 @@ async function runOwnerCommand(job: OwnerJob): Promise<string> {
       });
       return `Approved plan ${command.planId}.`;
     }
+    case 'reject_plan': {
+      const { client } = await getOrgScopedClient(job.orgId);
+      let workItemWorkflowIds: string[] = [];
+      try {
+        const existing = (
+          await client.query(`SELECT id, status FROM agent_plans WHERE id = $1 AND org_id = $2`, [
+            command.planId,
+            job.orgId,
+          ])
+        ).rows[0];
+        if (!existing) return `Plan ${command.planId} not found.`;
+        if (existing.status !== 'pending' && existing.status !== 'approved') {
+          return `Plan cannot be rejected (status: ${existing.status}).`;
+        }
+        await client.query(
+          `UPDATE agent_plans SET status = 'rejected', updated_at = NOW() WHERE id = $1 AND org_id = $2`,
+          [command.planId, job.orgId]
+        );
+        const ownerRes = await client.query<{ id: string }>(
+          `SELECT id FROM users WHERE org_id = $1 AND lower(role) = 'owner' ORDER BY created_at ASC LIMIT 1`,
+          [job.orgId]
+        );
+        const userId = ownerRes.rows[0]?.id ?? null;
+        try {
+          await recordAuditEvent(
+            {
+              orgId: job.orgId,
+              kind: 'plan.reject',
+              actor: userId
+                ? { actorType: 'user', userId }
+                : { actorType: 'system', component: 'owner-whatsapp' },
+              resultStatus: 'ok',
+              planId: command.planId,
+              approverUserId: userId,
+              payload: { planId: command.planId, source: 'owner-whatsapp' },
+            },
+            { client, orgId: job.orgId }
+          );
+        } catch (auditErr: unknown) {
+          const message = auditErr instanceof Error ? auditErr.message : String(auditErr);
+          console.warn('[Owner WhatsApp] audit_events insert failed (reject):', message);
+        }
+        const waiting = await client.query(
+          `SELECT temporal_workflow_id FROM work_items
+           WHERE org_id = $1
+             AND temporal_workflow_id IS NOT NULL
+             AND (metadata->>'planId' = $2 OR status = 'waiting_approval')
+           LIMIT 8`,
+          [job.orgId, command.planId]
+        );
+        workItemWorkflowIds = waiting.rows
+          .map((r: { temporal_workflow_id?: string }) => r.temporal_workflow_id)
+          .filter((id: unknown): id is string => typeof id === 'string' && id.length > 0);
+      } finally {
+        client.release();
+      }
+      await signalPlanDecision({
+        orgId: job.orgId,
+        planId: command.planId,
+        decision: 'rejected',
+        workItemWorkflowIds,
+      });
+      return `Rejected plan ${command.planId}.`;
+    }
     case 'pause_employee': {
       const { client } = await getOrgScopedClient(job.orgId);
       try {
@@ -161,7 +224,7 @@ async function runOwnerCommand(job: OwnerJob): Promise<string> {
       }
     }
     case 'unknown':
-      return 'Owner commands: "brief me", "approve plan <id>", "pause <employee>". Customer WhatsApp cannot approve payments.';
+      return 'Owner commands: "brief me", "approve plan <id>", "reject plan <id>", "pause <employee>". Customer WhatsApp cannot approve payments.';
     default: {
       const _never: never = command;
       return String(_never);
@@ -210,17 +273,20 @@ export async function POST(req: Request) {
         (await resolveChannelByMeta('whatsapp', 'phone_number_id', phoneNumberId)) ||
         (await resolveChannelByMeta('whatsapp', 'phoneNumberId', phoneNumberId));
       if (customerChannel) {
-        console.warn('[Owner WhatsApp] Customer WABA number delivered here — skipping');
+        console.warn('[Owner WhatsApp] Customer WABA number delivered here - skipping');
         continue;
       }
 
       const matched =
         (await resolveChannelByMeta('owner_whatsapp', 'phone_number_id', phoneNumberId)) ||
-        (await resolveChannelByMeta('owner_whatsapp', 'phoneNumberId', phoneNumberId)) ||
-        (await resolveSingleOrgChannel('owner_whatsapp'));
+        (await resolveChannelByMeta('owner_whatsapp', 'phoneNumberId', phoneNumberId));
 
       if (!matched?.org_id) {
-        console.error('[Owner WhatsApp] Cannot resolve org for phone_number_id', phoneNumberId);
+        console.error(
+          '[Owner WhatsApp] Cannot resolve org for phone_number_id',
+          phoneNumberId,
+          '- no single-org fallback'
+        );
         continue;
       }
 
@@ -241,7 +307,7 @@ export async function POST(req: Request) {
         const text = inboundText(message);
         if (!from) continue;
         if (!isRegisteredOwnerPhone(from, chanMeta)) {
-          console.warn('[Owner WhatsApp] Unregistered sender — ignoring commands from', from);
+          console.warn('[Owner WhatsApp] Unregistered sender - ignoring commands from', from);
           continue;
         }
 
@@ -279,7 +345,7 @@ export async function POST(req: Request) {
       const target = replyTargetFromChannelMeta('whatsapp', job.from, job.chanMeta);
       const sendResult = await sendChannelReply(job.orgId, target, reply);
       if (job.chanMeta && sendResult.attempted && !sendResult.sent) {
-        console.warn('[Owner WhatsApp] outbound not sent (revoked Meta ≠ success):', sendResult.message);
+        console.warn('[Owner WhatsApp] outbound not sent (revoked Meta ? success):', sendResult.message);
       }
     })();
   }

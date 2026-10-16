@@ -1,0 +1,54 @@
+{
+  "risks": [
+    "read",
+    "draft",
+    "send",
+    "publish",
+    "sign",
+    "pay",
+    "delete",
+    "execute"
+  ],
+  "stages": {
+    "0": {
+      "read": "runs",
+      "draft": "recorded",
+      "send": "recorded",
+      "publish": "recorded",
+      "sign": "recorded",
+      "pay": "asks",
+      "delete": "asks",
+      "execute": "recorded"
+    },
+    "1": {
+      "read": "runs",
+      "draft": "runs",
+      "send": "asks",
+      "publish": "asks",
+      "sign": "asks",
+      "pay": "asks",
+      "delete": "asks",
+      "execute": "asks"
+    },
+    "2": {
+      "read": "runs",
+      "draft": "runs",
+      "send": "asks",
+      "publish": "asks",
+      "sign": "asks",
+      "pay": "asks",
+      "delete": "asks",
+      "execute": "asks"
+    },
+    "3": {
+      "read": "runs",
+      "draft": "runs",
+      "send": "asks",
+      "publish": "asks",
+      "sign": "asks",
+      "pay": "asks",
+      "delete": "asks",
+      "execute": "asks"
+    }
+  }
+}

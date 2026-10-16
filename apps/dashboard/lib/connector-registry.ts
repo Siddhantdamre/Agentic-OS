@@ -83,7 +83,7 @@ export const CONNECTOR_REGISTRY_META: Record<string, ConnectorRegistryMeta> = {
     nangoKey: 'whatsapp',
     riskClass: 'send',
     verticalTags: ['core', 'messaging'],
-    mcpTools: ['whatsapp_send'],
+    mcpTools: ['whatsapp_send', 'whatsapp_list_messages'],
   },
   gmail: {
     nangoKey: 'gmail',
@@ -96,6 +96,9 @@ export const CONNECTOR_REGISTRY_META: Record<string, ConnectorRegistryMeta> = {
       'gmail_extract_otp',
       'gmail_extract_attachment',
       'gmail_draft_email',
+      'gmail_read_email',
+      'gmail_reply',
+      'gmail_draft_reply',
     ],
   },
   'google-calendar': {
@@ -138,7 +141,7 @@ export const CONNECTOR_REGISTRY_META: Record<string, ConnectorRegistryMeta> = {
     nangoKey: 'slack',
     riskClass: 'send',
     verticalTags: ['core', 'messaging'],
-    mcpTools: ['slack_send'],
+    mcpTools: ['slack_send', 'slack_read_channel', 'slack_list_channels', 'slack_read_thread', 'slack_reply_thread', 'slack_post_decision_card'],
   },
   shopify: {
     nangoKey: 'shopify',
@@ -500,7 +503,7 @@ export async function upsertOrgConnector(
       `INSERT INTO org_connectors (
          org_id, connector_key, status, nango_connection_id, scopes, last_ok_at, last_error, updated_at
        ) VALUES ($1, $2, $3, $4, $5::text[], $6, $7, NOW())
-       ON CONFLICT (org_id, connector_key)
+       ON CONFLICT (org_id, connector_key, account_id)
        DO UPDATE SET
          status = EXCLUDED.status,
          nango_connection_id = EXCLUDED.nango_connection_id,

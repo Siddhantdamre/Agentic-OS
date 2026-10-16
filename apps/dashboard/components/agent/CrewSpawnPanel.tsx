@@ -60,12 +60,12 @@ export const CrewSpawnPanel: React.FC = () => {
       <div className="flex items-center justify-between border-b border-cream-200 pb-4">
         <div className="flex items-center space-x-3">
           <div className="w-10 h-10 rounded-2xl bg-amber-500/20 flex items-center justify-center border border-amber-500/30">
-            <Users className="w-5 h-5 text-amber-600" />
+            <Users className="w-5 h-5 text-amber-700" />
           </div>
           <div>
             <h2 className="text-lg font-serif font-bold text-heading">Spawn crew</h2>
             <p className="text-xs text-slate-500">
-              Routes across Sarah / Emma / Marcus. Cap 3. Greetings stay solo — inbound WhatsApp is never auto-crewed.
+              Routes the active roster by job — Customer, Operations, Growth, Sarah, Emma, Marcus, Research, Finance. Cap 3. Greetings stay solo.
             </p>
           </div>
         </div>
@@ -84,7 +84,7 @@ export const CrewSpawnPanel: React.FC = () => {
 
       <div className="flex items-center justify-between">
         <p className="text-[11px] text-slate-400">
-          Each specialist keeps their own tool allowlist. Missing OAuth still returns notConnected.
+          Each employee only uses the tools they’re allowed. If a tool isn’t connected, the action is blocked — never faked.
         </p>
         <button
           type="button"
@@ -108,23 +108,23 @@ export const CrewSpawnPanel: React.FC = () => {
         <div className="space-y-3">
           <div className="flex items-center space-x-2 text-xs">
             {result.success ? (
-              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-700" />
             ) : (
-              <AlertCircle className="w-3.5 h-3.5 text-amber-600" />
+              <AlertCircle className="w-3.5 h-3.5 text-amber-700" />
             )}
             <span className="font-bold uppercase tracking-wider text-slate-500">
               {result.mode}
             </span>
             {result.reason && <span className="text-slate-500">— {result.reason}</span>}
             {result.usedTemporal && (
-              <span className="text-[10px] font-bold text-emerald-700">Durable</span>
+              <span className="text-[10px] font-bold text-emerald-700">Saved progress</span>
             )}
           </div>
 
           {result.spawned.map((spawn) => (
             <div key={`${spawn.employeeName}-${spawn.task}`} className="p-3.5 bg-cream-100/70 border border-cream-300 rounded-2xl space-y-1.5">
               <div className="flex items-center space-x-2">
-                <Bot className="w-4 h-4 text-amber-600" />
+                <Bot className="w-4 h-4 text-amber-700" />
                 <span className="text-xs font-bold text-heading">{spawn.employeeName}</span>
                 <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-700">
                   {spawn.employeeRole}

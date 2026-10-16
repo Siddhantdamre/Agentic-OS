@@ -39,6 +39,7 @@ import {
 } from 'lucide-react';
 import { disconnectProvider, startRealNangoOAuth } from '@/lib/nango-client';
 import { LiveRegion, StatusBadge } from '@/components/a11y';
+import { networkErrorMessage } from '@/lib/client-error';
 
 interface Integration {
   id: string;
@@ -104,6 +105,7 @@ export default function IntegrationsPage() {
   const [connectingId, setConnectingId] = useState<string | null>(null);
   const [selectedApp, setSelectedApp] = useState<Integration | null>(null);
   const [notification, setNotification] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   // Test Runner state
   const [testPayload, setTestPayload] = useState<Record<string, any>>({});
@@ -112,14 +114,24 @@ export default function IntegrationsPage() {
 
   const fetchIntegrations = async () => {
     setLoading(true);
+    setLoadError(null);
     try {
       const res = await fetch('/api/integrations');
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setIntegrations([]);
+        setLogs([]);
+        setLoadError(data.error || data.message || `Failed to load integrations (HTTP ${res.status})`);
+        return;
+      }
       setIntegrations(data.integrations || []);
       if (data.stats) setStats(data.stats);
       if (data.logs) setLogs(data.logs);
     } catch (err) {
       console.error('Failed to load integrations:', err);
+      setIntegrations([]);
+      setLogs([]);
+      setLoadError(networkErrorMessage(err, 'Failed to load integrations'));
     } finally {
       setLoading(false);
     }
@@ -135,13 +147,13 @@ export default function IntegrationsPage() {
 
     try {
       if (app.authMode === 'service_account') {
-        throw new Error(app.missingConfigReason || 'This connector is not OAuth and cannot be connected here.');
+        throw new Error(app.missingConfigReason || 'This app can’t be connected here.');
       }
       if (app.authMode === 'byok' || app.id === 'whatsapp') {
-        throw new Error('WhatsApp uses a Meta system-user token. Open /connectors and use the BYOK form — Graph verifies the token before Connected.');
+        throw new Error('WhatsApp connects with an access token from Meta. Go to Connectors and paste it there; we check it with Meta before showing it as connected.');
       }
       if (app.authMode === 'api_key' || app.id === 'razorpay') {
-        throw new Error('Razorpay uses API keys. Open /connectors and paste key_id + key_secret (verified against Razorpay).');
+        throw new Error('Razorpay connects with API keys. Go to Connectors and paste your key ID and key secret; we check them with Razorpay before saving.');
       }
       const extras: Record<string, string> = {};
       for (const field of app.extraConnectFields || []) {
@@ -150,7 +162,7 @@ export default function IntegrationsPage() {
       }
       const result = await startRealNangoOAuth(app.id, { extraParams: extras });
       if (result.success) {
-        setNotification({ type: 'success', message: `${app.name} is connected.` });
+        setNotification({ type: 'success', message: `${app.name} is now connected.` });
       } else {
         setNotification({ type: 'error', message: result.error || `Failed to connect ${app.name}` });
       }
@@ -212,7 +224,7 @@ export default function IntegrationsPage() {
         <div>
           <h1 className="text-3xl font-serif font-bold text-heading">Integrations & Connectors</h1>
           <p className="text-slate-500 text-sm mt-1">
-            Your account logins are stored securely and never shared.
+            Connect the tools your business uses. Sign-in details are stored securely and never shared with other businesses.
           </p>
         </div>
 
@@ -221,16 +233,26 @@ export default function IntegrationsPage() {
           className="px-4 py-2 bg-cream-200 hover:bg-cream-300 border border-cream-300 rounded-xl text-xs font-semibold text-slate-700 flex items-center space-x-2 transition-colors"
         >
           <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
-          <span>Refresh</span>
+          <span>Refresh status</span>
         </button>
       </div>
+
+      {loadError && (
+        <div className="p-4 rounded-2xl border border-red-200 bg-red-50 text-red-800 text-sm font-medium flex items-start space-x-2 shadow-sm">
+          <AlertCircle className="w-5 h-5 text-red-600 shrink-0" />
+          <div>
+            <p className="font-semibold">Could not load integrations</p>
+            <p className="text-xs mt-1 text-red-900/80">{loadError}</p>
+          </div>
+        </div>
+      )}
 
       {notification && (
         <div className={`p-4 rounded-2xl border text-sm font-medium flex items-center justify-between shadow-sm ${
           notification.type === 'success' ? 'bg-emerald-50 border-emerald-200 text-emerald-800' : 'bg-red-50 border-red-200 text-red-800'
         }`}>
           <div className="flex items-center space-x-2">
-            {notification.type === 'success' ? <CheckCircle2 className="w-5 h-5 text-emerald-600" /> : <AlertCircle className="w-5 h-5 text-red-600" />}
+            {notification.type === 'success' ? <CheckCircle2 className="w-5 h-5 text-emerald-700" /> : <AlertCircle className="w-5 h-5 text-red-600" />}
             <span>{notification.message}</span>
           </div>
           <button onClick={() => setNotification(null)} className="text-slate-400 hover:text-slate-600">
@@ -242,27 +264,27 @@ export default function IntegrationsPage() {
       {/* 4-Stat Header Bar */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <div className="bg-cream-200/70 border border-cream-300 p-5 rounded-2xl space-y-1 shadow-sm">
-          <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Connected Apps</span>
+          <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Connected Tools</span>
           <div className="text-3xl font-bold text-heading">{stats.connectedApps} / {integrations.length}</div>
-          <span className="text-xs text-emerald-600 font-medium">Connected securely</span>
+          <span className="text-xs text-emerald-700 font-medium">Secure sign-in</span>
         </div>
 
         <div className="bg-cream-200/70 border border-cream-300 p-5 rounded-2xl space-y-1 shadow-sm">
           <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Total Syncs Today</span>
           <div className="text-3xl font-bold text-heading">{stats.totalSyncsToday}</div>
-          <span className="text-xs text-emerald-600 font-medium">Live DB payload delivery</span>
+          <span className="text-xs text-emerald-700 font-medium">Updates received automatically</span>
         </div>
 
         <div className="bg-cream-200/70 border border-cream-300 p-5 rounded-2xl space-y-1 shadow-sm">
-          <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Failed Webhooks</span>
+          <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Failed updates</span>
           <div className="text-3xl font-bold text-heading">{stats.failedWebhooks}</div>
-          <span className="text-xs text-slate-500 font-medium">0 retry queue backlog</span>
+          <span className="text-xs text-slate-500 font-medium">Nothing waiting to retry</span>
         </div>
 
         <div className="bg-cream-200/70 border border-cream-300 p-5 rounded-2xl space-y-1 shadow-sm">
           <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">API Quota Used</span>
           <div className="text-3xl font-bold text-heading">{stats.apiQuotaUsed}</div>
-          <span className="text-xs text-emerald-600 font-medium">Rate limits healthy</span>
+          <span className="text-xs text-emerald-700 font-medium">Rate limits healthy</span>
         </div>
       </div>
 
@@ -306,7 +328,7 @@ export default function IntegrationsPage() {
                     setTestPayload({});
                     setTestResult(null);
                   }}
-                  className="text-xs text-amber-700 font-semibold hover:underline flex items-center space-x-1"
+                  className="touch-target text-xs text-amber-700 font-semibold hover:underline flex items-center space-x-1"
                 >
                   <span>View Details & Test</span>
                   <ExternalLink className="w-3 h-3" />
@@ -346,7 +368,7 @@ export default function IntegrationsPage() {
                 </div>
                 <div>
                   <h2 className="text-xl font-serif font-bold text-heading">{selectedApp.name}</h2>
-                  <span className="text-xs text-slate-400 font-medium">Test this connection</span>
+                  <span className="text-xs text-slate-400 font-medium">Tool details</span>
                 </div>
               </div>
 
@@ -362,13 +384,14 @@ export default function IntegrationsPage() {
               {/* Credentials Summary */}
               <div className="p-4 bg-cream-100 rounded-2xl border border-cream-300 space-y-2">
                 <div className="flex items-center space-x-2 text-xs font-semibold text-slate-600">
-                  <ShieldCheck className="w-4 h-4 text-emerald-600" />
-                  <span>Tenant Connection Scope</span>
+                  <ShieldCheck className="w-4 h-4 text-emerald-700" />
+                  <span>Your connection</span>
                 </div>
                 <p className="text-xs text-slate-600">
+                  Connection ID: <code className="bg-cream-200 px-1.5 py-0.5 rounded text-amber-800 font-mono">{selectedApp.nangoConnectionId}</code>
                 </p>
                 <p className="text-xs text-slate-500">
-                  OAuth Provider Mode: <span className="font-semibold text-slate-700">{selectedApp.id === 'razorpay' ? 'API Key' : 'OAuth 2.0'}</span>
+                  Connected with: <span className="font-semibold text-slate-700">{selectedApp.id === 'razorpay' ? 'an API key' : 'your account sign-in'}</span>
                 </p>
               </div>
 
@@ -377,10 +400,10 @@ export default function IntegrationsPage() {
                 <div className="flex items-center justify-between">
                   <div className="flex items-center space-x-2">
                     <Terminal className="w-4 h-4 text-amber-700" />
-                    <h3 className="text-sm font-bold text-heading">Try an action</h3>
+                    <h3 className="text-sm font-bold text-heading">Execute `@darex/connectors` Function</h3>
                   </div>
                   <span className="text-xs bg-amber-500/10 text-amber-800 font-semibold px-2.5 py-0.5 rounded-full">
-                    Live
+                    Runs for real
                   </span>
                 </div>
 
@@ -549,7 +572,7 @@ export default function IntegrationsPage() {
                     className="w-full py-2.5 bg-amber-500 hover:bg-amber-600 text-heading text-xs font-bold rounded-xl transition-all shadow-md flex items-center justify-center space-x-2"
                   >
                     <Play className="w-3.5 h-3.5 fill-current" />
-                    <span>{testRunning ? 'Running...' : `Run ${selectedApp.name} Action`}</span>
+                    <span>{testRunning ? 'Running…' : `Run ${selectedApp.name} Action`}</span>
                   </button>
 
                   {testResult && (
@@ -569,7 +592,7 @@ export default function IntegrationsPage() {
               {/* Real Database Event Logs Feed */}
               <div>
                 <div className="flex items-center justify-between mb-2">
-                  <h3 className="text-sm font-bold text-heading">Live activity</h3>
+                  <h3 className="text-sm font-bold text-heading">Recent activity</h3>
                   <span className="text-xs text-slate-400 font-medium">{filteredLogs.length} entries</span>
                 </div>
 
@@ -607,7 +630,7 @@ export default function IntegrationsPage() {
                   onClick={() => handleConnectOAuth(selectedApp)}
                   className="w-full py-3 bg-amber-500 hover:bg-amber-600 text-heading text-sm font-bold rounded-2xl transition-all shadow-md"
                 >
-                  Authorize via Nango OAuth
+                  Connect securely
                 </button>
               )}
             </div>

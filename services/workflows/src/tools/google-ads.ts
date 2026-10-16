@@ -1,6 +1,6 @@
 import type { ToolRisk } from './risk.js';
 import type { ToolActionContext, ToolModule } from './shared.js';
-import { apiError, confirmFromRisk, getNangoAccessToken, notConnected } from './shared.js';
+import { apiError, confirmFromRisk, nangoAuthError, notConnected, resolveGoogleAuth, fetchWithTimeout } from './shared.js';
 
 const ACTIONS = ['fetch_campaign_metrics'] as const;
 
@@ -10,8 +10,9 @@ function riskFor(_action: string): ToolRisk {
 
 async function execute(ctx: ToolActionContext) {
   const { payload, orgId, timestamp } = ctx;
-  const googleAdsConnId = `${orgId}_google-ads`;
-  const googleAdsToken = await getNangoAccessToken(googleAdsConnId, 'google-ads');
+  const _gadsAuth = await resolveGoogleAuth(orgId, 'google-ads');
+  const googleAdsToken = _gadsAuth.kind === 'connected' ? _gadsAuth.accessToken : null;
+  const _gadsAuthErr = _gadsAuth.kind === 'connected' ? null : nangoAuthError('google-ads', 'fetch_campaign_metrics', timestamp, _gadsAuth);
   if (googleAdsToken) {
     try {
       const customerId = payload.customerId || process.env.GOOGLE_ADS_CUSTOMER_ID;
@@ -20,10 +21,27 @@ async function execute(ctx: ToolActionContext) {
         return apiError('google-ads', 'fetch_campaign_metrics', timestamp, 'customerId is required (payload or GOOGLE_ADS_CUSTOMER_ID). Token is connected.');
       }
       if (!developerToken) {
-        return apiError('google-ads', 'fetch_campaign_metrics', timestamp, 'GOOGLE_ADS_DEVELOPER_TOKEN is not set. Token is connected but Ads API calls cannot run.');
+        // catalog_only until developer token — honest notConnected, never fake metrics.
+        const path = '/connectors?connect=google-ads';
+        return {
+          tool: 'google-ads',
+          action: 'fetch_campaign_metrics',
+          status: 'error' as const,
+          message:
+            'google-ads is notConnected: GOOGLE_ADS_DEVELOPER_TOKEN is missing. OAuth alone is not enough for live Ads API calls. Set the developer token, then reconnect at ' +
+            path +
+            '. Do not invent campaign metrics.',
+          data: {
+            connected: false,
+            setupUrl: path,
+            missing: 'GOOGLE_ADS_DEVELOPER_TOKEN',
+            reason: 'catalog_only_pending_developer_token',
+          },
+          timestamp,
+        };
       }
       if (customerId) {
-        const gaRes = await fetch(
+        const gaRes = await fetchWithTimeout(
           `https://googleads.googleapis.com/v14/customers/${customerId}/googleAds:search`,
           {
             method: 'POST',
@@ -53,7 +71,7 @@ async function execute(ctx: ToolActionContext) {
       console.error('[Google Ads] API error:', e.message);
     }
   }
-  return notConnected('google-ads', 'fetch_campaign_metrics', timestamp);
+  return _gadsAuthErr ?? notConnected('google-ads', 'fetch_campaign_metrics', timestamp);
 }
 
 export const googleAds: ToolModule = {

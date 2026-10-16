@@ -3,7 +3,9 @@
 import React, { useState, useEffect, Suspense } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { Lock, Mail, ArrowRight, Eye, EyeOff, Sparkles, Loader2 } from 'lucide-react';
+import { Lock, Mail, ArrowRight, Eye, EyeOff, Sparkles, Loader2, ShieldCheck } from 'lucide-react';
+import { safePostLoginPath } from '@/lib/session-cookie';
+import { networkErrorMessage } from '@/lib/client-error';
 
 function LoginForm() {
   const router = useRouter();
@@ -11,6 +13,8 @@ function LoginForm() {
 
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [mfaCode, setMfaCode] = useState('');
+  const [mfaRequired, setMfaRequired] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [rememberMe, setRememberMe] = useState(true);
   const [loading, setLoading] = useState(false);
@@ -19,6 +23,9 @@ function LoginForm() {
   const [ssoProviders, setSsoProviders] = useState<
     Array<{ id: string; name: string; configured: boolean }>
   >([]);
+  const [oauthProviders, setOauthProviders] = useState<
+    Record<string, boolean>
+  >({ google: true, github: true, facebook: true, microsoft: true });
 
   // Read error from OAuth/SSO redirect (e.g. ?error=OAuth+denied)
   useEffect(() => {
@@ -39,6 +46,21 @@ function LoginForm() {
       .catch(() => {
         // Password login still works when the SSO catalog is unavailable.
       });
+
+    void fetch('/api/auth/oauth')
+      .then((res) => (res.ok ? res.json() : null))
+      .then((json: { providers?: Array<{ id: string; name: string; configured: boolean }> } | null) => {
+        if (cancelled || !json?.providers) return;
+        const map: Record<string, boolean> = {};
+        for (const p of json.providers) {
+          map[p.id] = p.configured;
+        }
+        setOauthProviders(map);
+      })
+      .catch(() => {
+        // Default to enabled if status cannot be fetched
+      });
+
     return () => {
       cancelled = true;
     };
@@ -58,29 +80,55 @@ function LoginForm() {
           password,
           rememberMe,
           inviteToken: searchParams?.get('invite') || undefined,
+          mfaCode: mfaRequired ? mfaCode : undefined,
         }),
       });
 
-      const data = await res.json();
+      let data: any = {};
+      try {
+        data = await res.json();
+      } catch {
+        throw new Error(
+          res.ok
+            ? 'Unexpected response from server. Please try again.'
+            : 'Something went wrong on our side. Please try again.'
+        );
+      }
+
+      if (data.status === 'MFA_REQUIRED') {
+        setMfaRequired(true);
+        setError(data.message || 'Enter the code from your authenticator app.');
+        setLoading(false);
+        return;
+      }
 
       if (!res.ok || data.status !== 'OK') {
         throw new Error(data.message || 'Login failed. Please check your credentials.');
       }
 
-      const redirectTo = searchParams?.get('redirect');
       if (!data.onboardingComplete) {
         router.push('/onboarding/name');
       } else {
-        router.push(redirectTo && redirectTo.startsWith('/') ? redirectTo : '/');
+        router.push(safePostLoginPath(searchParams?.get('redirect')));
       }
-    } catch (err: any) {
-      setError(err.message);
+    } catch (err: unknown) {
+      setError(networkErrorMessage(err, 'Login failed. Please check your credentials.'));
       setLoading(false);
     }
   };
 
   // OAuth Login Handler — redirects to provider authorization URL
   const handleOAuthLogin = (provider: string) => {
+    if (oauthProviders[provider] === false) {
+      const names: Record<string, string> = {
+        google: 'Google',
+        github: 'GitHub',
+        facebook: 'Meta',
+        microsoft: 'Microsoft',
+      };
+      setError(`${names[provider] || provider} sign-in is not configured on this workspace.`);
+      return;
+    }
     setOauthLoading(provider);
     setError('');
     const invite = searchParams?.get('invite');
@@ -163,7 +211,7 @@ function LoginForm() {
               </span>
             </button>
           ))}
-          <p className="text-[10px] text-emerald-600 text-center">
+          <p className="text-[10px] text-emerald-700 text-center">
             SSO is optional. Email and password still work.
           </p>
         </div>
@@ -253,7 +301,7 @@ function LoginForm() {
 
         <div className="relative flex py-1 items-center">
           <div className="flex-grow border-t border-emerald-950"></div>
-          <span className="flex-shrink mx-3 text-[10px] text-emerald-600 font-semibold uppercase">
+          <span className="flex-shrink mx-3 text-[10px] text-emerald-400 font-semibold uppercase">
             Or sign in with email
           </span>
           <div className="flex-grow border-t border-emerald-950"></div>
@@ -327,6 +375,30 @@ function LoginForm() {
             <span>Remember this device</span>
           </label>
         </div>
+
+        {mfaRequired && (
+          <div>
+            <label className="block text-xs font-semibold text-emerald-300 mb-1">
+              Authenticator code
+            </label>
+            <div className="relative">
+              <ShieldCheck className="w-4 h-4 text-emerald-500 absolute left-3.5 top-3.5" />
+              <input
+                id="login-mfa-code"
+                type="text"
+                inputMode="numeric"
+                autoComplete="one-time-code"
+                pattern="[0-9 ]{6,8}"
+                maxLength={8}
+                value={mfaCode}
+                onChange={(e) => setMfaCode(e.target.value)}
+                placeholder="6-digit code"
+                required
+                className="w-full pl-10 pr-4 py-2.5 bg-[#1C2825] border border-emerald-900/80 rounded-2xl text-xs text-emerald-100 placeholder-emerald-600 focus:border-[#F0C05A] focus:outline-none transition"
+              />
+            </div>
+          </div>
+        )}
 
         {/* Submit Button */}
         <button

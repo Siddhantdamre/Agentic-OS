@@ -1,8 +1,9 @@
 import type { ToolRisk } from './risk.js';
 import type { ToolActionContext, ToolModule } from './shared.js';
-import { confirmFromRisk, getNangoAccessToken, notConnected } from './shared.js';
+import { confirmFromRisk, nangoAuthError, notConnected, resolveGoogleAuth, fetchWithTimeout } from './shared.js';
+import { hubspot } from './hubspot.js';
 
-const ACTIONS = ['list_events', 'check_availability', 'create_event'] as const;
+const ACTIONS = ['list_events', 'check_availability', 'create_event', 'update_event'] as const;
 
 function riskFor(action: string): ToolRisk {
   const a = action.toLowerCase();
@@ -54,22 +55,19 @@ function computeFreeSlots(
 async function execute(ctx: ToolActionContext) {
   const { action, payload, orgId, timestamp } = ctx;
   const summary = payload.summary || payload.title;
-  const startIso = payload.startTime;
+  const startIso = payload.startTime || payload.start_time || payload.start || payload.dateTime;
   const calAction = action || payload.calAction || 'create_event';
-  const connId = `${orgId}_google-calendar`;
 
-  let accessToken: string | null = null;
-  for (const providerKey of ['google-calendar', 'google-calendar-v2', 'google']) {
-    accessToken = await getNangoAccessToken(connId, providerKey);
-    if (accessToken) break;
-  }
+  const _calAuth = await resolveGoogleAuth(orgId, 'google-calendar');
+  const accessToken: string | null = _calAuth.kind === 'connected' ? _calAuth.accessToken : null;
+  const _calAuthErr = _calAuth.kind === 'connected' ? null : nangoAuthError('google-calendar', calAction, timestamp, _calAuth);
 
   if (accessToken) {
     try {
-      if (calAction === 'list_events' || calAction === 'fetch_events') {
+      if (calAction === 'list_events' || calAction === 'fetch_events' || calAction.includes('list') || calAction.includes('fetch')) {
         const timeMin = new Date().toISOString();
         const timeMax = new Date(Date.now() + 7 * 86400000).toISOString();
-        const listRes = await fetch(
+        const listRes = await fetchWithTimeout(
           `https://www.googleapis.com/calendar/v3/calendars/primary/events?timeMin=${encodeURIComponent(timeMin)}&timeMax=${encodeURIComponent(timeMax)}&singleEvents=true&orderBy=startTime&maxResults=10`,
           { headers: { Authorization: `Bearer ${accessToken}` } }
         );
@@ -90,6 +88,15 @@ async function execute(ctx: ToolActionContext) {
                 end: e.end?.dateTime || e.end?.date,
                 hangoutLink: e.hangoutLink,
                 htmlLink: e.htmlLink,
+                attendees: (e.attendees || [])
+                  .map((a: any) => a.email)
+                  .filter((email: unknown): email is string => typeof email === 'string' && email.length > 0),
+                // OE-08: full attendee objects (with RSVP status) for calendar-deadlock
+                // detection. Kept separate from `attendees` above so existing consumers
+                // that expect a plain string array (e.g. GE-07 dossier compiler) don't break.
+                attendeeDetails: (e.attendees || [])
+                  .filter((a: any) => typeof a?.email === 'string' && a.email.length > 0)
+                  .map((a: any) => ({ email: a.email, responseStatus: a.responseStatus })),
               })),
             },
             timestamp,
@@ -100,7 +107,7 @@ async function execute(ctx: ToolActionContext) {
         }
       }
 
-      if (calAction === 'check_availability' || calAction === 'find_free_slots') {
+      if (calAction === 'check_availability' || calAction === 'find_free_slots' || calAction.includes('availab') || calAction.includes('free_slot')) {
         const winStart = payload.startTime || payload.start || new Date().toISOString();
         const winEnd = payload.endTime || payload.end || new Date(new Date(winStart).getTime() + 7 * 86400000).toISOString();
         const durationMin = parseInt(payload.durationMinutes || payload.duration || '60', 10);
@@ -112,7 +119,7 @@ async function execute(ctx: ToolActionContext) {
         const dayStartMin = parseHhmm(payload.dayStart, 540);
         const dayEndMin = parseHhmm(payload.dayEnd, 1080);
 
-        const availRes = await fetch(
+        const availRes = await fetchWithTimeout(
           `https://www.googleapis.com/calendar/v3/calendars/primary/events?timeMin=${encodeURIComponent(winStart)}&timeMax=${encodeURIComponent(winEnd)}&singleEvents=true&orderBy=startTime&maxResults=100`,
           { headers: { Authorization: `Bearer ${accessToken}` } }
         );
@@ -136,6 +143,105 @@ async function execute(ctx: ToolActionContext) {
             durationMinutes: durationMin,
             freeSlots,
             busyEvents: busy.map((b) => ({ start: b.start.toISOString(), end: b.end.toISOString() })),
+          },
+          timestamp,
+        };
+      }
+
+      if (calAction === 'update_event' || calAction === 'reschedule_event' || calAction.includes('reschedul') || (calAction.includes('update') && calAction.includes('event'))) {
+        const eventId = payload.eventId || payload.id;
+        if (!eventId) {
+          return {
+            tool: 'google-calendar', action: 'update_event', status: 'error' as const,
+            message: 'eventId is required to reschedule/update a calendar event.', data: null, timestamp,
+          };
+        }
+        const patch: Record<string, unknown> = {};
+        if (summary) patch.summary = summary;
+        if (payload.description !== undefined) patch.description = payload.description;
+        if (payload.location !== undefined) patch.location = payload.location;
+        if (startIso) patch.start = { dateTime: startIso, timeZone: payload.timeZone || 'UTC' };
+        const endIso = payload.endTime || payload.end_time || payload.end || payload.endDateTime;
+        if (endIso) patch.end = { dateTime: endIso, timeZone: payload.timeZone || 'UTC' };
+        if (Array.isArray(payload.attendees)) {
+          patch.attendees = payload.attendees.map((email: string) => ({ email }));
+        }
+        // OE-08: autonomous Google Meet link injection for meetings missing a
+        // video conferencing link. Google requires conferenceDataVersion=1 on
+        // the request whenever conferenceData is present in the patch body.
+        const injectVideoLink = Boolean(payload.injectVideoLink);
+        if (injectVideoLink) {
+          patch.conferenceData = {
+            createRequest: { requestId: `drx-link-${Date.now()}`, conferenceSolutionKey: { type: 'hangoutsMeet' } },
+          };
+        }
+        if (Object.keys(patch).length === 0) {
+          return {
+            tool: 'google-calendar', action: 'update_event', status: 'error' as const,
+            message: 'At least one field to change (startTime, endTime, summary, description, location, attendees, injectVideoLink) is required.', data: null, timestamp,
+          };
+        }
+
+        const patchRes = await fetchWithTimeout(
+          `https://www.googleapis.com/calendar/v3/calendars/primary/events/${encodeURIComponent(String(eventId))}?sendUpdates=all${injectVideoLink ? '&conferenceDataVersion=1' : ''}`,
+          {
+            method: 'PATCH',
+            headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify(patch),
+          },
+        );
+        const patchData = await patchRes.json().catch(() => ({}));
+        if (!patchRes.ok) {
+          return {
+            tool: 'google-calendar', action: 'update_event', status: 'error' as const,
+            message: `Google Calendar update failed: ${patchRes.status}: ${patchData?.error?.message || 'Unknown error'}`,
+            data: { statusCode: patchRes.status, error: patchData }, timestamp,
+          };
+        }
+
+        // Best-effort CRM sync: log the reschedule on the linked contact/deal so
+        // sales/CS history stays accurate. Never blocks the calendar result — a
+        // customer employee cannot mutate deal stage (role-capability denies
+        // update_deal/create_deal), so this only appends an informational note.
+        let crmSync: { attempted: boolean; synced: boolean; reason?: string } = { attempted: false, synced: false };
+        if (payload.crmContactEmail) {
+          crmSync.attempted = true;
+          try {
+            const noteResult = await hubspot.execute({
+              tool: 'hubspot',
+              action: 'sync_deal_schedule',
+              actionName: 'sync_deal_schedule',
+              payload: {
+                email: payload.crmContactEmail,
+                dealId: payload.crmDealId,
+                note: `Meeting rescheduled to ${patchData.start?.dateTime || startIso} (was previously requested by customer via self-service reschedule).`,
+              },
+              orgId,
+              timestamp,
+            });
+            crmSync.synced = noteResult.status === 'executed';
+            if (!crmSync.synced) crmSync.reason = noteResult.message;
+          } catch (e: any) {
+            crmSync.reason = e?.message || 'CRM sync failed';
+          }
+        }
+
+        return {
+          tool: 'google-calendar',
+          action: 'update_event',
+          status: 'executed' as const,
+          message: injectVideoLink
+            ? `✅ Injected a Google Meet link into "${patchData.summary || summary || eventId}"`
+            : `✅ Rescheduled "${patchData.summary || summary || eventId}" on Google Calendar`,
+          data: {
+            eventId: patchData.id || eventId,
+            summary: patchData.summary,
+            startTime: patchData.start?.dateTime,
+            endTime: patchData.end?.dateTime,
+            htmlLink: patchData.htmlLink,
+            hangoutLink: patchData.hangoutLink || patchData.conferenceData?.entryPoints?.[0]?.uri || null,
+            attendees: patchData.attendees?.map((a: any) => a.email) || [],
+            crmSync,
           },
           timestamp,
         };
@@ -168,14 +274,14 @@ async function execute(ctx: ToolActionContext) {
         location: payload.location || '',
         start: { dateTime: startIso, timeZone: payload.timeZone || 'UTC' },
         end: {
-          dateTime: payload.endTime || new Date(new Date(startIso).getTime() + 3600000).toISOString(),
+          dateTime: payload.endTime || payload.end_time || payload.end || payload.endDateTime || new Date(new Date(startIso).getTime() + 3600000).toISOString(),
           timeZone: payload.timeZone || 'UTC',
         },
         attendees: payload.attendees?.map((email: string) => ({ email })) || [],
         conferenceData: { createRequest: { requestId: `drx-${Date.now()}`, conferenceSolutionKey: { type: 'hangoutsMeet' } } },
       };
 
-      const calRes = await fetch(
+      const calRes = await fetchWithTimeout(
         'https://www.googleapis.com/calendar/v3/calendars/primary/events?conferenceDataVersion=1&sendUpdates=all',
         {
           method: 'POST',
@@ -227,7 +333,7 @@ async function execute(ctx: ToolActionContext) {
     }
   }
 
-  return notConnected('google-calendar', calAction, timestamp);
+  return _calAuthErr ?? notConnected('google-calendar', calAction, timestamp);
 }
 
 export const googleCalendar: ToolModule = {

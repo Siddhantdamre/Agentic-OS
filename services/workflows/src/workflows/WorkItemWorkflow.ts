@@ -7,29 +7,13 @@ import {
   setHandler,
   workflowInfo,
   condition,
-  sleep,
+  patched,
 } from '@temporalio/workflow';
 import type * as activities from '../activities/index.js';
 import type { AgentTaskInput, AgentTaskResult } from '../agent-engine.js';
 import { AutonomousAgentWorkflow } from './AutonomousAgentWorkflow.js';
-import {
-  buildEvidence,
-  detectThirdPartyPiiRequest,
-  formatForChannel,
-  isKnowledgeGap,
-  stripMechanismTalk,
-  stripPreamble,
-  stripPlaceholders,
-  detectCommitment,
-  INTERIM_ACK_REPLY,
-  HUMAN_REVIEW_REPLY,
-  SERVICE_FALLBACK_REPLY,
-  PRIVACY_REFUSAL,
-  DISCLOSURE_SAFE_REPLY,
-  sanitiseCustomerReply,
-} from '../reply-gate.js';
-import { shouldAttemptLookup } from '../answerable.js';
 import { MemoryWriteBackWorkflow } from './MemoryWriteBackWorkflow.js';
+import { CustomerRecoveryWorkflow } from './CustomerRecoveryWorkflow.js';
 import { isHumanDestination } from '../route-employee.js';
 import { resolveInboundHitlGate } from '../inbound-hitl.js';
 
@@ -45,10 +29,6 @@ export type WorkItemStatus =
 export type WorkItemType = 'conversation';
 
 export type WorkEventKind =
-  // The per-tenant token budget was at or past its warning line when this turn
-  // started. Recorded for a warning as well as a breach, so the owner is not
-  // first told by their replies quietly getting worse.
-  | 'budget_exceeded'
   | 'inbound_received'
   | 'memory_retrieved'
   | 'employee_routed'
@@ -61,10 +41,7 @@ export type WorkEventKind =
   | 'confirm_requested'
   | 'confirm_approved'
   | 'confirm_rejected'
-  | 'critic_blocked'
-  // Emitted whenever self-revision ran, successful or not — measuring how often
-  // it rescues a reply (vs. just adding latency) is the point.
-  | 'critic_revised';
+  | 'critic_blocked';
 
 export interface WorkItemWorkflowInput {
   orgId: string;
@@ -81,6 +58,7 @@ export interface WorkItemWorkflowInput {
   connectedChannels?: string[];
   userMessage: string;
   idempotencyKey?: string;
+  customerIdentifier?: string;
 }
 
 export interface WorkItemWorkflowResult {
@@ -107,15 +85,8 @@ const {
   retrieveMemoryActivity,
   routeEmployeeActivity,
   criticCheck,
-  criticCheckWithRevision,
-  recordKnowledgeGapActivity,
-  recordCommitmentActivity,
-  recordApprovalRequestActivity,
   enqueueEmbedActivity,
   markNeedsAttentionActivity,
-  saveMessageActivity,
-  checkLlmBudgetActivity,
-  recordTaskSupervisionActivity,
 } = proxyActivities<typeof activities>({
   startToCloseTimeout: '2 minutes',
   scheduleToCloseTimeout: '6 minutes',
@@ -126,42 +97,6 @@ const {
     nonRetryableErrorTypes: ['AuthorizationError', 'InvalidArgumentError'],
   },
 });
-
-/**
- * The lookup that runs before we accept "I don't know". Its own proxy because
- * it has a different shape from every other activity here: several fetches plus
- * a synthesis pass, so it needs minutes rather than seconds — and exactly one
- * attempt, because a customer waiting on a reply must not wait through retries
- * of an optional enrichment. A failed lookup falls through to the denial.
- */
-const { researchTopicActivity } = proxyActivities<typeof activities>({
-  startToCloseTimeout: '3 minutes',
-  scheduleToCloseTimeout: '4 minutes',
-  retry: { maximumAttempts: 1 },
-});
-
-/**
- * How long a reply waits for human approval before the customer is
- * acknowledged instead.
- *
- * Two minutes, and short on purpose: a customer on WhatsApp must never wait on
- * an operator's response time. The operator keeps the item in needs_attention
- * and follows up properly; the customer just stops being ignored. A workflow
- * constant, never process.env — reading env inside a workflow is
- * non-deterministic across replay.
- */
-const HITL_WAIT_TIMEOUT = '2 minutes';
-
-/**
- * How long a customer waits in silence before the agent says it is working.
- *
- * 30s, from measurement: p50 for a good reply is ~21s, so most answers arrive
- * before this fires and the interim message stays rare. It only appears on the
- * genuinely slow turns — which are exactly the ones where silence reads as
- * being ignored. A workflow constant, never process.env: reading env inside a
- * workflow is non-deterministic across replay.
- */
-const INTERIM_ACK_DELAY = '30 seconds';
 
 function sessionKeyForWorkItem(workItemId: string): string {
   return workItemId;
@@ -204,100 +139,7 @@ function eventKindForConfirm(decision: WorkItemConfirmDecision): WorkEventKind {
  * Does not replace the child. Does not auto-spawn CrewWorkflow.
  * Session for the child turn: darex:{orgId}:{workItemId} via sessionKey=workItemId.
  */
-/**
- * What the trio observed. Filled in as the work proceeds; anything left
- * `undefined` is derived from the RESULT by the wrapper below, so a path that
- * never reached the critic still reports an honest doer outcome instead of a
- * guess.
- */
-interface SupervisionDraft {
-  workItemId?: string;
-  replyProduced?: boolean;
-  refused?: boolean;
-  escalated?: boolean;
-  turns?: number;
-  criticBlocked?: boolean;
-  criticRevised?: boolean;
-  criticReason?: string;
-  criticUsedModel?: boolean;
-  gapRecorded?: boolean;
-  memoryWritten?: boolean;
-}
-
-/**
- * THE TRIO REPORTS ON EVERY EXIT, NOT JUST THE GOOD ONE.
- *
- * Supervision used to be recorded at a single point near the end of the work
- * item. There were TEN returns before it — six failures, two cancellations, one
- * escalation to a human, and one success — and not one of them recorded
- * anything. The trio reported only on tasks that ran cleanly to the end, which
- * is precisely the population that needs the least supervising.
- *
- * Worse, the check guarding it only looked at work items in status `done`, so
- * the six failure paths and the escalation could never have been caught by it.
- * A supervisor that sees only successes does not measure quality; it measures
- * how often nothing went wrong, and reports that as the same thing.
- *
- * So the recording moved out here, where no `return` inside the body can skip
- * it and a thrown activity cannot either. `recordTaskSupervisionActivity` never
- * throws, so this cannot turn a working task into a failed one, and it cannot
- * mask an error on the way out.
- */
 export async function WorkItemWorkflow(input: WorkItemWorkflowInput): Promise<WorkItemWorkflowResult> {
-  const draft: SupervisionDraft = {};
-  try {
-    const result = await runWorkItem(input, draft);
-    await reportTrio(input, draft, result);
-    return result;
-  } catch (err) {
-    // The task died. That is exactly when a supervision row matters most, and
-    // exactly when the old placement guaranteed there would not be one.
-    await reportTrio(input, draft, undefined);
-    throw err;
-  }
-}
-
-async function reportTrio(
-  input: WorkItemWorkflowInput,
-  draft: SupervisionDraft,
-  result: WorkItemWorkflowResult | undefined,
-): Promise<void> {
-  // No work item means the upsert itself failed, so there is nothing to hang a
-  // supervision row on. Recording against a null id would be inventing a task.
-  if (!draft.workItemId) return;
-
-  const reply = (result?.replyMessage || '').trim();
-  await recordTaskSupervisionActivity({
-    orgId: input.orgId,
-    workItemId: draft.workItemId,
-    conversationId: input.conversationId,
-    // DOER — explicit where the body knew, derived from the outcome otherwise.
-    replyProduced: draft.replyProduced ?? Boolean(reply),
-    // A refusal is identified by being one of our OWN canned outputs, which are
-    // correct by construction. A classifier guessing "does this look like a
-    // refusal" would eventually file a real answer as one, and a refusal is the
-    // outcome that must never be mistaken for a failure.
-    refused: draft.refused ?? (reply === PRIVACY_REFUSAL || reply === DISCLOSURE_SAFE_REPLY),
-    // An escalation is a work item handed to a person. It is its own outcome,
-    // not a failure — the agent correctly declined to guess.
-    escalated: draft.escalated ?? (result?.status === 'needs_attention'),
-    turns: draft.turns ?? (result?.executedSteps?.length ?? 0),
-    // MONITOR — false on a path that never reached the critic, which is true:
-    // it did not block anything, because it never ran.
-    criticBlocked: draft.criticBlocked ?? false,
-    criticRevised: draft.criticRevised ?? false,
-    criticReason: draft.criticReason ?? '',
-    criticUsedModel: draft.criticUsedModel ?? false,
-    // LEARNER
-    gapRecorded: draft.gapRecorded ?? false,
-    memoryWritten: draft.memoryWritten ?? false,
-  });
-}
-
-async function runWorkItem(
-  input: WorkItemWorkflowInput,
-  draft: SupervisionDraft,
-): Promise<WorkItemWorkflowResult> {
   const parentId = workflowInfo().workflowId;
   const businessKey = input.idempotencyKey || input.inboundEventId || parentId;
   let lastConfirm: WorkItemConfirmDecision | undefined;
@@ -322,8 +164,6 @@ async function runWorkItem(
   });
 
   const workItemId = upserted.workItemId;
-  // From here on every exit is supervised, including the ones that throw.
-  draft.workItemId = workItemId;
 
   await appendWorkEventActivity({
     orgId: input.orgId,
@@ -338,22 +178,33 @@ async function runWorkItem(
     businessKey: `${businessKey}:inbound_received`,
   });
 
-  const memory = await retrieveMemoryActivity({
-    orgId: input.orgId,
-    workItemId,
-    conversationId: input.conversationId,
-    query: input.userMessage,
-    employeeId: input.employeeId,
-    businessKey: `${businessKey}:retrieveMemory`,
-  });
-  await appendWorkEventActivity({
-    orgId: input.orgId,
-    workItemId,
-    kind: 'memory_retrieved',
-    actor: 'system',
-    payload: { factCount: memory.facts.length, noOp: memory.noOp },
-    businessKey: `${businessKey}:memory_retrieved`,
-  });
+  // MEM-B07: route first so the parent retrieve runs with the resolved
+  // employee and role (persona tier exclusions apply). Versioned with
+  // patched() because it reorders activities; histories recorded before
+  // this change replay the old retrieve-then-route order.
+  const routeBeforeRetrieve = patched('memory-route-before-retrieve');
+  const retrieveAndRecord = async (employeeId?: string, employeeRole?: string) => {
+    const memory = await retrieveMemoryActivity({
+      orgId: input.orgId,
+      workItemId,
+      conversationId: input.conversationId,
+      query: input.userMessage,
+      employeeId,
+      employeeRole,
+      businessKey: `${businessKey}:retrieveMemory`,
+    });
+    await appendWorkEventActivity({
+      orgId: input.orgId,
+      workItemId,
+      kind: 'memory_retrieved',
+      actor: 'system',
+      payload: { factCount: memory.facts.length, noOp: memory.noOp },
+      businessKey: `${businessKey}:memory_retrieved`,
+    });
+  };
+  if (!routeBeforeRetrieve) {
+    await retrieveAndRecord(input.employeeId);
+  }
 
   // E2: route(work_item). Emergency → human/dispatch, not ISA. Name lock from "Ask Marcus to".
   const routed = await routeEmployeeActivity({
@@ -410,34 +261,24 @@ async function runWorkItem(
     };
   }
 
-  // HOOK(later-ws): embed enqueue — no-op until EmbedWorkflow is registered additively.
-  //
-  // NON-FATAL BY CONTRACT. Memory/RAG is optional enrichment; the reply is the
-  // product. A misconfigured embeddings provider previously threw here, and
-  // Temporal's retries (5 x 120s) exhausted the worker's activity slots so
-  // agent turns were never scheduled — replies stopped entirely. Swallowing
-  // the error keeps the turn running with no memory, and the event records
-  // exactly why so a silent degradation is still visible.
-  let embed: { enqueued?: boolean; noOp?: boolean } = {};
-  let embedSkipReason: string | null = null;
-  try {
-    embed = await enqueueEmbedActivity({
-      orgId: input.orgId,
-      workItemId,
-      conversationId: input.conversationId,
-      businessKey: `${businessKey}:enqueueEmbed`,
-    });
-  } catch (err: any) {
-    embedSkipReason = String(err?.cause?.message || err?.message || 'embed_failed').slice(0, 200);
+  if (routeBeforeRetrieve) {
+    await retrieveAndRecord(routed.employeeId || input.employeeId, routed.employeeRole || input.employeeRole);
   }
+
+  // Raw inbound text is not a write-back event, so the activity records a
+  // policy no-op (MEM-S02). Durable facts come from MemoryWriteBackWorkflow.
+  const embed = await enqueueEmbedActivity({
+    orgId: input.orgId,
+    workItemId,
+    conversationId: input.conversationId,
+    businessKey: `${businessKey}:enqueueEmbed`,
+  });
   await appendWorkEventActivity({
     orgId: input.orgId,
     workItemId,
     kind: 'embed_enqueued',
     actor: 'system',
-    payload: embedSkipReason
-      ? { enqueued: false, noOp: true, skipped: true, reason: embedSkipReason }
-      : { enqueued: embed.enqueued, noOp: embed.noOp },
+    payload: { enqueued: embed.enqueued, noOp: embed.noOp, policyBlocked: embed.policyBlocked === true },
     businessKey: `${businessKey}:embed_enqueued`,
   });
 
@@ -461,60 +302,10 @@ async function runWorkItem(
       payload: { classes: preHitl.classes, phase: 'before_tools' },
       businessKey: `${businessKey}:confirm_requested`,
     });
-
-    // Put it somewhere a human can actually answer.
-    //
-    // The work event above is append-only and nothing rendered it, so before
-    // this the agent asked and could never be answered: 24 requests waiting,
-    // 0 ever decided, the oldest for thirteen days. This writes the row
-    // /api/approvals reads, carrying the workflow id so a decision can be
-    // signalled back if this workflow is somehow still waiting.
-    for (const actionClass of preHitl.classes) {
-      await recordApprovalRequestActivity({
-        orgId: input.orgId,
-        workItemId,
-        conversationId: input.conversationId,
-        actionClass,
-        summary: `The agent wants to ${actionClass} in reply to: ${input.userMessage.slice(0, 200)}`,
-        workflowId: parentId,
-      });
-    }
-
-    // Bounded, and strictly fail-CLOSED. Side-effecting send/pay/sign tools have
-    // not run yet, so a timeout must never be read as approval — an unanswered
-    // prompt is not consent, and money moving because nobody replied is the one
-    // outcome this gate exists to prevent. The agent turn simply does not run.
-    // The customer still gets an acknowledgement so they are not left in
-    // silence, and the operator still has the item.
-    const approved = await condition(() => lastConfirm !== undefined, HITL_WAIT_TIMEOUT);
-    if (!approved) {
-      await appendWorkEventActivity({
-        orgId: input.orgId,
-        workItemId,
-        kind: 'needs_attention',
-        actor: 'system',
-        payload: { reason: 'hitl_timeout', phase: 'before_tools', classes: preHitl.classes },
-        businessKey: `${businessKey}:hitl_timeout_before_tools`,
-      });
-      const ackReply = formatForChannel(HUMAN_REVIEW_REPLY, input.channel);
-      if (input.conversationId) {
-        await saveMessageActivity({
-          orgId: input.orgId,
-          conversationId: input.conversationId,
-          role: 'assistant',
-          content: ackReply,
-          idempotencyKey: `${businessKey}:save-hitl-timeout-ack-pre`,
-        });
-      }
-      return {
-        workItemId,
-        status: nextStatus('fail'),
-        replyMessage: ackReply,
-        savedByWorkflow: true,
-        success: false,
-        error: 'hitl_timeout',
-      };
-    }
+    // 24h bound — an owner who never confirms must not hold history to the
+    // 7-day execution timeout. Timeout auto-rejects (safe default).
+    await condition(() => lastConfirm !== undefined, '24 hours');
+    if (lastConfirm === undefined) lastConfirm = 'rejected';
     if (lastConfirm === 'rejected') {
       await appendWorkEventActivity({
         orgId: input.orgId,
@@ -556,110 +347,6 @@ async function runWorkItem(
     });
   }
 
-  // Third-party PII: refuse deterministically, BEFORE the agent turn.
-  //
-  // Placed here rather than after the reply for two reasons. First, no tool is
-  // consulted at all, so the refusal cannot depend on whether a connector
-  // happens to be enabled — the previous behaviour declined only because
-  // WhatsApp could not read history, which would have reversed the moment
-  // history-reading was switched on. Second, there is no model call for an
-  // injection to argue with. It also removes a full agent turn of latency.
-  if (detectThirdPartyPiiRequest(input.userMessage)) {
-    const refusal = formatForChannel(PRIVACY_REFUSAL, input.channel);
-    await appendWorkEventActivity({
-      orgId: input.orgId,
-      workItemId,
-      kind: 'reply_sanitised',
-      actor: 'system',
-      payload: { violations: ['third_party_pii_request'], disclosedInternals: false },
-      businessKey: `${businessKey}:third_party_pii`,
-    });
-    if (input.conversationId) {
-      await saveMessageActivity({
-        orgId: input.orgId,
-        conversationId: input.conversationId,
-        role: 'assistant',
-        content: refusal,
-        idempotencyKey: `${businessKey}:save-privacy-refusal`,
-      });
-    }
-    await updateWorkItemStatusActivity({
-      orgId: input.orgId,
-      workItemId,
-      status: nextStatus('done'),
-      conversationId: input.conversationId,
-      businessKey: `${businessKey}:status_privacy_refusal`,
-    });
-    return {
-      workItemId,
-      status: nextStatus('done'),
-      replyMessage: refusal,
-      executedSteps: [],
-      savedByWorkflow: true,
-      success: true,
-    };
-  }
-
-  // ── PER-TENANT BUDGET GATE ────────────────────────────────────────────────
-  // Read the meter before the expensive part. One agent turn on this
-  // deployment measures ~49,000 tokens, so this is the point where a runaway
-  // workspace stops being everybody else's problem.
-  //
-  // The gate never ends the conversation on its own: over budget means a
-  // cheaper model, not silence. Only an explicit `stop` policy refuses, and
-  // then it says so in words the customer can act on.
-  const budget = await checkLlmBudgetActivity({ orgId: input.orgId });
-
-  if (!budget.allowed) {
-    await appendWorkEventActivity({
-      orgId: input.orgId,
-      workItemId,
-      kind: 'budget_exceeded',
-      actor: 'system',
-      payload: {
-        state: budget.state,
-        usedTokens: budget.usedTokens,
-        limitTokens: budget.limitTokens,
-        onExceeded: 'stop',
-      },
-      businessKey: `${businessKey}:budget_stop`,
-    });
-    await updateWorkItemStatusActivity({
-      orgId: input.orgId,
-      workItemId,
-      status: 'needs_attention',
-      businessKey: `${businessKey}:budget_stop_status`,
-    });
-    return {
-      workItemId,
-      status: 'needs_attention',
-      replyMessage: budget.reason,
-      executedSteps: [],
-      savedByWorkflow: false,
-      success: false,
-      error: 'llm_budget_exceeded',
-    };
-  }
-
-  if (budget.state === 'exceeded' || budget.state === 'warn') {
-    // Recorded even for a warning, so the first the owner hears of a cap is
-    // not the moment their replies get worse.
-    await appendWorkEventActivity({
-      orgId: input.orgId,
-      workItemId,
-      kind: 'budget_exceeded',
-      actor: 'system',
-      payload: {
-        state: budget.state,
-        usedTokens: budget.usedTokens,
-        limitTokens: budget.limitTokens,
-        pctUsed: budget.pctUsed,
-        modelOverride: budget.modelOverride ?? null,
-      },
-      businessKey: `${businessKey}:budget_${budget.state}`,
-    });
-  }
-
   await appendWorkEventActivity({
     orgId: input.orgId,
     workItemId,
@@ -677,71 +364,22 @@ async function runWorkItem(
     employeeName: routed.employeeName,
     employeeRole: routed.employeeRole,
     employeePersona: routed.employeePersona,
-    // Who the business actually is. Without this the agent's own opening line
-    // called its employer "the DarEX organisation <uuid>", which is why it once
-    // asked a customer for the showroom's address.
-    businessName: routed.businessName,
-    businessType: routed.businessType,
     toolAllowlist: routed.toolAllowlist,
     connectedChannels: input.connectedChannels,
     userMessage: input.userMessage,
     sessionKey: sessionKeyForWorkItem(workItemId),
     idempotencyKey: `${businessKey}:agent-turn`,
-    // The child must NOT write the assistant message. It persists the raw draft
-    // the moment the agent produces it, which is before the critic, the
-    // grounding check, the disclosure sanitiser and the HITL gate have run — so
-    // every one of those gates was operating on a copy while the ungated text
-    // was already in `messages` and on the customer's screen.
-    //
-    // Found when a correctly-sanitised reply still showed the pre-sanitiser
-    // text in the quality run. The parent now persists, once, after the reply
-    // is actually cleared to send.
-    skipPersist: true,
-    // Undefined for a normal turn; the free-tier alias when this workspace is
-    // over budget and set to degrade rather than stop.
-    modelOverride: budget.modelOverride,
+    skipPersist: false,
+    customerIdentifier: input.customerIdentifier || input.conversationId,
   };
 
   let childResult: AgentTaskResult;
   try {
-    const childRun = executeChild(AutonomousAgentWorkflow, {
+    childResult = await executeChild(AutonomousAgentWorkflow, {
       workflowId: `${parentId}-turn`,
       args: [childInput],
       workflowExecutionTimeout: '20 minutes',
     });
-
-    // Say something before the customer starts wondering.
-    //
-    // Bounding the retry budget capped the WORST case at ~2 minutes, but it
-    // cannot make a slow answer fast: the slowest CORRECT reply measured was
-    // 93.1s, so tightening timeouts further would cut off work that was going
-    // to succeed. Silence is the thing that makes a customer feel ignored, not
-    // slowness — so the agent keeps working and simply says so.
-    //
-    // A durable Temporal timer, raced against the child. Deterministic across
-    // replay, and the child is never cancelled: the real answer still follows.
-    const stillWorking = Symbol('still-working');
-    const raced = await Promise.race([
-      childRun,
-      sleep(INTERIM_ACK_DELAY).then(() => stillWorking),
-    ]);
-
-    if (raced === stillWorking) {
-      // Interim only, never a substitute for the answer. It asserts nothing,
-      // because at this point nothing has been checked.
-      if (input.conversationId) {
-        await saveMessageActivity({
-          orgId: input.orgId,
-          conversationId: input.conversationId,
-          role: 'assistant',
-          content: formatForChannel(INTERIM_ACK_REPLY, input.channel),
-          idempotencyKey: `${businessKey}:save-interim-ack`,
-        });
-      }
-      childResult = await childRun;
-    } else {
-      childResult = raced as AgentTaskResult;
-    }
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
     // Compensation: log + needs_attention. Never silent-resend the channel reply.
@@ -768,46 +406,9 @@ async function runWorkItem(
       payload: { reason: message.slice(0, 500) },
       businessKey: `${businessKey}:needs_attention_event`,
     });
-
-    // NEVER go silent.
-    //
-    // This path used to return with no message saved at all. When the upstream
-    // model returned 502, the customer got nothing — 5 of 12 questions in the
-    // completion run ended in total silence. Silence is the worst outcome
-    // available: the customer assumes they were ignored, and unlike a wrong
-    // answer nobody can even see that it happened.
-    //
-    // The original comment here said "never silent-resend the channel reply",
-    // and that still holds — this is not a resend of a business answer. It is a
-    // bare acknowledgement that asserts no fact, so it cannot be wrong, needs
-    // no grounding, and is safe to send without knowing what was asked. It
-    // always accompanies the needs_attention above, so a human follows up.
-    const fallbackReply = formatForChannel(SERVICE_FALLBACK_REPLY, input.channel);
-    if (input.conversationId) {
-      await saveMessageActivity({
-        orgId: input.orgId,
-        conversationId: input.conversationId,
-        role: 'assistant',
-        content: fallbackReply,
-        idempotencyKey: `${businessKey}:save-service-fallback`,
-      });
-    }
-    // The question still deserves an answer, so it goes on the gap list as
-    // `no_reply`. Without this a provider outage silently erases the questions
-    // it swallowed, and nobody ever learns what customers were asking.
-    await recordKnowledgeGapActivity({
-      orgId: input.orgId,
-      question: input.userMessage,
-      agentReply: fallbackReply,
-      detectedVia: 'no_reply',
-      conversationId: input.conversationId,
-      workItemId,
-    });
-
     return {
       workItemId,
       status: nextStatus('fail'),
-      replyMessage: fallbackReply,
       savedByWorkflow: true,
       success: false,
       error: message,
@@ -831,63 +432,10 @@ async function runWorkItem(
       payload: { reason: childResult.error || 'empty_reply' },
       businessKey: `${businessKey}:needs_attention_event`,
     });
-    /**
-     * THE OTHER HALF OF "NEVER GO SILENT".
-     *
-     * The catch block above sends SERVICE_FALLBACK_REPLY when the child
-     * THROWS. This branch handles the child RETURNING a failure — same
-     * outcome for the customer, and it used to return here having saved no
-     * message at all. Worse, it returns `savedByWorkflow: true`, which tells
-     * the caller the reply was handled, so the caller does not save one
-     * either. Nobody sends anything and nobody notices.
-     *
-     * That is only a logged incident until you look at what the customer saw.
-     * Measured, conversation 28f8fa06, reliability run 1:
-     *
-     *   23:18:16  customer   What was your total revenue last financial year?
-     *   23:18:47  assistant  Just checking that for you - I will have an
-     *                        answer shortly.
-     *             (nothing, ever)
-     *
-     * The interim ack is a PROMISE. Thirty seconds earlier this workflow told
-     * the customer an answer was coming. Breaking that is worse than never
-     * having spoken: they are now waiting.
-     *
-     * The trigger was an upstream provider outage - OpenRouter returned 502
-     * "Upstream error from Nvidia: Service temporarily overloaded" mid-stream,
-     * which LiteLLM cannot fail over because the stream had already begun. The
-     * child caught it, returned success:false, and this branch went quiet.
-     *
-     * Same idempotency key as the catch branch on purpose. The two paths are
-     * mutually exclusive within one execution, but a workflow retry can take
-     * the other branch on a second pass, and the customer must get exactly one
-     * apology, not two.
-     */
-    const emptyReplyFallback = formatForChannel(SERVICE_FALLBACK_REPLY, input.channel);
-    if (input.conversationId) {
-      await saveMessageActivity({
-        orgId: input.orgId,
-        conversationId: input.conversationId,
-        role: 'assistant',
-        content: emptyReplyFallback,
-        idempotencyKey: `${businessKey}:save-service-fallback`,
-      });
-    }
-    // The question still deserves an answer. Same as the catch branch: without
-    // this, an outage silently erases the questions it swallowed.
-    await recordKnowledgeGapActivity({
-      orgId: input.orgId,
-      question: input.userMessage,
-      agentReply: emptyReplyFallback,
-      detectedVia: 'no_reply',
-      conversationId: input.conversationId,
-      workItemId,
-    });
-
     return {
       workItemId,
       status: nextStatus('fail'),
-      replyMessage: emptyReplyFallback,
+      replyMessage: reply || undefined,
       executedSteps: childResult.executedSteps,
       savedByWorkflow: true,
       success: false,
@@ -904,241 +452,13 @@ async function runWorkItem(
     businessKey: `${businessKey}:agent_replied`,
   });
 
-  // Critic gate with bounded self-revision. A mechanically fixable block (an
-  // overclaim to drop, a disclosure to add) gets up to 2 corrected drafts,
-  // each re-judged from scratch by the same unmodified critic. fair_housing
-  // never revises, and anything unresolved still escalates exactly as before —
-  // this can only reduce human interruptions, never let something through.
-  // Evidence = what the agent actually retrieved this turn. Deliberately built
-  // from tool results only — the inbound customer message is NOT evidence, or a
-  // prompt-injected "I already paid ₹99,999" would license the agent to state
-  // that figure back as fact. See buildEvidence in reply-gate.ts.
-  //
-  // Retrieved memory counts as evidence too. It is the org's own curated
-  // knowledge, fetched this turn by the same retrieval step that feeds the
-  // prompt — every bit as much a lookup result as a tool call. Excluding it
-  // meant a CORRECT answer sourced from the knowledge base ("refunds take 7
-  // working days") looked like an invented figure to the grounding gate and
-  // got blocked. That stayed hidden only because retrieval was returning
-  // nothing at all; fixing retrieval would have exposed it immediately.
-  //
-  // This is not the same as trusting the inbound message: memory is written by
-  // the business, the user's message is not. The injection guard above stands.
-  const evidence = buildEvidence(
-    childResult.executedSteps,
-    // `facts` holds the snippet TEXT; `citations` holds row ids. Only the text
-    // can ground a claim — passing ids would have fed the gate a list of UUIDs
-    // and silently grounded nothing.
-    //
-    // childResult.groundingContext — the platform-supplied dates — is NOT
-    // merged here. It travels as `dateContext` below so it can license a date
-    // and nothing else.
-    (memory?.facts || []).filter(Boolean),
-  );
-
-  const critic = await criticCheckWithRevision({
+  const critic = await criticCheck({
     orgId: input.orgId,
     workItemId,
     draft: reply,
     intent: 'send',
     businessKey: `${businessKey}:criticCheck`,
-    evidence,
-    // Supplied dates travel SEPARATELY and license only date claims. Folding
-    // them into `evidence` was a real fabrication hole: on 23 August the block
-    // contains "Saturday, 30 August", and those digits grounded an invented
-    // "30% off the order".
-    dateContext: (childResult.groundingContext || []).join(' | '),
   });
-
-  // The text that actually goes out. Only trust finalDraft once allowed —
-  // on a block it still holds the last rejected draft.
-  const criticReply = critic.allow ? (critic.finalDraft || reply).trim() : reply;
-
-  // Deterministic scrub for internal identifiers and self-description. The
-  // prompt already forbids both, but a prompt is guidance and an injection can
-  // out-argue it — this runs on the finished text no matter what the model was
-  // told. See sanitiseCustomerReply in reply-gate.ts for the two real leaks
-  // that motivated it.
-  const sanitised = sanitiseCustomerReply(criticReply);
-
-  // Remove any sentence that explains HOW the answer was found. The prompt
-  // already forbids it and mostly complies — it slipped once in four
-  // reliability runs, offering the customer a tour of the connectors and the
-  // database. Guidance the model follows most of the time is not a control.
-  //
-  // Sentence-level, so the answer survives the edit. If nothing usable is left,
-  // fall back to the neutral acknowledgement rather than shipping a fragment.
-  // Placeholders first: an unresolved [current date] is the most visibly broken
-  // thing a reply can contain, and removing its sentence may leave the rest
-  // needing the same mechanism/preamble treatment as any other draft.
-  const placeholders = stripPlaceholders(sanitised.text);
-  const afterPlaceholders = placeholders.removed.length
-    ? (placeholders.text.length >= 20 ? placeholders.text : HUMAN_REVIEW_REPLY)
-    : sanitised.text;
-
-  const mechanism = stripMechanismTalk(afterPlaceholders);
-  const cleanedReply = mechanism.removed.length
-    ? (mechanism.text.length >= 20 ? mechanism.text : HUMAN_REVIEW_REPLY)
-    : afterPlaceholders;
-
-  // Channel formatting last, so it shapes exactly what ships. On WhatsApp and
-  // the shared inbox a reply is a chat message, not a document: markdown
-  // headers and bullet lists render as literal `**` and `-`, and 900 characters
-  // is a wall of text. Strips formatting and trims on sentence boundaries.
-  // Lead with the answer. Caught by the multi-turn suite: a booking reply
-  // opened "I’d be happy to help you book a showroom viewing." before any of
-  // the detail asked for. Deterministic, because the prompt rule held in 21 of
-  // 22 replies — close enough to be a tendency, not a control.
-  let finalReply = formatForChannel(stripPreamble(cleanedReply).text, input.channel);
-
-  /**
-   * Before accepting "I don't know", go and find out — when finding out is
-   * possible.
-   *
-   * A business does not want an employee who shrugs at a question every
-   * competitor's website answers. But "always produce an answer" is the
-   * fabrication path, so the lookup is gated twice.
-   *
-   * classifyAnswerability decides whether a public source could hold the
-   * answer. "What is the stamp duty on a 1.2cr flat in Thane?" can be looked
-   * up. "Do you have anything in Chembur under 90 lakh?" cannot — that is our
-   * inventory, and searching the web for it would surface a competitor's flat
-   * to quote as ours. Ambiguity resolves to internal, so the tie goes to a
-   * human rather than to a search engine.
-   *
-   * Then the answer is gated again on the way out: only findings corroborated
-   * by two or more INDEPENDENT publishers survive, and the text passes through
-   * exactly the same sanitiser, mechanism strip and channel formatter as any
-   * other reply. A researched answer gets no shortcut past the reply gate.
-   */
-  let answeredByLookup = false;
-  const denied = isKnowledgeGap(finalReply, input.userMessage);
-  const lookup = shouldAttemptLookup({
-    isDenial: denied,
-    question: input.userMessage,
-    // web_extract reads a named page with no credential, so retrieval is
-    // reachable in every workspace. Search widens it; it is not required.
-    retrievalAvailable: true,
-  });
-
-  if (lookup.attempt) {
-    try {
-      const found = await researchTopicActivity({
-        orgId: input.orgId,
-        topic: input.userMessage,
-        maxSources: 4,
-      });
-
-      const corroborated = found.report.findings.filter((f) => f.independentSourceCount >= 2);
-      if (corroborated.length > 0) {
-        const drafted = corroborated
-          .slice(0, 3)
-          .map((f) => f.claim)
-          .join(' ');
-
-        // The same gate as any other reply. If sanitising leaves too little to
-        // be useful, the denial stands — a half-sentence is worse than an
-        // honest "I could not confirm that".
-        const gated = sanitiseCustomerReply(drafted);
-        const cleaned = stripMechanismTalk(gated.text).text;
-        const shaped = formatForChannel(stripPreamble(cleaned).text, input.channel);
-
-        if (shaped.trim().length >= 40) {
-          finalReply = shaped;
-          answeredByLookup = true;
-        }
-      }
-    } catch {
-      // A failed lookup must never cost the customer their reply. The denial
-      // below still ships, and the gap is still recorded.
-    }
-  }
-
-  // Learn from the miss. If the agent could not answer, that question goes on
-  // the org's knowledge-gap list so a human can answer it ONCE and the agent
-  // has it forever. Security refusals are excluded inside isKnowledgeGap —
-  // "what is the other customer's number?" is correct behaviour, and listing it
-  // as a gap would invite an operator to supply the answer.
-  //
-  // A question answered by lookup is not a gap: nobody needs to write down what
-  // the agent can now source on its own.
-  let knowledgeGapRecorded = false;
-  if (denied && !answeredByLookup) {
-    knowledgeGapRecorded = true;
-    await recordKnowledgeGapActivity({
-      orgId: input.orgId,
-      question: input.userMessage,
-      agentReply: finalReply,
-      detectedVia: 'denied',
-      conversationId: input.conversationId,
-      workItemId,
-    });
-  }
-
-  // Keep the promise, or at least remember making it.
-  //
-  // "I'll check and get back to you" used to evaporate the moment this
-  // function returned. Nothing tracked a follow-up, a deadline or an owner, so
-  // the customer waited, nothing arrived, and they concluded the business did
-  // not care — the most expensive failure this system had, and the only one
-  // invisible in every metric, because the conversation looked resolved.
-  //
-  // Detection is deterministic and runs on the FINAL text, after every gate,
-  // so it sees exactly the sentence the customer will read. The detector is
-  // pure and returns a relative offset in minutes rather than a timestamp:
-  // `new Date()` inside workflow code differs across replay, so the database
-  // owns the clock.
-  const commitment = detectCommitment(finalReply);
-  if (commitment.made) {
-    await recordCommitmentActivity({
-      orgId: input.orgId,
-      promise: commitment.promise,
-      question: input.userMessage,
-      dueInMinutes: commitment.dueInMinutes,
-      conversationId: input.conversationId,
-      workItemId,
-      // Keyed by the business key, so a Temporal retry replaying this turn
-      // reopens nothing: one reply is one obligation however many times the
-      // platform runs it.
-      sourceMessageId: `${businessKey}:reply`,
-    });
-  }
-
-  if (sanitised.modified) {
-    // Audited, not silent: a draft that had to be scrubbed means the model was
-    // pushed off-role, and that is worth seeing in the event stream.
-    await appendWorkEventActivity({
-      orgId: input.orgId,
-      workItemId,
-      kind: 'reply_sanitised',
-      actor: 'system',
-      payload: {
-        violations: sanitised.violations,
-        disclosedInternals: sanitised.disclosedInternals,
-      },
-      businessKey: `${businessKey}:reply_sanitised`,
-    });
-  }
-
-  if (critic.revisionsUsed > 0) {
-    // Recorded whether or not it succeeded: how often revision rescues a reply
-    // (and how often it fails) is exactly what tells you if this is earning
-    // its latency. Pairs with the outcome ledger's human_took_over signal.
-    await appendWorkEventActivity({
-      orgId: input.orgId,
-      workItemId,
-      kind: 'critic_revised',
-      actor: 'system',
-      payload: {
-        revisionsUsed: critic.revisionsUsed,
-        stopReason: critic.stopReason,
-        resolved: critic.allow,
-        attempts: critic.attempts,
-      },
-      businessKey: `${businessKey}:critic_revised`,
-    });
-  }
-
   if (!critic.allow) {
     await markNeedsAttentionActivity({
       orgId: input.orgId,
@@ -1163,30 +483,9 @@ async function runWorkItem(
       payload: { reason: critic.reason },
       businessKey: `${businessKey}:needs_attention_event`,
     });
-    // Third silence path, closed. A blocked draft saved no message at all, so
-    // the customer got nothing — found by reliability ×20: viewing_slot, the
-    // only multi-fact answer in the suite, blocked on 1 run in 5 with "only 33%
-    // of factual claims are supported by retrieved evidence" and went silent.
-    //
-    // The blocked draft is NOT sent — it failed the grounding or compliance bar
-    // and sending it would defeat the gate. The customer gets the same neutral
-    // acknowledgement used for a review timeout, and the item stays in
-    // needs_attention for a human. Blocking a doubtful answer is correct;
-    // answering with silence is not.
-    const blockedAck = formatForChannel(HUMAN_REVIEW_REPLY, input.channel);
-    if (input.conversationId) {
-      await saveMessageActivity({
-        orgId: input.orgId,
-        conversationId: input.conversationId,
-        role: 'assistant',
-        content: blockedAck,
-        idempotencyKey: `${businessKey}:save-critic-blocked-ack`,
-      });
-    }
     return {
       workItemId,
       status: nextStatus('fail'),
-      replyMessage: blockedAck,
       executedSteps: childResult.executedSteps,
       savedByWorkflow: true,
       success: false,
@@ -1197,10 +496,71 @@ async function runWorkItem(
   // Reply-class safety net only when we did not already wait before tools.
   // Leftover: agent-initiated send/pay/sign without user-message intent may
   // have already executed; this still withholds the customer-facing reply.
+  if (childResult.forceEscalate) {
+    await updateWorkItemStatusActivity({
+      orgId: input.orgId,
+      workItemId,
+      status: nextStatus('await_confirm'),
+      conversationId: input.conversationId,
+      conversationStatus: 'needs_attention',
+      businessKey: `${businessKey}:status_waiting_confidence`,
+    });
+    await appendWorkEventActivity({
+      orgId: input.orgId,
+      workItemId,
+      kind: 'confirm_requested',
+      actor: 'system',
+      payload: { reason: 'confidence_below_threshold', phase: 'confidence_gate' },
+      businessKey: `${businessKey}:confirm_requested_gate`,
+    });
+    await condition(() => lastConfirm !== undefined, '24 hours');
+    if (lastConfirm === undefined) lastConfirm = 'rejected';
+    if (lastConfirm === 'rejected') {
+      await appendWorkEventActivity({
+        orgId: input.orgId,
+        workItemId,
+        kind: eventKindForConfirm('rejected'),
+        actor: 'owner',
+        payload: { decision: 'rejected', reason: 'confidence_gate' },
+        businessKey: `${businessKey}:confirm_rejected_gate`,
+      });
+      await markNeedsAttentionActivity({
+        orgId: input.orgId,
+        workItemId,
+        conversationId: input.conversationId,
+        reason: 'confidence_gate_rejected',
+        businessKey: `${businessKey}:needs_attention_gate`,
+      });
+      await updateWorkItemStatusActivity({
+        orgId: input.orgId,
+        workItemId,
+        status: nextStatus('cancel'),
+        businessKey: `${businessKey}:status_cancelled_gate`,
+      });
+      return {
+        workItemId,
+        status: nextStatus('cancel'),
+        replyMessage: reply,
+        executedSteps: childResult.executedSteps,
+        savedByWorkflow: true,
+        success: false,
+        hitlDecision: 'rejected',
+        error: 'confidence_gate_rejected',
+      };
+    }
+    await appendWorkEventActivity({
+      orgId: input.orgId,
+      workItemId,
+      kind: eventKindForConfirm('approved'),
+      actor: 'owner',
+      payload: { decision: 'approved', reason: 'confidence_gate' },
+      businessKey: `${businessKey}:confirm_approved_gate`,
+    });
+  }
+
   const postHitl = resolveInboundHitlGate({
     userMessage: input.userMessage,
-    // The approved text, so the HITL net judges what would actually be sent.
-    reply: finalReply,
+    reply,
     executedSteps: childResult.executedSteps,
     usedTools: childResult.usedTools,
   });
@@ -1221,48 +581,8 @@ async function runWorkItem(
       payload: { classes: postHitl.classes, phase: 'after_reply' },
       businessKey: `${businessKey}:confirm_requested`,
     });
-
-    // Bounded wait. This used to be an unbounded condition(), and "If I change
-    // my mind about an order, can I cancel it?" sat in waiting_approval
-    // indefinitely: the agent had answered correctly, the answer was held for
-    // review, and the customer heard nothing, ever. No error was logged because
-    // nothing failed — the workflow was waiting, exactly as written.
-    //
-    // On expiry the held reply is NOT sent. It was flagged for review and
-    // nobody reviewed it, so sending it unreviewed would defeat the gate. The
-    // customer gets a neutral acknowledgement instead, and the work item stays
-    // in needs_attention for the operator. Fail closed on content, fail open on
-    // acknowledgement — the customer never waits on human latency.
-    const approved = await condition(() => lastConfirm !== undefined, HITL_WAIT_TIMEOUT);
-    if (!approved) {
-      await appendWorkEventActivity({
-        orgId: input.orgId,
-        workItemId,
-        kind: 'needs_attention',
-        actor: 'system',
-        payload: { reason: 'hitl_timeout', phase: 'after_reply', classes: postHitl.classes },
-        businessKey: `${businessKey}:hitl_timeout_after_reply`,
-      });
-      const ackReply = formatForChannel(HUMAN_REVIEW_REPLY, input.channel);
-      if (input.conversationId) {
-        await saveMessageActivity({
-          orgId: input.orgId,
-          conversationId: input.conversationId,
-          role: 'assistant',
-          content: ackReply,
-          idempotencyKey: `${businessKey}:save-hitl-timeout-ack`,
-        });
-      }
-      return {
-        workItemId,
-        status: nextStatus('fail'),
-        replyMessage: ackReply,
-        executedSteps: childResult.executedSteps,
-        savedByWorkflow: true,
-        success: false,
-        error: 'hitl_timeout',
-      };
-    }
+    await condition(() => lastConfirm !== undefined, '24 hours');
+    if (lastConfirm === undefined) lastConfirm = 'rejected';
     if (lastConfirm === 'rejected') {
       await appendWorkEventActivity({
         orgId: input.orgId,
@@ -1305,23 +625,6 @@ async function runWorkItem(
     });
   }
 
-  // The reply is now cleared to send: critic allowed it, the sanitiser scrubbed
-  // it, and HITL either did not apply or was approved. This is the ONLY place
-  // the assistant message is written (the child runs with skipPersist), so what
-  // the customer sees is exactly what passed every gate. A blocked or rejected
-  // draft returns above and is never persisted as an assistant message — it
-  // goes to needs_attention instead, which is where an ungated draft belongs.
-  if (input.conversationId) {
-    await saveMessageActivity({
-      orgId: input.orgId,
-      conversationId: input.conversationId,
-      role: 'assistant',
-      content: finalReply,
-      toolCalls: childResult.executedSteps,
-      idempotencyKey: `${businessKey}:save-gated-reply`,
-    });
-  }
-
   // M4: MemoryWriteBack as a child — off the webhook HTTP thread, not awaited.
   await startChild(MemoryWriteBackWorkflow, {
     workflowId: `${parentId}-writeback`,
@@ -1354,30 +657,24 @@ async function runWorkItem(
     businessKey: `${businessKey}:status_done`,
   });
 
-  // ── WHAT THE TRIO OBSERVED ────────────────────────────────────────────────
-  // Recorded into the draft rather than written here. The wrapper writes the
-  // row on EVERY exit, so this block no longer decides whether supervision
-  // happens — only how precise it is on the path that got this far.
-  draft.replyProduced = Boolean(finalReply && finalReply.trim());
-  draft.refused = finalReply === PRIVACY_REFUSAL || finalReply === DISCLOSURE_SAFE_REPLY;
-  draft.escalated = false;
-  draft.turns = childResult.executedSteps?.length ?? 0;
-  draft.criticBlocked = !critic.allow;
-  draft.criticRevised = Boolean(critic.allow && critic.finalDraft && critic.finalDraft !== reply);
-  draft.criticReason = critic.reason || critic.policy || '';
-  // A COST signal, observed rather than guessed. Counted at the LLM gateway —
-  // the one function that can reach the proxy — so it covers the critic call
-  // and every revision call in the loop. If this trends toward 1.0 the
-  // deterministic gates have stopped carrying their share and the price per
-  // conversation is quietly tripling.
-  draft.criticUsedModel = critic.usedModel;
-  draft.gapRecorded = knowledgeGapRecorded;
-  draft.memoryWritten = true;
+  await startChild(CustomerRecoveryWorkflow, {
+    workflowId: `${parentId}-recovery`,
+    args: [
+      {
+        orgId: input.orgId,
+        conversationId: input.conversationId,
+        customerIdentifier: input.customerIdentifier || input.conversationId,
+        workItemId,
+      },
+    ],
+    parentClosePolicy: ParentClosePolicy.PARENT_CLOSE_POLICY_ABANDON,
+    workflowExecutionTimeout: '30 days',
+  });
 
   return {
     workItemId,
     status: nextStatus('done'),
-    replyMessage: finalReply,
+    replyMessage: reply,
     executedSteps: childResult.executedSteps,
     savedByWorkflow: true,
     success: true,

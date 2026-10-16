@@ -119,7 +119,7 @@ export async function rotateWidgetSiteKey(
   await client.query(
     `INSERT INTO channels (org_id, channel_type, status, meta, connected_at)
      VALUES ($1, 'widget', 'active', $2::jsonb, NOW())
-     ON CONFLICT (org_id, channel_type)
+     ON CONFLICT (org_id, channel_type, account_key)
      DO UPDATE SET
        status = 'active',
        meta = COALESCE(channels.meta, '{}'::jsonb) || EXCLUDED.meta,

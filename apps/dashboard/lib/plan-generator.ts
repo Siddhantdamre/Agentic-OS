@@ -3,7 +3,7 @@
 // When the classifier marks a request COMPLEX, we ask LiteLLM (one plain,
 // non-streaming completion) to decompose the request into an explicit,
 // approvable step sequence + optional draft + reasoning. This bypasses
-// atomic-agent's agent loop — the planner only needs structured JSON out,
+// the TrueForge agent loop — the planner only needs structured JSON out,
 // never tool execution.
 
 import { chatCompletion } from './litellm-client';
@@ -15,7 +15,6 @@ export type { GeneratedPlan, PlanStep };
 export const CORE_PLAN_TOOLS = [
   'database_query',
   'web_search',
-  'deep_research',
   'web_extract',
   'file_ops',
   'sandbox',
@@ -28,6 +27,8 @@ export const VALID_TOOLS = new Set<string>([
   'stripe', 'shopify', 'zendesk', 'intercom', 'razorpay',
   'google-analytics', 'google-chat', 'google-meet', 'google-search-console',
   'google-business-profile', 'google-cloud',
+  'salesforce', 'microsoft-outlook', 'microsoft-calendar', 'docusign', 'twilio',
+  'zoho-crm', 'leegality', 'quickbooks', 'apollo', 'linkedin', 'maps',
   ...CORE_PLAN_TOOLS,
 ]);
 
@@ -41,6 +42,18 @@ const TOOL_ALIASES: Record<string, string> = {
   google_docs: 'google-docs',
   sheets: 'google-sheets',
   google_sheets: 'google-sheets',
+  slides: 'google-slides',
+  google_slides: 'google-slides',
+  presentation: 'google-slides',
+  forms: 'google-forms',
+  google_forms: 'google-forms',
+  contacts: 'google-contacts',
+  google_contacts: 'google-contacts',
+  tasks: 'google-tasks',
+  google_tasks: 'google-tasks',
+  mail: 'gmail',
+  email: 'gmail',
+  google_mail: 'gmail',
   google_ads: 'google-ads',
   meta_ads: 'meta-ads',
   ga4: 'google-analytics',
@@ -53,6 +66,25 @@ const TOOL_ALIASES: Record<string, string> = {
   google_business_profile: 'google-business-profile',
   gcp: 'google-cloud',
   google_cloud: 'google-cloud',
+  outlook: 'microsoft-outlook',
+  'microsoft-outlook': 'microsoft-outlook',
+  ms_outlook: 'microsoft-outlook',
+  ms_calendar: 'microsoft-calendar',
+  'microsoft-calendar': 'microsoft-calendar',
+  crm: 'hubspot',
+  zoho: 'zoho-crm',
+  'zoho-crm': 'zoho-crm',
+  sign: 'docusign',
+  docusign: 'docusign',
+  sms: 'twilio',
+  twilio: 'twilio',
+  quickbooks: 'quickbooks',
+  qb: 'quickbooks',
+  leegality: 'leegality',
+  apollo: 'apollo',
+  linkedin: 'linkedin',
+  maps: 'maps',
+  'google-maps': 'maps',
   'database-query': 'database_query',
   db_query: 'database_query',
   sql: 'database_query',
@@ -60,6 +92,11 @@ const TOOL_ALIASES: Record<string, string> = {
   code_execution: 'sandbox',
   execute_code: 'sandbox',
   'code-execution': 'sandbox',
+  fileops: 'file_ops',
+  workspace_file: 'file_ops',
+  file_system: 'file_ops',
+  filesystem: 'file_ops',
+  files: 'file_ops',
 };
 
 export function normalizeToolName(raw: string): string {
@@ -136,8 +173,9 @@ export async function generatePlan(
       '{"reasoning": "1-2 sentence rationale", "summary": "one-line plan title", "steps": [{"description": "human step", "tool": "gmail", "action": "send_email", "payload": {"to":"x@y.com","subject":"...","body":"..."}}], "draft": "full drafted email/message content if the user wants a message authored, else empty string"}',
       'Rules:',
       '- step.tool must be one of the connected tools.',
-      '- step.action must be a real action for that tool (e.g. gmail: fetch_latest_emails, triage_emails, draft_email, send_email, extract_otp, extract_attachment; google-calendar: check_availability, create_event, list_events; google-drive: drive_search, drive_list, drive_get_text, drive_upload, drive_share; google-docs: docs_create, docs_read, docs_append; google-sheets: sheets_create, sheets_read, sheets_append_row; hubspot: create_crm_contact, update_contact; github: create_repo, create_issue, fetch_user_repos; zendesk: create_support_ticket, update_ticket, fetch_tickets; notion: create_page, append_page_content, search_workspace_docs; google-analytics: analytics_report; google-chat: chat_list_spaces, chat_send_message; google-meet: meet_create_space, meet_get_space; google-search-console: search_console_sites, search_console_query; google-business-profile: business_list_locations; google-cloud: cloud_list_projects; database_query: query; web_search: search; web_extract: extract; deep_research: research; sandbox: execute).',
+      '- step.action must be a real action for that tool (e.g. gmail: fetch_latest_emails, triage_emails, draft_email, send_email, extract_otp, extract_attachment; google-calendar: check_availability, create_event, list_events; google-drive: drive_search, drive_list, drive_get_text, drive_upload, drive_share; google-docs: docs_create, docs_read, docs_append; google-sheets: sheets_create, sheets_read, sheets_append_row; google-slides: slides_create, slides_add_slide, slides_update_slide, slides_get; google-contacts: contacts_list; google-tasks: tasks_list, tasks_create; hubspot: create_crm_contact, update_contact, search_contacts; github: create_repo, create_issue, fetch_user_repos; zendesk: create_support_ticket, update_ticket, fetch_tickets; notion: create_page, append_page_content, search_workspace_docs; google-analytics: analytics_report; google-chat: chat_list_spaces, chat_send_message; google-meet: meet_create_space, meet_get_space; google-search-console: search_console_sites, search_console_query; google-business-profile: business_list_locations; google-cloud: cloud_list_projects; database_query: query; web_search: search; web_extract: extract; sandbox: execute).',
       '- Step payloads must include all required params for the action.',
+      '- Quality & Depth: Ensure payloads for content-generating steps (such as slides_create with slides array, docs_create, sheets_create) contain substantive, complete, and high-quality content rather than placeholder text.',
       '- To pass the result of a previous step (like search results or fetched content) into a text field, use the exact syntax {{stepN_output}} where N is the 1-based index (e.g. {{step1_output}}). DO NOT write placeholders like "[Insert results here]".',
       '- Never invent a user email/phone — if the user did not provide the recipient, leave the param empty and note it in description.',
       '- Keep steps to at most 6.',
@@ -177,9 +215,7 @@ export async function generatePlan(
 export async function reviseDraft(
   originalRequest: string,
   currentDraft: string,
-  feedback: string,
-  /** Whose budget this spends. See ChatOptions.orgId in litellm-client. */
-  orgId: string
+  feedback: string
 ): Promise<string> {
   try {
     const systemPrompt = [
@@ -200,7 +236,7 @@ export async function reviseDraft(
         { role: 'system', content: systemPrompt },
         { role: 'user', content: userPrompt },
       ],
-      { maxTokens: 1000, temperature: 0.2, timeoutMs: 60000, orgId }
+      { maxTokens: 1000, temperature: 0.2, timeoutMs: 60000 }
     );
     return content.trim().slice(0, 4000);
   } catch (err) {

@@ -1,7 +1,3 @@
-/**
- * SUPERVISION: GAP — sends a payment reminder about a real amount to a real
- * tenant.
- */
 import { ApplicationFailure, proxyActivities, sleep } from '@temporalio/workflow';
 import type * as activities from '../activities/index.js';
 

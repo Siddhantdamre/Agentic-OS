@@ -8,7 +8,38 @@
  * Does not read/write data files.
  */
 
+export const GOOGLE_WORKSPACE_SERVICES = [
+  'gmail',
+  'google-calendar',
+  'google-drive',
+  'google-docs',
+  'google-sheets',
+  'google-slides',
+  'google-forms',
+  'google-contacts',
+  'google-tasks',
+  'google-chat',
+  'google-meet',
+  'google-ads',
+  'google-analytics',
+  'google-search-console',
+  'google-business-profile',
+  'google-cloud',
+] as const;
+
+export type GoogleWorkspaceService = (typeof GOOGLE_WORKSPACE_SERVICES)[number];
+
+export function isGoogleWorkspaceService(id: string): boolean {
+  return (
+    id === 'google' ||
+    id === 'google-workspace' ||
+    GOOGLE_WORKSPACE_SERVICES.includes(id as any)
+  );
+}
+
 export const NANGO_PROVIDER_ALIASES: Record<string, readonly string[]> = {
+  'google-workspace': ['google', 'google-workspace'],
+  google: ['google', 'google-workspace'],
   whatsapp: ['whatsapp', 'whatsapp-business'],
   gmail: ['gmail', 'google-mail', 'google'],
   'google-calendar': ['google-calendar', 'google'],
@@ -36,6 +67,8 @@ export const NANGO_PROVIDER_ALIASES: Record<string, readonly string[]> = {
   intercom: ['intercom'],
   github: ['github'],
   razorpay: ['razorpay'],
+  'microsoft-outlook': ['microsoft-outlook', 'microsoft'],
+  'microsoft-calendar': ['microsoft-calendar', 'microsoft'],
 };
 
 export function nangoKeysFor(provider: string): string[] {
@@ -49,6 +82,11 @@ export function connectionIdsFor(orgId: string, provider: string): string[] {
   for (const key of nangoKeysFor(provider)) {
     ids.add(`${orgId}_${key}`);
   }
+  if (isGoogleWorkspaceService(provider)) {
+    ids.add(`${orgId}_google-workspace`);
+    ids.add(`${orgId}_google`);
+    ids.add(`${orgId}_gmail`);
+  }
   return [...ids];
 }
 
@@ -57,10 +95,31 @@ export function catalogIdFromConnectionId(orgId: string, connectionId: string): 
   if (!connectionId.startsWith(prefix)) return null;
   const suffix = connectionId.slice(prefix.length);
   if (!suffix) return null;
+  if (suffix === 'google' || suffix === 'google-workspace') {
+    return 'google-workspace';
+  }
   for (const [catalogId, aliases] of Object.entries(NANGO_PROVIDER_ALIASES)) {
     if (catalogId === suffix || aliases.includes(suffix)) return catalogId;
   }
   return suffix;
+}
+
+export function catalogIdsFromConnectionId(orgId: string, connectionId: string): string[] {
+  const prefix = `${orgId}_`;
+  if (!connectionId.startsWith(prefix)) return [];
+  const suffix = connectionId.slice(prefix.length);
+  if (!suffix) return [];
+  if (suffix === 'google' || suffix === 'google-workspace' || suffix === 'gmail') {
+    return ['google-workspace', ...GOOGLE_WORKSPACE_SERVICES];
+  }
+  const matched = new Set<string>();
+  for (const [catalogId, aliases] of Object.entries(NANGO_PROVIDER_ALIASES)) {
+    if (catalogId === suffix || aliases.includes(suffix)) {
+      matched.add(catalogId);
+    }
+  }
+  if (matched.size === 0) matched.add(suffix);
+  return [...matched];
 }
 
 export type PingMethod = 'GET' | 'POST';
@@ -74,6 +133,8 @@ export interface PingSpec {
 
 /** Read-only (or auth.test) endpoints used by the integrations diagnostic. */
 export const NANGO_PING_SPECS: Record<string, PingSpec> = {
+  'google-workspace': { method: 'GET', endpoint: '/drive/v3/about?fields=user,storageQuota' },
+  google: { method: 'GET', endpoint: '/drive/v3/about?fields=user,storageQuota' },
   gmail: { method: 'GET', endpoint: '/gmail/v1/users/me/profile' },
   'google-calendar': { method: 'GET', endpoint: '/calendar/v3/users/me/calendarList?maxResults=1' },
   'google-drive': { method: 'GET', endpoint: '/drive/v3/about?fields=user,storageQuota' },
@@ -103,4 +164,6 @@ export const NANGO_PING_SPECS: Record<string, PingSpec> = {
   zendesk: { method: 'GET', endpoint: '/api/v2/users/me.json' },
   intercom: { method: 'GET', endpoint: '/me' },
   'meta-ads': { method: 'GET', endpoint: '/me?fields=id,name' },
+  'microsoft-outlook': { method: 'GET', endpoint: '/v1.0/me/mailFolders/inbox?$select=id,displayName' },
+  'microsoft-calendar': { method: 'GET', endpoint: '/v1.0/me/calendars?$top=1' },
 };

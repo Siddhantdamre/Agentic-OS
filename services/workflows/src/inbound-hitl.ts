@@ -36,25 +36,8 @@ function normalizeToken(value: string): string {
     .replace(/_/g, '-');
 }
 
-/**
- * Tool IDENTITY only — never its output.
- *
- * `step.result` used to be folded in here, and the risk matchers
- * (isPayRisk/isSendRisk/isSignRisk) look for bare tokens like `charge`,
- * `payout`, `payment-link`. Those are tool identifiers; run over free text they
- * match ordinary English. The result payload is exactly free text: when the
- * agent retrieved "outside Bengaluru a delivery charge of 1200 rupees applies"
- * or "orders can be cancelled free of charge within 48 hours", the word
- * `charge` in the RESEARCH tripped the payment gate, held the reply, and the
- * customer got an acknowledgement instead of the answer they asked for.
- *
- * A tool's identity is what tells you it had a side effect; its output is data
- * the agent read. Reading a policy that mentions a charge is not a payment.
- * Classifying on output also means the agent is penalised for doing better
- * research, which is precisely backwards.
- */
 function blobOf(step: { tool?: string; toolUsed?: string; action?: string; result?: string }): string {
-  return [step.toolUsed, step.tool, step.action].filter(Boolean).map((v) => normalizeToken(String(v))).join(' ');
+  return [step.toolUsed, step.tool, step.action, step.result].filter(Boolean).map((v) => normalizeToken(String(v))).join(' ');
 }
 
 function parseSteps(raw: unknown[] | undefined): Array<{
@@ -80,10 +63,13 @@ function parseSteps(raw: unknown[] | undefined): Array<{
 
 function isSendRisk(blob: string): boolean {
   if (/\bgmail-send\b/.test(blob) || /\bsend-email\b/.test(blob)) return true;
+  if (/\bgmail-reply\b/.test(blob) || /\breply-email\b/.test(blob)) return true;
+  if (/\boutlook-reply\b/.test(blob) || /\bslack-reply-thread\b/.test(blob) || /\bslack-send-reply\b/.test(blob)) return true;
   if (/\b(microsoft-outlook|outlook).{0,40}send\b/.test(blob)) return true;
   if (/\bslack-send\b/.test(blob) || /\bsend-slack\b/.test(blob)) return true;
   if (/\bintercom-send\b/.test(blob) || /\bsend-intercom\b/.test(blob)) return true;
   if (/\btwilio-send\b/.test(blob) || /\bsend-sms\b/.test(blob)) return true;
+  if (/\binstagram-send\b/.test(blob) || /\bsend-dm\b/.test(blob)) return true;
   return false;
 }
 
@@ -162,32 +148,14 @@ export function inboundRequiresHitlWait(input: {
 
   // Pre-turn: classify from the inbound message so WorkItem can wait before
   // executeChild (PlanExecute pattern). Greetings / draft / “send me …” skip.
-  // isPayRisk / isSendRisk match TOOL identifiers — "payout", "payment-link",
-  // "charge" as in a Stripe charge object, "gmail-send". They must NEVER run
-  // against a customer's natural language.
-  //
-  // Measured, not theorised: "Do you charge extra for installation?" matched
-  // the bare word `charge`, was classified as a payment request, and the
-  // workflow parked in waiting_approval for an operator signal that never came.
-  // Four of twelve questions in the completion run hung exactly this way —
-  // "can I cancel it", "how much do you charge", "is there a delivery charge",
-  // "do you charge extra". Every one an ordinary pricing question; every one
-  // answered with permanent silence. Nothing was logged because nothing
-  // failed — the workflow was waiting, precisely as designed.
-  //
-  // Asking what something COSTS is a question. Only an instruction to move
-  // money is an action. USER_PAY_INTENT_RE and USER_CLAIMED_PAY_RE already
-  // encode that difference ("create a charge", "send a payment link",
-  // "I've paid"), so the natural-language path uses those alone.
-  if (USER_CLAIMED_PAY_RE.test(userMessage) || USER_PAY_INTENT_RE.test(userMessage)) {
+  const userNorm = normalizeToken(userMessage);
+  if (isPayRisk(userNorm) || USER_CLAIMED_PAY_RE.test(userMessage) || USER_PAY_INTENT_RE.test(userMessage)) {
     classes.push('pay');
   }
-  // Signing keeps a keyword check: "docusign"/"leegality" named in a message is
-  // an unambiguous signing intent with no innocent reading, unlike "charge".
-  if (SIGN_RE.test(userMessage) || USER_SIGN_INTENT_RE.test(userMessage)) {
+  if (isSignRisk(userNorm) || SIGN_RE.test(userMessage) || USER_SIGN_INTENT_RE.test(userMessage)) {
     classes.push('sign');
   }
-  if (USER_SEND_INTENT_RE.test(userMessage)) {
+  if (isSendRisk(userNorm) || USER_SEND_INTENT_RE.test(userMessage)) {
     classes.push('send');
   }
 

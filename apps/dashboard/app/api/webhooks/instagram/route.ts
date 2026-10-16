@@ -1,11 +1,10 @@
 import { NextResponse } from 'next/server';
 import { fireInboundAgent } from '@/lib/inbound-agent';
-import { assertMetaWebhookSignature, verifyMetaSubscribeToken } from '@/lib/webhook-crypto';
+import { assertMetaWebhookSignature } from '@/lib/webhook-crypto';
 import {
   inboundJobFromPersist,
   persistInboundMessage,
   resolveChannelByMeta,
-  resolveSingleOrgChannel,
 } from '@/lib/channel-normalize';
 import { denyWebhookIfLimited, isRateLimitError, responseFromRateLimit } from '@/lib/rate-limit';
 
@@ -21,7 +20,7 @@ export async function GET(req: Request) {
     const challenge = url.searchParams.get('hub.challenge');
     const verifyToken = process.env.VERIFY_TOKEN || process.env.INSTAGRAM_VERIFY_TOKEN;
 
-    if (mode === 'subscribe' && verifyMetaSubscribeToken(token, verifyToken)) {
+    if (mode === 'subscribe' && verifyToken && token === verifyToken) {
       return new NextResponse(challenge, {
         status: 200,
         headers: { 'Content-Type': 'text/plain' },
@@ -119,11 +118,14 @@ export async function POST(req: Request) {
       const matched =
         (await resolveChannelByMeta('instagram', 'ig_user_id', message.igUserId)) ||
         (await resolveChannelByMeta('instagram', 'instagram_account_id', message.igUserId)) ||
-        (await resolveChannelByMeta('instagram', 'page_id', message.igUserId)) ||
-        (await resolveSingleOrgChannel('instagram'));
+        (await resolveChannelByMeta('instagram', 'page_id', message.igUserId));
 
       if (!matched?.org_id) {
-        console.error('[Instagram Webhook] Cannot resolve org for ig user', message.igUserId);
+        console.error(
+          '[Instagram Webhook] Cannot resolve org for ig user',
+          message.igUserId,
+          '- no single-org fallback'
+        );
         continue;
       }
 

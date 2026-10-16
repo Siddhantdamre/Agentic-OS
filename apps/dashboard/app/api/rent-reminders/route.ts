@@ -1,8 +1,9 @@
 import { NextResponse } from 'next/server';
-import { getScopedClient } from '@/lib/db';
+import { getScopedClient, scopedAuthErrorResponse } from '@/lib/db';
 import { rejectBodyOrgId } from '@/app/api/packs/_lib';
 import { rentReminderActivity } from '@darex/workflows/dist/activities/packs';
 import { startRentReminderWorkflow } from '@darex/workflows/dist/workflow-client';
+import { jsonBodyOrEmpty } from '@/lib/safe-json';
 
 export const dynamic = 'force-dynamic';
 
@@ -50,13 +51,13 @@ export async function GET() {
       client.release();
     }
   } catch (err) {
-    if (err instanceof Error && err.message === 'Unauthorized') {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
+    const __scopedAuth = scopedAuthErrorResponse(err);
+    if (__scopedAuth) return __scopedAuth;
     const message = err instanceof Error ? err.message : String(err);
     if (missingTables(message)) {
       return NextResponse.json({ charges: [], invented: false });
     }
+    console.error('GET /api/rent-reminders Error:', err);
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
   }
 }
@@ -67,7 +68,7 @@ export async function POST(request: Request) {
     let chargeId = '';
 
     try {
-      const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
+      const body = (await jsonBodyOrEmpty(request)) as Record<string, unknown>;
       const rejected = rejectBodyOrgId(body);
       if (rejected) {
         return NextResponse.json({ error: rejected }, { status: 400 });
@@ -115,9 +116,8 @@ export async function POST(request: Request) {
     });
     return NextResponse.json({ ...direct, via: 'direct', invented: false });
   } catch (err) {
-    if (err instanceof Error && err.message === 'Unauthorized') {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
+    const __scopedAuth2 = scopedAuthErrorResponse(err);
+    if (__scopedAuth2) return __scopedAuth2;
     const message = err instanceof Error ? err.message : String(err);
     if (missingTables(message)) {
       return NextResponse.json(

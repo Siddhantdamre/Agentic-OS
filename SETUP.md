@@ -151,8 +151,8 @@ rm .setup-done
 | Temporal UI | 8233 | Workflow orchestration |
 | LiteLLM | 4000 | LLM routing |
 | Inbox | 3004 | WhatsApp/Email ingestion |
-| atomic-agent | 8787 | Agent sandbox |
 | MCP bridge | 8790 | Model Context Protocol |
+| TrueForge | 8791 | Agent runtime (external — required for agent turns) |
 
 ## Environment Variables
 

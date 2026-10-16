@@ -11,10 +11,6 @@
  * the role is darex, FAIL — do not report green.
  */
 
-// NOTE: 127.0.0.1, never 'localhost'. Node resolves localhost to IPv6 ::1 first;
-// Docker publishes on [::] but that path resets the connection, producing
-// intermittent ECONNRESET / "fetch failed" that looks like random flakiness.
-// curl hides this by falling back to IPv4 — Node's fetch and pg do not.
 const path = require('path');
 
 let Pool;
@@ -36,7 +32,7 @@ if (user === 'darex') {
 }
 
 const pool = new Pool({
-  host: process.env.DB_HOST || '127.0.0.1',
+  host: process.env.DB_HOST || 'localhost',
   port: parseInt(process.env.DB_PORT || '5432', 10),
   user,
   password,
@@ -71,18 +67,16 @@ async function main() {
     }
     console.log('  [PASS] orgs has RLS enabled');
 
-    // FORCE RLS is on `orgs` as of migration 028, and the policy refuses a
-    // direct INSERT with no org context — which is the behaviour this probe
-    // exists to confirm. So the fixtures come in through org_provision(), the
-    // sanctioned signup door, exactly as the application creates a tenant.
-    // Writing them with a raw INSERT made the probe fail on the very policy it
-    // was checking for.
     await client.query('BEGIN');
     const a = await client.query(
-      `SELECT org_provision('rls-alert-a', 'rls-alert-a-' || substr(md5(random()::text), 1, 12)) AS id`,
+      `INSERT INTO orgs (name, slug, status)
+       VALUES ('rls-alert-a', 'rls-alert-a-' || substr(md5(random()::text), 1, 12), 'active')
+       RETURNING id`,
     );
     const b = await client.query(
-      `SELECT org_provision('rls-alert-b', 'rls-alert-b-' || substr(md5(random()::text), 1, 12)) AS id`,
+      `INSERT INTO orgs (name, slug, status)
+       VALUES ('rls-alert-b', 'rls-alert-b-' || substr(md5(random()::text), 1, 12), 'active')
+       RETURNING id`,
     );
     orgA = a.rows[0].id;
     orgB = b.rows[0].id;
@@ -105,7 +99,7 @@ async function main() {
     if (orgA || orgB) {
       try {
         const admin = new Pool({
-          host: process.env.DB_HOST || '127.0.0.1',
+          host: process.env.DB_HOST || 'localhost',
           port: parseInt(process.env.DB_PORT || '5432', 10),
           user: 'darex',
           password: process.env.DB_PASSWORD || 'darex_dev_secret',

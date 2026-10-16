@@ -1,4 +1,5 @@
 import supertokens from 'supertokens-node';
+import { googleWorkspaceHd } from '@/lib/google-workspace-hd';
 import EmailPassword from 'supertokens-node/recipe/emailpassword';
 import Session from 'supertokens-node/recipe/session';
 import ThirdParty from 'supertokens-node/recipe/thirdparty';
@@ -115,6 +116,8 @@ function buildSamlProvider(): ProviderInput | null {
 }
 
 function buildGoogleWorkspacesProvider(): ProviderInput | null {
+  const hd = googleWorkspaceHd();
+  if (!hd) return null;
   const clientId = process.env.GOOGLE_WORKSPACE_CLIENT_ID || process.env.GOOGLE_CLIENT_ID;
   const clientSecret = process.env.GOOGLE_WORKSPACE_CLIENT_SECRET || process.env.GOOGLE_CLIENT_SECRET;
   if (!clientId || !clientSecret) return null;
@@ -126,7 +129,7 @@ function buildGoogleWorkspacesProvider(): ProviderInput | null {
         {
           clientId,
           clientSecret,
-          additionalConfig: { hd: process.env.GOOGLE_WORKSPACE_HD || '*' },
+          additionalConfig: { hd },
         },
       ],
     },
@@ -267,7 +270,15 @@ export function ensureSuperTokensInit() {
       ],
     });
     initialized = true;
-  } catch {
-    initialized = true;
+  } catch (err) {
+    // Hot reload / multi-import can re-enter after a successful init. Only that
+    // case is safe to treat as done — real init failures must surface so the
+    // next call retries instead of leaving auth half-dead.
+    const message = err instanceof Error ? err.message : String(err);
+    if (/already been initiali[sz]ed/i.test(message)) {
+      initialized = true;
+      return;
+    }
+    throw err;
   }
 }

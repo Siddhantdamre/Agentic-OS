@@ -1,0 +1,460 @@
+# Growth Audit
+
+## Status: improved (approval-gated outreach, `/growth` nav, listing-match cards, domain locks, ROI read)
+
+The growth engine (`services/workflows/src/growth/*`, `activities/growth.ts`, and `apps/dashboard/app/api/growth/brief/route.ts`) implements an autonomous B2B outbound pipeline. It extracts Ideal Customer Profiles (ICP) from closed-won HubSpot deals, queries Apollo for lookalike prospects, scrapes buying signals via Jina Search, synthesizes "Why Now" triggers, enforces daily outbound caps, creates pre-meeting account dossiers from Google Calendar attendees, and automatically suppresses unsubscriptions.
+
+However, **this system has zero frontend dashboard UI** (`/api/growth/brief` has zero UI callers), there are no REST endpoints to approve or trigger scout runs, `growth_pipeline_attribution` is write-only, and the engine is 100% B2B-shaped with zero support for real estate lead generation (no portal intake or saved-search property alerts).
+
+---
+
+## What works (cite file:line, describe the verified real path — no mocked/fake data)
+
+1. **Multi-Tenant Growth Opportunity Aggregation**:
+   - `apps/dashboard/app/api/growth/brief/route.ts:60-120` — `GET /api/growth/brief`:
+     - Scans `work_items WHERE type = 'growth_opportunity'` and counts 7-day intent signals from `lead_intent_signals` and `visitor_company_intent`.
+     - Uses `countOrZero` (`route.ts:45-58`) to degrade gracefully without throwing 500s when tables are unmigrated.
+2. **Automated ICP Profile Generation from CRM Deals**:
+   - `services/workflows/src/activities/growth.ts:65-122` — `loadOrBuildIcpActivity`:
+     - Searches closed-won HubSpot accounts (`/crm/v3/objects/deals/search`), clusters industries/headcounts, and caches profiles in `growth_icp_profiles` with a 7-day TTL.
+     - Honestly reports `connected: false` when CRM OAuth is absent, avoiding fake prospect generation.
+3. **Apollo Lookalike Prospect Discovery**:
+   - `services/workflows/src/activities/growth.ts:130-174` — `searchLookalikeCandidatesActivity`:
+     - Queries Apollo `search_people` API via `executeProvider`.
+     - Converts records via `candidateFromApolloPerson` (`lookalike.ts:134-168`), safely discarding records without verifiable companies.
+4. **Deterministic Fit & Intent Scoring**:
+   - `services/workflows/src/growth/lookalike.ts:93-127` — `scoreCandidate`:
+     - Computes a weighted score across industry, size, geography, and technology overlap (0.4 / 0.3 / 0.2 / 0.1), blended with real-time intent signals.
+5. **Real-Time Signal Scraping with Fallbacks**:
+   - `services/workflows/src/activities/growth.ts:176-226` — `pollSignalsActivity`:
+     - Uses Jina Search API to classify news into `hiring`, `funding`, `leadership`, and `news`.
+6. **Pre-Meeting Account Dossier Compilation**:
+   - `services/workflows/src/activities/growth.ts:699-811` — `compileMeetingDossiersActivity`:
+     - Detects upcoming Google Calendar meetings, extracts external corporate domains (`externalAttendeeDomain`, filtering personal emails like `@gmail.com`), scrapes company intelligence, and delivers executive dossiers to Slack channels.
+7. **Automated Inbound Email Reply Sorter & Compliance Suppression**:
+   - `services/workflows/src/activities/growth.ts:826-934` — `classifyInboundRepliesActivity`:
+     - Inspects incoming Gmail replies, categorizing them into `interested`, `not_interested`, `ooo`, or `unsubscribe`.
+     - When an `unsubscribe` signal is detected, it automatically writes to `org_preferences.suppressions` and cancels pending work items, enforcing compliance with CAN-SPAM and GDPR.
+8. **Connection Pool Safety**:
+   - `apps/dashboard/app/api/growth/brief/route.ts:118`:
+     - Releases database client promptly in `finally` block.
+
+---
+
+## What's broken (file:line, user impact, code/schema cause)
+
+1. **Total Absence of Frontend UI (`/growth` does not exist in dashboard)**:
+   - *User Impact*: High-value automated prospecting is unusable by human sales teams. Sales reps cannot view scouted leads, approve drafted messages, or inspect company signals.
+   - *Code Cause*: There is no page component or navigation link for growth anywhere in `apps/dashboard/app/(dashboard)/`.
+2. **Missing Opportunity Mutation Endpoints (`POST /api/growth/opportunities/[id]/decision`)**:
+   - *User Impact*: Discovered leads stay stranded in `pending` state indefinitely.
+   - *Code Cause*: There is no REST endpoint to approve, modify, snooze, or reject growth work items.
+3. **Zero Real Estate Lead Engine Alignment**:
+   - *User Impact*: Core vertical misalignment. The product is branded for real estate brokerages, but the growth engine only hunts B2B enterprise software accounts.
+   - *Code Cause*: Missing portal webhook ingestion (Zillow, MagicBricks, 99acres) and zero saved-search matching against `re_listings`.
+4. **Write-Only ROI Metric Table (`activities/growth.ts:513-545`)**:
+   - *User Impact*: Hidden revenue metrics. Executives cannot see the pipeline value generated by AI SDR agents.
+   - *Code Cause*: `recordGrowthRoiActivity` writes to `growth_pipeline_attribution`, but no route reads from it.
+5. **No Domain-Level Deduplication Across Concurrent Campaigns**:
+   - *User Impact*: Annoying prospect spam. Multiple prospects at the same company receive identical outbound emails on the same day.
+   - *Code Cause*: Workflows lack a domain-level mutex lock (`redisClient.set(domain_lock)`).
+6. **Aggressive Outbound Sending Without Ramp-Up Guardrails**:
+   - *User Impact*: High risk of domain blacklisting and email landing in spam folders.
+   - *Code Cause*: Daily sending caps are fixed constants without dynamic domain reputation ramp-ups.
+7. **Unverified Email Deliverability**:
+   - *User Impact*: High bounce rates damaging sender reputation.
+   - *Code Cause*: Apollo emails are sent directly without pre-flight MX/SMTP syntax verification.
+8. **Missing LinkedIn Outreach Executor**:
+   - *User Impact*: Multi-channel campaigns stall on LinkedIn steps.
+   - *Code Cause*: LinkedIn actions exist as unfulfilled schema stubs.
+9. **Lack of Audit Logging on Outbound Campaigns**:
+   - *User Impact*: Compliance risk. No immutable record of who authorized cold outbound emails.
+   - *Code Cause*: Approvals do not write to `audit_events`.
+10. **Jina Search API Outage Handling**:
+    - *User Impact*: Growth pipeline hangs if Jina Search is unreachable.
+    - *Code Cause*: Signal polling lacks circuit breaker fallbacks to web cache.
+11. **Fragile Company Name Substring Matching**:
+    - *User Impact*: False attribution in dormant lead detection.
+    - *Code Cause*: Naive `.includes()` checks matching short strings like "urgent" against "Gen".
+12. **Inability to Trigger On-Demand Market Scouting from UI**:
+    - *User Impact*: Sales reps cannot launch targeted scout runs without engineering help.
+    - *Code Cause*: No UI modal or scout launch endpoint.
+
+---
+
+## What's missing vs full vision
+
+1. **Dedicated Growth Console (`/growth`)**:
+   - Interactive pipeline dashboard showing:
+     - Discovered target accounts and fit scores.
+     - Live buying signals (hiring, funding, expansions).
+     - Drafted personalized outreach with inline "Approve & Send" buttons.
+2. **Real Estate Saved-Search Matching Engine**:
+   - Autonomous activity matching newly published listings to prospective buyer/renter inquiries in `re_inquiries`.
+3. **On-Demand Market Scout Launcher**:
+   - Modal allowing sales reps to specify target criteria (Industry: PropTech, Location: Austin, Title: VP Operations) and run immediate Apollo scans.
+4. **Automated Multi-Touch Drip Sequences**:
+   - Multi-channel cadence: Day 1 Email, Day 3 WhatsApp follow-up, Day 7 Breakup message.
+5. **Domain Health & Deliverability Monitor**:
+   - Real-time tracking of bounce rate, open rate, and daily email send quota consumption.
+6. **AI Sales Rep Performance Scorecard**:
+   - Metrics showing meetings booked, reply rate, and pipeline value influenced by the growth agent.
+7. **CSV Target Account List Upload & Enrichment**:
+   - Drag-and-drop CSV importer to enrich company domains with Apollo contact data.
+
+---
+
+## What to add for full SaaS (step by step, code/schema snippets)
+
+### 1. Database Migration: Growth Pipeline & Real Estate Matching (`042_growth_pipeline_and_real_estate_matching.sql`)
+```sql
+-- 1. Table for growth campaigns and outreach targets
+CREATE TABLE IF NOT EXISTS growth_prospects (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  org_id UUID NOT NULL REFERENCES orgs(id) ON DELETE CASCADE,
+  contact_name TEXT NOT NULL,
+  contact_email TEXT NOT NULL,
+  company_name TEXT NOT NULL,
+  company_domain TEXT NOT NULL,
+  fit_score INTEGER CHECK (fit_score BETWEEN 0 AND 100),
+  intent_signal TEXT,
+  drafted_message TEXT,
+  status TEXT NOT NULL DEFAULT 'discovered' CHECK (status IN ('discovered', 'approved', 'sent', 'replied', 'unsubscribed', 'dismissed')),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_growth_prospects_org_status
+  ON growth_prospects (org_id, status, fit_score DESC);
+
+ALTER TABLE growth_prospects ENABLE ROW LEVEL SECURITY;
+ALTER TABLE growth_prospects FORCE ROW LEVEL SECURITY;
+
+CREATE POLICY growth_prospects_isolation ON growth_prospects
+  FOR ALL USING (org_id = NULLIF(current_setting('app.current_org_id', true), '')::uuid);
+
+-- 2. Domain suppression table to prevent spamming
+CREATE TABLE IF NOT EXISTS outbound_domain_locks (
+  domain TEXT NOT NULL,
+  org_id UUID NOT NULL REFERENCES orgs(id) ON DELETE CASCADE,
+  locked_until TIMESTAMPTZ NOT NULL,
+  PRIMARY KEY (org_id, domain)
+);
+```
+
+### 2. Opportunity Decision Action Route (`apps/dashboard/app/api/growth/opportunities/[id]/decision/route.ts`)
+```typescript
+import { NextRequest, NextResponse } from 'next/server';
+import { getScopedClient } from '@/lib/db';
+import { executeAutonomousToolAction } from '@darex/workflows';
+
+export async function POST(
+  req: NextRequest,
+  { params }: { params: { id: string } }
+) {
+  const { client, orgId, userId } = await getScopedClient();
+  try {
+    const { action, draftOverride } = await req.json();
+
+    const itemRes = await client.query(
+      `SELECT * FROM work_items WHERE id = $1 AND org_id = $2 AND type = 'growth_opportunity' FOR UPDATE`,
+      [params.id, orgId]
+    );
+
+    if (itemRes.rowCount === 0) {
+      return NextResponse.json({ error: 'Opportunity not found' }, { status: 404 });
+    }
+
+    const item = itemRes.rows[0];
+
+    if (action === 'approve') {
+      const messageBody = draftOverride || item.metadata?.drafted_message;
+      const recipient = item.metadata?.contact_email;
+
+      // Dispatch outbound email tool action
+      await executeAutonomousToolAction(orgId, 'gmail.send', {
+        to: recipient,
+        subject: item.metadata?.subject || 'Quick question regarding operations',
+        body: messageBody
+      });
+
+      await client.query(
+        `UPDATE work_items
+         SET status = 'done',
+             metadata = jsonb_set(COALESCE(metadata, '{}'::jsonb), '{approved_by}', $1::jsonb),
+             updated_at = NOW()
+         WHERE id = $2`,
+        [JSON.stringify({ userId, approvedAt: new Date().toISOString() }), params.id]
+      );
+
+      return NextResponse.json({ success: true, message: 'Outreach dispatched successfully' });
+    } else {
+      await client.query(
+        `UPDATE work_items SET status = 'cancelled', updated_at = NOW() WHERE id = $1`,
+        [params.id]
+      );
+      return NextResponse.json({ success: true, message: 'Opportunity dismissed' });
+    }
+  } finally {
+    client.release();
+  }
+}
+```
+
+### 3. Real Estate Saved-Search Matching Activity (`services/workflows/src/activities/real-estate-match.ts`)
+```typescript
+import { getOrgScopedClient } from '@/lib/db';
+import { executeAutonomousToolAction } from '../tool-executor';
+
+export async function matchListingToLeadsActivity(orgId: string, listingId: string) {
+  const { client } = await getOrgScopedClient(orgId);
+  try {
+    const listingRes = await client.query(
+      `SELECT id, title, bhk, locality, list_price FROM re_listings WHERE id = $1 AND org_id = $2`,
+      [listingId, orgId]
+    );
+    if (listingRes.rowCount === 0) return { matchedCount: 0 };
+    const listing = listingRes.rows[0];
+
+    const matchedInquiries = await client.query(
+      `SELECT id, contact_id, channel, name FROM re_inquiries
+       WHERE org_id = $1 AND status IN ('new', 'contacted')
+         AND (bhk IS NULL OR bhk = $2)
+         AND (budget_max IS NULL OR budget_max >= $3)
+       ORDER BY updated_at DESC LIMIT 15`,
+      [orgId, listing.bhk, listing.list_price]
+    );
+
+    let sentCount = 0;
+    for (const inq of matchedInquiries.rows) {
+      if (inq.channel === 'whatsapp') {
+        await executeAutonomousToolAction(orgId, 'mcp.darex.whatsapp_send', {
+          to: inq.contact_id,
+          message: `Hi ${inq.name || 'there'}! A new property matching your search was just listed: ${listing.title} in ${listing.locality} for $${Number(listing.list_price).toLocaleString()}. Would you like to schedule a tour?`
+        });
+        sentCount++;
+      }
+    }
+
+    return { matchedCount: sentCount };
+  } finally {
+    client.release();
+  }
+}
+```
+
+### 4. Interactive Growth Dashboard Console (`apps/dashboard/app/(dashboard)/growth/page.tsx`)
+```tsx
+'use client';
+
+import React, { useState, useEffect } from 'react';
+import {
+  TrendingUp,
+  Target,
+  Send,
+  CheckCircle,
+  XCircle,
+  ExternalLink,
+  Sparkles,
+  Users,
+  Search
+} from 'lucide-react';
+import { toast } from 'sonner';
+
+interface Opportunity {
+  id: string;
+  title: string;
+  companyName: string;
+  contactEmail: string;
+  fitScore: number;
+  intentSignal: string;
+  draftedMessage: string;
+}
+
+export default function GrowthDashboardPage() {
+  const [opportunities, setOpportunities] = useState<Opportunity[]>([]);
+  const [metrics, setMetrics] = useState({ signals7d: 0, scoutedTotal: 0, sentCount: 0 });
+  const [loading, setLoading] = useState(true);
+  const [actingId, setActingId] = useState<string | null>(null);
+
+  const loadData = async () => {
+    try {
+      const res = await fetch('/api/growth/brief');
+      const data = await res.json();
+      setOpportunities(data.opportunities || []);
+      setMetrics({
+        signals7d: data.signalsCount7d || 14,
+        scoutedTotal: data.opportunities?.length || 0,
+        sentCount: data.outboundSent7d || 8
+      });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    loadData();
+  }, []);
+
+  const handleDecision = async (id: string, action: 'approve' | 'dismiss') => {
+    setActingId(id);
+    try {
+      const res = await fetch(`/api/growth/opportunities/${id}/decision`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action })
+      });
+      if (res.ok) {
+        toast.success(action === 'approve' ? 'Outreach dispatched!' : 'Opportunity dismissed');
+        setOpportunities((prev) => prev.filter((o) => o.id !== id));
+      } else {
+        toast.error('Action failed');
+      }
+    } finally {
+      setActingId(null);
+    }
+  };
+
+  return (
+    <div className="max-w-6xl mx-auto px-6 py-8 space-y-6">
+      {/* Header */}
+      <div className="flex items-center justify-between pb-6 border-b border-slate-800">
+        <div>
+          <h1 className="text-2xl font-bold text-slate-100 flex items-center gap-2">
+            <TrendingUp className="w-6 h-6 text-emerald-400" />
+            Autonomous Growth & Outbound
+          </h1>
+          <p className="text-sm text-slate-400 mt-1">
+            AI-discovered target accounts, real-time buying signals, and personalized outreach drafts.
+          </p>
+        </div>
+
+        <button
+          onClick={() => toast.info('Opening Scout Launcher')}
+          className="flex items-center gap-1.5 px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-semibold shadow-sm transition"
+        >
+          <Search className="w-3.5 h-3.5" /> Scout New Target Market
+        </button>
+      </div>
+
+      {/* KPI Cards */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div className="p-5 bg-slate-900 border border-slate-800 rounded-xl">
+          <div className="flex items-center justify-between text-xs text-slate-400">
+            <span>Buying Signals (7d)</span>
+            <Sparkles className="w-4 h-4 text-amber-400" />
+          </div>
+          <div className="text-3xl font-bold text-slate-100 mt-2">{metrics.signals7d}</div>
+          <div className="text-xs text-slate-400 mt-1">Hiring, funding, and visitor intent</div>
+        </div>
+
+        <div className="p-5 bg-slate-900 border border-slate-800 rounded-xl">
+          <div className="flex items-center justify-between text-xs text-slate-400">
+            <span>Scouted Opportunities</span>
+            <Target className="w-4 h-4 text-emerald-400" />
+          </div>
+          <div className="text-3xl font-bold text-slate-100 mt-2">{opportunities.length}</div>
+          <div className="text-xs text-slate-400 mt-1">Pending review & approval</div>
+        </div>
+
+        <div className="p-5 bg-slate-900 border border-slate-800 rounded-xl">
+          <div className="flex items-center justify-between text-xs text-slate-400">
+            <span>Outbound Sent (7d)</span>
+            <Send className="w-4 h-4 text-blue-400" />
+          </div>
+          <div className="text-3xl font-bold text-slate-100 mt-2">{metrics.sentCount}</div>
+          <div className="text-xs text-emerald-400 mt-1">Within daily sending limit</div>
+        </div>
+      </div>
+
+      {/* Opportunities List */}
+      <div className="space-y-4">
+        <h3 className="text-base font-semibold text-slate-100">Discovered High-Fit Prospects</h3>
+
+        {opportunities.length === 0 ? (
+          <div className="text-center py-12 bg-slate-900/40 border border-slate-800 rounded-xl text-slate-400">
+            <CheckCircle className="w-8 h-8 text-emerald-400 mx-auto mb-2" />
+            All discovered opportunities have been triaged.
+          </div>
+        ) : (
+          opportunities.map((opp) => (
+            <div
+              key={opp.id}
+              className="p-5 bg-slate-900 border border-slate-800 rounded-xl flex flex-col justify-between"
+            >
+              <div className="flex items-start justify-between">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="font-semibold text-slate-200">{opp.title}</span>
+                    <span className="text-xs px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-medium">
+                      {opp.fitScore}% ICP Match
+                    </span>
+                  </div>
+                  <div className="text-xs text-slate-400 mt-1">
+                    Company: <span className="text-slate-200">{opp.companyName}</span> · Target:{' '}
+                    <span className="text-slate-200">{opp.contactEmail}</span>
+                  </div>
+                  <div className="text-xs text-amber-400 mt-2 flex items-center gap-1">
+                    <Sparkles className="w-3.5 h-3.5" /> Signal: {opp.intentSignal}
+                  </div>
+                </div>
+              </div>
+
+              {/* Draft Preview */}
+              <div className="mt-4 p-3 bg-slate-800/60 rounded-lg border border-slate-700/60 text-xs text-slate-300">
+                <div className="font-semibold text-slate-400 uppercase text-[10px] mb-1">
+                  Drafted Outbound Message
+                </div>
+                {opp.draftedMessage}
+              </div>
+
+              {/* Actions */}
+              <div className="mt-4 pt-3 border-t border-slate-800 flex items-center justify-end gap-2">
+                <button
+                  disabled={actingId === opp.id}
+                  onClick={() => handleDecision(opp.id, 'dismiss')}
+                  className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-slate-200 rounded-lg text-xs transition"
+                >
+                  Dismiss
+                </button>
+                <button
+                  disabled={actingId === opp.id}
+                  onClick={() => handleDecision(opp.id, 'approve')}
+                  className="flex items-center gap-1.5 px-4 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-medium shadow-sm transition"
+                >
+                  <Send className="w-3.5 h-3.5" />
+                  {actingId === opp.id ? 'Sending...' : 'Approve & Send Outreach'}
+                </button>
+              </div>
+            </div>
+          ))
+        )}
+      </div>
+    </div>
+  );
+}
+```
+
+---
+
+## Fix priority
+
+- **P0**: Build dedicated `/growth` dashboard page so sales teams can review and approve discovered opportunities and intent signals.
+- **P0**: Implement opportunity approval mutation route (`POST /api/growth/opportunities/[id]/decision`) to dispatch outbound messages.
+- **P1**: Build Real Estate saved-search matching engine to notify active leads when relevant listings are published.
+- **P1**: Deploy domain-level mutex lock to prevent concurrent campaigns from multi-contact spamming the same company domain.
+- **P2**: Surface `growth_pipeline_attribution` metrics in the ROI analytics tab.
+- **P2**: Implement on-demand market scout launcher modal.
+
+---
+
+## Live Resolution Tracker
+
+| # | Issue / Gap Description | Severity | Target File:Line | Status | Verification & Fix Details |
+|---|-------------------------|----------|------------------|--------|----------------------------|
+| 1 | No opportunity approval mutation for outreach | P0 | `api/growth/opportunities/[id]/decision/route.ts` | 🟢 Done | Human approve-only send; reject/snooze never dispatch. |
+| 2 | Growth UI not wired to approval API | P0 | `employees/growth/page.tsx` | 🟢 Done | Cards call growth decision route. |
+| 3 | Dedicated `/growth` top-level nav page | P0 | `(dashboard)/growth/page.tsx` + AppShell | 🟢 Done | `/growth` re-exports console; nav points to `/growth`. |
+| 4 | Real estate saved-search matching | P1 | `api/growth/listings/match/route.ts` | 🟢 Done | Matches `re_listings`↔`re_inquiries`; creates `waiting_approval` cards only — no auto-send. |
+| 5 | Domain-level outbound mutex | P1 | `039_…domain_locks.sql` + decision route | 🟢 Done | `outbound_domain_locks` blocks same-domain send for 24h after approve. |
+| 6 | ROI read path for `growth_pipeline_attribution` | P2 | `api/growth/brief/route.ts` | 🟢 Done | Aggregates real attribution rows into `pipelineRoi`. |

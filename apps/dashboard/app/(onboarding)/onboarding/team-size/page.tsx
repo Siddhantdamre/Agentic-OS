@@ -16,7 +16,7 @@ export default function OnboardingTeamSizePage() {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ wizardStep: 'business-type', teamSize }),
-    });
+    }).catch(() => undefined); // progress save is best-effort; the last step saves everything
     router.push('/onboarding/business-type');
   };
 
@@ -33,12 +33,13 @@ export default function OnboardingTeamSizePage() {
 
       <div className="max-w-md mx-auto bg-cream-100 p-6 rounded-2xl border border-cream-300 space-y-4">
         <div className="flex items-center justify-center space-x-2 text-3xl font-bold text-heading">
-          <Users className="w-8 h-8 text-amber-600" />
+          <Users className="w-8 h-8 text-amber-700" />
           <span>{teamSize} {teamSize === 1 ? 'person' : 'people'}</span>
         </div>
 
         <input
           type="range"
+          aria-label="Team size"
           min="1"
           max="100"
           value={teamSize}
@@ -58,6 +59,7 @@ export default function OnboardingTeamSizePage() {
         <button
           type="button"
           onClick={() => router.push('/onboarding/name')}
+          aria-label="Back"
           className="py-4 px-5 bg-cream-200 hover:bg-cream-300 text-heading font-semibold rounded-2xl transition-colors"
         >
           <ArrowLeft className="w-5 h-5" />

@@ -1,5 +1,5 @@
 /**
- * Unified inbound channel_key + persist helper (WS-18 / H2–H5).
+ * Unified inbound channel_key + persist helper (WS-18 / H2-H5).
  * Org is resolved from channel config, never body org_id.
  */
 import type { PoolClient } from 'pg';
@@ -11,7 +11,6 @@ import {
   type InboundAgentJob,
 } from '@/lib/inbound-agent';
 import { replyTargetFromChannelMeta } from '@/lib/channel-outbound';
-import { resolvePersonId } from './resolve-person';
 
 export const CHANNEL_KEYS = [
   'whatsapp',
@@ -72,6 +71,7 @@ export function normalizeChannelKey(raw: string | null | undefined): ChannelKey 
 export type OwnerCommand =
   | { kind: 'brief' }
   | { kind: 'approve_plan'; planId: string }
+  | { kind: 'reject_plan'; planId: string }
   | { kind: 'pause_employee'; name: string }
   | { kind: 'unknown' };
 
@@ -89,6 +89,12 @@ export function parseOwnerCommand(text: string): OwnerCommand {
     if (idMatch) return { kind: 'approve_plan', planId: idMatch[1].toLowerCase() };
     return { kind: 'unknown' };
   }
+  const reject = trimmed.match(/^\s*reject(?:\s+plan)?\s+(.+)$/i);
+  if (reject) {
+    const idMatch = reject[1].match(UUID_RE);
+    if (idMatch) return { kind: 'reject_plan', planId: idMatch[1].toLowerCase() };
+    return { kind: 'unknown' };
+  }
   const pause = trimmed.match(/^\s*pause\s+(.+)$/i);
   if (pause) {
     const name = pause[1].replace(/[.!]+$/, '').trim();
@@ -102,6 +108,7 @@ export function isOwnerCommand(text: string): boolean {
   switch (parsed.kind) {
     case 'brief':
     case 'approve_plan':
+    case 'reject_plan':
     case 'pause_employee':
       return true;
     case 'unknown':
@@ -136,26 +143,13 @@ export async function resolveChannelByMeta(
   }
 }
 
-export async function resolveSingleOrgChannel(channelType: string): Promise<ChannelRow | null> {
-  try {
-    // Was a direct COUNT(*) on `orgs`, which is behind RLS as of migration
-    // 028 and now returns 0 on an unscoped connection — indistinguishable
-    // from "not a single-org deployment", so every inbound message would have
-    // been silently refused. single_active_org_id() answers the same question
-    // through the supported resolver and returns NULL once a second org
-    // exists, so it can never quietly pick a tenant.
-    const sole = await pool.query(`SELECT single_active_org_id() AS id`);
-    if (!sole.rows[0]?.id) return null;
-    const res = await pool.query(
-      `SELECT id, org_id, meta FROM channels
-        WHERE channel_type = $1 AND status IN ('active', 'connected')
-        ORDER BY connected_at DESC NULLS LAST LIMIT 1`,
-      [channelType]
-    );
-    return (res.rows[0] as ChannelRow) ?? null;
-  } catch {
-    return null;
-  }
+/**
+ * @deprecated Cross-tenant guess - always returns null.
+ * Unresolved channel identifiers must fail honestly; never LIMIT 1 across orgs.
+ */
+export async function resolveSingleOrgChannel(_channelType: string): Promise<ChannelRow | null> {
+  void _channelType;
+  return null;
 }
 
 export async function resolveOrgByChatwootInbox(
@@ -247,56 +241,13 @@ export async function persistInboundMessageWithClient(
   const channelRes = await client.query(
     `INSERT INTO channels (org_id, channel_type, status, meta, connected_at)
      VALUES ($1, $2, 'active', $3::jsonb, NOW())
-     ON CONFLICT (org_id, channel_type)
+     ON CONFLICT (org_id, channel_type, account_key)
      DO UPDATE SET status = 'active', updated_at = NOW()
      RETURNING id, meta`,
     [orgId, channelType, JSON.stringify({ name: `${channelType} Channel`, ...extraMeta })]
   );
   const channelId = channelRes.rows[0].id as string;
   const chanMeta = (channelRes.rows[0].meta || {}) as Record<string, unknown>;
-
-  /**
-   * Route the message to an employee that can actually work the channel it
-   * arrived on.
-   *
-   * This was `WHERE status = 'active' LIMIT 1` with no ORDER BY — every inbound
-   * message went to whichever row Postgres happened to return first. The effect
-   * was visible in the data long before anyone looked for it: one employee per
-   * org held every recorded action and the rest held none, because there was no
-   * routing at all. A roster of specialists with different tool allowlists is
-   * decorative if the same arbitrary one receives everything, and without an
-   * ORDER BY it was not even a consistent arbitrary one.
-   *
-   * The channel is the one capability signal available before a model runs, and
-   * the allowlist already encodes it — an employee holding `whatsapp` can work a
-   * WhatsApp thread and one holding only `google-sheets` cannot. So prefer a
-   * holder of the channel's tool, then the broader allowlist, then oldest first
-   * so the choice is stable across replays and identical inputs.
-   *
-   * This is deliberately not a skills model. It does not read the message. It
-   * removes the case where a message lands on an employee that provably cannot
-   * answer it, and nothing more.
-   */
-  const CHANNEL_TOOL: Record<string, string> = {
-    whatsapp: 'whatsapp',
-    email: 'gmail',
-    gmail: 'gmail',
-    instagram: 'whatsapp', // Meta inbox; the same messaging hands apply
-    sms: 'twilio',
-  };
-  const channelTool = CHANNEL_TOOL[String(input.channelType).toLowerCase()]
-    ?? String(input.channelType).toLowerCase();
-
-  const empRes = await client.query(
-    `SELECT id, name, role, persona, tool_allowlist FROM ai_employees
-      WHERE org_id = $1 AND status = 'active'
-      ORDER BY ($2 = ANY(tool_allowlist)) DESC,
-               COALESCE(array_length(tool_allowlist, 1), 0) DESC,
-               created_at ASC
-      LIMIT 1`,
-    [orgId, channelTool]
-  );
-  const employee = empRes.rows[0] as PersistInboundResult['employee'];
 
   const connectedRes = await client.query(
     `SELECT channel_type FROM channels WHERE org_id = $1 AND status IN ('active', 'connected')`,
@@ -305,46 +256,84 @@ export async function persistInboundMessageWithClient(
   const connectedChannels = connectedRes.rows.map((row: { channel_type: string }) => row.channel_type);
 
   let conversationId: string;
-  const existingConv = await client.query(
-    `SELECT id FROM conversations WHERE org_id = $1 AND contact_id = $2 AND status != 'resolved' LIMIT 1`,
-    [orgId, input.contactId]
-  );
+  let assignedEmployeeId: string | null = null;
+  let aiPaused = false;
+  let existingConv: { rows: Array<Record<string, unknown>> };
+  try {
+    existingConv = await client.query(
+      `SELECT id, employee_id, ai_paused_until
+       FROM conversations
+       WHERE org_id = $1 AND contact_id = $2 AND status != 'resolved'
+       LIMIT 1`,
+      [orgId, input.contactId]
+    );
+  } catch {
+    existingConv = await client.query(
+      `SELECT id, employee_id
+       FROM conversations
+       WHERE org_id = $1 AND contact_id = $2 AND status != 'resolved'
+       LIMIT 1`,
+      [orgId, input.contactId]
+    );
+  }
   const metadata = {
     sender_name: input.senderName || input.contactId,
     channel: input.channelKey,
     ...extraMeta,
   };
   if (existingConv.rows.length > 0) {
-    conversationId = existingConv.rows[0].id;
+    conversationId = existingConv.rows[0].id as string;
+    assignedEmployeeId = (existingConv.rows[0].employee_id as string | null) ?? null;
+    const pausedRaw = existingConv.rows[0].ai_paused_until;
+    if (pausedRaw) {
+      const until = new Date(pausedRaw as string);
+      aiPaused = !Number.isNaN(until.getTime()) && until.getTime() > Date.now();
+    }
     await client.query(
       `UPDATE conversations SET updated_at = NOW(), summary = $1, metadata = metadata || $2::jsonb
        WHERE id = $3 AND org_id = $4`,
       [input.content.slice(0, 100), JSON.stringify(metadata), conversationId, orgId]
     );
   } else {
-    // Who is this? Resolved BEFORE the conversation exists, so it is linked to
-    // everything this human has said before rather than starting as a stranger.
-    // resolvePersonId never throws: a null here degrades the conversation, and
-    // refusing to store an inbound customer message because the identity table
-    // had a bad moment would be an outage caused by a context feature.
-    const personId = await resolvePersonId(
-      client, orgId, input.contactId, input.channelType);
-
+    const fallbackEmp = await client.query(
+      `SELECT id FROM ai_employees WHERE org_id = $1 AND status = 'active'
+       ORDER BY created_at ASC NULLS LAST LIMIT 1`,
+      [orgId]
+    );
     const newConv = await client.query(
-      `INSERT INTO conversations (org_id, channel_id, contact_id, employee_id, status, summary, metadata, started_at, updated_at, person_id)
-       VALUES ($1, $2, $3, $4, 'open', $5, $6, NOW(), NOW(), $7)
-       RETURNING id`,
+      `INSERT INTO conversations (org_id, channel_id, contact_id, employee_id, status, summary, metadata, started_at, updated_at)
+       VALUES ($1, $2, $3, $4, 'open', $5, $6, NOW(), NOW())
+       RETURNING id, employee_id`,
       [
         orgId,
         channelId,
         input.contactId,
-        employee?.id ?? null,
+        fallbackEmp.rows[0]?.id ?? null,
         input.content.slice(0, 100),
         JSON.stringify(metadata),
-        personId,
       ]
     );
     conversationId = newConv.rows[0].id;
+    assignedEmployeeId = (newConv.rows[0].employee_id as string | null) ?? null;
+  }
+
+  let employee: PersistInboundResult['employee'] = undefined;
+  if (assignedEmployeeId) {
+    const byId = await client.query(
+      `SELECT id, name, role, persona, tool_allowlist FROM ai_employees
+       WHERE org_id = $1 AND id = $2 AND status = 'active'`,
+      [orgId, assignedEmployeeId]
+    );
+    employee = byId.rows[0] as PersistInboundResult['employee'];
+  }
+  if (!employee) {
+    const empRes = await client.query(
+      `SELECT id, name, role, persona, tool_allowlist FROM ai_employees
+       WHERE org_id = $1 AND status = 'active'
+       ORDER BY created_at ASC NULLS LAST LIMIT 1`,
+      [orgId]
+    );
+    employee = empRes.rows[0] as PersistInboundResult['employee'];
   }
 
   let inserted = true;
@@ -408,7 +397,7 @@ export async function persistInboundMessageWithClient(
     messageId,
     channelId,
     inserted,
-    shouldFireAgent: inserted && !input.skipAgent,
+    shouldFireAgent: inserted && !input.skipAgent && !aiPaused,
     employee,
     connectedChannels,
     chanMeta,

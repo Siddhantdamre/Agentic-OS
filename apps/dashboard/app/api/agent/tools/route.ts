@@ -1,7 +1,10 @@
 import { NextResponse } from 'next/server';
-import { getScopedClient } from '@/lib/db';
+import { getScopedClient, scopedAuthErrorResponse } from '@/lib/db';
+import { tryReadJson } from '@/lib/safe-json';
 import { canCallPayTools, isPayTool, loadHumanRole } from '@/lib/rbac';
-import { AUTONOMOUS_TOOL_CATALOG, executeAutonomousToolAction, mergeRuntimeAllowlist } from '@darex/workflows/dist/tool-executor';
+import { AUTONOMOUS_TOOL_CATALOG, executeAutonomousToolAction } from '@darex/workflows/dist/tool-executor';
+
+export const dynamic = 'force-dynamic';
 
 export async function GET() {
   try {
@@ -12,9 +15,8 @@ export async function GET() {
       totalCount: AUTONOMOUS_TOOL_CATALOG.length,
     });
   } catch (error: any) {
-    if (error.message === 'Unauthorized') {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
+    const __scopedAuth = scopedAuthErrorResponse(error);
+    if (__scopedAuth) return __scopedAuth;
     console.error('API GET /api/agent/tools Error:', error);
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
   }
@@ -22,12 +24,16 @@ export async function GET() {
 
 export async function POST(request: Request) {
   try {
-    const body = await request.json();
-    const { tool, action, payload } = body;
+    const body = await tryReadJson<Record<string, unknown>>(request);
+    if (!body) {
+      return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 });
+    }
+    const { tool, action, payload, employeeId } = body as {
+      tool?: unknown; action?: unknown; payload?: unknown; employeeId?: unknown;
+    };
 
     const scoped = await getScopedClient();
     const { client, orgId, userId } = scoped;
-    let allowlist: string[] = [];
     try {
       if (!tool) {
         return NextResponse.json({ error: 'Tool parameter is required' }, { status: 400 });
@@ -37,37 +43,21 @@ export async function POST(request: Request) {
       if (isPayTool(String(tool), typeof action === 'string' ? action : undefined) && !canCallPayTools(role)) {
         return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
       }
-
-      const empRes = await client.query(
-        `SELECT tool_allowlist FROM ai_employees WHERE org_id = $1 AND status = 'active'`,
-        [orgId]
-      );
-      const employeeTools: string[] = [];
-      for (const row of empRes.rows) {
-        try {
-          const list = Array.isArray(row.tool_allowlist)
-            ? row.tool_allowlist
-            : JSON.parse(row.tool_allowlist || '[]');
-          employeeTools.push(...list.map(String));
-        } catch {
-          // ignore malformed allowlists
-        }
-      }
-      const chanRes = await client.query(
-        `SELECT channel_type FROM channels WHERE org_id = $1 AND status IN ('connected','active')`,
-        [orgId]
-      );
-      allowlist = mergeRuntimeAllowlist(employeeTools, chanRes.rows.map((r: any) => r.channel_type));
     } finally {
       client.release();
     }
 
     const result = await executeAutonomousToolAction({
-      tool,
-      action: action || 'auto_execute',
-      payload: payload || {},
+      tool: String(tool),
+      action: typeof action === 'string' ? action : 'auto_execute',
+      payload: (payload && typeof payload === 'object' ? payload : {}) as Record<string, unknown>,
       orgId,
-      toolAllowlist: allowlist,
+      // The executor loads this employee's card for the session org. With no
+      // employee named, the call runs as the Executive (17 §3), never as the
+      // union of every card.
+      ...(typeof employeeId === 'string' && employeeId ? { employeeId } : { employeeRole: 'executive' }),
+      actorUserId: userId,
+      source: 'chat',
     });
 
     try {
@@ -85,11 +75,15 @@ export async function POST(request: Request) {
       // Non-critical audit log
     }
 
-    return NextResponse.json({ success: result.status === 'executed', result });
+    const completed = result.status === 'executed' || result.status === 'pending_approval';
+    return NextResponse.json({
+      success: completed,
+      result,
+      error: completed ? undefined : result.message,
+    });
   } catch (error: any) {
-    if (error.message === 'Unauthorized') {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
+    const __scopedAuth2 = scopedAuthErrorResponse(error);
+    if (__scopedAuth2) return __scopedAuth2;
     console.error('API /api/agent/tools Error:', error);
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
   }

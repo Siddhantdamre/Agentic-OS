@@ -5,7 +5,7 @@
 FROM node:20-bookworm-slim
 
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends python3 bash ca-certificates \
+  && apt-get install -y --no-install-recommends python3 bash ca-certificates curl jq bc python3-pip \
   && rm -rf /var/lib/apt/lists/* \
   && useradd --create-home --uid 10001 --shell /usr/sbin/nologin sandbox
 

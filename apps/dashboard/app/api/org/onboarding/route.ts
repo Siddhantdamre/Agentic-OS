@@ -1,6 +1,8 @@
 import { NextResponse } from 'next/server';
-import { getScopedClient } from '@/lib/db';
+import { getScopedClient, scopedAuthErrorResponse } from '@/lib/db';
+import { canManageOrgSettings, loadHumanRole } from '@/lib/rbac';
 import { recommendationPayload } from '@/app/(onboarding)/pack-recommendations';
+import { jsonBodyOrEmpty } from '@/lib/safe-json';
 
 export async function GET() {
   try {
@@ -28,18 +30,23 @@ export async function GET() {
       client.release();
     }
   } catch (err) {
-    if (err instanceof Error && err.message === 'Unauthorized') {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
+    const __scopedAuth = scopedAuthErrorResponse(err);
+    if (__scopedAuth) return __scopedAuth;
+    console.error('GET /api/org/onboarding Error:', err);
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
   }
 }
 
 export async function PATCH(request: Request) {
   try {
-    const { client, orgId } = await getScopedClient();
+    const { client, orgId, userId } = await getScopedClient();
     try {
-      const body = (await request.json().catch(() => ({}))) as {
+      const role = await loadHumanRole(client, userId);
+      if (!canManageOrgSettings(role)) {
+        return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+      }
+
+      const body = (await jsonBodyOrEmpty(request)) as {
         wizardStep?: string;
         businessName?: string;
         teamSize?: number;
@@ -55,6 +62,11 @@ export async function PATCH(request: Request) {
         );
       }
 
+      const businessName =
+        typeof body.businessName === 'string' && body.businessName.trim()
+          ? body.businessName.trim()
+          : null;
+
       await client.query(
         `INSERT INTO org_onboarding (org_id, wizard_step, business_name, team_size, business_type, channels_selected)
          VALUES ($1, $2, $3, $4, $5, $6)
@@ -68,12 +80,22 @@ export async function PATCH(request: Request) {
         [
           orgId,
           body.wizardStep || 'name',
-          body.businessName ?? null,
+          businessName,
           body.teamSize ?? null,
           body.businessType ?? null,
           body.selectedChannels ?? null,
         ]
       );
+
+      // Keep orgs.name in sync whenever the wizard records a business name.
+      // Final completion also writes via POST /api/org/create.
+      if (businessName) {
+        await client.query(`UPDATE orgs SET name = $1, updated_at = NOW() WHERE id = $2`, [
+          businessName,
+          orgId,
+        ]);
+      }
+
       return NextResponse.json({
         status: 'OK',
         orgId,
@@ -83,9 +105,9 @@ export async function PATCH(request: Request) {
       client.release();
     }
   } catch (err) {
-    if (err instanceof Error && err.message === 'Unauthorized') {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
+    const __scopedAuth2 = scopedAuthErrorResponse(err);
+    if (__scopedAuth2) return __scopedAuth2;
+    console.error('PATCH /api/org/onboarding Error:', err);
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
   }
 }

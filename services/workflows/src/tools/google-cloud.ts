@@ -1,6 +1,6 @@
 import type { ToolRisk } from './risk.js';
 import type { ToolActionContext, ToolModule } from './shared.js';
-import { apiError, confirmFromRisk, fetchWithTimeout, getNangoAccessToken, notConnected } from './shared.js';
+import { apiError, confirmFromRisk, fetchWithTimeout, nangoAuthError, notConnected, resolveGoogleAuth } from './shared.js';
 
 const ACTIONS = ['cloud_list_projects'] as const;
 
@@ -10,13 +10,10 @@ function riskFor(_action: string): ToolRisk {
 
 async function execute(ctx: ToolActionContext) {
   const { actionName, orgId, timestamp } = ctx;
-  const gConnId = `${orgId}_google-cloud`;
-  let gToken: string | null = null;
-  for (const providerKey of ['google-cloud', 'google']) {
-    gToken = await getNangoAccessToken(gConnId, providerKey);
-    if (gToken) break;
-  }
-  if (!gToken) return notConnected('google-cloud', actionName, timestamp);
+  const _gAuth = await resolveGoogleAuth(orgId, 'google-cloud');
+  const gToken: string | null = _gAuth.kind === 'connected' ? _gAuth.accessToken : null;
+  const _gAuthErr = _gAuth.kind === 'connected' ? null : nangoAuthError('google-cloud', actionName, timestamp, _gAuth);
+  if (!gToken) return _gAuthErr ?? notConnected('google-cloud', actionName, timestamp);
 
   try {
     const projRes = await fetchWithTimeout('https://cloudresourcemanager.googleapis.com/v1/projects', {

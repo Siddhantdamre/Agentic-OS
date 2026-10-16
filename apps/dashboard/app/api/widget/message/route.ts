@@ -6,19 +6,22 @@ import {
 } from '@/lib/channel-normalize';
 import { getOrgScopedClient } from '@/lib/db';
 import { denyWebhookIfLimited } from '@/lib/rate-limit';
+import { extractVisitorToken, verifyVisitorSession } from '@/lib/widget-token';
 import {
   ignoreBodyOrgId,
   orgHasInstalledPack,
   requireWidgetOrg,
+  resolveWidgetToolAllowlist,
   widgetForbidden,
   widgetPreflight,
   withWidgetCors,
 } from '../_lib';
+import { tryReadJson } from '@/lib/safe-json';
 
 /**
  * POST /api/widget/message
  * Persist inbound + HTTP 200. Fire-and-forget WorkItem — never await the model.
- * Session-scoped chat. Agent allowlist is listings.search only — never database_query / Drive.
+ * GET requires signed visitorToken (X-Visitor-Token) bound to sessionId.
  */
 export const dynamic = 'force-dynamic';
 
@@ -27,6 +30,14 @@ const UUID_RE =
 
 export async function OPTIONS(request: Request) {
   return widgetPreflight(request);
+}
+
+function visitorForbidden(request: Request, allowedOrigins: string[]) {
+  return withWidgetCors(
+    request,
+    NextResponse.json({ error: 'Forbidden: invalid visitor session signature' }, { status: 403 }),
+    allowedOrigins
+  );
 }
 
 export async function GET(request: Request) {
@@ -51,6 +62,11 @@ export async function GET(request: Request) {
       NextResponse.json({ error: 'sessionId is required' }, { status: 400 }),
       auth.allowedOrigins
     );
+  }
+
+  const visitorToken = extractVisitorToken(request);
+  if (!verifyVisitorSession(visitorToken, auth.orgId, sessionId)) {
+    return visitorForbidden(request, auth.allowedOrigins);
   }
 
   const { client } = await getOrgScopedClient(auth.orgId);
@@ -120,10 +136,11 @@ export async function POST(request: Request) {
   const limited = denyWebhookIfLimited(auth.orgId);
   if (limited) return withWidgetCors(request, limited, auth.allowedOrigins);
 
+  const parsedBody = await tryReadJson<Record<string, unknown>>(request);
   let body: Record<string, unknown>;
-  try {
-    body = (await request.json()) as Record<string, unknown>;
-  } catch {
+  if (parsedBody) {
+    body = parsedBody;
+  } else {
     return withWidgetCors(
       request,
       NextResponse.json({ error: 'Invalid JSON' }, { status: 400 }),
@@ -145,7 +162,14 @@ export async function POST(request: Request) {
     );
   }
 
+  const visitorToken =
+    (typeof body.visitorToken === 'string' && body.visitorToken) || extractVisitorToken(request);
+  if (!verifyVisitorSession(visitorToken, auth.orgId, sessionId)) {
+    return visitorForbidden(request, auth.allowedOrigins);
+  }
+
   try {
+    const allowlist = await resolveWidgetToolAllowlist(auth.orgId);
     const { client } = await getOrgScopedClient(auth.orgId);
     let contactId = `widget:${sessionId}`;
     try {
@@ -193,7 +217,7 @@ export async function POST(request: Request) {
         },
         persisted
       );
-      job.toolAllowlist = parseToolAllowlist(['listings.search'], ['listings.search']);
+      job.toolAllowlist = parseToolAllowlist(allowlist, allowlist);
       fireInboundAgent(job);
     }
 

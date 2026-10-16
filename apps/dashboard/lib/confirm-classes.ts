@@ -104,6 +104,7 @@ const SEND_TOOLS = new Set([
   'slack',
   'intercom',
   'twilio',
+  'instagram',
 ]);
 
 export type ExecutedStepLike = {

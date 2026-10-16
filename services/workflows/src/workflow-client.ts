@@ -8,6 +8,7 @@ import type { StaleChaseWorkflowInput } from './workflows/StaleChaseWorkflow.js'
 import type { NurtureWorkflowInput } from './workflows/NurtureWorkflow.js';
 import type { InsightActionWorkflowInput } from './workflows/InsightActionWorkflow.js';
 import type { ShowingScheduleWorkflowInput } from './workflows/ShowingScheduleWorkflow.js';
+import type { ShowingReminderWorkflowInput } from './workflows/ShowingReminderWorkflow.js';
 import type { RentReminderWorkflowInput } from './workflows/RentReminderWorkflow.js';
 import type { NurtureCancelReason } from './quiet-hours.js';
 import {
@@ -17,35 +18,30 @@ import {
   planExecuteWorkflowId,
   staleChaseWorkflowId,
 } from './quiet-hours.js';
+import { withOrgClient } from './db.js';
+import { markDsrRequestFailed, runDsrDelete } from './dsr/run-delete.js';
+import { runDsrExport } from './dsr/run-export.js';
+import { createLazyConnector } from './temporal-connect.js';
 
-let clientInstance: Client | null = null;
-let connecting: Promise<Client | null> | null = null;
+function envMs(name: string, fallback: number): number {
+  const n = Number.parseInt(process.env[name] || '', 10);
+  return Number.isFinite(n) && n > 0 ? n : fallback;
+}
+
+const temporalAddress = () => process.env.TEMPORAL_ADDRESS || 'localhost:7233';
+
+// One shared attempt, cached on success; after a failure the next TEMPORAL_RETRY_BACKOFF_MS (default 10 s)
+// answer null at once, so a Temporal outage costs one request the connect timeout instead of every request.
+const getClient = createLazyConnector<Client>({
+  connect: async () => new Client({ connection: await Connection.connect({ address: temporalAddress() }) }),
+  timeoutMs: envMs('TEMPORAL_CONNECT_TIMEOUT_MS', 5000),
+  backoffMs: envMs('TEMPORAL_RETRY_BACKOFF_MS', 10_000),
+  onConnected: () => console.log(`Connected to Temporal cluster at ${temporalAddress()}`),
+  onFailure: (err) => console.warn(`[Temporal Client] Could not connect to cluster at ${temporalAddress()}: ${err.message}`),
+});
 
 export async function getTemporalClient(): Promise<Client | null> {
-  if (clientInstance) return clientInstance;
-  if (connecting) return connecting;
-
-  const address = process.env.TEMPORAL_ADDRESS || 'localhost:7233';
-  connecting = (async () => {
-    try {
-      const connection = await Promise.race([
-        Connection.connect({ address }),
-        new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error(`Temporal connect timed out after 5s (${address})`)), 5000)
-        ),
-      ]);
-      clientInstance = new Client({ connection });
-      console.log(`Connected to Temporal cluster at ${address}`);
-      return clientInstance;
-    } catch (err: any) {
-      console.warn(`[Temporal Client] Could not connect to cluster at ${address}: ${err.message}`);
-      return null;
-    } finally {
-      connecting = null;
-    }
-  })();
-
-  return connecting;
+  return getClient();
 }
 
 function workflowIdFor(input: AgentTaskInput): string {
@@ -55,24 +51,27 @@ function workflowIdFor(input: AgentTaskInput): string {
   return `agent-task-${input.orgId}-${stamp}`;
 }
 
+/**
+ * Returns null ONLY when Temporal is unreachable (caller may use direct
+ * fallback). Throws when the workflow starts but fails — callers must NOT
+ * silently re-run direct in that case (tools may already have executed).
+ */
 export async function triggerAutonomousAgentWorkflow(input: AgentTaskInput): Promise<AgentTaskResult | null> {
   const client = await getTemporalClient();
   if (!client) return null;
 
   const workflowId = workflowIdFor(input);
-  try {
-    const handle = await client.workflow.start('AutonomousAgentWorkflow', {
-      taskQueue: 'darex-agent-tasks',
-      workflowId,
-      args: [{ ...input, idempotencyKey: input.idempotencyKey || workflowId }],
-      workflowExecutionTimeout: '25 minutes',
-    });
-    console.log(`Temporal AutonomousAgentWorkflow started: ${handle.workflowId}`);
-    return await handle.result();
-  } catch (err: any) {
-    console.error(`[Temporal Execution Error] Workflow ${workflowId} failed:`, err.message);
-    return null;
-  }
+  const handle = await client.workflow.start('AutonomousAgentWorkflow', {
+    taskQueue: 'darex-agent-tasks',
+    workflowId,
+    args: [{ ...input, idempotencyKey: input.idempotencyKey || workflowId }],
+    workflowExecutionTimeout: '25 minutes',
+  }).catch((err: any) => {
+    if (isAlreadyStarted(err)) return client.workflow.getHandle(workflowId);
+    throw err;
+  });
+  console.log(`Temporal AutonomousAgentWorkflow started: ${handle.workflowId}`);
+  return await handle.result();
 }
 
 export async function startAutonomousAgentWorkflow(input: AgentTaskInput) {
@@ -90,8 +89,11 @@ export async function startAutonomousAgentWorkflow(input: AgentTaskInput) {
     console.log(`Temporal AutonomousAgentWorkflow started: ${handle.workflowId}`);
     return handle;
   } catch (err: any) {
-    console.error(`[Temporal Start Error] Workflow ${workflowId} start failed:`, err.message);
-    return null;
+    if (isAlreadyStarted(err)) {
+      console.log(`Temporal AutonomousAgentWorkflow already started: ${workflowId}`);
+      return client.workflow.getHandle(workflowId);
+    }
+    throw err;
   }
 }
 
@@ -107,19 +109,17 @@ export async function triggerCrewWorkflow(input: CrewWorkflowInput): Promise<Cre
   if (!client) return null;
 
   const workflowId = crewWorkflowIdFor(input);
-  try {
-    const handle = await client.workflow.start('CrewWorkflow', {
-      taskQueue: 'darex-agent-tasks',
-      workflowId,
-      args: [{ ...input, idempotencyKey: input.idempotencyKey || workflowId }],
-      workflowExecutionTimeout: '40 minutes',
-    });
-    console.log(`Temporal CrewWorkflow started: ${handle.workflowId}`);
-    return await handle.result();
-  } catch (err: any) {
-    console.error(`[Temporal Execution Error] CrewWorkflow ${workflowId} failed:`, err.message);
-    return null;
-  }
+  const handle = await client.workflow.start('CrewWorkflow', {
+    taskQueue: 'darex-agent-tasks',
+    workflowId,
+    args: [{ ...input, idempotencyKey: input.idempotencyKey || workflowId }],
+    workflowExecutionTimeout: '40 minutes',
+  }).catch((err: any) => {
+    if (isAlreadyStarted(err)) return client.workflow.getHandle(workflowId);
+    throw err;
+  });
+  console.log(`Temporal CrewWorkflow started: ${handle.workflowId}`);
+  return await handle.result();
 }
 
 export async function startCrewWorkflow(input: CrewWorkflowInput) {
@@ -137,8 +137,11 @@ export async function startCrewWorkflow(input: CrewWorkflowInput) {
     console.log(`Temporal CrewWorkflow started: ${handle.workflowId}`);
     return handle;
   } catch (err: any) {
-    console.error(`[Temporal Start Error] CrewWorkflow ${workflowId} start failed:`, err.message);
-    return null;
+    if (isAlreadyStarted(err)) {
+      console.log(`Temporal CrewWorkflow already started: ${workflowId}`);
+      return client.workflow.getHandle(workflowId);
+    }
+    throw err;
   }
 }
 
@@ -260,6 +263,37 @@ export async function getPlanExecuteHandle(orgId: string, planId: string) {
  * O7: PlanCard approve/reject signals waiting PlanExecute + WorkItem workflows.
  * Never takes orgId from the request body — callers pass session orgId.
  */
+/**
+ * Slack / dashboard HITL: signal a running WorkItemWorkflow.
+ * Callers pass the Temporal workflow id already stored on the work item —
+ * never an orgId from the request body.
+ */
+export async function signalWorkItemDecision(params: {
+  workflowId: string;
+  decision: 'approved' | 'rejected';
+  optionId?: string;
+}): Promise<void> {
+  const client = await getTemporalClient();
+  if (!client || !params.workflowId) return;
+  try {
+    const handle = client.workflow.getHandle(params.workflowId);
+    if (params.decision === 'rejected') {
+      await handle.signal('rejectWorkItem');
+      return;
+    }
+    if (params.decision === 'approved') {
+      await handle.signal('approveWorkItem', params.optionId || 'approved');
+      return;
+    }
+    const _exhaustive: never = params.decision;
+    void _exhaustive;
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    if (/not found|not running|no running/i.test(message)) return;
+    console.warn(`[HITL signal] ${params.workflowId}: ${message}`);
+  }
+}
+
 export async function signalPlanDecision(params: {
   orgId: string;
   planId: string;
@@ -288,37 +322,6 @@ export async function signalPlanDecision(params: {
       if (/not found|not running|no running/i.test(message)) continue;
       console.warn(`[HITL signal] ${workflowId}: ${message}`);
     }
-  }
-}
-
-/**
- * Signal one WorkItemWorkflow with a human's decision.
- *
- * BEST EFFORT, AND THAT IS THE POINT. WorkItemWorkflow waits on the signal for
- * HITL_WAIT_TIMEOUT — two minutes — and humans do not answer in two minutes.
- * A decision made an hour later cannot un-time-out a workflow that has already
- * moved on, so the DECISION is recorded durably in approval_requests first and
- * this runs second. A "not found" here means the workflow finished, which is
- * expected and not a failure: the record is what matters and what lets the
- * work be re-driven.
- */
-export async function signalWorkItemDecision(params: {
-  workflowId: string;
-  decision: 'approved' | 'rejected';
-}): Promise<{ signalled: boolean; reason?: string }> {
-  const client = await getTemporalClient();
-  if (!client) return { signalled: false, reason: 'Temporal unavailable' };
-  try {
-    const handle = client.workflow.getHandle(params.workflowId);
-    if (params.decision === 'rejected') await handle.signal('rejectWorkItem');
-    else await handle.signal('approveWorkItem', 'approved');
-    return { signalled: true };
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : String(err);
-    if (/not found|not running|no running|completed/i.test(message)) {
-      return { signalled: false, reason: 'the workflow had already finished waiting' };
-    }
-    return { signalled: false, reason: message.slice(0, 120) };
   }
 }
 
@@ -452,6 +455,32 @@ export async function startShowingScheduleWorkflow(input: ShowingScheduleWorkflo
   }
 }
 
+function showingReminderWorkflowId(input: ShowingReminderWorkflowInput): string {
+  if (input.idempotencyKey) return `showing-reminder-${input.orgId}-${input.idempotencyKey}`;
+  return `showing-reminder-${input.orgId}-${input.showingId}`;
+}
+
+/** Schedule 24h/2h showing reminders. Null if Temporal is down. */
+export async function startShowingReminderWorkflow(input: ShowingReminderWorkflowInput) {
+  const client = await getTemporalClient();
+  if (!client) return null;
+  const workflowId = showingReminderWorkflowId(input);
+  try {
+    return await client.workflow.start('ShowingReminderWorkflow', {
+      taskQueue: 'darex-agent-tasks',
+      workflowId,
+      args: [{ ...input, idempotencyKey: input.idempotencyKey || input.showingId }],
+      // Showings may be booked weeks ahead; durable sleep until start.
+      workflowExecutionTimeout: '60 days',
+    });
+  } catch (err: unknown) {
+    if (isAlreadyStarted(err)) return client.workflow.getHandle(workflowId);
+    const message = err instanceof Error ? err.message : String(err);
+    console.error(`[Temporal Start Error] ShowingReminderWorkflow ${workflowId} start failed:`, message);
+    return null;
+  }
+}
+
 /** Rent reminder via RentReminderWorkflow. Null if Temporal is down. */
 export async function startRentReminderWorkflow(input: RentReminderWorkflowInput) {
   const client = await getTemporalClient();
@@ -470,4 +499,127 @@ export async function startRentReminderWorkflow(input: RentReminderWorkflowInput
     console.error(`[Temporal Start Error] RentReminderWorkflow ${workflowId} start failed:`, message);
     return null;
   }
+}
+
+export type DsrJobWorkflowInput = {
+  orgId: string;
+  dsrRequestId: string;
+  requestedByUserId: string | null;
+};
+
+function dsrDeleteWorkflowId(orgId: string, dsrRequestId: string): string {
+  return `dsr-delete-${orgId}-${dsrRequestId}`;
+}
+
+function dsrExportWorkflowId(orgId: string, dsrRequestId: string): string {
+  return `dsr-export-${orgId}-${dsrRequestId}`;
+}
+
+/**
+ * Fire-and-forget GDPR delete. Caller must release the DB client first.
+ * Returns null when Temporal is unreachable (caller may run direct fallback).
+ */
+export async function startDsrDeleteWorkflow(input: DsrJobWorkflowInput) {
+  const client = await getTemporalClient();
+  if (!client) return null;
+  const workflowId = dsrDeleteWorkflowId(input.orgId, input.dsrRequestId);
+  try {
+    return await client.workflow.start('DsrDeleteWorkflow', {
+      taskQueue: 'darex-agent-tasks',
+      workflowId,
+      args: [input],
+      workflowExecutionTimeout: '60 minutes',
+    });
+  } catch (err: unknown) {
+    if (isAlreadyStarted(err)) return client.workflow.getHandle(workflowId);
+    const message = err instanceof Error ? err.message : String(err);
+    console.error(`[Temporal Start Error] DsrDeleteWorkflow ${workflowId} start failed:`, message);
+    return null;
+  }
+}
+
+/**
+ * Fire-and-forget GDPR export. Caller must release the DB client first.
+ * Returns null when Temporal is unreachable (caller may run direct fallback).
+ */
+export async function startDsrExportWorkflow(input: DsrJobWorkflowInput) {
+  const client = await getTemporalClient();
+  if (!client) return null;
+  const workflowId = dsrExportWorkflowId(input.orgId, input.dsrRequestId);
+  try {
+    return await client.workflow.start('DsrExportWorkflow', {
+      taskQueue: 'darex-agent-tasks',
+      workflowId,
+      args: [input],
+      workflowExecutionTimeout: '60 minutes',
+    });
+  } catch (err: unknown) {
+    if (isAlreadyStarted(err)) return client.workflow.getHandle(workflowId);
+    const message = err instanceof Error ? err.message : String(err);
+    console.error(`[Temporal Start Error] DsrExportWorkflow ${workflowId} start failed:`, message);
+    return null;
+  }
+}
+
+/**
+ * Start Temporal delete, or run the resumable delete in-process when Temporal
+ * is down so the row never sits in pending/running with no worker.
+ * Must be called after the HTTP handler has released its pooled client.
+ */
+export async function enqueueDsrDelete(input: DsrJobWorkflowInput): Promise<'temporal' | 'direct'> {
+  const handle = await startDsrDeleteWorkflow(input);
+  if (handle) return 'temporal';
+  void withOrgClient(input.orgId, (db) =>
+    runDsrDelete(db, {
+      orgId: input.orgId,
+      dsrRequestId: input.dsrRequestId,
+      requestedByUserId: input.requestedByUserId,
+    })
+  ).catch(async (err: unknown) => {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error(`[dsr] direct delete failed for ${input.dsrRequestId}:`, message);
+    try {
+      await withOrgClient(input.orgId, (db) =>
+        markDsrRequestFailed(db, {
+          orgId: input.orgId,
+          dsrRequestId: input.dsrRequestId,
+          error: message,
+        })
+      );
+    } catch (markErr: unknown) {
+      console.error('[dsr] mark failed after direct delete error:', markErr);
+    }
+  });
+  return 'direct';
+}
+
+/**
+ * Start Temporal export, or write the artifact in-process when Temporal is down.
+ * Must be called after the HTTP handler has released its pooled client.
+ */
+export async function enqueueDsrExport(input: DsrJobWorkflowInput): Promise<'temporal' | 'direct'> {
+  const handle = await startDsrExportWorkflow(input);
+  if (handle) return 'temporal';
+  void withOrgClient(input.orgId, (db) =>
+    runDsrExport(db, {
+      orgId: input.orgId,
+      dsrRequestId: input.dsrRequestId,
+      requestedByUserId: input.requestedByUserId,
+    })
+  ).catch(async (err: unknown) => {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error(`[dsr] direct export failed for ${input.dsrRequestId}:`, message);
+    try {
+      await withOrgClient(input.orgId, (db) =>
+        markDsrRequestFailed(db, {
+          orgId: input.orgId,
+          dsrRequestId: input.dsrRequestId,
+          error: message,
+        })
+      );
+    } catch (markErr: unknown) {
+      console.error('[dsr] mark failed after direct export error:', markErr);
+    }
+  });
+  return 'direct';
 }

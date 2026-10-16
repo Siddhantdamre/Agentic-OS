@@ -1,13 +1,9 @@
 /**
  * MCP bridge launcher — merges root .env (API keys), dashboard .env.local (DB creds)
- * and infra/.env into the bridge process env, then starts the atomic-agent MCP
+ * and infra/.env into the bridge process env, then starts the DareX MCP
  * connector bridge (SSE server on port 8790).
  * Usage: node infra/scripts/bridge-launcher.js
  */
-// NOTE: 127.0.0.1, never 'localhost'. Node resolves localhost to IPv6 ::1 first;
-// Docker publishes on [::] but that path resets the connection, producing
-// intermittent ECONNRESET / "fetch failed" that looks like random flakiness.
-// curl hides this by falling back to IPv4 — Node's fetch and pg do not.
 const path = require('path');
 const fs = require('fs');
 const { spawn } = require('child_process');
@@ -38,7 +34,7 @@ loadEnvFile(path.join(root, 'services', 'connectors', '.env'));
 const bridgePath = path.join(root, 'services', 'workflows', 'dist', 'mcp-bridge.js');
 console.log('[bridge-launcher] Launching DareX MCP connector bridge with merged env...');
 console.log('   Nango:', process.env.NANGO_HOST || 'http://localhost:3003');
-console.log('   DB:', `${process.env.DB_USER || 'darex'}@${process.env.DB_HOST || '127.0.0.1'}${process.env.DB_PASSWORD ? ' (password set)' : ' (NO PASSWORD)'}`);
+console.log('   DB:', `${process.env.DB_USER || 'darex'}@${process.env.DB_HOST || 'localhost'}${process.env.DB_PASSWORD ? ' (password set)' : ' (NO PASSWORD)'}`);
 
 const child = spawn(process.execPath, [bridgePath], {
   cwd: path.join(root, 'services', 'workflows'),

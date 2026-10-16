@@ -35,6 +35,8 @@ export function SourceRow({
       const data = await res.json().catch(() => ({}));
       if (data.enqueued) setNote('Reindex queued');
       else setNote(data.skipped ? `Skipped (${data.skipped})` : data.error || 'Could not reindex');
+    } catch {
+      setNote('Reindex failed. Check your connection and try again.');
     } finally {
       setBusy(false);
     }

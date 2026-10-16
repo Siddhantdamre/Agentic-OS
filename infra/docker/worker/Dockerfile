@@ -6,7 +6,7 @@
 # Run (managed by infra/docker-compose.yml):
 #   docker run --rm --net darex-net \
 #     -e TEMPORAL_ADDRESS=temporal:7233 -e DB_HOST=postgres \
-#     -e ATOMIC_AGENT_URL=http://atomic-agent:8787 darex-worker
+#     -e TRUEFORGE_URL=http://trueforge:8790 darex-worker
 
 # ── deps: install the full workspace graph (frozen lockfile) ────────────────
 FROM node:22-bookworm-slim AS deps
@@ -14,12 +14,13 @@ RUN corepack enable
 WORKDIR /app
 
 COPY package.json pnpm-workspace.yaml pnpm-lock.yaml ./
-RUN mkdir -p apps/dashboard apps/inbox services/connectors services/workflows packages/shared-types
+RUN mkdir -p apps/dashboard apps/inbox services/connectors services/workflows packages/shared-types packages/whatsapp-gateway
 COPY apps/dashboard/package.json apps/dashboard/package.json
 COPY apps/inbox/package.json apps/inbox/package.json
 COPY services/connectors/package.json services/connectors/package.json
 COPY services/workflows/package.json services/workflows/package.json
 COPY packages/shared-types/package.json packages/shared-types/package.json
+COPY packages/whatsapp-gateway/package.json packages/whatsapp-gateway/package.json
 RUN pnpm install --frozen-lockfile
 
 # ── builder: compile connectors + workflows ─────────────────────────────────
@@ -28,6 +29,9 @@ WORKDIR /app
 
 COPY packages/shared-types packages/shared-types
 RUN pnpm --filter @darex/shared-types build
+
+COPY packages/whatsapp-gateway packages/whatsapp-gateway
+RUN pnpm --filter @darex/whatsapp-gateway build
 
 COPY services/connectors/tsconfig.json services/connectors/tsconfig.json
 COPY services/connectors/src services/connectors/src

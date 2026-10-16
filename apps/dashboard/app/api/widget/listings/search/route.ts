@@ -7,6 +7,7 @@ import {
   widgetPreflight,
   withWidgetCors,
 } from '../../_lib';
+import { stripNulChars } from '@/lib/safe-json';
 
 /**
  * GET /api/widget/listings/search
@@ -32,7 +33,7 @@ export async function GET(request: Request) {
   }
 
   const url = new URL(request.url);
-  const q = (url.searchParams.get('q') || url.searchParams.get('query') || '').trim();
+  const q = stripNulChars(url.searchParams.get('q') || url.searchParams.get('query') || '').trim();
   const { client } = await getOrgScopedClient(auth.orgId);
   try {
     const params: unknown[] = [auth.orgId];

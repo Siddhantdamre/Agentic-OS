@@ -1,141 +1,101 @@
 import { NextResponse } from 'next/server';
-import { getScopedClient } from '@/lib/db';
+import { getScopedClient, scopedAuthErrorResponse } from '@/lib/db';
+import { tryReadJson } from '@/lib/safe-json';
+import { canDisableEmployee, loadHumanRole } from '@/lib/rbac';
+import { validateToolAllowlist } from '@/lib/tool-allowlist';
+import { recordAuditEvent } from '@/lib/audit-events';
 
-/**
- * GET /api/employees/[id] — what this employee has actually done.
- *
- * Until this existed you could pause or delete an employee but never see its
- * work, even though every action has named its employee since the outcome
- * ledger shipped. The roster was a list of permissions with no history behind
- * it, which is the wrong half: the permission answers "what may it touch", and
- * the only question an operator actually asks is "what did it do".
- *
- * Every field below is read from a persisted row. Nothing is derived from a
- * model, estimated, or filled in when absent — a counter with no rows returns
- * 0 and the page says so. An invented metric on this page would undo the
- * attribution work it exists to display.
- */
-export async function GET(
-  _request: Request,
-  { params }: { params: { id: string } }
-) {
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function isMissingColumn(err: unknown): boolean {
+  return (err as { code?: string })?.code === '42703';
+}
+
+export async function GET(_request: Request, props: { params: Promise<{ id: string }> }) {
+  const params = await props.params;
   try {
     const { id } = params;
+    if (!UUID_RE.test(id)) {
+      return NextResponse.json({ error: 'Invalid employee id' }, { status: 400 });
+    }
     const { client, orgId } = await getScopedClient();
     try {
-      const emp = await client.query(
-        `SELECT id, name, role, status, persona, tool_allowlist, created_at
-           FROM ai_employees WHERE id = $1 AND org_id = $2 LIMIT 1`,
-        [id, orgId]
-      );
-      if (!emp.rows[0]) {
+      let res;
+      try {
+        res = await client.query(
+          `SELECT id, name, role, persona, tool_allowlist, graph_id, status, archived_at, created_at, updated_at
+             FROM ai_employees
+            WHERE id = $1 AND org_id = $2 AND archived_at IS NULL`,
+          [id, orgId],
+        );
+      } catch (err) {
+        if (!isMissingColumn(err)) throw err;
+        res = await client.query(
+          `SELECT id, name, role, persona, tool_allowlist, graph_id, status, created_at, updated_at
+             FROM ai_employees WHERE id = $1 AND org_id = $2`,
+          [id, orgId],
+        );
+      }
+      if (res.rows.length === 0) {
         return NextResponse.json({ error: 'Employee not found' }, { status: 404 });
       }
-
-      // What it did, by kind. agent_actions is the ledger the outcome pipeline
-      // materialises; action_kind is its own vocabulary, not a UI label.
-      const actions = await client.query(
-        `SELECT action_kind, COUNT(*)::int AS n, MAX(occurred_at) AS last_at
-           FROM agent_actions
-          WHERE org_id = $1 AND employee_id = $2
-          GROUP BY action_kind ORDER BY n DESC`,
-        [orgId, id]
-      );
-
-      // The threads it owns, newest first. Capped — this is a summary view.
-      const conversations = await client.query(
-        `SELECT id, status, summary, contact_id, started_at, resolved_at
-           FROM conversations
-          WHERE org_id = $1 AND employee_id = $2
-          ORDER BY started_at DESC LIMIT 20`,
-        [orgId, id]
-      );
-
-      const convStats = await client.query(
-        `SELECT
-           COUNT(*)::int                                              AS total,
-           COUNT(*) FILTER (WHERE status = 'resolved')::int           AS resolved,
-           COUNT(*) FILTER (WHERE status = 'needs_attention')::int    AS needs_attention,
-           COUNT(*) FILTER (WHERE status = 'open')::int               AS open
-         FROM conversations WHERE org_id = $1 AND employee_id = $2`,
-        [orgId, id]
-      );
-
-      // Recent individual actions, so the page can show real timestamps rather
-      // than only aggregates. metadata carries whatever the source row had.
-      const recent = await client.query(
-        `SELECT a.action_kind, a.occurred_at, a.conversation_id, a.metadata,
-                a.source_table, a.source_id
-           FROM agent_actions a
-          WHERE a.org_id = $1 AND a.employee_id = $2
-          ORDER BY a.occurred_at DESC LIMIT 25`,
-        [orgId, id]
-      );
-
-      const e = emp.rows[0];
-      const persona = typeof e.persona === 'object' && e.persona
-        ? (e.persona as { text?: string }).text ?? null
-        : null;
-
-      return NextResponse.json({
-        id: e.id,
-        name: e.name,
-        role: e.role,
-        status: e.status,
-        persona,
-        tools: Array.isArray(e.tool_allowlist) ? e.tool_allowlist : [],
-        createdAt: e.created_at,
-        conversationStats: convStats.rows[0],
-        actionsByKind: actions.rows,
-        conversations: conversations.rows,
-        recentActions: recent.rows,
-      });
+      return NextResponse.json({ employee: res.rows[0] });
     } finally {
       client.release();
     }
-  } catch (error: any) {
-    if (error?.message === 'Unauthorized') {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
-    console.error('[employees/:id GET]', error);
-    return NextResponse.json({ error: 'Could not load this employee.' }, { status: 500 });
+  } catch (error: unknown) {
+    const __scopedAuth = scopedAuthErrorResponse(error);
+    if (__scopedAuth) return __scopedAuth;
+    console.error('API /api/employees/[id] GET Error:', error);
+    return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
   }
 }
 
-export async function PATCH(
-  request: Request,
-  { params }: { params: { id: string } }
-) {
+export async function PATCH(request: Request, props: { params: Promise<{ id: string }> }) {
+  const params = await props.params;
   try {
     const { id } = params;
-    const { client, orgId } = await getScopedClient();
+    const { client, orgId, userId } = await getScopedClient();
     try {
-      const body = await request.json();
-      const { name, role, persona, tool_allowlist, status } = body;
+      const humanRole = await loadHumanRole(client, userId);
+      if (!canDisableEmployee(humanRole)) {
+        return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+      }
+      const body = await tryReadJson<Record<string, unknown>>(request);
+      if (!body) {
+        return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 });
+      }
+      const { name, role: empRole, persona, tool_allowlist, status } = body;
 
       const fields: string[] = [];
-      const values: any[] = [id, orgId];
+      const values: unknown[] = [id, orgId];
       let valIdx = 3;
 
       if (name !== undefined) {
         fields.push(`name = $${valIdx++}`);
         values.push(name);
       }
-      if (role !== undefined) {
+      if (empRole !== undefined) {
         fields.push(`role = $${valIdx++}`);
-        values.push(role);
+        values.push(empRole);
       }
       if (persona !== undefined) {
         fields.push(`persona = $${valIdx++}::jsonb`);
         values.push(JSON.stringify(typeof persona === 'string' ? persona : persona));
       }
       if (tool_allowlist !== undefined) {
+        const raw = Array.isArray(tool_allowlist)
+          ? tool_allowlist.filter((item: unknown): item is string => typeof item === 'string')
+          : [];
+        const validated = validateToolAllowlist(raw);
+        if (!validated.ok) {
+          return NextResponse.json(
+            { error: `Invalid tools: ${validated.invalid.join(', ')}` },
+            { status: 400 },
+          );
+        }
         fields.push(`tool_allowlist = $${valIdx++}`);
-        values.push(
-          Array.isArray(tool_allowlist)
-            ? tool_allowlist.filter((item: unknown): item is string => typeof item === 'string')
-            : []
-        );
+        values.push(validated.tools);
       }
       if (status !== undefined) {
         fields.push(`status = $${valIdx++}`);
@@ -149,9 +109,9 @@ export async function PATCH(
       }
 
       const query = `
-        UPDATE ai_employees 
-        SET ${fields.join(', ')} 
-        WHERE id = $1 AND org_id = $2 
+        UPDATE ai_employees
+        SET ${fields.join(', ')}
+        WHERE id = $1 AND org_id = $2
         RETURNING id, name, role, persona, tool_allowlist, graph_id, status, created_at, updated_at
       `;
 
@@ -160,42 +120,143 @@ export async function PATCH(
         return NextResponse.json({ error: 'Employee not found' }, { status: 404 });
       }
 
+      await recordAuditEvent(
+        { orgId, kind: 'employee.update', actor: { actorType: 'user', userId }, resultStatus: 'ok', payload: { employeeId: id } },
+        { client, orgId }
+      );
+
       return NextResponse.json({ employee: res.rows[0] });
     } finally {
       client.release();
     }
-  } catch (error: any) {
-    if (error.message === 'Unauthorized') {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
+  } catch (error: unknown) {
+    const __scopedAuth2 = scopedAuthErrorResponse(error);
+    if (__scopedAuth2) return __scopedAuth2;
     console.error('API /api/employees/[id] PATCH Error:', error);
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
   }
 }
 
-export async function DELETE(
-  request: Request,
-  { params }: { params: { id: string } }
-) {
+export async function DELETE(request: Request, props: { params: Promise<{ id: string }> }) {
+  const params = await props.params;
   try {
     const { id } = params;
-    const { client, orgId } = await getScopedClient();
+    if (!UUID_RE.test(id)) {
+      return NextResponse.json({ error: 'Invalid employee id' }, { status: 400 });
+    }
+    const { client, orgId, userId } = await getScopedClient();
     try {
-      const res = await client.query(
-        'DELETE FROM ai_employees WHERE id = $1 AND org_id = $2 RETURNING id',
-        [id, orgId]
-      );
-      if (res.rows.length === 0) {
-        return NextResponse.json({ error: 'Employee not found' }, { status: 404 });
+      const role = await loadHumanRole(client, userId);
+      if (!canDisableEmployee(role)) {
+        return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
       }
-      return NextResponse.json({ success: true, deletedId: id });
+
+      const { searchParams } = new URL(request.url);
+      const reassignTo = searchParams.get('reassignTo');
+      if (reassignTo && !UUID_RE.test(reassignTo)) {
+        return NextResponse.json({ error: 'Invalid reassignTo id' }, { status: 400 });
+      }
+
+      let taskCount = 0;
+      try {
+        const openTasks = await client.query<{ count: string }>(
+          `SELECT COUNT(*)::text AS count FROM work_items
+            WHERE assignee_employee_id = $1 AND org_id = $2
+              AND status IN ('open', 'needs_attention', 'waiting_approval', 'in_progress')`,
+          [id, orgId],
+        );
+        taskCount = parseInt(openTasks.rows[0]?.count || '0', 10);
+      } catch (err) {
+        if ((err as { code?: string })?.code !== '42P01') throw err;
+      }
+
+      if (taskCount > 0 && !reassignTo) {
+        return NextResponse.json(
+          {
+            error: `Employee has ${taskCount} active tasks. Pass reassignTo to reassign before archiving.`,
+            activeTaskCount: taskCount,
+          },
+          { status: 409 },
+        );
+      }
+
+      await client.query('BEGIN');
+      try {
+        if (taskCount > 0 && reassignTo) {
+          const target = await client.query(
+            `SELECT id FROM ai_employees WHERE id = $1 AND org_id = $2 AND (archived_at IS NULL OR archived_at IS NOT NULL)`,
+            [reassignTo, orgId],
+          );
+          // Prefer non-archived target when column exists
+          let targetOk = target.rowCount && target.rowCount > 0;
+          try {
+            const activeTarget = await client.query(
+              `SELECT id FROM ai_employees WHERE id = $1 AND org_id = $2 AND archived_at IS NULL`,
+              [reassignTo, orgId],
+            );
+            targetOk = Boolean(activeTarget.rowCount);
+          } catch (err) {
+            if (!isMissingColumn(err)) throw err;
+          }
+          if (!targetOk) {
+            await client.query('ROLLBACK');
+            return NextResponse.json({ error: 'reassignTo employee not found' }, { status: 400 });
+          }
+          await client.query(
+            `UPDATE work_items
+                SET assignee_employee_id = $1, updated_at = NOW()
+              WHERE assignee_employee_id = $2 AND org_id = $3
+                AND status IN ('open', 'needs_attention', 'waiting_approval', 'in_progress')`,
+            [reassignTo, id, orgId],
+          );
+        }
+
+        let res;
+        try {
+          res = await client.query(
+            `UPDATE ai_employees
+                SET status = 'paused', archived_at = NOW(), updated_at = NOW()
+              WHERE id = $1 AND org_id = $2 AND archived_at IS NULL
+              RETURNING id, name`,
+            [id, orgId],
+          );
+        } catch (err) {
+          if (!isMissingColumn(err)) throw err;
+          // Fallback hard delete if migration not applied yet — still reassign first.
+          res = await client.query(
+            `DELETE FROM ai_employees WHERE id = $1 AND org_id = $2 RETURNING id, name`,
+            [id, orgId],
+          );
+        }
+
+        if (!res.rowCount) {
+          await client.query('ROLLBACK');
+          return NextResponse.json({ error: 'Employee not found' }, { status: 404 });
+        }
+
+        await client.query('COMMIT');
+
+        await recordAuditEvent(
+          { orgId, kind: 'employee.delete', actor: { actorType: 'user', userId }, resultStatus: 'ok', payload: { employeeId: id, reassignTo: reassignTo || null } },
+          { client, orgId }
+        );
+
+        return NextResponse.json({
+          success: true,
+          archived: res.rows[0],
+          reassignedTasks: taskCount,
+          reassignTo: reassignTo || null,
+        });
+      } catch (inner) {
+        await client.query('ROLLBACK');
+        throw inner;
+      }
     } finally {
       client.release();
     }
-  } catch (error: any) {
-    if (error.message === 'Unauthorized') {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
+  } catch (error: unknown) {
+    const __scopedAuth3 = scopedAuthErrorResponse(error);
+    if (__scopedAuth3) return __scopedAuth3;
     console.error('API /api/employees/[id] DELETE Error:', error);
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
   }

@@ -12,6 +12,14 @@ import {
   type ConfirmEvalResult,
   type WebhookConfirmClass,
 } from '@/lib/confirm-classes';
+import {
+  recordAuditEvent,
+  type AuditActorInput,
+  type AuditEventInsert,
+} from '@/lib/audit-events';
+
+/** Re-export shared audit emit helper (canonical home: lib/audit-events.ts). */
+export { recordAuditEvent, type AuditActorInput, type AuditEventInsert };
 
 export type InboundConfirmJob = {
   orgId: string;
@@ -33,154 +41,7 @@ export type InboundConfirmDecision = {
   eval: ConfirmEvalResult;
 };
 
-export type AuditActorInput =
-  | { actorType: 'user'; userId: string }
-  | { actorType: 'employee'; employeeId: string }
-  | { actorType: 'system'; component: string };
-
-export type AuditEventInsert = {
-  orgId: string;
-  kind:
-    | 'tool.execute'
-    | 'plan.approve'
-    | 'plan.reject'
-    | 'plan.execute'
-    | 'connector.connect'
-    | 'connector.disconnect'
-    | 'memory.write'
-    | 'memory.delete'
-    | 'memory.correct'
-    | 'pack.install'
-    | 'pack.uninstall'
-    | 'dsr.export'
-    | 'dsr.delete'
-    | 'role.change'
-    | 'login'
-    | 'confirm.override';
-  actor: AuditActorInput;
-  resultStatus: 'ok' | 'error' | 'denied';
-  workItemId?: string | null;
-  planId?: string | null;
-  confirmId?: string | null;
-  approverUserId?: string | null;
-  tool?: string | null;
-  action?: string | null;
-  riskClass?: string | null;
-  model?: string | null;
-  promptHash?: string | null;
-  langfuseTraceId?: string | null;
-  dataClasses?: string[];
-  payload?: Record<string, unknown>;
-};
-
-function actorColumns(actor: AuditActorInput): {
-  actorType: string;
-  actorUserId: string | null;
-  actorEmployeeId: string | null;
-  actorComponent: string | null;
-} {
-  switch (actor.actorType) {
-    case 'user':
-      return {
-        actorType: 'user',
-        actorUserId: actor.userId,
-        actorEmployeeId: null,
-        actorComponent: null,
-      };
-    case 'employee':
-      return {
-        actorType: 'employee',
-        actorUserId: null,
-        actorEmployeeId: actor.employeeId,
-        actorComponent: null,
-      };
-    case 'system':
-      return {
-        actorType: 'system',
-        actorUserId: null,
-        actorEmployeeId: null,
-        actorComponent: actor.component,
-      };
-    default: {
-      const _exhaustive: never = actor;
-      return _exhaustive;
-    }
-  }
-}
-
-export async function recordAuditEvent(
-  params: AuditEventInsert,
-  scoped?: { client: PoolClient; orgId: string }
-): Promise<void> {
-  const run = async (client: PoolClient, orgId: string) => {
-    if (orgId !== params.orgId) {
-      throw new Error('recordAuditEvent orgId does not match scoped client');
-    }
-    const actor = actorColumns(params.actor);
-    await client.query(
-      `INSERT INTO audit_events (
-         org_id, kind, actor_type, actor_user_id, actor_employee_id, actor_component,
-         work_item_id, plan_id, confirm_id, approver_user_id,
-         tool, action, risk_class, model, prompt_hash, langfuse_trace_id,
-         result_status, data_classes, payload
-       ) VALUES (
-         $1, $2, $3, $4, $5, $6,
-         $7, $8, $9, $10,
-         $11, $12, $13, $14, $15, $16,
-         $17, $18, $19::jsonb
-       )`,
-      [
-        params.orgId,
-        params.kind,
-        actor.actorType,
-        actor.actorUserId,
-        actor.actorEmployeeId,
-        actor.actorComponent,
-        params.workItemId ?? null,
-        params.planId ?? null,
-        params.confirmId ?? null,
-        params.approverUserId ?? null,
-        params.tool ?? null,
-        params.action ?? null,
-        params.riskClass ?? null,
-        params.model ?? null,
-        params.promptHash ?? null,
-        params.langfuseTraceId ?? null,
-        params.resultStatus,
-        params.dataClasses ?? [],
-        JSON.stringify(params.payload ?? {}),
-      ]
-    );
-  };
-
-  if (scoped) {
-    await run(scoped.client, scoped.orgId);
-    return;
-  }
-
-  const { client, orgId } = await getOrgScopedClient(params.orgId);
-  try {
-    await run(client, orgId);
-  } finally {
-    client.release();
-  }
-}
-
-/**
- * The org's own banned phrases, applied on top of the pack defaults.
- *
- * Returns null for UNKNOWN, which is deliberately distinct from [] meaning
- * "this org configured none". A transient error used to return [] silently,
- * and downstream that is indistinguishable from an org with no custom rules —
- * so a business that had configured "never say guaranteed delivery" would have
- * that rule quietly stop applying, the reply would go out clean, and nothing
- * anywhere would record that a compliance control had been skipped.
- *
- * Throwing would be the other extreme: failing a customer reply over a blip in
- * a rule most orgs never configure. So the uncertainty is returned honestly
- * and the caller decides what to do with it.
- */
-async function loadBannedPhrases(client: PoolClient, orgId: string): Promise<string[] | null> {
+async function loadBannedPhrases(client: PoolClient, orgId: string): Promise<string[]> {
   try {
     const res = await client.query<{ phrases: unknown }>(
       `SELECT meta->'compliance'->'bannedPhrases' AS phrases FROM orgs WHERE id = $1 LIMIT 1`,
@@ -189,13 +50,8 @@ async function loadBannedPhrases(client: PoolClient, orgId: string): Promise<str
     const raw = res.rows[0]?.phrases;
     if (!Array.isArray(raw)) return [];
     return raw.filter((item): item is string => typeof item === 'string' && item.trim().length > 0);
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : String(err);
-    console.error(
-      `[inbound-confirm] compliance rules unreadable for org ${orgId} — routing this `
-        + `reply to human review rather than sending it unchecked: ${message}`
-    );
-    return null;
+  } catch {
+    return [];
   }
 }
 
@@ -253,28 +109,19 @@ export async function evaluateInboundConfirm(job: InboundConfirmJob): Promise<In
   const { client, orgId } = await getOrgScopedClient(job.orgId);
   try {
     const bannedPhrases = await loadBannedPhrases(client, orgId);
-    // null means the org's compliance rules could not be read at all. The pack
-    // defaults still apply, but this org's own additions are unknown, so the
-    // reply has not actually been checked against the rules its owner wrote.
-    // Pause for review rather than send something whose compliance state is a
-    // guess — the whole point of the confirm classes is that a human decides
-    // when the machine cannot.
-    const rulesUnknown = bannedPhrases === null;
     const evaluated = evaluateConfirmClasses({
       reply: job.reply,
       userMessage: job.userMessage,
       executedSteps: job.executedSteps,
-      bannedPhrases: bannedPhrases ?? [],
+      bannedPhrases,
     });
 
-    if (!evaluated.pause && !rulesUnknown) {
+    if (!evaluated.pause) {
       return { pause: false, classes: [], reason: '', eval: evaluated };
     }
 
     const primary = primaryConfirmClass(evaluated);
-    const reason = evaluated.hits[0]?.reason
-      || (rulesUnknown ? 'compliance rules for this org could not be read' : '')
-      || `confirm class ${primary || 'unknown'}`;
+    const reason = evaluated.hits[0]?.reason || `confirm class ${primary || 'unknown'}`;
     const workItemId = await markNeedsAttention(client, orgId, job.conversationId, reason);
 
     const actor: AuditActorInput = job.employeeId

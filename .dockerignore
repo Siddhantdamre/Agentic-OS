@@ -27,8 +27,7 @@ workspace_storage/
 **/workspace_storage/
 
 # Docker build contexts for sibling infra images
-infra/docker/atomic-agent/
-infra/docker/atomic-bridge/
+infra/docker/mcp-bridge/
 
 # OS / editor
 .DS_Store

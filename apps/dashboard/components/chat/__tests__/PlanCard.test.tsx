@@ -194,4 +194,54 @@ describe('PlanCard', () => {
     expect(screen.getByText('02')).toBeInTheDocument();
     expect(screen.getByText('03')).toBeInTheDocument();
   });
+
+  it('renders Pending Approval status badge when status is pending', () => {
+    render(
+      <PlanCard
+        planId="plan-1"
+        summary="Test"
+        steps={mockSteps}
+        status="pending"
+        onApprove={jest.fn()}
+        onCancel={jest.fn()}
+        onToggleStep={jest.fn()}
+      />
+    );
+
+    const badge = screen.getByTestId('plan-status-badge');
+    expect(badge).toBeInTheDocument();
+    expect(badge).toHaveTextContent('Pending Approval');
+  });
+
+  it('disables Approve & Execute button when status is approved', () => {
+    render(
+      <PlanCard
+        planId="plan-1"
+        summary="Test"
+        steps={mockSteps}
+        status="approved"
+        onApprove={jest.fn()}
+        onCancel={jest.fn()}
+        onToggleStep={jest.fn()}
+      />
+    );
+
+    const badge = screen.getByTestId('plan-status-badge');
+    expect(badge).toHaveTextContent('approved');
+    const approveBtn = screen.getByRole('button', { name: /Approve & Execute/i });
+    expect(approveBtn).toBeDisabled();
+  });
+
+  it('names each step\u2019s app in words, not as an internal tool id', () => {
+    const steps: PlanStep[] = [
+      { id: 'a', description: 'Read the sheet', action: 'sheets_read', tool: 'google-sheets', enabled: true },
+      { id: 'b', description: 'Email the result', action: 'gmail_send', tool: 'mcp.gmail.gmail_send', enabled: true },
+    ];
+    const { container } = render(
+      <PlanCard planId="p" summary="s" steps={steps} onApprove={jest.fn()} onCancel={jest.fn()} onToggleStep={jest.fn()} />
+    );
+    expect(screen.getByText('Google Sheets · Read')).toBeInTheDocument();
+    expect(screen.getByText('Gmail · Send')).toBeInTheDocument();
+    expect(container.textContent).not.toMatch(/mcp\./);
+  });
 });

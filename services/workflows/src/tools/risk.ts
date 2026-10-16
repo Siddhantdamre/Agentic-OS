@@ -3,9 +3,9 @@
  * Metadata only — webhook/inbound confirm enforcement is a later workstream.
  */
 
-export type ToolRisk = 'read' | 'draft' | 'send' | 'pay' | 'sign' | 'publish' | 'delete';
+export type ToolRisk = 'read' | 'draft' | 'send' | 'pay' | 'sign' | 'publish' | 'delete' | 'execute';
 
-const TOOL_RISKS: readonly ToolRisk[] = ['read', 'draft', 'send', 'pay', 'sign', 'publish', 'delete'];
+const TOOL_RISKS: readonly ToolRisk[] = ['read', 'draft', 'send', 'pay', 'sign', 'publish', 'delete', 'execute'];
 
 export function isToolRisk(value: string): value is ToolRisk {
   return (TOOL_RISKS as readonly string[]).includes(value);
@@ -22,6 +22,7 @@ export function confirmForRisk(risk: ToolRisk): boolean {
     case 'sign':
     case 'publish':
     case 'delete':
+    case 'execute':
       return true;
     default: {
       const _exhaustive: never = risk;

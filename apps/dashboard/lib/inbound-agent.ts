@@ -1,8 +1,11 @@
 import { getOrgScopedClient } from '@/lib/db';
 import { realtimeHub } from '@/lib/realtime-hub';
 import { sendChannelReply, type ChannelReplyTarget } from '@/lib/channel-outbound';
+import type { InboundMedia } from '@darex/whatsapp-gateway';
+import type { AutoReplyConfig } from '@/lib/whatsapp-auto-reply-config';
 import { evaluateInboundConfirm } from '@/lib/inbound-confirm';
-import { runAutonomousAgentDirect } from '@darex/workflows/dist/atomic-agent-client';
+import { recordOutboundDelivery } from '@/lib/failed-webhooks';
+import { runAutonomousAgentDirect } from '@darex/workflows/dist/agent-client';
 import { runInboundDirectFallback } from '@darex/workflows/dist/inbound-hitl';
 import { startWorkItemWorkflow, signalNurtureCancelled } from '@darex/workflows/dist/workflow-client';
 
@@ -22,6 +25,10 @@ export type InboundAgentJob = {
   inboundEventId?: string;
   /** Unified surface key (H2). Does not replace replyTarget.channelType. */
   channelKey?: string;
+  /** WhatsApp only: how this channel wants replies. Absent or `agent` = full agent. */
+  autoReply?: AutoReplyConfig;
+  /** WhatsApp voice note / image to read before replying (never persisted with its base64). */
+  media?: InboundMedia;
 };
 
 type WorkItemChannel = 'whatsapp' | 'chatwoot' | 'inbox' | 'ask_ai' | 'unknown';
@@ -118,7 +125,112 @@ export function fireInboundAgent(job: InboundAgentJob): void {
     conversationId: job.conversationId,
     reason: 'inbound',
   });
-  void runInboundAgent(job);
+  void dispatchInbound(job);
+}
+
+/**
+ * Up-front hard-cap check for webhook-started turns. Returns true when the org
+ * is over a hard usage cap (or the gate failed closed): no model call, no fake
+ * reply; the inbound message is already persisted by the caller.
+ */
+async function blockIfOverUsageCap(job: InboundAgentJob): Promise<boolean> {
+  let reasons: unknown[];
+  try {
+    const { assertUsageAllowed } = await import('@/lib/usage-gate');
+    const block = await assertUsageAllowed(job.orgId);
+    if (!block) return false;
+    reasons = block.gate.reasons;
+  } catch (err: unknown) {
+    // Fail closed: an unreadable gate must not start a paid turn.
+    console.error('[inbound-agent] usage gate check failed, blocking turn:', err instanceof Error ? err.message : String(err));
+    reasons = [];
+  }
+  await recordUsageCapBlock(job, reasons);
+  return true;
+}
+
+async function recordUsageCapBlock(job: InboundAgentJob, reasons: unknown[]): Promise<void> {
+  const channel = workItemChannelFrom(job.channelKey || job.replyTarget?.channelType);
+  const { client } = await getOrgScopedClient(job.orgId);
+  try {
+    await client.query(
+      `UPDATE conversations SET status = 'needs_attention', updated_at = NOW()
+        WHERE id = $1 AND org_id = $2`,
+      [job.conversationId, job.orgId]
+    );
+    await client.query(
+      `INSERT INTO work_items (org_id, type, status, assignee_employee_id, conversation_id, channel, metadata)
+       VALUES ($1, 'conversation', 'open', $2, $3, $4, $5::jsonb)
+       ON CONFLICT (org_id, conversation_id) WHERE conversation_id IS NOT NULL DO NOTHING`,
+      [job.orgId, job.employeeId || null, job.conversationId, channel, JSON.stringify({ usageCapBlocked: true })]
+    );
+    const item = await client.query<{ id: string }>(
+      `SELECT id FROM work_items WHERE org_id = $1 AND conversation_id = $2 LIMIT 1`,
+      [job.orgId, job.conversationId]
+    );
+    const workItemId = item.rows[0]?.id;
+    if (workItemId) {
+      await client.query(
+        `INSERT INTO work_events (org_id, work_item_id, kind, payload, actor, idempotency_key)
+         VALUES ($1, $2, 'usage_cap_blocked', $3::jsonb, 'system', $4)
+         ON CONFLICT DO NOTHING`,
+        [
+          job.orgId,
+          workItemId,
+          JSON.stringify({ reasons, note: 'Hard usage cap reached; agent turn not started' }),
+          `inbound-agent:usage-cap:${job.conversationId}:${job.inboundEventId || 'no-event'}`,
+        ]
+      );
+    }
+  } catch (err: unknown) {
+    console.error('[inbound-agent] failed to record usage-cap block:', err instanceof Error ? err.message : String(err));
+  } finally {
+    client.release();
+  }
+  realtimeHub.publish(job.orgId, {
+    type: 'needs_attention',
+    conversationId: job.conversationId,
+    message: 'Usage cap reached: AI reply not sent',
+    contactId: job.replyTarget?.contactId,
+    channelType: job.replyTarget?.channelType,
+  });
+}
+
+async function dispatchInbound(original: InboundAgentJob): Promise<void> {
+  if (await blockIfOverUsageCap(original)) return;
+  let job: InboundAgentJob = { ...original, media: undefined };
+  if (original.media) {
+    // Lazy import keeps the media reader (and its model client) off the webhook path.
+    try {
+      const { readWhatsAppMedia } = await import('@/lib/whatsapp-media');
+      const rt = original.replyTarget;
+      const text = await readWhatsAppMedia({
+        orgId: original.orgId,
+        conversationId: original.conversationId,
+        providerMessageId: original.inboundEventId,
+        media: original.media,
+        channelMeta: {
+          ...(rt?.whatsappMeta || {}),
+          phone_number_id: rt?.phoneNumberId,
+          meta_access_token: rt?.metaAccessToken,
+        },
+      });
+      if (text) job = { ...job, userMessage: text };
+    } catch (err: unknown) {
+      console.warn('[inbound-agent] media read failed, continuing with metadata:', err instanceof Error ? err.message : String(err));
+    }
+  }
+  if (job.autoReply && (job.autoReply.mode === 'fixed' || job.autoReply.mode === 'ai_simple')) {
+    // Lazy import: whatsapp-auto-reply imports deliverInboundReply from this file.
+    const { runWhatsAppAutoReply } = await import('@/lib/whatsapp-auto-reply');
+    await runWhatsAppAutoReply(job);
+    return;
+  }
+  if (job.autoReply?.holdingReply.enabled && job.replyTarget?.channelType === 'whatsapp') {
+    // Runs beside the agent turn, which blocks until the owner decides when the AI is unsure.
+    void import('@/lib/whatsapp-holding-reply').then((m) => m.watchForHoldingReply(job));
+  }
+  await runInboundAgent(job);
 }
 
 async function runInboundAgent(job: InboundAgentJob): Promise<void> {
@@ -244,34 +356,48 @@ async function runInboundAgent(job: InboundAgentJob): Promise<void> {
     return;
   }
 
-  const sendKey = workflowId || job.inboundEventId || `${job.conversationId}:${reply.slice(0, 80)}`;
-  const claimed = await claimOutboundSend(job.orgId, sendKey);
+  await deliverInboundReply(job, reply, {
+    executedSteps,
+    savedByWorkflow,
+    sendKey: workflowId || job.inboundEventId || `${job.conversationId}:${reply.slice(0, 80)}`,
+  });
+}
+
+/**
+ * Claim, save, send and announce one reply. Shared by the agent path and the
+ * simple WhatsApp auto-reply modes so both dedupe and record delivery alike.
+ */
+export async function deliverInboundReply(
+  job: InboundAgentJob,
+  reply: string,
+  opts: { executedSteps: unknown[]; savedByWorkflow: boolean; sendKey: string }
+): Promise<void> {
+  const claimed = await claimOutboundSend(job.orgId, opts.sendKey);
   if (!claimed) {
     console.warn('[inbound-agent] Duplicate inbound event — skipping persist/send');
     return;
   }
 
-  if (!savedByWorkflow) {
-    await persistAssistantMessage(job.orgId, job.conversationId, reply, executedSteps, job.channelKey);
+  let assistantMessageId: string | null = null;
+  if (!opts.savedByWorkflow) {
+    assistantMessageId = await persistAssistantMessage(
+      job.orgId,
+      job.conversationId,
+      reply,
+      opts.executedSteps,
+      job.channelKey
+    );
   }
 
-  // ── SHADOW MODE: the agent drafts, a person sends ───────────────────────
-  // The switch promised "nothing is sent" and governed nothing: it had a table,
-  // an API, a migration and 18 passing assertions, and no runtime code read it.
-  // Meanwhile THIS line auto-replied to the customer on every inbound channel,
-  // because fireInboundAgent is called by the chatwoot, gmail, instagram and sms
-  // webhooks and the send lives one level below them.
-  //
-  // A labelled safety control that does not control is worse than none, because
-  // a person reads the label and relaxes. The reply is still written to the
-  // conversation either way, which is the whole point: the operator reads the
-  // draft, edits it if it is wrong, and sends it themselves.
-  const withheld = await shadowModeEnabled(job.orgId);
-  if (job.replyTarget && !withheld) {
-    await sendChannelReply(job.orgId, job.replyTarget, reply);
-  } else if (withheld) {
-    console.info(`[inbound-agent] shadow mode on for org ${job.orgId}: `
-      + 'reply drafted and stored, not delivered');
+  if (job.replyTarget) {
+    const send = await sendChannelReply(job.orgId, job.replyTarget, reply);
+    await recordOutboundDelivery({
+      orgId: job.orgId,
+      result: send,
+      messageId: assistantMessageId,
+      conversationId: job.conversationId,
+      role: 'assistant',
+    });
   }
 
   realtimeHub.publish(job.orgId, {
@@ -290,28 +416,6 @@ async function runInboundAgent(job: InboundAgentJob): Promise<void> {
   });
 }
 
-/**
- * Is this workspace watching rather than acting?
- *
- * Fails CLOSED on error: if the switch cannot be read we withhold the message.
- * The cost of withholding wrongly is a reply an operator has to send by hand.
- * The cost of sending wrongly is a message reaching a customer after somebody
- * was told nothing would be sent, which is the promise this exists to keep.
- */
-async function shadowModeEnabled(orgId: string): Promise<boolean> {
-  const { client } = await getOrgScopedClient(orgId);
-  try {
-    const res = await client.query(
-      `SELECT enabled FROM org_shadow_mode WHERE org_id = $1`, [orgId]);
-    return Boolean(res.rows[0]?.enabled);
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : String(err);
-    console.error('[inbound-agent] could not read shadow mode; withholding the send:', message);
-    return true;
-  } finally {
-    client.release();
-  }
-}
 
 async function claimOutboundSend(orgId: string, businessKey: string): Promise<boolean> {
   const key = `${orgId}:sendChannelReply:${businessKey}`;
@@ -454,21 +558,29 @@ async function persistAssistantMessage(
   reply: string,
   executedSteps: unknown[],
   channelKey?: string
-): Promise<void> {
+): Promise<string | null> {
   const { client } = await getOrgScopedClient(orgId);
   try {
-    await client.query(
+    const inserted = await client.query<{ id: string }>(
       `INSERT INTO messages (org_id, conversation_id, role, content, tool_calls, channel_key, created_at)
-       VALUES ($1, $2, 'assistant', $3, $4, $5, NOW())`,
+       VALUES ($1, $2, 'assistant', $3, $4, $5, NOW())
+       RETURNING id`,
       [orgId, conversationId, reply, JSON.stringify(executedSteps), channelKey || null]
     );
     await client.query(
       `UPDATE conversations SET updated_at = NOW(), summary = $1 WHERE id = $2 AND org_id = $3`,
       [reply.slice(0, 100), conversationId, orgId]
     );
+    realtimeHub.publish(orgId, {
+      type: 'conversation_updated',
+      conversationId,
+      message: reply.slice(0, 200),
+    });
+    return inserted.rows[0]?.id ?? null;
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
     console.error('[inbound-agent] failed to persist assistant message:', message);
+    return null;
   } finally {
     client.release();
   }

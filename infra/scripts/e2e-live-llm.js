@@ -1,8 +1,4 @@
 const http = require('http');
-// NOTE: 127.0.0.1, never 'localhost'. Node resolves localhost to IPv6 ::1 first;
-// Docker publishes on [::] but that path resets the connection, producing
-// intermittent ECONNRESET / "fetch failed" that looks like random flakiness.
-// curl hides this by falling back to IPv4 — Node's fetch and pg do not.
 const crypto = require('crypto');
 const path = require('path');
 const fs = require('fs');
@@ -36,7 +32,7 @@ loadEnvFile(path.join(root, 'apps', 'dashboard', '.env.local'));
 loadEnvFile(path.join(root, 'infra', '.env'));
 
 const pool = new Pool({
-  host: process.env.DB_HOST || '127.0.0.1',
+  host: process.env.DB_HOST || 'localhost',
   port: parseInt(process.env.DB_PORT || '5432'),
   user: process.env.DB_USER || 'darex',
   password: process.env.DB_PASSWORD,

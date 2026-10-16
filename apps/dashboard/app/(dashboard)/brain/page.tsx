@@ -1,11 +1,11 @@
 'use client';
 
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { useLiveRefresh } from '@/lib/use-live-refresh';
 import { Brain, Search } from 'lucide-react';
 import { SnippetCard, type BrainSnippetView } from '@/components/brain/SnippetCard';
 import { SourceRow, type BrainSourceView } from '@/components/brain/SourceRow';
-import { KnowledgeGaps } from '@/components/brain/KnowledgeGaps';
-import { TeachFact } from '@/components/brain/TeachFact';
+import { responseErrorMessage } from '@/lib/client-error';
 
 type BrainEntity = {
   entityType: string;
@@ -16,8 +16,12 @@ type BrainEntity = {
   updatedAt: string;
 };
 
+type GraphFact = { id: string; text: string; type: string; updatedAt: string };
+
 type BrainPayload = {
   empty: boolean;
+  graph: GraphFact[];
+  graphUnavailable: boolean;
   canMutate: boolean;
   snippets: BrainSnippetView[];
   entities: BrainEntity[];
@@ -26,37 +30,61 @@ type BrainPayload = {
 
 const EMPTY_PAYLOAD: BrainPayload = {
   empty: true,
+  graph: [],
+  graphUnavailable: false,
   canMutate: false,
   snippets: [],
   entities: [],
   sources: [],
 };
 
+const BRAIN_EVENTS = ['memory.updated'] as const;
+
 export default function BrainPage() {
   const [query, setQuery] = useState('');
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [data, setData] = useState<BrainPayload>(EMPTY_PAYLOAD);
 
-  const load = useCallback(async (q: string) => {
-    setLoading(true);
+  // The query last sent, so a live refresh re-runs it rather than the half-typed input.
+  const activeQuery = useRef('');
+
+  const load = useCallback(async (q: string, quiet = false) => {
+    if (!quiet) {
+      activeQuery.current = q;
+      setLoading(true);
+      setError(null);
+    }
     try {
       const res = await fetch(`/api/brain?q=${encodeURIComponent(q)}`);
       if (!res.ok) {
+        if (quiet) {
+          console.error('[brain] live refresh failed', res.status);
+          return;
+        }
+        setError(await responseErrorMessage(res, 'We couldn’t load your business brain just now. Please try again.'));
         setData(EMPTY_PAYLOAD);
         return;
       }
       const json = await res.json();
       setData({
         empty: Boolean(json.empty),
+        graph: Array.isArray(json.graph) ? json.graph : [],
+        graphUnavailable: Boolean(json.graphUnavailable),
         canMutate: Boolean(json.canMutate),
         snippets: Array.isArray(json.snippets) ? json.snippets : [],
         entities: Array.isArray(json.entities) ? json.entities : [],
         sources: Array.isArray(json.sources) ? json.sources : [],
       });
-    } catch {
+    } catch (err: unknown) {
+      if (quiet) {
+        console.error('[brain] live refresh failed', err);
+        return;
+      }
+      setError('We couldn’t load your business brain. Please check your connection and try again.');
       setData(EMPTY_PAYLOAD);
     } finally {
-      setLoading(false);
+      if (!quiet) setLoading(false);
     }
   }, []);
 
@@ -66,6 +94,8 @@ export default function BrainPage() {
     void load(q);
   }, [load]);
 
+  useLiveRefresh({ events: BRAIN_EVENTS, refetch: () => load(activeQuery.current, true) });
+
   const onDeleted = (id: string) => {
     setData((prev) => {
       const snippets = prev.snippets.filter((s) => s.id !== id);
@@ -74,7 +104,8 @@ export default function BrainPage() {
         ...prev,
         snippets,
         sources,
-        empty: snippets.length === 0 && prev.entities.length === 0 && sources.length === 0,
+        empty:
+          snippets.length === 0 && prev.entities.length === 0 && sources.length === 0 && prev.graph.length === 0,
       };
     });
   };
@@ -91,7 +122,7 @@ export default function BrainPage() {
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
           <div className="w-10 h-10 rounded-2xl bg-amber-500/20 border border-amber-500/40 flex items-center justify-center">
-            <Brain className="w-5 h-5 text-amber-600" />
+            <Brain className="w-5 h-5 text-amber-700" />
           </div>
           <div>
             <h1 className="text-3xl font-serif font-bold text-heading">Brain</h1>
@@ -119,22 +150,22 @@ export default function BrainPage() {
         />
       </form>
 
-      {/*
-        Above the stored memory on purpose. What the agent does NOT know is
-        more urgent than what it does, and it is the only list here that
-        converts a minute of an operator's time into a permanent capability.
-      */}
-      {/* Only for people who may change memory — the API enforces this too,
-          but showing a box that will 403 is its own small cruelty. */}
-      {data.canMutate && <TeachFact onSaved={() => void load(query)} />}
-
-      <KnowledgeGaps />
-
       {loading ? (
         <div className="space-y-3">
           {[1, 2, 3].map((i) => (
             <div key={i} className="h-24 bg-cream-200/50 rounded-2xl animate-pulse border border-cream-300" />
           ))}
+        </div>
+      ) : error ? (
+        <div className="text-sm text-red-700 bg-red-50 border border-red-200 rounded-2xl p-6 space-y-2">
+          <p>{error}</p>
+          <button
+            type="button"
+            onClick={() => void load(query)}
+            className="text-xs font-bold underline text-red-800"
+          >
+            Retry
+          </button>
         </div>
       ) : data.empty ? (
         <p className="text-sm text-slate-500 bg-white border border-cream-300 rounded-2xl p-6">
@@ -180,6 +211,31 @@ export default function BrainPage() {
                     {e.stale && (
                       <span className="text-[10px] font-bold uppercase text-amber-800">stale</span>
                     )}
+                  </div>
+                ))
+              )}
+            </section>
+
+            <section className="space-y-3">
+              <h2 className="text-sm font-bold text-heading uppercase tracking-wider">
+                What your AI has learned
+              </h2>
+              {data.graphUnavailable ? (
+                <p className="text-xs text-amber-800">
+                  Learned facts are temporarily unavailable. Nothing was lost; try again shortly.
+                </p>
+              ) : data.graph.length === 0 ? (
+                <p className="text-xs text-slate-500">
+                  Nothing learned from conversations yet. Facts appear here as your AI employees talk to customers.
+                </p>
+              ) : (
+                data.graph.map((g) => (
+                  <div key={g.id} className="bg-white border border-cream-300 rounded-2xl p-4 space-y-1">
+                    <p className="text-xs text-slate-700">{g.text}</p>
+                    <p className="text-[10px] font-mono text-slate-500">
+                      {g.type}
+                      {g.updatedAt ? ` · ${new Date(g.updatedAt).toLocaleDateString()}` : ''}
+                    </p>
                   </div>
                 ))
               )}

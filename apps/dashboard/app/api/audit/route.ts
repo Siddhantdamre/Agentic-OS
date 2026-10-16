@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { getScopedClient } from '@/lib/db';
+import { getScopedClient, scopedAuthErrorResponse } from '@/lib/db';
 import { canReadAudit, loadHumanRole } from '@/lib/rbac';
 
 export const dynamic = 'force-dynamic';
@@ -84,9 +84,8 @@ export async function GET(request: Request) {
     }
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : String(error);
-    if (message === 'Unauthorized') {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
+    const __scopedAuth = scopedAuthErrorResponse(error instanceof Error ? error : new Error(message));
+    if (__scopedAuth) return __scopedAuth;
     console.error('GET /api/audit Error:', error);
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
   }

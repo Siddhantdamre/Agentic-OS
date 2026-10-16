@@ -1,18 +1,22 @@
 import { NextResponse } from 'next/server';
 import { persistInboundMessage } from '@/lib/channel-normalize';
+import { signVisitorSession } from '@/lib/widget-token';
 import {
   ignoreBodyOrgId,
   orgHasInstalledPack,
   requireWidgetOrg,
+  resolveWidgetToolAllowlist,
   widgetForbidden,
   widgetPreflight,
   withWidgetCors,
 } from '../_lib';
+import { jsonBodyOrEmpty } from '@/lib/safe-json';
 
 /**
  * POST /api/widget/session
  * Public embed token → session (conversation). Deny-all until a pack is installed.
  * Body org_id is ignored; tenant is the site key.
+ * Returns signed visitorToken bound to orgId + sessionId.
  */
 export const dynamic = 'force-dynamic';
 
@@ -35,7 +39,7 @@ export async function POST(request: Request) {
 
   let contactHint = 'widget-visitor';
   try {
-    const body = (await request.json()) as Record<string, unknown>;
+    const body = await jsonBodyOrEmpty<Record<string, unknown>>(request);
     ignoreBodyOrgId(body);
     if (typeof body.visitorId === 'string' && body.visitorId.trim()) {
       contactHint = body.visitorId.trim().slice(0, 80);
@@ -45,6 +49,7 @@ export async function POST(request: Request) {
   }
 
   try {
+    const allowlist = await resolveWidgetToolAllowlist(auth.orgId);
     const persisted = await persistInboundMessage({
       orgId: auth.orgId,
       channelKey: 'widget',
@@ -55,12 +60,15 @@ export async function POST(request: Request) {
       extraMeta: { surface: 'widget' },
     });
 
+    const visitorToken = signVisitorSession(auth.orgId, persisted.conversationId, contactHint);
+
     return withWidgetCors(
       request,
       NextResponse.json({
         sessionId: persisted.conversationId,
         conversationId: persisted.conversationId,
-        allowlist: ['listings.search'],
+        visitorToken,
+        allowlist,
       }),
       auth.allowedOrigins
     );

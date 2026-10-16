@@ -3,10 +3,10 @@ import { render, screen, fireEvent } from '@testing-library/react';
 import { ReasoningStrip } from '../ReasoningStrip';
 
 describe('ReasoningStrip', () => {
-  it('renders with default duration', () => {
+  it('renders without a fake duration when none is provided', () => {
     render(<ReasoningStrip text="Analyzing request..." />);
 
-    expect(screen.getByText('Synthesized in 1.2s')).toBeInTheDocument();
+    expect(screen.getByText('Synthesis')).toBeInTheDocument();
   });
 
   it('formats milliseconds correctly', () => {
@@ -45,13 +45,13 @@ describe('ReasoningStrip', () => {
   it('handles null duration', () => {
     render(<ReasoningStrip text="Analyzing..." durationMs={null} />);
 
-    expect(screen.getByText('Synthesized in 1.2s')).toBeInTheDocument();
+    expect(screen.getByText('Synthesis')).toBeInTheDocument();
   });
 
   it('handles zero duration', () => {
     render(<ReasoningStrip text="Analyzing..." durationMs={0} />);
 
-    expect(screen.getByText(/Synthesized in/)).toBeInTheDocument();
+    expect(screen.getByText('Synthesis')).toBeInTheDocument();
   });
 
   it('renders icon that responds to user interaction', () => {

@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
-import { getScopedClient } from '@/lib/db';
+import { getScopedClient, scopedAuthErrorResponse } from '@/lib/db';
+import { denyUnlessConnectorManager } from '@/lib/connector-rbac';
 import {
   NangoConnectorClient,
   createGoogleCalendarEvent,
@@ -10,8 +11,17 @@ import {
   pingWhatsApp,
   sendGmailEmail,
   sendWhatsAppWithCreds,
+  testGoogleWorkspace,
 } from '@darex/connectors';
+import {
+  getEvolutionState,
+  openSecret,
+  providerIdOf,
+  sendWhatsApp as sendWhatsAppViaGateway,
+} from '@darex/whatsapp-gateway';
 import { getIntegration, isIntegrationId } from '@/lib/integrations-catalog';
+import { jsonBodyOrEmpty } from '@/lib/safe-json';
+import { publicErrorMessage } from '@/lib/public-error';
 
 function getNangoClient(): NangoConnectorClient {
   return new NangoConnectorClient();
@@ -22,8 +32,15 @@ function whatsappCredsFromMeta(meta: Record<string, unknown> | null | undefined)
   phoneNumberId: string;
 } | null {
   const src = meta && typeof meta === 'object' ? meta : {};
-  const accessToken = String(src.accessToken || src.meta_access_token || process.env.META_ACCESS_TOKEN || '');
-  const phoneNumberId = String(src.phoneNumberId || src.phone_number_id || process.env.WHATSAPP_PHONE_NUMBER_ID || '');
+  // Per-org BYOK only — never fall back to process env (would leak a global
+  // token across tenants on the diagnostic route).
+  let accessToken = String(src.accessToken || src.meta_access_token || '');
+  try {
+    accessToken = accessToken ? openSecret(accessToken) : '';
+  } catch {
+    return null; // sealed token that cannot be opened: treat as not connected
+  }
+  const phoneNumberId = String(src.phoneNumberId || src.phone_number_id || '');
   if (!accessToken || !phoneNumberId) return null;
   return { accessToken, phoneNumberId };
 }
@@ -33,17 +50,24 @@ function razorpayCredsFromMeta(meta: Record<string, unknown> | null | undefined)
   keySecret: string;
 } | null {
   const src = meta && typeof meta === 'object' ? meta : {};
-  const keyId = String(src.keyId || src.key_id || process.env.RAZORPAY_KEY_ID || '');
-  const keySecret = String(src.keySecret || src.key_secret || process.env.RAZORPAY_KEY_SECRET || '');
+  const keyId = String(src.keyId || src.key_id || '');
+  let keySecret = String(src.keySecret || src.key_secret || '');
+  try {
+    keySecret = keySecret ? openSecret(keySecret) : '';
+  } catch {
+    return null; // sealed secret that cannot be opened: treat as not connected
+  }
   if (!keyId || !keySecret) return null;
   return { keyId, keySecret };
 }
 
 export async function POST(request: Request) {
   try {
-    const { client, orgId } = await getScopedClient();
+    const { client, orgId, userId } = await getScopedClient();
     try {
-      const { provider, payload: rawPayload } = await request.json();
+      const forbidden = await denyUnlessConnectorManager(client, userId);
+      if (forbidden) return forbidden;
+      const { provider, payload: rawPayload } = await jsonBodyOrEmpty(request);
       const payload = rawPayload && typeof rawPayload === 'object' ? rawPayload : {};
 
       if (!provider || !isIntegrationId(provider)) {
@@ -52,7 +76,7 @@ export async function POST(request: Request) {
 
       const spec = getIntegration(provider);
       const channelRes = await client.query(
-        `SELECT status, meta, nango_connection_id FROM channels WHERE org_id = $1 AND channel_type = $2`,
+        `SELECT status, meta, nango_connection_id FROM channels WHERE org_id = $1 AND channel_type = $2 AND account_key = ''`,
         [orgId, provider]
       );
       const channel = channelRes.rows[0] as { status?: string; meta?: Record<string, unknown>; nango_connection_id?: string } | undefined;
@@ -63,19 +87,40 @@ export async function POST(request: Request) {
       let connected = false;
 
       try {
-        if (provider === 'whatsapp') {
+        if (provider === 'whatsapp' && providerIdOf(channel?.meta) === 'evolution') {
+          // QR-linked number: check the live session, or send through the gateway.
+          const instance = String(channel?.meta?.evolution_instance || '');
+          if (payload.recipient && payload.text) {
+            const sent = await sendWhatsAppViaGateway(channel?.meta || {}, {
+              to: String(payload.recipient),
+              text: String(payload.text),
+            });
+            connected = sent.ok;
+            statusCode = sent.ok ? 200 : sent.status || 502;
+            result = { messageId: sent.messageId, provider: 'evolution' };
+            message = sent.ok ? `WhatsApp message sent to ${payload.recipient}` : sent.message;
+          } else {
+            const live = await getEvolutionState(instance);
+            connected = live.state === 'open';
+            statusCode = connected ? 200 : 503;
+            result = { provider: 'evolution', state: live.state };
+            message = connected
+              ? 'WhatsApp (QR) session is linked'
+              : 'WhatsApp (QR) session is not linked - scan the QR again at /connectors.';
+          }
+        } else if (provider === 'whatsapp') {
           const creds = whatsappCredsFromMeta(channel?.meta);
           if (!creds) {
             statusCode = 404;
             connected = false;
             message = 'WhatsApp is not connected. Paste a Meta system-user token at /connectors.';
-            result = { connected: false, setupUrl: '/connectors' };
+            result = { connected: false, reconnectUrl: '/connectors', setupUrl: '/connectors' };
           } else if (payload.recipient && payload.text) {
             const sent = await sendWhatsAppWithCreds(creds, {
               recipient: String(payload.recipient),
               text: String(payload.text),
             });
-            connected = true;
+            connected = sent.ok;
             statusCode = sent.status;
             result = sent.data;
             message = sent.ok
@@ -92,8 +137,8 @@ export async function POST(request: Request) {
           const creds = razorpayCredsFromMeta(channel?.meta);
           if (!creds) {
             statusCode = 404;
-            message = 'Razorpay keys are not set (per-org or RAZORPAY_KEY_ID/SECRET env).';
-            result = { connected: false, setupUrl: '/connectors' };
+            message = 'Razorpay keys are not set for this org. Connect at /connectors.';
+            result = { connected: false, reconnectUrl: '/connectors', setupUrl: '/connectors' };
           } else if (payload.customerEmail && payload.amountInPaisa) {
             const created = await createRazorpayInvoiceWithCreds(creds, {
               customerEmail: String(payload.customerEmail),
@@ -113,17 +158,26 @@ export async function POST(request: Request) {
             result = ping;
             message = ping.message;
           }
+        } else if (provider === 'google-workspace' || provider === 'google') {
+          const nangoClient = getNangoClient();
+          const suite = await testGoogleWorkspace(nangoClient, orgId);
+          connected = suite.connected;
+          statusCode = suite.ok ? 200 : (suite.connected ? 207 : 404);
+          result = suite;
+          message = suite.message;
         } else if (spec?.authMode === 'service_account') {
           statusCode = 400;
           message = `${spec.name} is service-account only — there is no OAuth connect or diagnostic ping.`;
-          result = { connected: false, setupUrl: '/connectors' };
+          result = { connected: false, reconnectUrl: '/connectors', setupUrl: '/connectors' };
         } else if (provider === 'gmail' && payload.recipient && payload.text) {
           const nangoClient = getNangoClient();
           result = await sendGmailEmail(nangoClient, orgId, {
             recipient: String(payload.recipient),
             text: String(payload.text),
           });
+          // proxyRequest throws on missing/expired OAuth — reaching here means live creds worked
           connected = true;
+          statusCode = 200;
           message = `Gmail email sent to ${payload.recipient}`;
         } else if (provider === 'google-calendar' && payload.title) {
           const nangoClient = getNangoClient();
@@ -141,6 +195,7 @@ export async function POST(request: Request) {
             attendeeEmails,
           });
           connected = true;
+          statusCode = 200;
           message = `Google Calendar event "${payload.title}" created`;
         } else if (provider === 'hubspot' && payload.email) {
           const nangoClient = getNangoClient();
@@ -152,6 +207,7 @@ export async function POST(request: Request) {
             phone: payload.phone ? String(payload.phone) : undefined,
           });
           connected = true;
+          statusCode = 200;
           message = `HubSpot contact created for ${payload.email}`;
         } else {
           const nangoClient = getNangoClient();
@@ -167,7 +223,14 @@ export async function POST(request: Request) {
       } catch (err: any) {
         statusCode = err.status || 500;
         connected = err.connected === true;
-        result = { error: err.message || 'API Proxy Execution Failed', connected: false, setupUrl: '/connectors' };
+        const reconnectUrl = err.reconnectUrl || '/connectors';
+        result = {
+          error: publicErrorMessage(err, 'API Proxy Execution Failed'),
+          connected: false,
+          reconnectUrl,
+          setupUrl: reconnectUrl,
+          reason: err.reason,
+        };
         message = `${provider} execution error: ${err.message || 'Failed'}`;
       }
 
@@ -193,16 +256,16 @@ export async function POST(request: Request) {
         statusCode,
         result,
         executorStatus: spec?.executorStatus,
+        reconnectUrl: connected ? undefined : '/connectors',
         setupUrl: statusCode === 200 ? undefined : '/connectors',
       });
     } finally {
       client.release();
     }
   } catch (err: any) {
-    if (err.message === 'Unauthorized') {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
+    const __scopedAuth = scopedAuthErrorResponse(err);
+    if (__scopedAuth) return __scopedAuth;
     console.error('Integration Test Error:', err);
-    return NextResponse.json({ message: err.message }, { status: 500 });
+    return NextResponse.json({ message: publicErrorMessage(err) }, { status: 500 });
   }
 }

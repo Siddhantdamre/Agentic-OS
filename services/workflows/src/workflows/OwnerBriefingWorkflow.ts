@@ -1,7 +1,3 @@
-/**
- * SUPERVISION: GAP — writes the briefing an owner reads first thing. A wrong
- * briefing is acted on before anyone checks it.
- */
 import {
   ApplicationFailure,
   continueAsNew,

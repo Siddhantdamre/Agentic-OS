@@ -1,312 +1,93 @@
 # LiteLLM Proxy Config — DareX model router
-# Routes the atomic-agent through LiteLLM using DeepSeek via OpenRouter:
-#   1) deepseek/deepseek-v4-flash-0731              (primary model via OpenRouter)
-#   2) deepseek/deepseek-v4-flash-0731              (fallback model via OpenRouter)
-# The atomic-agent always calls model "atomic-agent"; LiteLLM owns failover.
+# Routes the default DareX chat model through LiteLLM using Gemini Flash Lite
+# with Groq (gpt-oss-120b / gpt-oss-20b) as reliable fallbacks.
+# Plain chat-completion callers (classify/plan/critic) use model "darex-default";
+# LiteLLM owns failover. The agent tool loop itself runs in TrueForge.
 # File: infra/litellm/config.yaml
 
 model_list:
-  # OUTPUT CEILING — RESERVED BUDGET IS CHARGED BEFORE IT IS SPENT.
-  #
-  # The vendored agent asks for max_tokens 8192 on every call. OpenRouter checks
-  # affordability against the RESERVED amount, not the amount actually used, and
-  # refused outright:
-  #
-  #   "This request requires more credits, or fewer max_tokens. You requested up
-  #    to 8192 tokens, but can only afford 4445."
-  #
-  # So a turn that would have produced a two-sentence reply was rejected for a
-  # budget it was never going to spend, and the chain fell through to the free
-  # tier and then to Groq, both of which were also out. The visible symptom was
-  # "Sorry - I'm having trouble getting to that right now."
-  #
-  # 2048 is above every explicit maxTokens in this codebase - the largest is
-  # 1400, for a research report - and far above a customer reply, which is two
-  # or three sentences by policy. Nothing legitimate is truncated by it, and
-  # requests stop being rejected for headroom they do not need.
-  - model_name: atomic-agent
+  - model_name: darex-default
     litellm_params:
-      model: openrouter/deepseek/deepseek-chat
-      max_tokens: 2048
-      api_key: os.environ/OPENROUTER_API_KEY
+      model: gemini/gemini-2.5-flash-lite
+      api_key: os.environ/GEMINI_API_KEY
     model_info:
       mode: chat
 
-  # Tier 2 — PAID, a different vendor from tier 1.
-  #
-  # Both fallbacks were :free models until reliability run 17, which failed on
-  # "Rate limit exceeded: free-models-per-day-high-balance". OpenRouter caps
-  # free models per DAY regardless of account balance, so under sustained load
-  # the failover chain was the first thing to break — the exact opposite of
-  # what a failover chain is for. A fallback that runs out is not a fallback.
-  #
-  # ~$0.15 per 1M prompt tokens: fractions of a cent per agent turn, and it
-  # only runs at all once tier 1 has already failed.
-  - model_name: atomic-agent-fallback
+  - model_name: darex-default
     litellm_params:
-      model: openrouter/openai/gpt-4o-mini
-      max_tokens: 2048
-      api_key: os.environ/OPENROUTER_API_KEY
+      model: gemini/gemini-flash-lite-latest
+      api_key: os.environ/GEMINI_API_KEY
     model_info:
       mode: chat
 
-  # Tier 3 — FREE, deliberately. The zero-cost floor.
-  #
-  # Making all three tiers paid was a mistake and the logs showed it within one
-  # run: the balance hit zero and EVERY tier returned 402 at once, so 11 of 12
-  # cases got no reply. Free models have a daily cap (which is what broke run
-  # 17 before), but a capped tier still answers when the balance is empty, and
-  # an empty balance is the more likely failure — it arrives without warning
-  # and takes the paid tiers down together.
-  #
-  # So the chain now degrades along two independent axes:
-  #   tiers 1-2  paid, different vendors  → survive a provider outage
-  #   tier 3     free                     → survives an empty wallet
-  # Nothing here can be exhausted by the same event.
-  - model_name: atomic-agent-deepseek
+  - model_name: darex-default-fallback
     litellm_params:
-      # Verified present in the live OpenRouter catalogue and listed as
-      # supporting tool calling, which the agent loop requires. The obvious
-      # guess — llama-3.3-70b-instruct:free — does not exist; a model id that
-      # is merely plausible fails silently at the moment failover is needed.
-      model: openrouter/nvidia/nemotron-3-ultra-550b-a55b:free
-      api_key: os.environ/OPENROUTER_API_KEY
-    model_info:
-      mode: chat
-
-  # ── SECOND PAYMENT RAIL ───────────────────────────────────────────────────
-  #
-  # Tiers 1-3 above all bill the same OpenRouter account. When that balance hit
-  # zero, all three returned 402 within the same second and 11 of 12 test cases
-  # got no reply. Three models on one exhausted account is one point of
-  # failure wearing a disguise.
-  #
-  # These two tiers use DIRECT provider keys with their own separate balances,
-  # so an empty OpenRouter wallet cannot touch them. Both are OPTIONAL: if the
-  # key is absent the call fails immediately and the router moves to the next
-  # tier, which is exactly what a fallback chain is for. Nothing breaks by
-  # leaving them unset — you simply have one rail instead of two.
-  #
-  # To enable, add either (or both) to infra/.env:
-  #   DEEPSEEK_API_KEY=...   from platform.deepseek.com
-  #   GROQ_API_KEY=...       from console.groq.com  (has a real free tier)
-  # TIER 4 REMOVED — a second payment rail that had no money in it.
-  #
-  # `deepseek/deepseek-chat` on the DIRECT DeepSeek API (not via OpenRouter).
-  # The key is valid and the account balance is zero, so every call reaching
-  # this tier returned "Insufficient Balance" after two retries and a cooldown.
-  # Measured in one 25-minute window: 84 DeepseekException failures, all of
-  # them this tier, and one agent turn pushed past its 180-second ceiling by
-  # the accumulated retry tax. Reliability stopped on it.
-  #
-  # A tier with no balance is worse than no tier. It costs latency on every
-  # call that reaches it, it makes the chain look four deep when it is three,
-  # and the failure it produces looks like a provider outage rather than an
-  # unpaid invoice.
-  #
-  # To restore it: fund the account at platform.deepseek.com, then re-add
-  #
-  #   - model_name: atomic-agent-direct
-  #     litellm_params:
-  #       model: deepseek/deepseek-chat
-  #       api_key: os.environ/DEEPSEEK_API_KEY
-  #     model_info:
-  #       mode: chat
-  #
-  # and put it back in the `fallbacks` chain below. DEEPSEEK_API_KEY is still
-  # passed to the container, so only these lines are needed.
-
-  # TIER 5 — KEPT, ON EVIDENCE, after a request to remove tiers 4 and 5.
-  #
-  # Tier 4 was removed and deserved it: the DeepSeek direct account held no
-  # balance, so every call that reached it bought a retry and a cooldown and
-  # nothing else. The request assumed tier 5 was the same kind of padding.
-  # It measurably is not. Every remaining tier was called directly with
-  # `17 * 4`, 300 max_tokens, and asked for the number alone:
-  #
-  #   atomic-agent           10s   "68"
-  #   atomic-agent-fallback   6s   "68"
-  #   atomic-agent-deepseek   2s   "68"
-  #   atomic-agent-groq       1s   "68"   <- this tier, the FASTEST of the four
-  #
-  # A first pass with max_tokens=16 showed groq and fallback returning empty
-  # content and looked like evidence they were broken. They were not: both are
-  # reasoning models, and 16 tokens is consumed before any visible content is
-  # emitted. Worth remembering before condemning a tier on a short probe.
-  #
-  # So this is a working, sub-second, zero-cost floor. Deleting it would cost
-  # availability and buy nothing. To remove it anyway, delete this block and
-  # every `- atomic-agent-groq` line in `fallbacks` below.
-  - model_name: atomic-agent-groq
-    litellm_params:
-      # Verified against the live /models list for this account, with a tool
-      # call in the request. `llama-3.3-70b-versatile` was configured here and
-      # Groq answers "does not exist or you do not have access to it" — the
-      # model was retired. A tier naming a dead model is worse than no tier: it
-      # 401/404s after retries and cooldowns on every call that reaches it, and
-      # this one is LAST in the chain, so its failure is the chain's failure.
       model: groq/openai/gpt-oss-120b
       api_key: os.environ/GROQ_API_KEY
     model_info:
       mode: chat
 
-  # EMBEDDING_MODEL (worker/embed activity) must name a model_name defined
-  # here — the docker-compose default of "text-embedding-3-small" has no
-  # OpenAI key in this deployment, so route it to Gemini's embedding model
-  # instead via the same name the workers already expect.
+  - model_name: darex-default-fallback
+    litellm_params:
+      model: groq/openai/gpt-oss-20b
+      api_key: os.environ/GROQ_API_KEY
+    model_info:
+      mode: chat
+
+  # ---- Quality tiers (used only when DAREX_TIER_ROUTING=1; see services/workflows/src/model-tier.ts) ----------
+  # standard: everyday analysis. deep: money, promises, complaints, legal. Each alias lists providers in order;
+  # an alias whose key is not set simply fails over to the next one and finally to darex-default.
+  - model_name: darex-standard
+    litellm_params:
+      model: anthropic/claude-sonnet-5-5
+      api_key: os.environ/ANTHROPIC_API_KEY
+    model_info:
+      mode: chat
+  - model_name: darex-standard
+    litellm_params:
+      model: openai/gpt-5-mini
+      api_key: os.environ/OPENAI_API_KEY
+    model_info:
+      mode: chat
+  - model_name: darex-deep
+    litellm_params:
+      model: anthropic/claude-opus-5-5
+      api_key: os.environ/ANTHROPIC_API_KEY
+    model_info:
+      mode: chat
+  - model_name: darex-deep
+    litellm_params:
+      model: openai/gpt-5
+      api_key: os.environ/OPENAI_API_KEY
+    model_info:
+      mode: chat
+
   - model_name: text-embedding-3-small
     litellm_params:
-      model: gemini/gemini-embedding-001
-      api_key: os.environ/GEMINI_API_KEY
-      # PINNED, and it must stay pinned.
-      #
-      # gemini-embedding-001 returns 3072 dimensions by default. The
-      # org_memory.embedding column is vector(1536), and retrieve.ts discards
-      # any vector whose length is not EMBEDDING_DIM (1536) -- silently,
-      # returning null. So without this line the key is present, every call
-      # succeeds, every vector is thrown away, and semantic search stays off
-      # with nothing anywhere reporting a problem.
-      #
-      # 1536 is also pgvector-index-friendly: ivfflat and hnsw cap at 2000
-      # dimensions, so widening the column to 3072 would cost the index.
-      dimensions: 1536
+      model: openrouter/openai/text-embedding-3-small
+      api_key: os.environ/OPENROUTER_API_KEY
     model_info:
       mode: embedding
 
 litellm_settings:
   default_team_id: darex-default
+  # Cost accounting (RT-G01): every proxied call lands in Langfuse, which is
+  # what the llm_tokens meter reads (billing/_lib.ts, userId = orgId).
+  # Callers pass `user: <orgId>` and `metadata.trace_user_id`; keys and host
+  # come from LANGFUSE_PUBLIC_KEY / LANGFUSE_SECRET_KEY / LANGFUSE_HOST.
   success_callback: ["langfuse"]
   failure_callback: ["langfuse"]
-  langfuse_host: http://darex-langfuse-server:3000
 
 router_settings:
   enable_pre_call_checks: false
   request_timeout: 60
-  # Ordered so that consecutive tiers never share a failure mode:
-  #   1 openrouter paid   — normal traffic
-  #   2 openrouter paid   — different vendor, survives a provider outage
-  #   3 openrouter free   — survives an empty OpenRouter balance (daily cap)
-  #   4 deepseek direct   — SEPARATE account, survives OpenRouter entirely
-  #   5 groq direct       — separate again, real free tier, survives no-payment
-  # Tiers 4 and 5 are skipped instantly when their keys are unset.
-  #
-  # EVERY ENTRY POINT NEEDS A CHAIN, NOT JUST THE FRONT DOOR.
-  #
-  # This listed fallbacks for `atomic-agent` alone, on the assumption stated at
-  # the top of this file — "the atomic-agent always calls model atomic-agent".
-  # That assumption is false. The per-tenant budget gate pins an over-budget
-  # workspace straight to a zero-cost tier via modelOverride, so the request
-  # arrives as `atomic-agent-deepseek` and never passes the front door.
-  #
-  # Found on the first real shift run. Nvidia returned "Service temporarily
-  # overloaded", LiteLLM logged `No fallback model group found for original
-  # model_group=atomic-agent-deepseek`, and four of six agents executed their
-  # tools correctly — metrics_query, database_query, intercom_fetch — then
-  # returned an EMPTY reply. The work happened and the report vanished.
-  #
-  # The budget intent must survive the fix: a workspace pinned to a free tier
-  # because it is over budget must not fail over onto a paid one. So the
-  # zero-cost floor falls through to the OTHER zero-cost tier — different
-  # provider, separate balance — and stops there.
-  #
-  # GROQ CANNOT SERVE AN AGENT TURN, SO IT STAYS AT THE BOTTOM.
-  #
-  # This chain is four deep and one provider wide - tiers 1, 2 and 3 all route
-  # through OpenRouter - so a single upstream problem takes out three of the
-  # four. Measured:
-  #
-  #   OpenrouterException - Upstream error from Nvidia: Service temporarily
-  #   overloaded, {'error_type': 'provider_unavailable'}
-  #   Received Model Group=atomic-agent-deepseek
-  #
-  # The obvious fix is to put Groq directly under tier 1: same model
-  # (openai/gpt-oss-120b, served direct instead of through OpenRouter), 1s
-  # against tier 1's 10s, zero cost, different company. That was tried, and it
-  # does not work, for a reason no plain-chat probe can see:
-  #
-  #   GroqException - {'tools' : maximum number of items is 128}
-  #
-  # Groq caps a request at 128 tools. The MCP bridge advertises 95 mcp.darex
-  # tools and the agent adds its own on top, so every AGENT turn is over the
-  # line while every plain chat call sails through. Promoting Groq would put a
-  # guaranteed 400 in front of the tiers that actually work - the same "costs a
-  # round trip and buys nothing" property that got tier 4 deleted.
-  #
-  # So Groq stays last, where it is a real floor for the non-tool calls the
-  # product makes (critic, reviser, writeback, briefs) and never intercepts a
-  # tool-calling turn.
-  #
-  # THE REAL FIX IS UPSTREAM OF THE ROUTER: advertise only the tools the turn is
-  # allowed to use. The allowlist already exists and is already enforced at
-  # execution; the bridge just does not use it to filter what it advertises. An
-  # employee typically holds a handful of tools, not 95. That would cut prompt
-  # tokens, improve tool selection, and drop under Groq's limit as a side
-  # effect - at which point this ordering should be revisited.
-  #
-  # UPDATE - GROQ IS FIRST NOW, BECAUSE THE REASON IT COULD NOT BE IS FIXED.
-  #
-  # The note above says Groq cannot serve an agent turn because 95 advertised
-  # tools plus the agent's built-ins clear its cap of 128. That was true. The
-  # bridge now hides tools for connectors this deployment has never configured
-  # (MCP_DISABLED_MODULES), advertising 50 of 95, and the error is gone:
-  #
-  #   before   25 x "'tools' : maximum number of items is 128"
-  #   after     0
-  #
-  # So the cross-provider argument stands on its own again, and it is now the
-  # only argument that matters: BOTH OpenRouter keys are out of funds. Key one
-  # hit its 2 dollar cap; key two has an empty account balance and falls back to
-  # free models whose daily quota is also spent -
-  #
-  #   429 "Rate limit exceeded: free-models-per-day. Add 10 credits to unlock"
-  #   402 "This request requires more credits"
-  #
-  # Leaving Groq last meant every turn walked three dead OpenRouter tiers, with
-  # two retries each, before reaching the one provider that could answer - and
-  # spent its time budget getting there. Measured: 70.8s, then the service
-  # fallback.
-  #
-  # The OpenRouter tiers stay beneath it rather than being deleted: they are
-  # one payment away from working, and if Groq is the side that is down the
-  # chain still has somewhere to go.
-  # FINAL ANSWER ON THE ORDER, WITH THE NUMBER THAT SETTLES IT.
-  #
-  # Groq was promoted once the tool cap was fixed, and that was still wrong -
-  # for a different limit that only shows up once you get past the first:
-  #
-  #   Request too large for `openai/gpt-oss-120b`, service tier `on_demand`
-  #   tokens per minute (TPM): Limit 8000, Requested 24256
-  #
-  # Groq's free tier allows 8,000 tokens per minute. An agent turn here is
-  # 24,000-26,000: system prompt, retrieved memory, conversation, and the tool
-  # schemas. Three times over, and trimming cannot close it - removing EVERY
-  # tool still leaves more than 8,000. The free tier cannot run this agent at
-  # all, so Groq goes back to last, where it serves the small non-tool calls
-  # and never intercepts a turn.
-  #
-  # This is the honest state of the whole chain, all four measured:
-  #
-  #   atomic-agent / fallback / deepseek   OpenRouter, both keys out of funds
-  #                                        (2 dollar cap hit; second account
-  #                                        empty, free-model daily quota spent)
-  #   groq                                 8,000 TPM against a 24,000 request
-  #
-  # No ordering fixes an empty account. Roughly 10 dollars of OpenRouter credit
-  # restores tiers 1-3 immediately and unlocks 1000 free requests a day; Groq's
-  # Dev tier raises the TPM if it is ever wanted as a real tier rather than a
-  # floor. The code is not the thing that is missing.
   fallbacks:
-    - atomic-agent:
-        - atomic-agent-fallback
-        - atomic-agent-deepseek
-        - atomic-agent-groq
-    # Zero-cost floor → zero-cost floor. Never onto a paid tier: that would bill
-    # exactly the workspace the budget gate was protecting the account from.
-    - atomic-agent-deepseek:
-        - atomic-agent-groq
-    # Paid tier 2 keeps the rest of the chain beneath it.
-    - atomic-agent-fallback:
-        - atomic-agent-groq
+    - darex-default:
+        - darex-default-fallback
+    - darex-standard:
+        - darex-default
+    - darex-deep:
+        - darex-standard
   retry_policy:
     timeout: 0
     RateLimitError: 2

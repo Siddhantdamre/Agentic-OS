@@ -1,0 +1,30 @@
+{
+  "promptVersion": "obligation-extractor.v1",
+  "classifierVersion": "obligation-classifier.v1",
+  "cases": [
+    {
+      "id": "us-explicit-friday",
+      "message": "I'll send the revised quote by Friday.",
+      "sender": "us",
+      "expected": { "hasCommitment": true, "keyword": true, "count": 1, "obligor": "us", "dueText": "by Friday" }
+    },
+    {
+      "id": "none-greeting",
+      "message": "Hi, just checking in.",
+      "sender": "us",
+      "expected": { "hasCommitment": false, "keyword": false, "count": 0 }
+    },
+    {
+      "id": "signature-ill",
+      "message": "Best regards,\nI'll be in the office Monday.\nAda",
+      "sender": "them",
+      "expected": { "hasCommitment": true, "keyword": true, "count": 0, "note": "keyword fires; extractor must drop signature-only" }
+    },
+    {
+      "id": "indirect-no-keyword",
+      "message": "The samples are going out this afternoon.",
+      "sender": "us",
+      "expected": { "hasCommitment": true, "keyword": false, "count": 1, "note": "keyword miss; classifier must catch" }
+    }
+  ]
+}

@@ -1,0 +1,188 @@
+# Production server notes
+
+Facts about the one server Darex is deployed to, so deploy and tuning work starts
+from what is actually there. Update this file when the server changes. Facts marked
+"to check" were not confirmed. No secrets here (they live in the server's `.env`).
+
+Last reviewed: 2026-10-01 (size and disk changed that day, see History).
+
+## The machine
+
+| | |
+|---|---|
+| Provider | Azure VM `Darexai-vm`, subscription "Azure subscription 1", resource group `Darexai`, Central India, availability zone 2 |
+| OS | Ubuntu 24.04 LTS (Canonical `ubuntu-24_04-lts` server image), VM generation 2, x64, Azure agent 2.16.0.2 |
+| Security | Trusted launch: secure boot and vTPM on, integrity monitoring off |
+| Size | `Standard_E2as_v5`: 2 vCPU (AMD, 2 threads per core), **16 GiB RAM** (since 2026-10-01) |
+| Pricing | **Azure Spot**, eviction policy Deallocate (see risks). About $9.65 per month Spot, about $52 regular (Azure retail prices, compute only) |
+| Disk | One OS disk `Darexai-vm_OsDisk_1_...`, 61 GB until 2026-10-01 (resize to 128 GiB in progress: to check with `df -h /`), no data disk, 6 GB swap |
+| Network | Public IP `135.235.136.6` (unchanged by the resize), DNS `xai.centralindia.cloudapp.azure.com`, private `10.0.0.4`, VNet `Darexai-vm-vnet/default`, NIC `darexai-vm426_z2` |
+| Login | SSH (`AADSSHLoginForLinux` extension installed), Tailscale also runs |
+| Not set | Auto-shutdown, health monitoring, hibernation |
+| Created | Portal shows 10/5/2026 22:19 UTC (date order unclear) |
+
+Sizes seen on this VM, so nobody repeats the mix-up: it started as `D2as_v5`
+with **constrained vCPUs ("1 of 2")**, which is why `nproc` said 1 although the size
+has 2 vCPU. It was briefly resized to `D2lds_v5` by mistake (only 4 GiB RAM), then
+to `E2as_v5`. Other sizes priced for later (Central India, Spot / regular per
+month): `D2ads_v5` $9 / $49, `D4as_v5` (4 vCPU, 16 GiB) $15 / $81, `E2ads_v5` $11.
+In the portal's Size page, check the RAM column and the vCPUs column ("2 of 2", not
+"1 of 2") before pressing Resize.
+
+## What else runs on this VM
+
+Darex shares the machine with two other projects. Plan memory and ports with them
+in mind.
+
+- **mtip** (about 11 containers, `~/mining-website`): includes `mtip-caddy`, which
+  owns ports 80 and 443. It is the public entry point.
+- **trueforge** (2 containers plus systemd services `trueforge`,
+  `trueforge-controller`, `trueforge-google-mcp`): the MCP service listens on 8085,
+  the harness on 8791.
+- **cognee** (systemd, port 8000), **openclaw-gateway** (user service, 18789),
+  **tailscaled**, **dockerd**.
+- The old host-process dashboard (`darex-dashboard.service`) is disabled. Docker
+  runs the dashboard now.
+
+Idle floor with all containers stopped and those services off: about 750 MB RAM.
+
+## Where Darex lives
+
+- Repo: `~/Agentic-Os-SaaS`. Deploy from `main`.
+- Deploy: `./deploy/deploy.sh --no-setup` (first run on a new box: `./deploy/deploy.sh`).
+  Routine code push: `./deploy/redeploy.sh`. Both run in the background and stream their
+  log, so closing the terminal or losing SSH does not stop them; reattach with `--logs`
+  (state in `~/.local/state/darex-deploy/`). Status: `--status`. Stop: `--down`.
+- Public URL comes from `NEXT_PUBLIC_APP_URL` in the server `.env`
+  (`darex.135-235-136-6.sslip.io`, which has the IP in its name).
+- HTTPS: `mtip-caddy` (another project's container) holds 80 and 443, so `deploy.sh` does not
+  install Caddy. That Caddy is a container, so `127.0.0.1:13100` on the host is not reachable
+  from it (loopback inside the container is its own). Attach it to Darex's Docker network and
+  proxy by container name:
+
+  ```bash
+  NET=$(docker network ls --format '{{.Name}}' | grep -E 'darex-net$')
+  docker network connect "$NET" mtip-caddy
+  # add to mtip-caddy's Caddyfile (path: docker inspect mtip-caddy, Mounts), then reload:
+  #   darex.135-235-136-6.sslip.io {
+  #       encode gzip
+  #       reverse_proxy darex-frontend:3100
+  #   }
+  docker exec mtip-caddy caddy reload --config /etc/caddy/Caddyfile
+  ```
+
+  `docker network connect` is lost when `mtip-caddy` is recreated; re-run it, or add `darex-net`
+  as an external network in that stack's compose file.
+- Backups taken before the 2026-10-01 wipe: `~/darex-db-backup.sql.gz` (Postgres
+  dump) and `~/darex-repo-backup.bundle` (all branches; `feat/close-109-plan-gaps`
+  had 30 commits that existed only on the server).
+
+## Builds happen on GitHub, not here
+
+`next build` took 13+ minutes on this shared 2 vCPU box (load average 27). So CI
+(`.github/workflows/images.yml`) builds `dashboard`, `worker`, `inbox` and `sandbox` on GitHub's
+runners on every push to `main` and pushes them to GHCR as `ghcr.io/<owner>/darex-<service>:<commit sha>`.
+`redeploy.sh` pulls the image for the commit it deploys (when HEAD is exactly `origin/main`) and tags
+it as the local image name, so a deploy is a pull plus a restart. If CI is still running it waits up
+to `DEPLOY_WAIT_IMAGES_MIN` (default 12) minutes. If anything fails (no login, no image, a pull error,
+HEAD not on `origin/main`) it builds locally exactly as before, so it can only save time.
+`mcp-bridge` (one `FROM darex-dashboard:local` line) and `frontend` (its own repo) still build here.
+
+One-time setup on the server: create a GitHub token with only `read:packages`, then
+
+```bash
+echo "<token>" | docker login ghcr.io -u <github-username> --password-stdin
+```
+
+`DEPLOY_PREBUILT=0` forces local builds; `DEPLOY_REGISTRY=ghcr.io/<owner>` overrides the registry
+path (it is derived from the git origin otherwise). The first image push makes the packages private
+under the org; if a pull says "denied", check the package's access in GitHub (Packages, the package,
+Package settings) and the token's scope.
+
+## Local-only images and sibling checkouts
+
+The compose file builds two services from checkouts next to the repo, not from it:
+`cognee` from `~/cognee` and the TrueForge image (`truefoundry-server:latest`) from
+`~/trueforge` (`Dockerfile.dev`, with `infra/patches/trueforge/darex-tenant-headers.patch`
+applied). `deploy.sh` builds the TrueForge image when it is missing and stops with a message
+if the checkout is not there. Never run `docker image prune -a` on this VM: that image has no
+registry copy and is deleted as soon as no container uses it. Use `docker image prune -f`.
+
+## Ports
+
+Every host port is set in one file, `deploy/ports.conf` (loaded by `deploy.sh`, `redeploy.sh`
+and `compose-cmd.sh`; read by `deploy/docker-compose.prod.yml` with `ports: !override`). Darex
+binds loopback only. Change a port by editing that file; a per-machine `.env` value still
+overrides it, and the guard below still applies to the result.
+
+This VM is shared. Who owns which ports:
+
+| Project | Ports | Notes |
+|---|---|---|
+| Darex | **10000-19999** | everything in `ports.conf`; loopback only |
+| mtip (mining) | 80, 443, 47020-47544 | `mtip-caddy` holds 80/443; 47033 and 47112 are public |
+| WA-AKG (pm2) | 3030, 3306 | 3030 listens on all interfaces; 3306 is local |
+| TrueForge | 8085, 8791 | host services |
+| openclaw-gateway | 18789 | inside Darex's range, so it is reserved in `ports.conf` |
+| System | 22 ssh, 53 dns, tailscale | |
+
+**Collision guard.** `check_port_ownership` (`deploy/lib.sh`, run by both deploy scripts before
+anything is built or recreated) refuses to deploy when a port the stack will publish is outside
+10000-19999, listed in `OTHER_PROJECTS_PORTS`, used twice, or already held by anything that is not
+a `darex-*` container. It names the owner and touches nothing. `bash tests/deploy-port-guard.sh`
+tests it and runs in CI. To add a port: pick one in 10000-19999 that `ss -tlnp` shows free, add it
+to `ports.conf`, and if another project ever takes a port inside the range, add it to
+`OTHER_PROJECTS_PORTS`.
+
+Defaults: 13100 frontend, 13000 dashboard, 13003 Nango, 13004 inbox, 13002 Langfuse, 13567
+SuperTokens, 14000 LiteLLM, 15432 Postgres, 16432 PgBouncer, 16379 Redis, 17233 and 18233
+Temporal, 18790 MCP bridge, 18080 sandbox, 18085 Evolution, 18088 SearXNG, 18123/19000
+ClickHouse, 19090/19091 MinIO, 19999 Hindsight UI, 11235 Crawl4AI.
+
+If the server `.env` still sets `DASHBOARD_PORT=3000` or `EVOLUTION_PORT=8086` (leftovers from
+before the move), the guard stops the deploy; delete those lines so `ports.conf` decides.
+
+## Risks and tuning, most important first
+
+1. **Spot eviction.** Azure can take the VM back at any time (about 30 s notice) and
+   leaves it stopped. A live site and mtip go down until someone starts it. Move to a
+   regular VM before real customers: snapshot the OS disk, create a regular VM from
+   it, keep the public IP.
+2. **Public ports.** The NSG was not reviewed (to check). Nothing except 80, 443 and
+   SSH should be open. Before 2026-10-01 Postgres (5432), the old dashboard (3000),
+   Cognee (8000), Evolution (8085) and TrueForge (8791) listened on all interfaces.
+3. **RAM.** 16 GiB now. Darex (about 17 services) plus mtip plus trueforge should
+   fit. `deploy.sh` still skips the Langfuse stack (about 1.5 to 2.5 GB real use) on
+   hosts under 12 GB RAM; at 16 GiB it starts it by itself (`LITE=1` skips it).
+   Keep trueforge, cognee and openclaw off during builds anyway.
+4. **CPU.** 2 vCPU after the 2026-10-01 resize (to check: `nproc --all` should print
+   2). Next.js builds are slow; `deploy.sh` triples its health waits at 2 CPUs or
+   fewer (dashboard about 9 min); if one still times out, rerun with `--no-build`.
+   `D4as_v5` (4 vCPU, 16 GiB, about $15 Spot) is the next step up.
+5. **Disk.** The first full build ran out of space (`no space left on device`)
+   with about 18 GB free: Docker uses the containerd image store, which keeps layers
+   twice, and `compose up --build` built 7 images at once. `deploy.sh` now builds one
+   at a time. Was 81% full before cleanup (72% after). Docker build cache and
+   images grow fast. The prod overlay now caps container logs at 10 MB x 3 and runs
+   `init: true`; `deploy.sh` prunes build cache older than 7 days before a build.
+   After the first full deploy `/` was at 62.7% of 122.94 GB (about 77 GB; breakdown
+   not measured: run `docker system df` and `sudo du -xh /var/lib/docker
+   /var/lib/containerd --max-depth=1 | sort -h | tail`). `deploy.sh` now skips builds
+   already done for the same commits, removes dangling images after a good deploy and
+   caps the build cache at 8 GB. Do not run `docker builder prune -af` before a deploy:
+   it discards the cache and forces every dependency install to run again.
+   Still open: a log cap for the mtip and trueforge projects.
+6. **Domain.** The `sslip.io` name breaks if the public IP changes. The Azure DNS
+   name above does not. Switching means a new `NEXT_PUBLIC_APP_URL`, a frontend
+   rebuild and new OAuth redirect URIs.
+7. **Updates.** About 4 OS updates were pending after the 2026-10-01 reboot.
+
+## History
+
+- 2026-10-01 (later): VM resized to `E2as_v5` (2 vCPU, 16 GiB) after the vCPU
+  constraint and a wrong-row resize to `D2lds_v5` were found; OS disk growth to
+  128 GiB started (VM deallocated for it). Not confirmed yet: `nproc --all`,
+  `free -h` and `df -h /` after the restart.
+- 2026-10-01: disk cleanup, old Darex stack and its volumes wiped on purpose (old
+  code), old host services disabled, `deploy.sh` and the prod overlay fixed (see
+  `BUILD_STATE.md`). First clean deploy pending.

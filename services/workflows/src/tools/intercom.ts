@@ -1,6 +1,6 @@
 import type { ToolRisk } from './risk.js';
 import type { ToolActionContext, ToolModule } from './shared.js';
-import { apiError, confirmFromRisk, fetchWithTimeout, getNangoAccessToken, notConnected } from './shared.js';
+import { apiError, confirmFromRisk, fetchWithTimeout, nangoAuthError, notConnected, resolveNangoAuth } from './shared.js';
 
 const ACTIONS = ['fetch_conversations', 'reply_conversation', 'create_conversation'] as const;
 
@@ -13,8 +13,11 @@ function riskFor(action: string): ToolRisk {
 async function execute(ctx: ToolActionContext) {
   const { actionName, payload, orgId, timestamp } = ctx;
   const intercomConnId = `${orgId}_intercom`;
-  const intercomToken = await getNangoAccessToken(intercomConnId, 'intercom');
-  if (!intercomToken) return notConnected('intercom', actionName, timestamp);
+  const _intercomAuth = await resolveNangoAuth(intercomConnId, 'intercom');
+  const intercomToken = _intercomAuth.kind === 'connected' ? _intercomAuth.accessToken : null;
+  // Distinguishes revoked/expired (re-authorize) from never-connected.
+  const _intercomAuthErr = _intercomAuth.kind === 'connected' ? null : nangoAuthError('intercom', actionName, timestamp, _intercomAuth);
+  if (!intercomToken) return _intercomAuthErr ?? notConnected('intercom', actionName, timestamp);
   const intercomHeaders = {
     Authorization: `Bearer ${intercomToken}`,
     Accept: 'application/json',

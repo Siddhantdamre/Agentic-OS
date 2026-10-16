@@ -20,29 +20,35 @@ export default function InviteAcceptPage() {
   useEffect(() => {
     let cancelled = false;
     async function load() {
-      const [inviteRes, sessionRes] = await Promise.all([
-        fetch(`/api/auth/invite/${token}`),
-        fetch('/api/auth/session'),
-      ]);
-      if (cancelled) return;
-      const session = await sessionRes.json().catch(() => ({ authenticated: false }));
-      setAuthenticated(!!session.authenticated);
-      if (!inviteRes.ok) {
-        const err = await inviteRes.json().catch(() => ({ error: 'Invite not found' }));
-        setMessage(err.error || 'Invite not found');
-        if (inviteRes.status === 410 || err.expired) {
-          setStatus('expired');
-        } else if (inviteRes.status === 409) {
-          setStatus('accepted');
-        } else {
-          setStatus('error');
+      try {
+        const [inviteRes, sessionRes] = await Promise.all([
+          fetch(`/api/auth/invite/${token}`),
+          fetch('/api/auth/session'),
+        ]);
+        if (cancelled) return;
+        const session = await sessionRes.json().catch(() => ({ authenticated: false }));
+        setAuthenticated(!!session.authenticated);
+        if (!inviteRes.ok) {
+          const err = await inviteRes.json().catch(() => ({ error: 'Invite not found' }));
+          setMessage(err.error || 'Invite not found');
+          if (inviteRes.status === 410 || err.expired) {
+            setStatus('expired');
+          } else if (inviteRes.status === 409) {
+            setStatus('accepted');
+          } else {
+            setStatus('error');
+          }
+          return;
         }
-        return;
+        const invite = await inviteRes.json();
+        setOrgName(invite.orgName);
+        setEmail(invite.email);
+        setStatus('preview');
+      } catch {
+        if (cancelled) return;
+        setMessage('We couldn’t load this invite. Please check your connection and try again.');
+        setStatus('error');
       }
-      const invite = await inviteRes.json();
-      setOrgName(invite.orgName);
-      setEmail(invite.email);
-      setStatus('preview');
     }
     if (token) void load();
     return () => {
@@ -52,18 +58,25 @@ export default function InviteAcceptPage() {
 
   const accept = async () => {
     setStatus('accepting');
-    const res = await fetch(`/api/auth/invite/${token}`, { method: 'POST' });
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({ error: 'Could not accept invite' }));
-      setMessage(err.error || 'Could not accept invite');
-      if (res.status === 410 || err.expired) {
-        setStatus('expired');
+    setMessage('');
+    try {
+      const res = await fetch(`/api/auth/invite/${token}`, { method: 'POST' });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: 'Could not accept invite' }));
+        setMessage(err.error || 'We couldn’t add you to the team. Please try again.');
+        if (res.status === 410 || err.expired) {
+          setStatus('expired');
+          return;
+        }
+        setStatus('error');
         return;
       }
-      setStatus('error');
-      return;
+      router.push('/');
+    } catch {
+      // Back to the preview so the Accept button is there for another try.
+      setMessage('We couldn’t add you to the team. Please check your connection and try again.');
+      setStatus('preview');
     }
-    router.push('/');
   };
 
   return (
@@ -84,6 +97,7 @@ export default function InviteAcceptPage() {
       )}
       {(status === 'preview' || status === 'accepting') && (
         <>
+          {message && <p role="alert" className="text-sm text-red-300">{message}</p>}
           <p className="text-sm text-emerald-200/80">
             You were invited to join <span className="font-semibold text-emerald-50">{orgName}</span>
             {email ? ` as ${email}` : ''}.

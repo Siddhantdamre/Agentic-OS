@@ -1,6 +1,7 @@
 'use client';
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, Suspense } from 'react';
+import { useSearchParams } from 'next/navigation';
 import {
   MessageSquare,
   Mail,
@@ -20,6 +21,17 @@ import {
 } from 'lucide-react';
 import { LiveRegion, StatusBadge } from '@/components/a11y';
 import { FormattedMarkdownResponse } from '@/components/chat/FormattedMarkdownResponse';
+import { safeHttpUrl } from '@/lib/safe-url';
+import { useRealtimeStream } from '@/lib/use-realtime-stream';
+import { networkErrorMessage } from '@/lib/client-error';
+import { contactDetail, contactLabel } from '@/lib/contact-label';
+
+const INBOX_EVENTS = [
+  'needs_attention',
+  'conversation_updated',
+  'message_received',
+  'conversation_takeover_updated',
+] as const;
 
 interface Conversation {
   id: string;
@@ -38,13 +50,23 @@ interface Conversation {
   last_message: string | null;
   last_message_at: string | null;
   message_count: number;
+  ai_paused?: boolean;
+  ai_paused_until?: string | null;
+  unread_count?: number;
+  sla_deadline_at?: string | null;
+  assigned_user_id?: string | null;
 }
+
+// Matches the server default page size in GET /api/conversations/[id]/messages.
+const MESSAGE_PAGE = 200;
 
 interface Message {
   id: string;
-  role: 'user' | 'assistant' | 'human_agent';
+  role: 'user' | 'assistant' | 'human_agent' | 'customer';
   content: string;
   created_at: string;
+  is_internal?: boolean;
+  attachments?: Array<{ type: string; url: string; name?: string }>;
 }
 
 interface AIEmployee {
@@ -53,31 +75,24 @@ interface AIEmployee {
   role: string;
 }
 
-export default function ConversationsPage() {
+function ConversationsPageInner() {
+  const searchParams = useSearchParams();
+  const deepLinkId = searchParams?.get('id') || null;
   const [conversations, setConversations] = useState<Conversation[]>([]);
-  const [selectedConvId, setSelectedConvId] = useState<string | null>(null);
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [selectedConvId, setSelectedConvId] = useState<string | null>(deepLinkId);
   const [messages, setMessages] = useState<Message[]>([]);
   const [loading, setLoading] = useState(true);
+  const [listError, setListError] = useState<string | null>(null);
   const [messagesLoading, setMessagesLoading] = useState(false);
+  const [olderMessages, setOlderMessages] = useState<Message[]>([]);
+  const [hasOlder, setHasOlder] = useState(false);
+  const [loadingOlder, setLoadingOlder] = useState(false);
   const [replyContent, setReplyContent] = useState('');
   const [sendingReply, setSendingReply] = useState(false);
   const [replyAsCustomer, setReplyAsCustomer] = useState(false);
-
-  // The AI draft this reply is CORRECTING, if any.
-  //
-  // This is the learning loop, and it was disconnected. Migration 026 and
-  // POST /api/conversations/{id}/reply were both in place, but every operator
-  // reply went to /messages instead — so record_reply_edit was never called
-  // and reply_edits stayed empty forever. The most valuable signal the product
-  // can collect, a domain expert saying "not that, THIS" about a real customer
-  // in their own words, was being discarded by one URL.
-  //
-  // Non-null means the operator pressed "Improve this reply" and is editing
-  // the agent's own words. Only then is there a (question, draft, correction)
-  // triple worth learning from: a reply typed from scratch has no draft to
-  // compare against and teaches nothing.
-  const [correctingDraft, setCorrectingDraft] = useState<string | null>(null);
-  const [learningNote, setLearningNote] = useState<string | null>(null);
+  const [isInternalNote, setIsInternalNote] = useState(false);
 
   // New Chat Modal
   const [isNewChatOpen, setIsNewChatOpen] = useState(false);
@@ -86,6 +101,8 @@ export default function ConversationsPage() {
   const [newChatEmployeeId, setNewChatEmployeeId] = useState('');
   const [newChatInitialMessage, setNewChatInitialMessage] = useState('');
   const [creatingChat, setCreatingChat] = useState(false);
+  const [newChatError, setNewChatError] = useState<string | null>(null);
+  const [statusError, setStatusError] = useState<string | null>(null);
   const [employees, setEmployees] = useState<AIEmployee[]>([]);
 
   // Filters
@@ -97,6 +114,8 @@ export default function ConversationsPage() {
   const [assigneeId, setAssigneeId] = useState<string>('all');
   const [workItemConvIds, setWorkItemConvIds] = useState<Set<string> | null>(null);
   const [mobilePane, setMobilePane] = useState<'list' | 'thread'>('list');
+  // The filter column is a drawer below 1536 px, so the conversation keeps room to be read.
+  const [filtersOpen, setFiltersOpen] = useState(false);
 
   // Stats
   const [stats, setStats] = useState({
@@ -115,80 +134,102 @@ export default function ConversationsPage() {
   const [notifVisible, setNotifVisible] = useState(false);
   const notifTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  useEffect(() => {
-    const es = new EventSource('/api/stream/events');
-    const onInboxEvent = (e: MessageEvent) => {
-      try {
-        const payload = JSON.parse(e.data);
-        const conversationId = payload.conversationId as string | undefined;
-        if (conversationId) {
-          if (e.type === 'needs_attention') {
-            setSelectedConvId(conversationId);
-          }
-          fetchConversations();
-          if (conversationId === selectedConvIdRef.current) {
-            void fetchMessages(conversationId);
-          }
-        }
-        if (e.type === 'needs_attention') {
-          const sender = payload.contactId?.toString() || 'Customer';
-          const preview = (payload.message?.toString() || '').slice(0, 80);
-          setNotif(`${sender}: ${preview}`);
-          setNotifVisible(true);
-          if (notifTimer.current) clearTimeout(notifTimer.current);
-          notifTimer.current = setTimeout(() => setNotifVisible(false), 6000);
-        }
-      } catch (err) {
-        console.error('Failed to parse realtime event:', err);
-      }
-    };
-    es.addEventListener('needs_attention', onInboxEvent);
-    es.addEventListener('conversation_updated', onInboxEvent);
-    es.addEventListener('message_received', onInboxEvent);
-    es.addEventListener('connected', () => {
-      console.log('[Realtime] SSE stream connected');
-    });
-    es.onerror = () => {
-      // EventSource auto-reconnects; nothing to do.
-    };
-    return () => es.close();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  // Conversations flagged by a needs_attention event while another thread
+  // was open. Shown as a badge; the operator's selection is never moved.
+  const [attentionIds, setAttentionIds] = useState<Set<string>>(() => new Set());
+  const refreshDebounce = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Fetch conversation list
-  const fetchConversations = async () => {
+  const scheduleRefresh = (conversationId?: string) => {
+    if (refreshDebounce.current) clearTimeout(refreshDebounce.current);
+    refreshDebounce.current = setTimeout(() => {
+      fetchConversations();
+      if (conversationId && conversationId === selectedConvIdRef.current) {
+        void fetchMessages(conversationId);
+      }
+    }, 500);
+  };
+
+  useEffect(
+    () => () => {
+      if (refreshDebounce.current) clearTimeout(refreshDebounce.current);
+    },
+    []
+  );
+
+  const { fallback: realtimeFallback } = useRealtimeStream({
+    events: INBOX_EVENTS,
+    onFallbackTick: () => scheduleRefresh(selectedConvIdRef.current ?? undefined),
+    onEvent: (payload) => {
+      const conversationId = payload.conversationId;
+      // Reduce tenant flood: only auto-refetch messages for the open thread.
+      if (conversationId) scheduleRefresh(conversationId);
+      if (payload.type !== 'needs_attention') return;
+      if (conversationId && conversationId !== selectedConvIdRef.current) {
+        setAttentionIds((prev) => (prev.has(conversationId) ? prev : new Set(prev).add(conversationId)));
+      }
+      const sender = payload.contactId?.toString() || 'Customer';
+      const preview = (payload.message?.toString() || '').slice(0, 80);
+      setNotif(`${sender}: ${preview}`);
+      setNotifVisible(true);
+      if (notifTimer.current) clearTimeout(notifTimer.current);
+      notifTimer.current = setTimeout(() => setNotifVisible(false), 6000);
+    },
+  });
+
+  // Fetch conversation list (cursor pagination; reset on filter change)
+  const fetchConversations = async (opts?: { cursor?: string | null; append?: boolean }) => {
     try {
-      setLoading(true);
+      if (opts?.append) setLoadingMore(true);
+      else setLoading(true);
       const queryParams = new URLSearchParams();
       if (selectedChannel !== 'all') queryParams.append('channel', selectedChannel);
       if (selectedStatus !== 'all') queryParams.append('status', selectedStatus);
       if (searchQuery) queryParams.append('search', searchQuery);
+      if (opts?.cursor) queryParams.append('cursor', opts.cursor);
 
       const res = await fetch(`/api/conversations?${queryParams.toString()}`);
+      if (!res.ok) {
+        if (!opts?.append) {
+          setListError('We couldn’t load conversations. Please try again.');
+        }
+        return;
+      }
       const data = await res.json();
+      setListError(null);
 
       if (data.conversations) {
-        setConversations(data.conversations);
-        if (data.conversations.length > 0 && !selectedConvId) {
+        setConversations((prev) =>
+          opts?.append ? [...prev, ...data.conversations] : data.conversations
+        );
+        if (!opts?.append && data.conversations.length > 0 && !selectedConvId) {
           setSelectedConvId(data.conversations[0].id);
         }
       }
-      if (data.stats) {
+      setNextCursor(typeof data.nextCursor === 'string' ? data.nextCursor : null);
+      if (data.stats && !opts?.append) {
         setStats(data.stats);
       }
     } catch (err) {
       console.error('Failed to fetch conversations:', err);
+      if (!opts?.append) {
+        setListError('Failed to load conversations');
+      }
     } finally {
       setLoading(false);
+      setLoadingMore(false);
     }
   };
 
   // Fetch employees for modal + assignee filter
   useEffect(() => {
-    fetch('/api/employees')
-      .then((res) => res.json())
-      .then((data) => setEmployees(data.employees || []))
-      .catch(console.error);
+    const ac = new AbortController();
+    fetch('/api/employees', { signal: ac.signal })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => setEmployees(data?.employees || []))
+      .catch((e) => {
+        if (e?.name !== 'AbortError') console.error('Failed to fetch employees:', e);
+      });
+    return () => ac.abort();
   }, []);
 
   useEffect(() => {
@@ -229,18 +270,45 @@ export default function ConversationsPage() {
   const fetchMessages = async (convId: string, silent = false) => {
     try {
       if (!silent) setMessagesLoading(true);
-      const res = await fetch(`/api/conversations/${convId}/messages`);
+      const res = await fetch(`/api/conversations/${convId}/messages?limit=${MESSAGE_PAGE}`);
       const data = await res.json();
       // Guard against races: only apply the result if this conversation is
       // still the one selected (an older fetch can resolve after a newer one
       // if the user switches conversations quickly).
       if (data.messages && selectedConvIdRef.current === convId) {
         setMessages(data.messages);
+        if (!silent) {
+          setOlderMessages([]);
+          setHasOlder(data.messages.length >= MESSAGE_PAGE);
+        }
       }
     } catch (err) {
       console.error('Failed to fetch messages:', err);
     } finally {
       if (!silent && selectedConvIdRef.current === convId) setMessagesLoading(false);
+    }
+  };
+
+  // Load the page of messages before the oldest one already on screen.
+  const loadOlderMessages = async () => {
+    const convId = selectedConvIdRef.current;
+    const oldest = olderMessages[0] ?? messages[0];
+    if (!convId || !oldest || loadingOlder) return;
+    setLoadingOlder(true);
+    try {
+      const res = await fetch(
+        `/api/conversations/${convId}/messages?limit=${MESSAGE_PAGE}&before=${encodeURIComponent(oldest.created_at)}`
+      );
+      const data = await res.json();
+      if (!res.ok || !Array.isArray(data.messages) || selectedConvIdRef.current !== convId) return;
+      const seen = new Set([...olderMessages, ...messages].map((m) => m.id));
+      const fresh = (data.messages as Message[]).filter((m) => !seen.has(m.id));
+      setOlderMessages((prev) => [...fresh, ...prev]);
+      setHasOlder(data.messages.length >= MESSAGE_PAGE);
+    } catch (err) {
+      console.error('Failed to load older messages:', err);
+    } finally {
+      setLoadingOlder(false);
     }
   };
 
@@ -257,9 +325,22 @@ export default function ConversationsPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedChannel, selectedStatus, searchQuery]);
 
+  // Honor ?id= deep links from Customer / Open Loops panels.
+  useEffect(() => {
+    if (!deepLinkId) return;
+    setSelectedConvId(deepLinkId);
+    setMobilePane('thread');
+  }, [deepLinkId]);
+
   useEffect(() => {
     if (selectedConvId) {
       fetchMessages(selectedConvId);
+      setAttentionIds((prev) => {
+        if (!prev.has(selectedConvId)) return prev;
+        const next = new Set(prev);
+        next.delete(selectedConvId);
+        return next;
+      });
     }
   }, [selectedConvId]);
 
@@ -274,44 +355,16 @@ export default function ConversationsPage() {
 
     try {
       setSendingReply(true);
-      setLearningNote(null);
-
-      // A correction goes through the learning endpoint; everything else keeps
-      // the existing path. Simulating a customer is a test harness, never a
-      // correction, so it must never reach record_reply_edit.
-      if (correctingDraft !== null && !replyAsCustomer) {
-        const res = await fetch(`/api/conversations/${selectedConvId}/reply`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ text: replyContent, aiDraft: correctingDraft }),
-        });
-        const data = await res.json();
-        if (res.ok && data.status === 'sent') {
-          setReplyContent('');
-          setCorrectingDraft(null);
-          // Say plainly whether anything was learned. Silence here would make
-          // "learned" and "refused for a good reason" look identical, and the
-          // refusals are the interesting ones — an edited security refusal is
-          // never learnable, by design.
-          setLearningNote(
-            data.learning?.learned
-              ? 'Sent. The agent learned this correction — it now outranks the document it corrected.'
-              : `Sent. Not learned${data.learning?.skipReason ? ` (${String(data.learning.skipReason).replace(/_/g, ' ')})` : ''}.`
-          );
-          await fetchMessages(selectedConvId);
-          fetchConversations();
-        } else {
-          setLearningNote(data.error || 'Could not send the reply.');
-        }
-        return;
-      }
-
       const targetRole = replyAsCustomer ? 'user' : 'human_agent';
 
       const res = await fetch(`/api/conversations/${selectedConvId}/messages`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ content: replyContent, role: targetRole }),
+        body: JSON.stringify({
+          content: replyContent,
+          role: targetRole,
+          isInternal: !replyAsCustomer && isInternalNote,
+        }),
       });
 
       const data = await res.json();
@@ -330,27 +383,6 @@ export default function ConversationsPage() {
     }
   };
 
-  /**
-   * Load the agent's reply into the composer so the operator EDITS it.
-   *
-   * Editing is the point. A correction is only usable as training data when
-   * there is a draft to diff against — "the agent said X, the expert sent Y,
-   * for question Z". Asking someone to retype the whole answer produces a
-   * message and teaches nothing.
-   */
-  const handleImproveReply = (draft: string) => {
-    setReplyAsCustomer(false);
-    setCorrectingDraft(draft);
-    setReplyContent(draft);
-    setLearningNote(null);
-  };
-
-  const cancelCorrection = () => {
-    setCorrectingDraft(null);
-    setReplyContent('');
-    setLearningNote(null);
-  };
-
   // Start New Test Conversation
   const handleCreateNewChat = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -358,28 +390,35 @@ export default function ConversationsPage() {
 
     try {
       setCreatingChat(true);
+      setNewChatError(null);
       const res = await fetch('/api/conversations', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          contactId: newChatContact || `Customer ${Math.floor(100 + Math.random() * 900)}`,
+          // Empty contact -> server assigns deterministic "Unnamed contact <timestamp>".
+          contactId: newChatContact.trim() || undefined,
           channelType: newChatChannel,
           employeeId: newChatEmployeeId || undefined,
           initialMessage: newChatInitialMessage,
         }),
       });
 
-      const data = await res.json();
-      if (data.success && data.conversation) {
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data.success && data.conversation) {
         setIsNewChatOpen(false);
         setNewChatContact('');
         setNewChatInitialMessage('');
+        setNewChatError(null);
         setSelectedConvId(data.conversation.id);
         fetchConversations();
         void pollForAssistant(data.conversation.id);
+      } else {
+        const msg = data.error || data.message || 'Failed to create conversation';
+        setNewChatError(msg);
       }
     } catch (err) {
       console.error('Failed to create new chat:', err);
+      setNewChatError(networkErrorMessage(err, 'Network error creating chat'));
     } finally {
       setCreatingChat(false);
     }
@@ -389,6 +428,7 @@ export default function ConversationsPage() {
   const handleStatusChange = async (newStatus: string) => {
     if (!selectedConvId) return;
     try {
+      setStatusError(null);
       const res = await fetch(`/api/conversations/${selectedConvId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
@@ -396,22 +436,78 @@ export default function ConversationsPage() {
       });
       if (res.ok) {
         fetchConversations();
+      } else {
+        const data = await res.json().catch(() => ({}));
+        setStatusError(data.error || 'Failed to update conversation status');
       }
     } catch (err) {
       console.error('Failed to update status:', err);
+      setStatusError(networkErrorMessage(err, 'Network error updating status'));
+    }
+  };
+
+  const handleToggleAiPause = async () => {
+    if (!selectedConvId || !activeConv) return;
+    const pauseAi = !activeConv.ai_paused;
+    try {
+      const res = await fetch(`/api/conversations/${selectedConvId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pauseAi, durationHours: 24 }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.conversation) {
+          setConversations((prev) =>
+            prev.map((c) => (c.id === selectedConvId ? { ...c, ...data.conversation } : c))
+          );
+        } else {
+          fetchConversations();
+        }
+      }
+    } catch (err) {
+      console.error('Failed to toggle AI pause:', err);
     }
   };
 
   const visibleConversations = conversations.filter((conv) => {
     if (assigneeId !== 'all' && conv.employee_id !== assigneeId) return false;
-    if (workItemConvIds && (workType !== 'all' || workPriority !== 'all')) {
+    const workFiltered = workType !== 'all' || workPriority !== 'all';
+    if (workFiltered) {
+      // work-items fetch failed or returned no payload — don't silently show the full inbox
+      if (workItemConvIds === null) return false;
       return workItemConvIds.has(conv.id);
     }
-    if (workType === 'inquiry' && workItemConvIds === null) return false;
     return true;
   });
 
-  const activeConv = visibleConversations.find((c) => c.id === selectedConvId) || conversations.find((c) => c.id === selectedConvId);
+  const listedConv =
+    visibleConversations.find((c) => c.id === selectedConvId) ||
+    conversations.find((c) => c.id === selectedConvId);
+  // Deep links (?id=) may target a conversation outside the current filter page —
+  // still render the thread so messages can load.
+  const activeConv: Conversation | null =
+    listedConv ||
+    (selectedConvId
+      ? {
+          id: selectedConvId,
+          org_id: '',
+          chatwoot_conv_id: 0,
+          status: 'open',
+          contact_id: 'Conversation',
+          summary: '',
+          metadata: {},
+          started_at: new Date(0).toISOString(),
+          updated_at: new Date(0).toISOString(),
+          employee_id: null,
+          employee_name: null,
+          employee_role: null,
+          channel_type: 'unknown',
+          last_message: null,
+          last_message_at: null,
+          message_count: 0,
+        }
+      : null);
 
   const getChannelIcon = (type: string) => {
     const kind = (type || '').toLowerCase();
@@ -429,7 +525,7 @@ export default function ConversationsPage() {
   };
 
   return (
-    <div className="flex h-[calc(100vh-8rem)] md:h-[calc(100vh-4rem)] bg-[#121917] text-[#FAF9F0] overflow-hidden">
+    <div className="relative flex h-[calc(100vh-8rem)] md:h-[calc(100vh-4rem)] bg-[#121917] text-[#FAF9F0] overflow-hidden">
       <LiveRegion message={notifVisible && notif ? `Needs attention: ${notif}` : ''} politeness="assertive" />
       {notifVisible && notif && (
         <div className="fixed top-4 right-4 z-50 bg-amber-950/95 border border-amber-600/40 text-amber-100 rounded-xl px-4 py-3 shadow-2xl max-w-sm flex items-start gap-3">
@@ -448,19 +544,34 @@ export default function ConversationsPage() {
       {/* ───────────────────────────────────────────────────────────── */}
       {/* PANE 1: FILTER & CHANNEL SIDEBAR */}
       {/* ───────────────────────────────────────────────────────────── */}
-      <div className={`${mobilePane === 'thread' ? 'hidden md:flex' : 'flex'} w-full md:w-64 border-r border-emerald-950/60 bg-[#16201D] flex-col shrink-0`}>
+      <div
+        id="inbox-filters"
+        className={`${filtersOpen ? 'flex' : 'hidden'} 2xl:flex absolute inset-y-0 left-0 z-30 w-64 max-w-[85%] shadow-2xl 2xl:static 2xl:shadow-none border-r border-emerald-950/60 bg-[#16201D] flex-col shrink-0`}
+      >
         <div className="p-4 border-b border-emerald-950/60 flex items-center justify-between">
           <div className="flex items-center gap-2">
             <Bot className="w-5 h-5 text-[#F0C05A]" />
             <h2 className="font-bold text-sm tracking-wide">Multi-Channel Inbox</h2>
           </div>
-          <button
-            onClick={() => fetchConversations()}
-            className="p-1.5 hover:bg-emerald-900/40 rounded text-emerald-400 transition"
-            title="Refresh feed"
-          >
-            <RefreshCw className="w-4 h-4" />
-          </button>
+          <div className="flex items-center gap-1">
+            <button
+              onClick={() => fetchConversations()}
+              className="p-1.5 hover:bg-emerald-900/40 rounded text-emerald-400 transition"
+              title="Refresh feed"
+              aria-label="Refresh the inbox"
+            >
+              <RefreshCw className="w-4 h-4" />
+            </button>
+            <button
+              type="button"
+              onClick={() => setFiltersOpen(false)}
+              className="2xl:hidden p-1.5 hover:bg-emerald-900/40 rounded text-emerald-400 transition"
+              aria-label="Close filters"
+              title="Close filters"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
         </div>
 
         <div className="p-3 space-y-6 overflow-y-auto flex-1">
@@ -554,7 +665,7 @@ export default function ConversationsPage() {
               {[
                 { id: 'all', label: 'All Channels', icon: Filter },
                 { id: 'whatsapp', label: 'WhatsApp', icon: MessageSquare },
-                { id: 'chatwoot', label: 'Chatwoot', icon: MessageSquare },
+                { id: 'chatwoot', label: 'Live chat', icon: MessageSquare },
                 { id: 'gmail', label: 'Email / Gmail', icon: Mail },
                 { id: 'instagram', label: 'Instagram', icon: MessageSquare },
                 { id: 'sms', label: 'SMS', icon: MessageSquare },
@@ -588,15 +699,27 @@ export default function ConversationsPage() {
       {/* ───────────────────────────────────────────────────────────── */}
       {/* PANE 2: CONVERSATION LIST FEED */}
       {/* ───────────────────────────────────────────────────────────── */}
-      <div className={`${mobilePane === 'thread' ? 'hidden md:flex' : 'flex'} w-full md:w-80 border-r border-emerald-950/60 bg-[#141E1B] flex-col shrink-0`}>
+      <div className={`${mobilePane === 'thread' ? 'hidden md:flex' : 'flex'} w-full md:w-72 xl:w-80 border-r border-emerald-950/60 bg-[#141E1B] flex-col shrink-0`}>
         <div className="p-3 border-b border-emerald-950/60 space-y-2">
-          <button
-            onClick={() => setIsNewChatOpen(true)}
-            className="w-full bg-[#F0C05A] hover:bg-[#e0b04a] text-[#16201D] font-bold text-xs py-2 rounded-lg flex items-center justify-center gap-1.5 transition shadow-md"
-          >
-            <Plus className="w-4 h-4" />
-            <span>New Test Chat</span>
-          </button>
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={() => setFiltersOpen((v) => !v)}
+              aria-expanded={filtersOpen}
+              aria-controls="inbox-filters"
+              className="2xl:hidden shrink-0 flex items-center gap-1.5 rounded-lg border border-emerald-800/50 bg-emerald-950/60 px-3 py-2 text-xs font-semibold text-emerald-200 hover:bg-emerald-900/50"
+            >
+              <Filter className="w-4 h-4" />
+              <span>Filters</span>
+            </button>
+            <button
+              onClick={() => setIsNewChatOpen(true)}
+              className="flex-1 bg-[#F0C05A] hover:bg-[#e0b04a] text-[#16201D] font-bold text-xs py-2 rounded-lg flex items-center justify-center gap-1.5 transition shadow-md"
+            >
+              <Plus className="w-4 h-4" />
+              <span>New Test Chat</span>
+            </button>
+          </div>
 
           <div className="relative">
             <Search className="w-4 h-4 absolute left-3 top-2.5 text-emerald-500" />
@@ -611,7 +734,18 @@ export default function ConversationsPage() {
         </div>
 
         <div className="flex-1 overflow-y-auto divide-y divide-emerald-950/40">
-          {loading ? (
+          {listError ? (
+            <div className="p-6 text-center text-xs text-red-300 space-y-2">
+              <p>{listError}</p>
+              <button
+                type="button"
+                onClick={() => fetchConversations()}
+                className="px-3 py-1.5 bg-red-500/20 text-red-200 rounded-lg border border-red-500/30 text-xs font-semibold"
+              >
+                Retry
+              </button>
+            </div>
+          ) : loading ? (
             <div className="p-6 text-center text-xs text-emerald-500 flex flex-col items-center gap-2">
               <RefreshCw className="w-5 h-5 animate-spin" />
               <span>Loading conversations...</span>
@@ -633,6 +767,7 @@ export default function ConversationsPage() {
                 onClick={() => {
                   setSelectedConvId(conv.id);
                   setMobilePane('thread');
+                  setFiltersOpen(false);
                 }}
                 className={`p-3 cursor-pointer transition flex flex-col gap-1.5 ${
                   selectedConvId === conv.id
@@ -644,12 +779,27 @@ export default function ConversationsPage() {
                   <div className="flex items-center gap-2">
                     {getChannelIcon(conv.channel_type)}
                     <span className="font-semibold text-xs text-emerald-100 truncate max-w-[130px]">
-                      {conv.metadata?.sender_name || conv.contact_id}
+                      {contactLabel({ senderName: conv.metadata?.sender_name, contactId: conv.contact_id })}
+                    </span>
+                    {conv.ai_paused ? (
+                      <span className="text-[9px] text-amber-400 bg-amber-500/10 px-1 rounded">AI paused</span>
+                    ) : null}
+                  </div>
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    {attentionIds.has(conv.id) ? (
+                      <span className="text-[9px] font-semibold uppercase text-red-200 bg-red-600/40 px-1.5 py-0.5 rounded">
+                        Needs you
+                      </span>
+                    ) : null}
+                    {(conv.unread_count ?? 0) > 0 ? (
+                      <span className="text-[10px] font-mono bg-amber-500/20 text-amber-300 px-1.5 py-0.5 rounded">
+                        {conv.unread_count}
+                      </span>
+                    ) : null}
+                    <span suppressHydrationWarning className="text-[10px] text-emerald-500 font-mono">
+                      {conv.updated_at ? new Date(conv.updated_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}
                     </span>
                   </div>
-                  <span suppressHydrationWarning className="text-[10px] text-emerald-500 shrink-0 font-mono">
-                    {conv.updated_at ? new Date(conv.updated_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}
-                  </span>
                 </div>
 
                 <p className="text-xs text-emerald-300/70 line-clamp-2 leading-relaxed">
@@ -662,6 +812,7 @@ export default function ConversationsPage() {
                   </span>
                   <StatusBadge
                     label={conv.status.replace(/_/g, ' ')}
+                    className={conv.status === 'open' ? '!text-emerald-300' : ''}
                     tone={
                       conv.status === 'open'
                         ? 'success'
@@ -674,6 +825,18 @@ export default function ConversationsPage() {
               </div>
             ))
           )}
+          {nextCursor && !loading ? (
+            <div className="p-3">
+              <button
+                type="button"
+                disabled={loadingMore}
+                onClick={() => fetchConversations({ cursor: nextCursor, append: true })}
+                className="w-full py-2 text-xs font-medium text-emerald-300 bg-emerald-950/50 hover:bg-emerald-900/40 border border-emerald-900/50 rounded-lg disabled:opacity-50"
+              >
+                {loadingMore ? 'Loading…' : 'Load older conversations'}
+              </button>
+            </div>
+          ) : null}
         </div>
       </div>
 
@@ -685,7 +848,7 @@ export default function ConversationsPage() {
           {/* Main Chat Canvas */}
           <div className="flex-1 flex flex-col bg-[#121917] min-w-0">
             {/* Conversation Header */}
-            <div className="p-4 border-b border-emerald-950/60 bg-[#16201D] flex items-center justify-between gap-2">
+            <div className="p-4 border-b border-emerald-950/60 bg-[#16201D] flex flex-wrap items-center justify-between gap-2">
               <div className="flex items-center gap-3 min-w-0">
                 <button
                   type="button"
@@ -700,20 +863,28 @@ export default function ConversationsPage() {
                 </div>
                 <div>
                   <h3 className="font-bold text-sm text-emerald-50">
-                    {activeConv.metadata?.sender_name || activeConv.contact_id}
+                    {contactLabel({ senderName: activeConv.metadata?.sender_name, contactId: activeConv.contact_id })}
                   </h3>
                   <div className="flex items-center gap-2 text-xs text-emerald-400/70">
-                    <span>{activeConv.contact_id}</span>
-                    <span>•</span>
+                    {contactDetail(activeConv.contact_id) ? (
+                      <>
+                        <span>{contactDetail(activeConv.contact_id)}</span>
+                        <span>•</span>
+                      </>
+                    ) : null}
                     <span className="capitalize">{activeConv.channel_type}</span>
                   </div>
                 </div>
               </div>
 
-              <div className="flex items-center gap-3">
+              <div className="flex flex-wrap items-center gap-2 sm:gap-3 min-w-0">
+                {statusError && (
+                  <span className="text-xs text-red-400 font-medium" role="alert">{statusError}</span>
+                )}
                 <select
                   value={activeConv.status}
                   onChange={(e) => handleStatusChange(e.target.value)}
+                  aria-label="Conversation Status"
                   className="bg-[#1D2925] border border-emerald-900/80 text-xs rounded-lg px-2.5 py-1.5 text-emerald-200 focus:outline-none focus:border-[#F0C05A]"
                 >
                   <option value="open">Status: Open</option>
@@ -723,51 +894,109 @@ export default function ConversationsPage() {
 
                 <div className="flex items-center gap-1.5 bg-emerald-950/80 px-3 py-1.5 rounded-lg border border-emerald-800/40 text-xs text-emerald-300">
                   <Bot className="w-4 h-4 text-[#F0C05A]" />
-                  <span>AI Assigned: <strong>{activeConv.employee_name || 'Sarah'}</strong></span>
+                  <span>AI: <strong>{activeConv.employee_name || 'Sarah'}</strong></span>
                 </div>
+                <button
+                  type="button"
+                  onClick={() => void handleToggleAiPause()}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border transition ${
+                    activeConv.ai_paused
+                      ? 'bg-amber-600/90 text-white border-amber-500'
+                      : 'bg-slate-900 text-emerald-200 border-emerald-800/50 hover:bg-emerald-950'
+                  }`}
+                  title={activeConv.ai_paused ? 'Resume AI employee' : 'Pause AI (human takeover)'}
+                >
+                  <ShieldAlert className="w-3.5 h-3.5" />
+                  {activeConv.ai_paused ? 'Resume AI' : 'Take over'}
+                </button>
+                {realtimeFallback ? (
+                  <span className="text-[10px] text-amber-400 font-mono">Polling fallback</span>
+                ) : null}
+                {activeConv.sla_deadline_at &&
+                new Date(activeConv.sla_deadline_at).getTime() < Date.now() &&
+                activeConv.status !== 'resolved' ? (
+                  <span className="text-[10px] text-red-300 bg-red-950/50 px-2 py-1 rounded border border-red-800/40">
+                    SLA breached
+                  </span>
+                ) : null}
               </div>
             </div>
 
             {/* Chat Messages Stream */}
             <div className="flex-1 p-4 overflow-y-auto space-y-4">
+              {hasOlder && !messagesLoading && (
+                <div className="text-center">
+                  <button
+                    type="button"
+                    onClick={() => void loadOlderMessages()}
+                    disabled={loadingOlder}
+                    className="px-3 py-1.5 text-xs font-semibold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 rounded-lg disabled:opacity-60 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500"
+                  >
+                    {loadingOlder ? 'Loading…' : 'Load older messages'}
+                  </button>
+                </div>
+              )}
               {messagesLoading ? (
                 <div className="text-center text-xs text-emerald-500 py-8">Loading message history...</div>
               ) : messages.length === 0 ? (
                 <div className="text-center text-xs text-emerald-500 py-8">No messages in this thread yet.</div>
               ) : (
-                messages.map((msg) => {
-                  const isUser = msg.role === 'user';
+                [...olderMessages, ...messages].map((msg) => {
+                  // API normalizes customer→user; still accept both for older cached rows.
+                  const isUser = msg.role === 'user' || (msg.role as string) === 'customer';
+                  const isInternal = msg.is_internal === true;
                   return (
-                    <div key={msg.id} className={`flex flex-col ${isUser ? 'items-start' : 'items-end'}`}>
+                    <div key={msg.id} className={`flex flex-col ${isUser || isInternal ? 'items-start' : 'items-end'}`}>
                       <div className="flex items-center gap-2 mb-1">
                         <span className="text-[10px] text-emerald-500">
-                          {isUser ? 'Customer' : msg.role === 'human_agent' ? 'Human Agent' : `AI (${activeConv.employee_name || 'Sarah'})`}
+                          {isInternal
+                            ? 'Internal note'
+                            : isUser
+                              ? 'Customer'
+                              : msg.role === 'human_agent'
+                                ? 'Human Agent'
+                                : `AI (${activeConv.employee_name || 'Sarah'})`}
                         </span>
-                        <span suppressHydrationWarning className="text-[10px] text-emerald-600 font-mono">
+                        <span suppressHydrationWarning className="text-[10px] text-emerald-700 font-mono">
                           {new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                         </span>
                       </div>
                       <div
                         className={`max-w-[75%] px-4 py-2.5 rounded-2xl text-xs leading-relaxed ${
-                          isUser
-                            ? 'bg-[#1C2825] text-emerald-100 rounded-tl-none border border-emerald-900/60'
-                            : 'bg-[#F0C05A] text-[#16201D] font-medium rounded-tr-none shadow-lg'
+                          isInternal
+                            ? 'bg-amber-950/50 text-amber-100 border border-amber-700/40 rounded-tl-none'
+                            : isUser
+                              ? 'bg-[#1C2825] text-emerald-100 rounded-tl-none border border-emerald-900/60'
+                              : 'bg-[#F0C05A] text-[#16201D] font-medium rounded-tr-none shadow-lg'
                         }`}
                       >
-                        {isUser ? msg.content : <FormattedMarkdownResponse content={msg.content} />}
+                        {isUser || isInternal ? msg.content : <FormattedMarkdownResponse content={msg.content} />}
+                        {Array.isArray(msg.attachments) && msg.attachments.length > 0 ? (
+                          <ul className="mt-2 space-y-1">
+                            {msg.attachments.map((a, i) => {
+                              // Rows written before URL validation may hold other schemes; never render them as links.
+                              const href = safeHttpUrl(a.url);
+                              const label = a.name || a.type || 'attachment';
+                              return (
+                                <li key={`${msg.id}-att-${i}`}>
+                                  {href ? (
+                                    <a
+                                      href={href}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      className="underline text-[11px] break-all"
+                                    >
+                                      {label}
+                                    </a>
+                                  ) : (
+                                    <span className="text-[11px] break-all">{label} (link blocked)</span>
+                                  )}
+                                </li>
+                              );
+                            })}
+                          </ul>
+                        ) : null}
                       </div>
-                      {msg.role === 'assistant' && (
-                        // The entry point to the learning loop. Every press
-                        // that ends in a real edit makes the same mistake
-                        // impossible tomorrow, for this business specifically.
-                        <button
-                          type="button"
-                          onClick={() => handleImproveReply(msg.content)}
-                          className="mt-1 text-[10px] text-emerald-500 hover:text-[#F0C05A] transition underline underline-offset-2"
-                        >
-                          Improve this reply — teach the agent
-                        </button>
-                      )}
                     </div>
                   );
                 })
@@ -783,76 +1012,61 @@ export default function ConversationsPage() {
 
             {/* Message Input Box */}
             <form onSubmit={handleSendMessage} className="p-3 border-t border-emerald-950/60 bg-[#16201D] space-y-2">
-              {correctingDraft !== null && (
-                <div className="flex items-start justify-between gap-3 rounded-xl border border-[#F0C05A]/40 bg-[#F0C05A]/10 px-3 py-2">
-                  <div className="text-[11px] text-emerald-100 leading-relaxed">
-                    <span className="font-bold text-[#F0C05A]">Correcting the agent.</span>{' '}
-                    Edit the reply below and send it. The agent learns the corrected
-                    answer for this business and will use it next time.
-                  </div>
+              <div className="flex flex-wrap items-center justify-between gap-2 px-1">
+                <div role="group" aria-label="Reply type" className="flex items-center gap-0.5 rounded-lg bg-emerald-950 p-0.5">
                   <button
                     type="button"
-                    onClick={cancelCorrection}
-                    className="shrink-0 text-[10px] text-emerald-400 hover:text-emerald-200 underline"
-                  >
-                    Cancel
-                  </button>
-                </div>
-              )}
-              {learningNote && (
-                <div className="rounded-xl border border-emerald-900/70 bg-[#1C2825] px-3 py-2 text-[11px] text-emerald-200">
-                  {learningNote}
-                </div>
-              )}
-              <div className="flex items-center justify-between px-1">
-                <div className="flex items-center space-x-2">
-                  <button
-                    type="button"
-                    onClick={() => setReplyAsCustomer(false)}
-                    className={`text-[10px] font-bold px-2 py-0.5 rounded transition ${
-                      !replyAsCustomer ? 'bg-[#F0C05A] text-[#16201D]' : 'bg-emerald-950 text-emerald-400'
+                    aria-pressed={!replyAsCustomer && !isInternalNote}
+                    onClick={() => {
+                      setReplyAsCustomer(false);
+                      setIsInternalNote(false);
+                    }}
+                    className={`text-[11px] font-bold px-2.5 py-1 rounded-md transition ${
+                      !replyAsCustomer && !isInternalNote ? 'bg-[#F0C05A] text-[#16201D]' : 'text-emerald-400 hover:text-emerald-200'
                     }`}
                   >
-                    Send as Human Agent
+                    Reply to customer
                   </button>
                   <button
                     type="button"
-                    onClick={() => setReplyAsCustomer(true)}
-                    className={`text-[10px] font-bold px-2 py-0.5 rounded transition ${
-                      replyAsCustomer ? 'bg-amber-500 text-heading' : 'bg-emerald-950 text-emerald-400'
+                    aria-pressed={!replyAsCustomer && isInternalNote}
+                    onClick={() => {
+                      setReplyAsCustomer(false);
+                      setIsInternalNote(true);
+                    }}
+                    className={`text-[11px] font-bold px-2.5 py-1 rounded-md transition ${
+                      !replyAsCustomer && isInternalNote ? 'bg-amber-700 text-white' : 'text-emerald-400 hover:text-emerald-200'
                     }`}
                   >
-                    Simulate Customer (Triggers Live AI Response)
+                    Private note
                   </button>
                 </div>
+                <button
+                  type="button"
+                  aria-pressed={replyAsCustomer}
+                  onClick={() => setReplyAsCustomer((v) => !v)}
+                  className={`text-[11px] font-semibold px-2 py-1 rounded-md underline-offset-2 transition ${
+                    replyAsCustomer ? 'bg-amber-500 text-heading' : 'text-emerald-500 hover:text-emerald-300 hover:underline'
+                  }`}
+                >
+                  {replyAsCustomer ? 'Stop practising' : 'Practise as the customer'}
+                </button>
               </div>
 
               <div className="flex items-center gap-2">
-                {correctingDraft !== null ? (
-                  // A textarea, not a single-line input: the operator is
-                  // editing a whole reply, and a one-line box makes reviewing
-                  // three sentences painful enough that people retype from
-                  // scratch instead — which produces no training pair at all.
-                  <textarea
-                    rows={4}
-                    placeholder="Edit the agent's reply into the answer it should have given..."
-                    value={replyContent}
-                    onChange={(e) => setReplyContent(e.target.value)}
-                    className="flex-1 bg-[#1C2825] border border-[#F0C05A]/60 rounded-xl px-4 py-2.5 text-xs text-emerald-100 placeholder-emerald-600 focus:outline-none focus:border-[#F0C05A] resize-y leading-relaxed"
-                  />
-                ) : (
-                  <input
-                    type="text"
-                    placeholder={
-                      replyAsCustomer
-                        ? "Simulate customer message (AI employee will reply live)..."
-                        : "Type a response as human agent..."
-                    }
-                    value={replyContent}
-                    onChange={(e) => setReplyContent(e.target.value)}
-                    className="flex-1 bg-[#1C2825] border border-emerald-900/80 rounded-xl px-4 py-2.5 text-xs text-emerald-100 placeholder-emerald-600 focus:outline-none focus:border-[#F0C05A]"
-                  />
-                )}
+                <input
+                  type="text"
+                  placeholder={
+                    replyAsCustomer
+                      ? "Type as the customer. Your AI employee will reply live..."
+                      : isInternalNote
+                        ? 'Internal note (team only, not sent to customer)...'
+                        : "Type your reply to the customer..."
+                  }
+                  value={replyContent}
+                  onChange={(e) => setReplyContent(e.target.value)}
+                  className="flex-1 bg-[#1C2825] border border-emerald-900/80 rounded-xl px-4 py-2.5 text-xs text-emerald-100 placeholder-emerald-600 focus:outline-none focus:border-[#F0C05A]"
+                />
                 <button
                   type="submit"
                   disabled={sendingReply || !replyContent.trim()}
@@ -866,15 +1080,15 @@ export default function ConversationsPage() {
           </div>
 
           {/* Context Drawer */}
-          <div className="hidden lg:block w-72 border-l border-emerald-950/60 bg-[#16201D] p-4 space-y-6 overflow-y-auto">
+          <div className="hidden 2xl:block w-72 border-l border-emerald-950/60 bg-[#16201D] p-4 space-y-6 overflow-y-auto">
             <div>
               <h4 className="text-xs font-bold text-emerald-400 uppercase tracking-wider mb-3">
                 Customer Context
               </h4>
               <div className="bg-[#1C2825] p-3 rounded-xl border border-emerald-900/60 space-y-2.5 text-xs">
                 <div>
-                  <span className="text-emerald-500 block text-[10px]">Contact Identity</span>
-                  <span className="font-mono text-emerald-200">{activeConv.contact_id}</span>
+                  <span className="text-emerald-500 block text-[10px]">Contact</span>
+                  <span className="text-emerald-200">{contactLabel({ senderName: activeConv.metadata?.sender_name, contactId: activeConv.contact_id })}</span>
                 </div>
                 <div>
                   <span className="text-emerald-500 block text-[10px]">Channel</span>
@@ -906,7 +1120,7 @@ export default function ConversationsPage() {
       ) : (
         <div className="flex-1 flex items-center justify-center text-center p-8 bg-[#121917]">
           <div className="max-w-md space-y-4">
-            <MessageSquare className="w-12 h-12 text-emerald-600 mx-auto" />
+            <MessageSquare className="w-12 h-12 text-emerald-700 mx-auto" />
             <h3 className="text-lg font-bold text-emerald-100 font-serif">No Conversation Selected</h3>
             <p className="text-xs text-emerald-500">
               Select a conversation from the list or start a new test chat to test live AI responses.
@@ -924,7 +1138,7 @@ export default function ConversationsPage() {
       {/* Start New Test Chat Modal */}
       {isNewChatOpen && (
         <div className="fixed inset-0 bg-slate-900/70 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-[#16201D] border border-emerald-900/80 rounded-3xl p-6 max-w-lg w-full shadow-2xl space-y-5 text-emerald-100">
+          <div className="bg-[#16201D] border border-emerald-900/80 rounded-3xl p-6 max-w-lg w-full max-h-[calc(100vh-2rem)] overflow-y-auto shadow-2xl space-y-5 text-emerald-100">
             <div className="flex items-center justify-between border-b border-emerald-900/60 pb-3">
               <div className="flex items-center space-x-2">
                 <Sparkles className="w-5 h-5 text-[#F0C05A]" />
@@ -936,6 +1150,12 @@ export default function ConversationsPage() {
             </div>
 
             <form onSubmit={handleCreateNewChat} className="space-y-4">
+              {newChatError && (
+                <div role="alert" className="p-3 bg-red-950/80 border border-red-800/80 text-red-200 text-xs rounded-xl flex items-center justify-between">
+                  <span>{newChatError}</span>
+                  <button type="button" onClick={() => setNewChatError(null)} className="text-red-400 hover:text-red-200 font-bold ml-2">✕</button>
+                </div>
+              )}
               <div>
                 <label className="block text-xs font-bold text-emerald-400 uppercase tracking-wider mb-1">
                   Customer Contact Identity
@@ -961,6 +1181,8 @@ export default function ConversationsPage() {
                   >
                     <option value="whatsapp">WhatsApp</option>
                     <option value="gmail">Gmail / Email</option>
+                    <option value="sms">SMS</option>
+                    <option value="instagram">Instagram</option>
                   </select>
                 </div>
 
@@ -1028,5 +1250,19 @@ export default function ConversationsPage() {
         </div>
       )}
     </div>
+  );
+}
+
+export default function ConversationsPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="flex h-[calc(100vh-8rem)] items-center justify-center bg-[#121917] text-emerald-500 text-xs">
+          Loading inbox...
+        </div>
+      }
+    >
+      <ConversationsPageInner />
+    </Suspense>
   );
 }

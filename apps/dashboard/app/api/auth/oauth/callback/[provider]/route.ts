@@ -2,13 +2,15 @@ import { NextResponse } from 'next/server';
 import crypto from 'crypto';
 import { cookies } from 'next/headers';
 import { pool, createOrgForEmail, ensureUserOrg } from '@/lib/db';
-import { applySessionCookies, PENDING_INVITE_COOKIE } from '@/lib/session-cookie';
+import { PENDING_INVITE_COOKIE } from '@/lib/session-cookie';
+import { issueSessionCookies } from '@/lib/session-epoch';
 import {
   demoAuthAllowed,
   getOAuthClientId,
   getOAuthClientSecret,
   getOAuthTokenUrl,
   parseOAuthProvider,
+  resolveAppUrl,
   type OAuthProvider,
 } from '@/lib/oauth-providers';
 import {
@@ -67,9 +69,14 @@ async function getUserInfo(
       Accept: 'application/json',
     },
     body: new URLSearchParams(tokenBody).toString(),
+    signal: AbortSignal.timeout(15_000),
   });
 
-  const tokenData = await tokenRes.json();
+  const tokenData = await tokenRes.json().catch(() => ({}));
+  if (!tokenRes.ok) {
+    const desc = tokenData?.error_description || tokenData?.error || `HTTP ${tokenRes.status}`;
+    throw new Error(`Token exchange failed: ${desc}`);
+  }
   if (!tokenData.access_token) {
     throw new Error(`Token exchange failed: ${JSON.stringify(tokenData)}`);
   }
@@ -80,20 +87,26 @@ async function getUserInfo(
     case 'google': {
       const r = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
         headers: { Authorization: `Bearer ${accessToken}` },
+        signal: AbortSignal.timeout(15_000),
       });
+      if (!r.ok) throw new Error(`Google userinfo failed (HTTP ${r.status})`);
       const u = (await r.json()) as { email?: string; name?: string; sub?: string };
       return { email: u.email || '', name: u.name, externalId: u.sub };
     }
     case 'github': {
       const r = await fetch('https://api.github.com/user', {
         headers: { Authorization: `Bearer ${accessToken}`, Accept: 'application/json' },
+        signal: AbortSignal.timeout(15_000),
       });
+      if (!r.ok) throw new Error(`GitHub userinfo failed (HTTP ${r.status})`);
       const u = (await r.json()) as { email?: string; name?: string; login?: string; id?: number };
       let email = u.email;
       if (!email) {
         const emailsRes = await fetch('https://api.github.com/user/emails', {
           headers: { Authorization: `Bearer ${accessToken}`, Accept: 'application/json' },
+          signal: AbortSignal.timeout(15_000),
         });
+        if (!emailsRes.ok) throw new Error(`GitHub emails failed (HTTP ${emailsRes.status})`);
         const emails = await emailsRes.json();
         if (Array.isArray(emails)) {
           const typed = emails as Array<{ email?: string; primary?: boolean; verified?: boolean }>;
@@ -110,15 +123,19 @@ async function getUserInfo(
     case 'facebook':
     case 'meta': {
       const r = await fetch(
-        `https://graph.facebook.com/me?fields=email,name&access_token=${accessToken}`
+        `https://graph.facebook.com/me?fields=email,name&access_token=${accessToken}`,
+        { signal: AbortSignal.timeout(15_000) }
       );
+      if (!r.ok) throw new Error(`Meta userinfo failed (HTTP ${r.status})`);
       const u = (await r.json()) as { email?: string; name?: string; id?: string };
       return { email: u.email || '', name: u.name, externalId: u.id };
     }
     case 'microsoft': {
       const r = await fetch('https://graph.microsoft.com/v1.0/me', {
         headers: { Authorization: `Bearer ${accessToken}` },
+        signal: AbortSignal.timeout(15_000),
       });
+      if (!r.ok) throw new Error(`Microsoft userinfo failed (HTTP ${r.status})`);
       const u = (await r.json()) as {
         mail?: string;
         userPrincipalName?: string;
@@ -149,7 +166,7 @@ async function finishOAuthLogin(
   const res = NextResponse.redirect(new URL(dest, origin));
   res.cookies.delete(`oauth_state_${rawProvider}`);
   res.cookies.delete(PENDING_INVITE_COOKIE);
-  await applySessionCookies(res, { userId, orgId, onboardingComplete });
+  await issueSessionCookies(res, { userId, orgId, onboardingComplete });
   return res;
 }
 
@@ -160,10 +177,11 @@ export async function GET(
   const { provider: rawProvider } = await params;
   const provider = parseOAuthProvider(rawProvider);
   const url = new URL(request.url);
+  const appUrl = resolveAppUrl(request);
   const code = url.searchParams.get('code');
   const state = url.searchParams.get('state');
   const errorParam = url.searchParams.get('error');
-  const loginUrl = new URL('/login', url.origin);
+  const loginUrl = new URL('/login', appUrl);
 
   if (!provider) {
     loginUrl.searchParams.set('error', 'Unsupported OAuth provider');
@@ -189,7 +207,6 @@ export async function GET(
   const pendingInvite = cookieStore.get(PENDING_INVITE_COOKIE)?.value;
 
   const { clientId, clientSecret } = getClientCredentials(provider);
-  const appUrl = process.env.NEXT_PUBLIC_APP_URL || url.origin;
   const redirectUri = `${appUrl}/api/auth/oauth/callback/${rawProvider}`;
 
   if (!clientId || !clientSecret) {
@@ -221,7 +238,7 @@ export async function GET(
         });
       }
       const onboardingComplete = await isOnboardingComplete(client, orgId);
-      return finishOAuthLogin(url.origin, rawProvider, userId, orgId, onboardingComplete);
+      return finishOAuthLogin(appUrl, rawProvider, userId, orgId, onboardingComplete);
     } finally {
       client.release();
     }
@@ -290,13 +307,10 @@ export async function GET(
       .catch(() => undefined);
 
     const onboardingComplete = isNew ? false : await isOnboardingComplete(client, orgId);
-    return finishOAuthLogin(url.origin, rawProvider, userId, orgId, onboardingComplete);
+    return finishOAuthLogin(appUrl, rawProvider, userId, orgId, onboardingComplete);
   } catch (err) {
-    console.error(`OAuth Callback Error (${provider}):`, err);
-    loginUrl.searchParams.set(
-      'error',
-      err instanceof Error ? err.message : 'Authentication failed. Please try again.'
-    );
+    console.error(`OAuth Callback Error (${provider}):`, err instanceof Error ? err.message : err);
+    loginUrl.searchParams.set('error', 'Authentication failed. Please try again.');
     return NextResponse.redirect(loginUrl);
   } finally {
     client.release();

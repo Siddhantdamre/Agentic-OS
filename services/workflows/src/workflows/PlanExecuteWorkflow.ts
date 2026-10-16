@@ -1,13 +1,10 @@
-/**
- * SUPERVISION: GAP — executes a plan a human confirmed. The confirmation is
- * a gate before the work, not supervision of how it went - a step that
- * half-succeeded is judged by nothing.
- */
 import {
   ApplicationFailure,
+  CancellationScope,
   condition,
   defineQuery,
   defineSignal,
+  isCancellation,
   proxyActivities,
   setHandler,
 } from '@temporalio/workflow';
@@ -100,11 +97,19 @@ export async function PlanExecuteWorkflow(
     events.push({ seq, event, data });
   };
 
+  let stageScope: CancellationScope | null = null;
+
+  // Reject is sticky: once cancelled, a late approve cannot restart the plan.
   setHandler(approvePlanSignal, (incoming) => {
+    if (decision === 'rejected') return;
     decision = incoming === 'rejected' ? 'rejected' : 'approved';
+    if (decision === 'rejected') {
+      stageScope?.cancel();
+    }
   });
   setHandler(rejectPlanSignal, () => {
     decision = 'rejected';
+    stageScope?.cancel();
   });
   setHandler(planProgressQuery, () => ({
     status,
@@ -114,8 +119,10 @@ export async function PlanExecuteWorkflow(
   }));
 
   if (input.waitForApproval) {
-    await condition(() => decision !== undefined);
-    if (decision === 'rejected') {
+    // Bound the wait so an owner who never approves can't hold workflow
+    // history until the 7-day execution timeout. 24h then auto-cancel.
+    const approved = await condition(() => decision !== undefined, '24 hours');
+    if (!approved || decision === 'rejected') {
       status = 'cancelled';
       await updateAgentPlanActivity({
         orgId,
@@ -145,51 +152,91 @@ export async function PlanExecuteWorkflow(
   const noteTools = new Set(['user_instruction', 'note', 'agent.user_instruction']);
   push('execution_start', { planId, totalSteps: loaded.enabledCount });
 
+  const isCancelled = () => decision === 'rejected';
+
   for (const stage of loaded.stages) {
-    const stageOutcomes = await Promise.all(
-      stage.map(async (item) => {
-        const i = item.i;
-        const step = item.s;
-        if (step.enabled === false) {
-          return { i, outcome: { status: 'skipped', message: step.description || 'skipped', data: null } };
-        }
-        if (noteTools.has(String(step.tool || ''))) {
-          push('step_done', {
-            stepIndex: i,
-            status: 'skipped',
-            message: 'Instruction noted — not an executable tool.',
-            data: null,
-          });
-          return { i, outcome: { status: 'skipped', message: 'Instruction noted — not an executable tool.', data: null } };
-        }
-        push('step_start', {
-          stepIndex: i,
-          description: step.description || '',
-          tool: step.tool || '',
-          action: step.action || '',
-        });
-        const outcome = await executePlanStepActivity({
+    // Cancel while running (ASK-B02): stop before the next stage starts.
+    if (isCancelled()) {
+      status = 'cancelled';
+      await CancellationScope.nonCancellable(async () => {
+        await updateAgentPlanActivity({
           orgId,
           planId,
-          stepIndex: i,
-          step,
-          previousResults: results,
-          toolAllowlist: loaded.planTools,
-          businessKey: `${planId}:step:${i}`,
+          status: 'cancelled',
+          businessKey: `${planId}:cancelled_running`,
         });
-        if (outcome.status === 'error') {
-          push('step_error', { stepIndex: i, message: String(outcome.message || 'step execution failed') });
-        } else {
-          push('step_done', {
-            stepIndex: i,
-            status: outcome.status,
-            message: outcome.message,
-            data: outcome.data ?? null,
+      });
+      push('execution_done', { planId, status: 'cancelled', results: results.filter(Boolean) });
+      return { planId, status, results: results.filter(Boolean) };
+    }
+
+    stageScope = new CancellationScope({ cancellable: true });
+    let stageOutcomes: Array<{ i: number; outcome: { status: string; message?: string; data?: unknown } }>;
+    try {
+      stageOutcomes = await stageScope.run(async () => {
+        return await Promise.all(
+          stage.map(async (item) => {
+            const i = item.i;
+            const step = item.s;
+            if (step.enabled === false) {
+              return { i, outcome: { status: 'skipped', message: step.description || 'skipped', data: null } };
+            }
+            if (noteTools.has(String(step.tool || ''))) {
+              push('step_done', {
+                stepIndex: i,
+                status: 'skipped',
+                message: 'Instruction noted — not an executable tool.',
+                data: null,
+              });
+              return { i, outcome: { status: 'skipped', message: 'Instruction noted — not an executable tool.', data: null } };
+            }
+            push('step_start', {
+              stepIndex: i,
+              description: step.description || '',
+              tool: step.tool || '',
+              action: step.action || '',
+            });
+            const outcome = await executePlanStepActivity({
+              orgId,
+              planId,
+              stepIndex: i,
+              step,
+              previousResults: results,
+              userId: loaded.userId,
+              businessKey: `${planId}:step:${i}`,
+            });
+            if (outcome.status === 'error') {
+              push('step_error', { stepIndex: i, message: String(outcome.message || 'step execution failed') });
+            } else {
+              push('step_done', {
+                stepIndex: i,
+                status: outcome.status,
+                message: outcome.message,
+                data: outcome.data ?? null,
+              });
+            }
+            return { i, outcome };
+          })
+        );
+      });
+    } catch (err: unknown) {
+      if (isCancellation(err) || isCancelled()) {
+        status = 'cancelled';
+        await CancellationScope.nonCancellable(async () => {
+          await updateAgentPlanActivity({
+            orgId,
+            planId,
+            status: 'cancelled',
+            businessKey: `${planId}:cancelled_mid_activity`,
           });
-        }
-        return { i, outcome };
-      })
-    );
+        });
+        push('execution_done', { planId, status: 'cancelled', results: results.filter(Boolean) });
+        return { planId, status, results: results.filter(Boolean) };
+      }
+      throw err;
+    } finally {
+      stageScope = null;
+    }
 
     stageOutcomes.sort((a, b) => a.i - b.i);
     let failed = false;
@@ -205,26 +252,81 @@ export async function PlanExecuteWorkflow(
     }
     if (failed) {
       status = 'completed_with_errors';
+      const firstErr = stageOutcomes.find((o) => o.outcome.status === 'error');
+      const priorSucceeded = results
+        .map((r, idx) => ({ r, idx }))
+        .filter(({ r }) => {
+          if (!r) return false;
+          const st = String(r.status || '');
+          return st !== 'error' && st !== 'cancelled' && st !== 'skipped' && st !== '';
+        })
+        .map(({ r, idx }) => ({
+          stepIndex: idx,
+          tool: (r as { tool?: string }).tool ?? null,
+          status: String(r.status || ''),
+        }));
       await updateAgentPlanActivity({
         orgId,
         planId,
         status: 'completed_with_errors',
+        compensationSteps: [
+          {
+            kind: 'partial_failure_freeze',
+            failedStepIndex: firstErr?.i ?? -1,
+            error: String(firstErr?.outcome.message || 'step execution failed'),
+            priorSucceeded,
+            recordedAt: new Date().toISOString(),
+          },
+        ],
         businessKey: `${planId}:done_errors`,
       });
-      push('execution_done', { planId, status, results: results.filter(Boolean) });
+      push('execution_done', {
+        planId,
+        status,
+        results: results.filter(Boolean),
+        compensation: 'partial_failure_freeze',
+      });
       return { planId, status, results: results.filter(Boolean) };
     }
   }
 
   const done = results.filter(Boolean);
-  const failed = done.filter((r) => r.status === 'error').length;
-  status = failed > 0 ? 'completed_with_errors' : 'completed';
-  await updateAgentPlanActivity({
-    orgId,
-    planId,
-    status,
-    businessKey: `${planId}:done`,
-  });
+  const failedCount = done.filter((r) => r.status === 'error').length;
+  status = failedCount > 0 ? 'completed_with_errors' : 'completed';
+  if (failedCount > 0) {
+    const firstErr = done.find((r) => r.status === 'error');
+    const priorSucceeded = done
+      .filter((r) => {
+        const st = String(r.status || '');
+        return st !== 'error' && st !== 'cancelled' && st !== 'skipped';
+      })
+      .map((r) => ({
+        stepIndex: typeof r.stepIndex === 'number' ? r.stepIndex : -1,
+        status: String(r.status || ''),
+      }));
+    await updateAgentPlanActivity({
+      orgId,
+      planId,
+      status: 'completed_with_errors',
+      compensationSteps: [
+        {
+          kind: 'partial_failure_freeze',
+          failedStepIndex: typeof firstErr?.stepIndex === 'number' ? firstErr.stepIndex : -1,
+          error: String(firstErr?.message || 'step execution failed'),
+          priorSucceeded,
+          recordedAt: new Date().toISOString(),
+        },
+      ],
+      businessKey: `${planId}:done`,
+    });
+  } else {
+    await updateAgentPlanActivity({
+      orgId,
+      planId,
+      status,
+      businessKey: `${planId}:done`,
+    });
+  }
   push('execution_done', { planId, status, results: done });
   return { planId, status, results: done };
 }

@@ -1,8 +1,8 @@
 import type { ToolRisk } from './risk.js';
 import type { ToolActionContext, ToolModule } from './shared.js';
-import { confirmFromRisk, getNangoAccessToken, notConnected } from './shared.js';
+import { confirmFromRisk, nangoAuthError, notConnected, resolveGoogleAuth, fetchWithTimeout } from './shared.js';
 
-const ACTIONS = ['forms_get'] as const;
+const ACTIONS = ['forms_get', 'forms_get_responses'] as const;
 
 function riskFor(_action: string): ToolRisk {
   return 'read';
@@ -10,20 +10,36 @@ function riskFor(_action: string): ToolRisk {
 
 async function execute(ctx: ToolActionContext) {
   const { actionName, payload, orgId, timestamp } = ctx;
-  const gConnId = `${orgId}_google-forms`;
-  let gToken: string | null = null;
-  for (const providerKey of ['google-forms', 'google']) {
-    gToken = await getNangoAccessToken(gConnId, providerKey);
-    if (gToken) break;
-  }
-  if (!gToken) return notConnected('google-forms', actionName, timestamp);
+  const _gAuth = await resolveGoogleAuth(orgId, 'google-forms');
+  const gToken: string | null = _gAuth.kind === 'connected' ? _gAuth.accessToken : null;
+  const _gAuthErr = _gAuth.kind === 'connected' ? null : nangoAuthError('google-forms', actionName, timestamp, _gAuth);
+  if (!gToken) return _gAuthErr ?? notConnected('google-forms', actionName, timestamp);
 
   try {
     const formId = payload.formId || payload.id;
     if (!formId) {
-      return { tool: 'google-forms', action: 'forms_get', status: 'error' as const, message: 'formId is required.', data: null, timestamp };
+      return { tool: 'google-forms', action: actionName, status: 'error' as const, message: 'formId is required.', data: null, timestamp };
     }
-    const formsRes = await fetch(`https://forms.googleapis.com/v1/forms/${formId}`, {
+
+    if (actionName.includes('response')) {
+      const respRes = await fetchWithTimeout(`https://forms.googleapis.com/v1/forms/${formId}/responses`, {
+        headers: { Authorization: `Bearer ${gToken}` },
+      });
+      if (!respRes.ok) {
+        return { tool: 'google-forms', action: 'forms_get_responses', status: 'error' as const, message: `Forms responses error ${respRes.status}: ${await respRes.text()}`, data: null, timestamp };
+      }
+      const respData = await respRes.json();
+      return {
+        tool: 'google-forms',
+        action: 'forms_get_responses',
+        status: 'executed' as const,
+        message: `Fetched ${(respData.responses || []).length} responses for form ${formId}`,
+        data: { formId, responses: respData.responses || [] },
+        timestamp,
+      };
+    }
+
+    const formsRes = await fetchWithTimeout(`https://forms.googleapis.com/v1/forms/${formId}`, {
       headers: { Authorization: `Bearer ${gToken}` },
     });
     if (!formsRes.ok) {

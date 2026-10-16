@@ -1,16 +1,21 @@
 'use client';
 
-import React, { useState, useEffect, Suspense } from 'react';
-import { useSearchParams } from 'next/navigation';
+import React, { useState, useEffect, useCallback, Suspense } from 'react';
+import { useSearchParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
+import { ApprovalsCallout } from '@/components/home/ApprovalsCallout';
+import { GetStarted } from '@/components/home/GetStarted';
+import { DailyDigest } from '@/components/home/DailyDigest';
 import { Sparkles, AlertTriangle, Send, CheckCircle2, CircleDashed } from 'lucide-react';
 import { LiveRegion, StatusBadge } from '@/components/a11y';
-import { ImpactPanel } from '@/components/impact/ImpactPanel';
-import { ApprovalQueue } from '@/components/approvals/ApprovalQueue';
-import { BriefingPanel } from '@/components/briefings/BriefingPanel';
-import { LiveActivity } from '@/components/activity/LiveActivity';
-import { ShadowPanel } from '@/components/shadow/ShadowPanel';
-import { LeakPanel } from '@/components/leaks/LeakPanel';
+import { useLiveRefresh } from '@/lib/use-live-refresh';
+
+const HOME_EVENTS = [
+  'needs_attention',
+  'conversation_updated',
+  'plan_updated',
+  'work_item_updated',
+] as const;
 
 export const dynamic = 'force-dynamic';
 
@@ -21,13 +26,18 @@ interface WarmupStep {
 }
 
 function HomeContent() {
+  const router = useRouter();
   const searchParams = useSearchParams();
   const [isWarmup, setIsWarmup] = useState(searchParams?.get('warmup') === 'true');
+  const setupChannel = searchParams?.get('setup') || '';
+  const [showSetupDrawer, setShowSetupDrawer] = useState(
+    Boolean(searchParams?.get('setup')) && searchParams?.get('warmup') !== 'true'
+  );
   const [provisionProgress, setProvisionProgress] = useState(0);
   const [warmupSteps, setWarmupSteps] = useState<WarmupStep[]>([
-    { id: 'employees', label: 'AI employees in roster', done: false },
-    { id: 'nango', label: 'Nango connector registry', done: false },
-    { id: 'pack', label: 'Pack recommendation recorded', done: false },
+    { id: 'employees', label: 'Your AI employees are ready', done: false },
+    { id: 'nango', label: 'Tool connections', done: false },
+    { id: 'pack', label: 'Starter skills chosen for your business', done: false },
   ]);
   const [askQuery, setAskQuery] = useState('');
   const [liveMessage, setLiveMessage] = useState('');
@@ -35,23 +45,38 @@ function HomeContent() {
   const [stats, setStats] = useState<{
     userEmail?: string;
     conversationCount?: number;
-    conversationsLast24h?: number;
+    conversationChangePct?: number | null;
     avgResponseMs?: number | null;
     aiAutomationRate?: number | null;
     needsAttentionCount?: number;
     channelCount?: number;
+    aiEmployeeCount?: number;
     aiEmployees?: Array<{ id: string; name: string; role: string; description?: string }>;
   } | null>(null);
+  const [infraStatus, setInfraStatus] = useState<'healthy' | 'degraded' | 'unhealthy' | 'unknown'>(
+    'unknown'
+  );
   const [needsAttention, setNeedsAttention] = useState<
     Array<{ id: string; subject?: string; channel?: string; snippet?: string }>
   >([]);
   const [pendingPlans, setPendingPlans] = useState<number>(0);
   const [loading, setLoading] = useState(true);
+  const [statsError, setStatsError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!isWarmup) return;
     let cancelled = false;
+    let ticks = 0;
+    const MAX_TICKS = 24; // 24 * 2.5s ≈ 60s hard stop
     const tick = async () => {
+      ticks += 1;
+      if (ticks > MAX_TICKS) {
+        if (!cancelled) {
+          setIsWarmup(false);
+          setLiveMessage('Provisioning timed out — open Employees or Integrations to finish setup');
+        }
+        return;
+      }
       try {
         const [empRes, statsRes, integRes, packsRes, onboardRes] = await Promise.all([
           fetch('/api/employees'),
@@ -61,6 +86,17 @@ function HomeContent() {
           fetch('/api/org/onboarding'),
         ]);
         if (cancelled) return;
+
+        if (
+          empRes.status === 401 ||
+          statsRes.status === 401 ||
+          integRes.status === 401 ||
+          packsRes.status === 401 ||
+          onboardRes.status === 401
+        ) {
+          window.location.href = '/login';
+          return;
+        }
 
         const empData = empRes.ok ? await empRes.json() : { employees: [] };
         const statsData = statsRes.ok ? await statsRes.json() : {};
@@ -81,9 +117,9 @@ function HomeContent() {
         );
 
         const nextSteps: WarmupStep[] = [
-          { id: 'employees', label: 'AI employees in roster', done: employeesReady },
-          { id: 'nango', label: 'Nango connector registry reachable', done: nangoReady },
-          { id: 'pack', label: 'Pack recommendation recorded', done: packReady },
+          { id: 'employees', label: 'Your AI employees are ready', done: employeesReady },
+          { id: 'nango', label: 'Tool connections are ready', done: nangoReady },
+          { id: 'pack', label: 'Starter skills chosen for your business', done: packReady },
         ];
         setWarmupSteps(nextSteps);
         const doneCount = nextSteps.filter((s) => s.done).length;
@@ -95,6 +131,9 @@ function HomeContent() {
           if (employeesReady) {
             setIsWarmup(false);
             setLiveMessage('Workspace is online');
+            if (searchParams?.get('setup')) {
+              setShowSetupDrawer(true);
+            }
           }
         }
       } catch (err) {
@@ -107,38 +146,91 @@ function HomeContent() {
       cancelled = true;
       clearInterval(timer);
     };
-  }, [isWarmup]);
+  }, [isWarmup, searchParams]);
 
   useEffect(() => {
-    fetch('/api/dashboard/stats')
-      .then((res) => res.json())
-      .then((data) => {
-        setStats(data);
-        setLoading(false);
-      })
-      .catch((err) => {
-        console.error(err);
-        setLoading(false);
-      });
+    if (!isWarmup && setupChannel) {
+      setShowSetupDrawer(true);
+    }
+  }, [isWarmup, setupChannel]);
 
-    fetch('/api/conversations?status=needs_attention')
-      .then((res) => res.json())
-      .then((data) => {
-        setNeedsAttention(data.conversations || []);
-      })
-      .catch((err) => console.error(err));
+  const load = useCallback(async () => {
+    try {
+      const res = await fetch('/api/dashboard/stats');
+      if (res.status === 401) {
+        window.location.href = '/login';
+        return;
+      }
+      if (!res.ok) throw new Error(`stats ${res.status}`);
+      const data = await res.json();
+      setStats(data);
+      setStatsError(null);
+    } catch (err) {
+      console.error(err);
+      setStatsError('Failed to load briefing stats');
+    } finally {
+      setLoading(false);
+    }
 
-    fetch('/api/ask-ai/plan')
-      .then((res) => (res.ok ? res.json() : { plans: [] }))
-      .then((data) => {
-        const plans = Array.isArray(data.plans) ? data.plans : [];
-        setPendingPlans(plans.filter((p: { status?: string }) => p.status === 'pending').length);
-      })
-      .catch(() => setPendingPlans(0));
+    try {
+      const res = await fetch('/api/conversations?status=needs_attention');
+      if (res.status === 401) {
+        window.location.href = '/login';
+        return;
+      }
+      const data = res.ok ? await res.json() : { conversations: [] };
+      setNeedsAttention(data.conversations || []);
+    } catch (err) {
+      console.error(err);
+    }
+
+    try {
+      const res = await fetch('/api/ask-ai/plan');
+      const data = res.ok ? await res.json() : { plans: [] };
+      const plans = Array.isArray(data.plans) ? data.plans : [];
+      setPendingPlans(plans.filter((p: { status?: string }) => p.status === 'pending').length);
+    } catch {
+      setPendingPlans(0);
+    }
+
+    try {
+      const res = await fetch('/api/health/ready', { cache: 'no-store' });
+      const data = res.ok || res.status === 503 ? await res.json() : null;
+      const status = data?.status;
+      if (status === 'healthy' || status === 'degraded' || status === 'unhealthy') {
+        setInfraStatus(status);
+      } else {
+        setInfraStatus('unknown');
+      }
+    } catch {
+      setInfraStatus('unknown');
+    }
   }, []);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  // Quiet refetch: setLoading only ever goes false here, so no loading flash.
+  useLiveRefresh({ events: HOME_EVENTS, refetch: load });
 
   if (loading) {
     return <div className="p-8 text-center text-slate-500 font-serif">Loading briefing...</div>;
+  }
+
+  if (statsError && !stats) {
+    return (
+      <div className="max-w-lg mx-auto p-8 text-center space-y-3">
+        <p className="text-sm text-red-700">{statsError}</p>
+        <button
+          type="button"
+          onClick={() => window.location.reload()}
+          className="px-4 py-2 rounded-xl bg-amber-500 text-heading text-sm font-semibold"
+        >
+          Retry
+        </button>
+      </div>
+    );
   }
 
   const firstName = stats?.userEmail
@@ -148,13 +240,42 @@ function HomeContent() {
   return (
     <div className="max-w-7xl mx-auto space-y-8 pb-4">
       <LiveRegion message={liveMessage} />
+      <div
+        className={`flex flex-wrap items-center justify-between gap-2 px-3 py-2 rounded-xl border text-xs ${
+          infraStatus === 'unhealthy'
+            ? 'bg-red-50 border-red-200 text-red-800'
+            : infraStatus === 'degraded'
+              ? 'bg-amber-50 border-amber-200 text-amber-900'
+              : infraStatus === 'healthy'
+                ? 'bg-emerald-50 border-emerald-200 text-emerald-900'
+                : 'bg-cream-100 border-cream-300 text-slate-600'
+        }`}
+      >
+        <span>
+          {infraStatus === 'healthy'
+            ? 'Everything is running'
+            : infraStatus === 'degraded'
+              ? 'Some services are slow'
+              : infraStatus === 'unhealthy'
+                ? 'Some services are down'
+                : 'Checking status…'}
+          {stats?.channelCount != null ? ` · ${stats.channelCount} ${stats.channelCount === 1 ? 'channel' : 'channels'} connected` : ''}
+          {stats?.aiEmployeeCount != null ? ` · ${stats.aiEmployeeCount} AI ${stats.aiEmployeeCount === 1 ? 'employee' : 'employees'}` : ''}
+        </span>
+        <Link href="/connectors" className="font-semibold underline-offset-2 hover:underline">
+          Manage connectors →
+        </Link>
+      </div>
+      <ApprovalsCallout />
+      <GetStarted channelCount={stats ? (stats.channelCount ?? 0) : null} />
+      <DailyDigest />
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
         <div>
           <h1 className="text-2xl sm:text-3xl font-serif font-bold text-heading">
             Daily briefing, {firstName}
           </h1>
           <p className="text-slate-500 text-sm mt-1">
-            Numbers below come from your org stats. Empty queues stay empty.
+            What happened in your business, and what needs you.
           </p>
         </div>
         {pendingPlans > 0 ? (
@@ -167,57 +288,11 @@ function HomeContent() {
         ) : null}
       </div>
 
-      {/*
-        Above the activity counters on purpose. "240 replies sent" describes
-        how busy the inbox was; "91% finished without a person, up 17 points"
-        is what decides whether this is worth paying for. Hidden during warm-up
-        because a brand new org has nothing finished yet, and a percentage over
-        no data is noise dressed as insight.
-      */}
-      {/*
-        Above impact on purpose. What the agent is BLOCKED on is more urgent
-        than how it performed — an unanswered approval is a customer waiting,
-        and 24 of them sat unanswerable for thirteen days before this existed.
-      */}
-      {!isWarmup && <ApprovalQueue />}
-
-      {/*
-        Directly under what needs the owner, because it answers the question
-        they arrive with: what happened since I last looked. The agent writes
-        this on its own schedule; this panel only reads it.
-      */}
-      {!isWarmup && <BriefingPanel />}
-
-      {/*
-        Under the overnight summary: what happened while you slept, then what is
-        happening as you read. Both answer "what are my employees doing", one
-        looking back and one looking now.
-      */}
-      {!isWarmup && <LiveActivity />}
-
-      {/*
-        Between what is blocked and what was achieved. The agreement rate is
-        the number that decides how much MORE the agent gets to do, so it sits
-        beside the approvals it is earned from.
-      */}
-      {/* Where money is walking out. Placed ABOVE shadow mode deliberately:
-          shadow mode answers "can I trust it", which is the second question.
-          The first is "what am I losing", and it is the one an owner opens the
-          dashboard to find out. It also shows during warm-up, because a brand
-          new workspace with unanswered questions and threads waiting on a
-          person has leaks on day one -- that is exactly when they are cheapest
-          to fix. */}
-      <LeakPanel />
-
-      {!isWarmup && <ShadowPanel days={30} />}
-
-      {!isWarmup && <ImpactPanel days={30} />}
-
       {isWarmup ? (
         <div className="bg-white border-2 border-amber-500/30 rounded-3xl p-6 sm:p-8 shadow-lg relative overflow-hidden">
           <div className="flex items-start space-x-5">
             <div className="p-4 bg-amber-500/20 rounded-2xl shrink-0">
-              <Sparkles className="w-8 h-8 text-amber-600 animate-spin" />
+              <Sparkles className="w-8 h-8 text-amber-700 animate-spin" />
             </div>
             <div className="space-y-3 flex-1 min-w-0">
               <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
@@ -225,7 +300,7 @@ function HomeContent() {
                 <StatusBadge label={`${provisionProgress}% complete`} tone="warning" />
               </div>
               <p className="text-slate-600 text-sm">
-                Progress is from live employee, Nango, and pack checks — not a timer.
+                This reflects what is really ready, not a timer.
               </p>
               <div className="w-full bg-cream-200 h-3 rounded-full overflow-hidden">
                 <div
@@ -237,7 +312,7 @@ function HomeContent() {
                 {warmupSteps.map((step) => (
                   <li key={step.id} className="flex items-center space-x-2">
                     {step.done ? (
-                      <CheckCircle2 className="w-4 h-4 text-emerald-600" aria-hidden="true" />
+                      <CheckCircle2 className="w-4 h-4 text-emerald-700" aria-hidden="true" />
                     ) : (
                       <CircleDashed className="w-4 h-4 text-slate-400" aria-hidden="true" />
                     )}
@@ -253,24 +328,48 @@ function HomeContent() {
         </div>
       ) : null}
 
+      {showSetupDrawer && !isWarmup ? (
+        <div className="bg-white border border-cream-300 rounded-3xl p-6 shadow-sm space-y-3">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <h2 className="text-lg font-serif font-bold text-heading">Connect a channel to go live</h2>
+              <p className="text-sm text-slate-600 mt-1">
+                Setup chose your channels{setupChannel ? ` (next: ${setupChannel})` : ''}. No messages arrive until you
+                connect them, and nothing shows as connected before then.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setShowSetupDrawer(false)}
+              className="text-xs font-semibold text-slate-500 hover:text-heading"
+            >
+              Dismiss
+            </button>
+          </div>
+          <ol className="text-sm text-slate-600 list-decimal pl-5 space-y-1">
+            <li>Open Connectors to connect WhatsApp, or Integrations to connect Gmail.</li>
+            <li>Sign in to the app when asked (or paste your Meta credentials for WhatsApp on Connectors).</li>
+            <li>Confirm the channel status shows connected — not pending.</li>
+          </ol>
+          <Link
+            href="/connectors"
+            className="inline-flex items-center px-4 py-2 rounded-xl bg-amber-500 text-heading text-sm font-semibold"
+          >
+            Open Connectors →
+          </Link>
+        </div>
+      ) : null}
+
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
         <div className="lg:col-span-8 space-y-8">
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
             <div className="bg-cream-200/70 border border-cream-300 p-5 rounded-2xl space-y-2 shadow-sm">
               <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Conversations</span>
               <div className="text-3xl font-bold text-heading">{stats?.conversationCount ?? 0}</div>
-              {/*
-                The headline is an all-time total, so the line under it counts
-                the same thing over a stated window. It used to read "% vs
-                yesterday", which described a different population and let the
-                card contradict itself — "8 conversations, -100% vs yesterday".
-                Week-over-week percentages live on /analytics, where the
-                headline is windowed too and the comparison is like-for-like.
-              */}
               <span className="text-xs text-slate-500 font-medium">
-                {stats?.conversationsLast24h
-                  ? `${stats.conversationsLast24h} new in the last 24 hours`
-                  : 'none new in the last 24 hours'}
+                {stats?.conversationChangePct == null
+                  ? 'No prior-day volume to compare'
+                  : `${stats.conversationChangePct >= 0 ? '+' : ''}${stats.conversationChangePct}% vs yesterday`}
               </span>
             </div>
 
@@ -279,19 +378,8 @@ function HomeContent() {
               <div className="text-3xl font-bold text-heading">
                 {stats?.avgResponseMs ? (stats.avgResponseMs / 1000).toFixed(1) + 's' : 'N/A'}
               </div>
-              {/*
-                Says which population it measures, because /analytics carries a
-                different one under a name that used to collide with this. Here:
-                the share of conversations the agent replied to at all. There:
-                the share of replies that called a tool. On this workspace those
-                read 88% and 0.0%, and both are true — but labelled "AI
-                automated" and "AI automation rate", two screens appeared to
-                contradict each other about the same thing.
-              */}
               <span className="text-xs text-slate-500 font-medium">
-                {stats?.aiAutomationRate != null
-                  ? `${stats.aiAutomationRate}% of conversations got an agent reply`
-                  : 'No automation sample yet'}
+                {stats?.aiAutomationRate != null ? `${stats.aiAutomationRate}% AI automated (7d)` : 'No automation sample yet'}
               </span>
             </div>
 
@@ -309,7 +397,15 @@ function HomeContent() {
           </div>
 
           <div className="bg-white border border-cream-300 rounded-3xl p-6 space-y-4 shadow-sm">
-            <h2 className="text-lg font-serif font-bold text-heading">Active AI Employee Roster</h2>
+            <div className="flex items-center justify-between gap-3">
+              <h2 className="text-lg font-serif font-bold text-heading">AI Employee Roster</h2>
+              <Link
+                href="/employees"
+                className="text-xs font-semibold text-amber-800 hover:text-amber-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-500 rounded-lg px-2 py-1"
+              >
+                View all{stats?.aiEmployeeCount != null ? ` (${stats.aiEmployeeCount})` : ''} →
+              </Link>
+            </div>
             {stats?.aiEmployees && stats.aiEmployees.length > 0 ? (
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
                 {stats.aiEmployees.map((emp) => (
@@ -324,7 +420,12 @@ function HomeContent() {
               </div>
             ) : (
               <div className="p-8 text-center bg-cream-50 border border-dashed border-cream-300 rounded-2xl">
-                <p className="text-slate-500">No AI employees configured yet — set them up in the Employees section</p>
+                <p className="text-slate-500">
+                  No AI employees configured yet — set them up in the{' '}
+                  <Link href="/employees" className="text-amber-700 underline font-semibold hover:text-amber-800">
+                    Employees section
+                  </Link>
+                </p>
               </div>
             )}
           </div>
@@ -342,7 +443,11 @@ function HomeContent() {
             <div className="space-y-3">
               {needsAttention.length > 0 ? (
                 needsAttention.map((conv) => (
-                  <div key={conv.id} className="p-3.5 bg-amber-500/10 border border-amber-500/30 rounded-2xl space-y-1">
+                  <Link
+                    key={conv.id}
+                    href={`/conversations?id=${encodeURIComponent(conv.id)}`}
+                    className="block p-3.5 bg-amber-500/10 border border-amber-500/30 rounded-2xl space-y-1 hover:bg-amber-500/15 focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
+                  >
                     <div className="flex items-center justify-between text-xs font-semibold text-amber-800">
                       <span className="flex items-center space-x-1">
                         <AlertTriangle className="w-3.5 h-3.5" aria-hidden="true" />
@@ -351,7 +456,7 @@ function HomeContent() {
                       <StatusBadge label={conv.channel || 'System'} tone="warning" />
                     </div>
                     <p className="text-xs text-slate-700">{conv.snippet || 'This conversation requires human review.'}</p>
-                  </div>
+                  </Link>
                 ))
               ) : (
                 <div className="p-4 text-center bg-cream-50 border border-dashed border-cream-300 rounded-2xl text-slate-500 text-sm">
@@ -368,11 +473,11 @@ function HomeContent() {
         onSubmit={(e) => {
           e.preventDefault();
           if (askQuery.trim()) {
-            window.location.href = '/ask-ai?q=' + encodeURIComponent(askQuery);
+            router.push('/ask-ai?q=' + encodeURIComponent(askQuery.trim()));
           }
         }}
       >
-        <Sparkles className="w-6 h-6 text-amber-600 shrink-0 ml-2" aria-hidden="true" />
+        <Sparkles className="w-6 h-6 text-amber-700 shrink-0 ml-2" aria-hidden="true" />
         <input
           type="text"
           value={askQuery}

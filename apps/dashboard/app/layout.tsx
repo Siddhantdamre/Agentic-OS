@@ -1,5 +1,7 @@
 import type { Metadata } from 'next';
 import './globals.css';
+import { AliveBeacon } from '@/components/AliveBeacon';
+import { LOAD_GUARD_SCRIPT } from '@/lib/load-guard';
 
 export const metadata: Metadata = {
   title: 'DareX ai — AI Employees for Business',
@@ -13,17 +15,12 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en">
+      <head>
+        <script dangerouslySetInnerHTML={{ __html: LOAD_GUARD_SCRIPT }} />
+      </head>
       <body className="bg-cream-100 min-h-screen text-heading antialiased">
-        {/* Skip link. A keyboard or screen-reader user otherwise tabs through
-            the whole sidebar on every page load before reaching the content.
-            Visually hidden until focused, so it costs sighted users nothing. */}
-        <a
-          href="#main"
-          className="sr-only focus:not-sr-only focus:absolute focus:left-4 focus:top-4 focus:z-50 focus:rounded focus:bg-white focus:px-4 focus:py-2 focus:text-heading focus:shadow-lg"
-        >
-          Skip to main content
-        </a>
-        <div id="main">{children}</div>
+        <AliveBeacon />
+        {children}
       </body>
     </html>
   );

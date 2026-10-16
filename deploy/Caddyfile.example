@@ -1,5 +1,7 @@
 # Example reverse proxy for a single VM. Callers: operators installing Caddy
-# on the host. Dashboard compose binds 127.0.0.1:3000 in docker-compose.prod.yml.
+# Ports come from deploy/ports.conf (FRONTEND_HOST_PORT, DASHBOARD_PORT); keep these in sync.
+# on the host. The frontend binds 127.0.0.1:13100 in docker-compose.prod.yml and proxies /api
+# to the dashboard (127.0.0.1:13000), so the public site points at 13100.
 #
 #   sudo cp deploy/Caddyfile.example /etc/caddy/Caddyfile
 #   # edit the hostname, then: sudo systemctl reload caddy
@@ -11,10 +13,10 @@
 # Documented in infra/scripts/split-ingest.md. Do not enable until a
 # dedicated ingest process exists (persist + 200 + Temporal only):
 # ingest.example.com {
-# 	reverse_proxy 127.0.0.1:3000
+# 	reverse_proxy 127.0.0.1:13000
 # }
 
 app.example.com {
 	encode gzip
-	reverse_proxy 127.0.0.1:3000
+	reverse_proxy 127.0.0.1:13100
 }

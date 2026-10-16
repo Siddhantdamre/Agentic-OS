@@ -20,6 +20,9 @@ export type {
   AgentStepResult,
   AgentTaskInput,
   AgentTaskResult,
+  ApprovalRequest,
+  SubagentEvent,
+  TurnUsage,
   ToolExecutionParams,
   ToolExecutionStatus,
   ToolExecutionResult,
@@ -37,13 +40,14 @@ export type {
 export type {
   CrewMode,
   CrewRosterMember,
+  FixedCrewMember,
   CrewSpecialistAssignment,
   CrewPlan,
   CrewSpawnResult,
   CrewWorkflowInput,
   CrewWorkflowResult,
 } from './crew.js';
-export { MAX_CREW_SPAWN } from './crew.js';
+export { MAX_CREW_SPAWN, planFixedMemberCrew } from './crew.js';
 
 export type {
   MemoryTier,
@@ -168,6 +172,7 @@ export {
   AUDIT_EVENT_KINDS,
   AUDIT_RESULT_STATUSES,
   ORG_HUMAN_ROLES,
+  canCallPayTools,
   DSR_KINDS,
   DSR_STATUSES,
 } from './audit.js';
@@ -189,3 +194,70 @@ export type {
   PlanPromotion,
 } from './metrics.js';
 export { METRIC_VALUE_KINDS, INSIGHT_CARD_STATUSES, EVAL_RUN_STATUSES } from './metrics.js';
+
+export type {
+  EnquiryState,
+  EnquiryPriority,
+  OpenLoopStatus,
+  ExpectationStatus,
+  DecisionOutcome,
+  AutonomyTier,
+  EmployeeRole,
+  ExpectationBasis,
+  DueBasis,
+  Obligor,
+  StateMachineName,
+} from './state-machines.js';
+export {
+  ENQUIRY_TRANSITIONS,
+  OPEN_LOOP_TRANSITIONS,
+  EXPECTATION_TRANSITIONS,
+  STATE_MACHINES,
+  STATE_MACHINE_INITIAL,
+  MACHINE_INITIAL,
+  MACHINE_TABLES,
+  canTransition,
+  assertTransition,
+  reachableFrom,
+} from './state-machines.js';
+
+export type {
+  ActionBucket,
+  ActionType,
+  Reversibility,
+} from './actions.js';
+export { ACTION_BUCKETS, BUCKET_REVERSIBILITY, bucketRuleKey, resolveActionType } from './actions.js';
+
+export type {
+  CustomerOperationalState,
+  DecisionCard,
+  DecisionCardOption,
+  ExtractedObligation,
+} from './customer.js';
+export { CUSTOMER_OPERATIONAL_STATES } from './customer.js';
+
+export type {
+  GrowthSignalType,
+  WonAccountFeatures,
+  IcpProfile,
+  PreferenceRule,
+  PreferenceSuppression,
+  RankedCandidate,
+  GrowthOpportunityPayload,
+  RejectionReason,
+  AutonomyActionType,
+  OwnerDecisionCardPayload,
+} from './growth.js';
+export { GROWTH_SIGNAL_TYPES, REJECTION_REASONS, AUTONOMY_ACTION_TYPES } from './growth.js';
+
+export type { ConnectorSignInId } from './connector-signin.js';
+export {
+  CONNECTOR_SIGN_IN_IDS,
+  connectorSignInPath,
+  isConnectorSignInId,
+  providerKeyForTool,
+} from './connector-signin.js';
+
+export type { RealtimeEventType } from './realtime.js';
+export { REALTIME_EVENT_TYPES, isRealtimeEventType } from './realtime.js';
+

@@ -1,33 +1,105 @@
 import type { ToolRisk } from './risk.js';
 import type { ToolActionContext, ToolModule } from './shared.js';
-import { apiError, confirmFromRisk, getNangoConnection, notConnected } from './shared.js';
+import { apiError, confirmFromRisk, nangoAuthError, notConnected, resolveNangoAuth, fetchWithTimeout } from './shared.js';
+import { decideHost, normaliseShopifyHost, pickTrusted } from './host-guard.js';
 
-const ACTIONS = ['fetch_products', 'fetch_orders'] as const;
+const ACTIONS = ['fetch_products', 'fetch_orders', 'update_order_address'] as const;
 
-function riskFor(_action: string): ToolRisk {
-  return 'read';
+function riskFor(action: string): ToolRisk {
+  return action.toLowerCase().includes('update') ? 'draft' : 'read';
 }
 
 async function execute(ctx: ToolActionContext) {
   const { actionName, payload, orgId, timestamp } = ctx;
   const shopifyConnId = `${orgId}_shopify`;
-  const shopifyConn = await getNangoConnection(shopifyConnId, 'shopify');
-  const shopifyToken = shopifyConn?.credentials?.raw?.access_token || shopifyConn?.credentials?.access_token || null;
+  const _shAuth = await resolveNangoAuth(shopifyConnId, 'shopify');
+  const shopifyConn = _shAuth.kind === 'connected' ? _shAuth.connection : null;
+  const _shAuthErr = _shAuth.kind === 'connected' ? null : nangoAuthError('shopify', actionName, timestamp, _shAuth);
+  const shopifyToken = (shopifyConn as any)?.credentials?.raw?.access_token || (shopifyConn as any)?.credentials?.access_token || null;
   if (shopifyToken) {
     try {
-      const shopDomain = payload.shopDomain
-        || process.env.SHOPIFY_SHOP_DOMAIN
-        || shopifyConn?.connection_config?.shop
-        || shopifyConn?.metadata?.shop
-        || shopifyConn?.metadata?.shopDomain;
-      if (!shopDomain) {
-        return apiError('shopify', actionName, timestamp, 'shopDomain is required (payload, SHOPIFY_SHOP_DOMAIN, or Nango connection metadata).');
-      }
+      // The token below belongs to THIS workspace's store. The model-written
+      // payload may name that store but never choose another host to send it to
+      // (see host-guard.ts). The connection's own record comes first.
+      const { trusted, invalid: trustedInvalid } = pickTrusted([
+        (shopifyConn as any)?.connection_config?.shop,
+        (shopifyConn as any)?.connection_config?.subdomain,
+        (shopifyConn as any)?.metadata?.shop,
+        (shopifyConn as any)?.metadata?.shopDomain,
+        process.env.SHOPIFY_SHOP_DOMAIN,
+      ], normaliseShopifyHost);
+      const hostDecision = decideHost({
+        provider: 'Shopify',
+        field: 'shopDomain',
+        trusted,
+        trustedInvalid,
+        requested: payload.shopDomain,
+        normalise: normaliseShopifyHost,
+        missingMessage: 'shopDomain is required (payload, SHOPIFY_SHOP_DOMAIN, or Nango connection metadata).',
+      });
+      if (!hostDecision.ok) return apiError('shopify', actionName, timestamp, hostDecision.message as string);
+      const shopDomain = hostDecision.host;
       if (shopDomain) {
+        if (actionName.includes('update') && actionName.includes('address')) {
+          const orderId = payload.orderId || payload.order_id || payload.id;
+          const shippingAddress = payload.shippingAddress || payload.shipping_address || payload.address;
+          if (!orderId) {
+            return apiError('shopify', 'update_order_address', timestamp, 'orderId is required to update a shipping address.');
+          }
+          if (!shippingAddress || typeof shippingAddress !== 'object') {
+            return apiError('shopify', 'update_order_address', timestamp, 'shippingAddress (address1, city, zip, country, etc.) is required.');
+          }
+
+          // Gate: never move an address once the warehouse has started fulfilling
+          // the order — a mid-fulfillment address change ships to the old address
+          // anyway and just corrupts the record.
+          const orderRes = await fetchWithTimeout(
+            `https://${shopDomain}/admin/api/2024-01/orders/${encodeURIComponent(String(orderId))}.json`,
+            { headers: { 'X-Shopify-Access-Token': shopifyToken }, redirect: 'error' },
+          );
+          const orderBody = await orderRes.json().catch(() => ({}));
+          if (!orderRes.ok) {
+            return apiError('shopify', 'update_order_address', timestamp, `Shopify order lookup failed: ${orderRes.status}`, orderBody);
+          }
+          const order = orderBody.order;
+          const fulfillmentStatus = order?.fulfillment_status || null;
+          if (fulfillmentStatus && fulfillmentStatus !== 'unfulfilled') {
+            return {
+              tool: 'shopify',
+              action: 'update_order_address',
+              status: 'error' as const,
+              message: `Order #${order?.order_number ?? orderId} is already ${fulfillmentStatus} — address can no longer be changed.`,
+              data: { orderId, fulfillmentStatus },
+              timestamp,
+            };
+          }
+
+          const updateRes = await fetchWithTimeout(
+            `https://${shopDomain}/admin/api/2024-01/orders/${encodeURIComponent(String(orderId))}.json`,
+            {
+              method: 'PUT',
+              headers: { 'X-Shopify-Access-Token': shopifyToken, 'Content-Type': 'application/json' },
+              redirect: 'error',
+              body: JSON.stringify({ order: { id: orderId, shipping_address: shippingAddress } }),
+            },
+          );
+          const updateBody = await updateRes.json().catch(() => ({}));
+          if (!updateRes.ok) {
+            return apiError('shopify', 'update_order_address', timestamp, `Shopify order update failed: ${updateRes.status}`, updateBody);
+          }
+          return {
+            tool: 'shopify',
+            action: 'update_order_address',
+            status: 'executed' as const,
+            message: `Updated shipping address on order #${updateBody.order?.order_number ?? orderId}`,
+            data: { orderId, shippingAddress: updateBody.order?.shipping_address || shippingAddress },
+            timestamp,
+          };
+        }
         if (actionName.includes('product')) {
-          const shopifyRes = await fetch(
+          const shopifyRes = await fetchWithTimeout(
             `https://${shopDomain}/admin/api/2024-01/products.json?limit=10`,
-            { headers: { 'X-Shopify-Access-Token': shopifyToken } }
+            { headers: { 'X-Shopify-Access-Token': shopifyToken }, redirect: 'error' }
           );
           if (shopifyRes.ok) {
             const data = await shopifyRes.json();
@@ -41,9 +113,9 @@ async function execute(ctx: ToolActionContext) {
             };
           }
         } else {
-          const shopifyRes = await fetch(
+          const shopifyRes = await fetchWithTimeout(
             `https://${shopDomain}/admin/api/2024-01/orders.json?status=open&limit=50`,
-            { headers: { 'X-Shopify-Access-Token': shopifyToken } }
+            { headers: { 'X-Shopify-Access-Token': shopifyToken }, redirect: 'error' }
           );
           if (shopifyRes.ok) {
             const shopifyData = await shopifyRes.json();
@@ -64,7 +136,7 @@ async function execute(ctx: ToolActionContext) {
       console.error('[Shopify] API error:', e.message);
     }
   }
-  return notConnected('shopify', actionName, timestamp);
+  return _shAuthErr ?? notConnected('shopify', actionName, timestamp);
 }
 
 export const shopify: ToolModule = {

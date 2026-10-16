@@ -39,7 +39,7 @@ export default function OnboardingLayout({
       {/* Brand Header */}
       <div className="mb-6 flex items-center space-x-2">
         <span className="text-2xl font-serif font-bold text-heading tracking-wide">
-          DareX<span className="text-amber-600 font-sans text-sm ml-1 px-2 py-0.5 bg-amber-500/20 rounded-full">ai</span>
+          DareX<span className="text-amber-700 font-sans text-sm ml-1 px-2 py-0.5 bg-amber-500/20 rounded-full">ai</span>
         </span>
       </div>
 

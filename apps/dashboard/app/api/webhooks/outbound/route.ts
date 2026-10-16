@@ -1,7 +1,9 @@
+import { randomUUID } from 'crypto';
 import { NextResponse } from 'next/server';
 import { pool, getOrgScopedClient } from '@/lib/db';
-import { assertChatwootWebhookSignature } from '@/lib/webhook-crypto';
+import { assertChatwootWebhookSignature, secretEquals, verifyChatwootSignature } from '@/lib/webhook-crypto';
 import { replyTargetFromChannelMeta, sendChannelReply } from '@/lib/channel-outbound';
+import { recordOutboundDelivery } from '@/lib/failed-webhooks';
 import { realtimeHub } from '@/lib/realtime-hub';
 import { denyWebhookIfLimited, isRateLimitError, responseFromRateLimit } from '@/lib/rate-limit';
 
@@ -46,6 +48,26 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'Conversation not found' }, { status: 404 });
   }
 
+  // The global inbox HMAC is not enough: it is shared, so a caller who has it
+  // could inject into any org's conversation id. The secret must match this org.
+  const secretRes = await pool.query(
+    `SELECT meta->>'webhook_secret' AS secret FROM orgs WHERE id = $1`,
+    [orgId]
+  );
+  const orgSecret = typeof secretRes.rows[0]?.secret === 'string' ? secretRes.rows[0].secret : '';
+  const bearer = (request.headers.get('authorization') || '').replace(/^Bearer\s+/i, '').trim();
+  const headerSecret = request.headers.get('x-darex-org-secret') || '';
+  const orgSigOk = orgSecret
+    ? verifyChatwootSignature(rawBody, request.headers.get('x-chatwoot-signature'), orgSecret)
+    : false;
+  const orgTokenOk = secretEquals(bearer, orgSecret) || secretEquals(headerSecret, orgSecret);
+  if (!orgSigOk && !orgTokenOk) {
+    return NextResponse.json(
+      { error: 'Outbound webhook secret does not match this workspace' },
+      { status: 403 }
+    );
+  }
+
   const webhookLimited = denyWebhookIfLimited(orgId);
   if (webhookLimited) {
     return webhookLimited;
@@ -66,10 +88,11 @@ export async function POST(request: Request) {
     }
 
     const conv = convRes.rows[0];
-    const channelType =
-      (typeof body.channel === 'string' && body.channel) || conv.channel_type || 'dashboard';
-    const contactId =
-      (typeof body.recipient === 'string' && body.recipient) || conv.contact_id || '';
+    // Channel and recipient always come from the stored conversation; body
+    // `channel` / `recipient` are ignored like `org_id`. Honouring them would
+    // let a caller send from this org's credentials to any number (CH-S01).
+    const channelType = conv.channel_type || 'dashboard';
+    const contactId = conv.contact_id || '';
 
     const msgRes = await client.query(
       `INSERT INTO messages (org_id, conversation_id, role, content, created_at)
@@ -93,6 +116,7 @@ export async function POST(request: Request) {
     released = true;
 
     const sendResult = await sendChannelReply(orgId, target, content);
+    await recordOutboundDelivery({ orgId, messageId: msgRes.rows[0].id, result: sendResult });
     realtimeHub.publish(orgId, {
       type: 'conversation_updated',
       conversationId,
@@ -114,9 +138,10 @@ export async function POST(request: Request) {
     if (isRateLimitError(err)) {
       return responseFromRateLimit(err);
     }
+    const errorId = randomUUID();
     const message = err instanceof Error ? err.message : String(err);
-    console.error('[outbound webhook]', message);
-    return NextResponse.json({ success: false, error: message }, { status: 500 });
+    console.error('[outbound webhook]', errorId, message);
+    return NextResponse.json({ success: false, error: 'Internal error', errorId }, { status: 500 });
   } finally {
     if (!released) client.release();
   }

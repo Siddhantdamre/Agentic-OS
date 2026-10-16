@@ -1,6 +1,6 @@
 import type { ToolRisk } from './risk.js';
 import type { ToolActionContext, ToolModule } from './shared.js';
-import { apiError, confirmFromRisk, getNangoAccessToken, notConnected } from './shared.js';
+import { apiError, confirmFromRisk, nangoAuthError, notConnected, resolveNangoAuth, fetchWithTimeout } from './shared.js';
 
 const ACTIONS = ['fetch_user_repos', 'create_repo', 'create_issue'] as const;
 
@@ -14,7 +14,9 @@ function riskFor(action: string): ToolRisk {
 async function execute(ctx: ToolActionContext) {
   const { actionName, payload, orgId, timestamp } = ctx;
   const connId = `${orgId}_github`;
-  const accessToken = await getNangoAccessToken(connId, 'github');
+  const _ghAuth = await resolveNangoAuth(connId, 'github');
+  const accessToken = _ghAuth.kind === 'connected' ? _ghAuth.accessToken : null;
+  const _ghAuthErr = _ghAuth.kind === 'connected' ? null : nangoAuthError('github', actionName, timestamp, _ghAuth);
 
   if (accessToken) {
     try {
@@ -31,12 +33,12 @@ async function execute(ctx: ToolActionContext) {
         const repoParts = repoArg.split('/');
         let fullRepo = repoArg;
         if (repoParts.length === 1) {
-          const meRes = await fetch('https://api.github.com/user', { headers: { Authorization: `Bearer ${accessToken}`, 'User-Agent': 'DareX-AI-Agent' } });
+          const meRes = await fetchWithTimeout('https://api.github.com/user', { headers: { Authorization: `Bearer ${accessToken}`, 'User-Agent': 'DareX-AI-Agent' } });
           const me = await meRes.json();
           fullRepo = `${me.login}/${repoParts[0]}`;
         }
 
-        const issueRes = await fetch(`https://api.github.com/repos/${fullRepo}/issues`, {
+        const issueRes = await fetchWithTimeout(`https://api.github.com/repos/${fullRepo}/issues`, {
           method: 'POST',
           headers: {
             Authorization: `Bearer ${accessToken}`,
@@ -70,7 +72,7 @@ async function execute(ctx: ToolActionContext) {
         const repoName = payload.name || payload.repoName || 'new-repo';
         const isPrivate = payload.private !== undefined ? payload.private : true;
 
-        const createRes = await fetch('https://api.github.com/user/repos', {
+        const createRes = await fetchWithTimeout('https://api.github.com/user/repos', {
           method: 'POST',
           headers: {
             Authorization: `Bearer ${accessToken}`,
@@ -101,7 +103,7 @@ async function execute(ctx: ToolActionContext) {
           return apiError('github', 'create_repo', timestamp, `GitHub repo creation failed: ${createRes.status} ${errData.message || ''}`, { status: createRes.status });
         }
       } else {
-        const ghRes = await fetch('https://api.github.com/user/repos?sort=updated&per_page=5', {
+        const ghRes = await fetchWithTimeout('https://api.github.com/user/repos?sort=updated&per_page=5', {
           headers: { Authorization: `Bearer ${accessToken}`, 'User-Agent': 'DareX-AI-Agent' },
         });
         if (ghRes.ok) {
@@ -124,7 +126,7 @@ async function execute(ctx: ToolActionContext) {
     }
   }
 
-  return notConnected('github', actionName, timestamp);
+  return _ghAuthErr ?? notConnected('github', actionName, timestamp);
 }
 
 export const github: ToolModule = {

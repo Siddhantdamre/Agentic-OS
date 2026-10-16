@@ -6,11 +6,10 @@
  */
 
 import { createHash } from 'crypto';
-import { llmChat } from '../llm/gateway.js';
 import { createConnection, type Socket } from 'node:net';
 import { connect as tlsConnect } from 'node:tls';
 import { ApplicationFailure } from '@temporalio/activity';
-import { Pool, PoolClient } from 'pg';
+import type { PoolClient } from 'pg';
 import type {
   MemoryEdgeRel,
   MemoryFieldUpdate,
@@ -21,7 +20,11 @@ import type {
   MemoryWriteBackPayload,
 } from '@darex/shared-types';
 import { MEMORY_EDGE_RELS, MEMORY_SOURCE_KINDS } from '@darex/shared-types';
+import { withOrgClient as withOrgScopedDb } from '../db.js';
 import { enqueueEmbedJobFromWorker } from './embed.js';
+import { classifyWriteBackEvent, isAllowedWriteBack } from '../memory/writeback-policy.js';
+import { rememberCognee } from '../memory/cognee-client.js';
+import { retainHindsight } from '../memory/hindsight-client.js';
 
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -67,15 +70,6 @@ export interface MemoryWriteBackResult {
   openQuestionCount: number;
   noOp?: boolean;
 }
-
-const pool = new Pool({
-  host: process.env.DB_HOST || 'localhost',
-  port: parseInt(process.env.DB_PORT || '5432', 10),
-  user: process.env.DB_USER || 'darex_app',
-  password: process.env.DB_PASSWORD,
-  database: process.env.DB_NAME || 'darex',
-  max: 5,
-});
 
 function requireOrgId(orgId: string | undefined): string {
   if (!orgId || !UUID_RE.test(orgId)) {
@@ -151,18 +145,7 @@ function entityFieldAllowed(entityType: string, field: string): boolean {
 }
 
 async function withOrgClient<T>(orgId: string, fn: (client: PoolClient) => Promise<T>): Promise<T> {
-  const client = await pool.connect();
-  try {
-    await client.query("SELECT set_config('app.current_org_id', $1, false)", [orgId]);
-    return await fn(client);
-  } finally {
-    try {
-      await client.query('RESET app.current_org_id');
-    } catch {
-      // always release
-    }
-    client.release();
-  }
+  return withOrgScopedDb(orgId, fn);
 }
 
 function litellmChatUrl(): string {
@@ -194,59 +177,6 @@ function asNumber(value: unknown, fallback = 0): number {
 
 function asString(value: unknown): string {
   return typeof value === 'string' ? value : value == null ? '' : String(value);
-}
-
-/**
- * DOES THIS "FACT" MERELY RECORD THAT WE COULD NOT ANSWER?
- *
- * The extraction prompt asks for durable facts grounded in the transcript, and
- * guards hard against inventing prices or legal ids. It never said that the
- * AGENT'S OWN INABILITY TO ANSWER is not a fact about the business — so the
- * model, correctly following its instructions, produced this from a failed turn:
- *
- *   "The RERA registration number for the Ghodbunder Road project is not
- *    available in our records."
- *
- * That sentence is grounded in the transcript and completely false: the number
- * was sitting in an uploaded document the whole time. Retrieval then ranked it
- * FIRST for the same question, because it repeats the question's own words, and
- * the agent answered the next customer by citing its own earlier failure.
- *
- * A WRONG ANSWER HAD BECOME A PERMANENT FACT, and every repeat of the question
- * reinforced it. That is the worst failure mode a memory system has: not
- * forgetting, but confidently remembering something untrue.
- *
- * A prompt line alone cannot fix this. Telling a model "do not do X" is a
- * request, not a guarantee, and the cost of one leak here is a false fact that
- * outranks the truth forever. So the prompt says it AND this drops it.
- *
- * Deliberately narrow. It matches only the shape "we do not have / cannot find
- * <thing>" — an assertion about our own records. It must NOT match a real
- * business fact that happens to be negative, because those are genuine
- * knowledge:
- *
- *   "Sunday site visits are not available."          <- a real policy
- *   "The booking amount is not refundable after 7 days."  <- a real term
- *
- * The distinguishing feature is a first-person reference to our own records or
- * knowledge, not the mere presence of a negation.
- */
-export function recordsOnlyOurIgnorance(text: string): boolean {
-  const t = String(text || '').toLowerCase().replace(/\s+/g, ' ').trim();
-  if (!t) return false;
-
-  // "in our records", "on file with us", "in the system" - the tell that the
-  // sentence is about our own bookkeeping rather than about the business.
-  const aboutOurRecords = /(in|from|on)\s+(our|the)\s+(record|records|file|files|system|database|documents?|knowledge base)\b/.test(t)
-    || /\bwe (do not|don't) (have|hold|keep)\b/.test(t)
-    || /\b(is|are|was|were) not (available|present|found|listed|recorded) (in|on|with)\b/.test(t);
-
-  // The agent narrating its own failure.
-  const narratesFailure = /\b(could ?n[o']?t|cannot|can't|unable to|failed to|was not able to)\s+(find|locate|retrieve|determine|identify|confirm|access)\b/.test(t)
-    || /\bno (information|record|records|details|data) (on|about|for|regarding)\b/.test(t)
-    || /\b(not|no) (information|answer) available\b/.test(t);
-
-  return aboutOurRecords || narratesFailure;
 }
 
 export function parseWriteBackExtract(raw: unknown): MemoryWriteBackPayload {
@@ -332,7 +262,6 @@ export function parseWriteBackExtract(raw: unknown): MemoryWriteBackPayload {
 }
 
 async function extractWithLiteLLM(params: {
-  orgId: string;
   transcript: string;
   toolResults: unknown;
   closed: boolean;
@@ -351,12 +280,6 @@ async function extractWithLiteLLM(params: {
     'Prices, legal ids, and payments: copy ONLY from tool_results, never from world knowledge or user guesses.',
     'Never invent listings, list_price, rents, or contact names that are not in the transcript or tool_results.',
     'If unsure, put an open_question instead of a field_update. Low confidence < 0.75 should not assert list_price.',
-    // The agent not knowing something is not knowledge ABOUT the business. Say
-    // so here, and drop it deterministically below, because a prompt is a
-    // request and one leak becomes a false fact that outranks the truth.
-    'NEVER record that something is missing, unavailable, or not in our records. '
-    + 'The assistant failing to find an answer is NOT a durable fact - put it in '
-    + 'open_questions instead. Only record what the business IS or DOES.',
     'Do not extract KYC / PAN / Aadhaar numbers.',
     'relations[] only when both ids are real UUIDs from the transcript; otherwise omit.',
   ].join(' ');
@@ -369,25 +292,37 @@ async function extractWithLiteLLM(params: {
     JSON.stringify(params.toolResults ?? []).slice(0, 8000),
   ].join('\n');
 
-  // Through the gateway: the model comes from the workspace's budget. This runs
-  // after EVERY successful conversation, so it was the largest paid path that
-  // had never heard of the budget -- an over-budget tenant was degraded for the
-  // reply and then charged full price to remember it.
-  const res = await llmChat({
-    orgId: params.orgId,
-    purpose: 'writeback',
-    maxTokens: 800,
-    temperature: 0,
-    timeoutMs: EXTRACT_TIMEOUT_MS,
-    messages: [
-      { role: 'system', content: system },
-      { role: 'user', content: user },
-    ],
-  });
-  if (res.error || !res.content) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), EXTRACT_TIMEOUT_MS);
+  try {
+    const res = await fetch(litellmChatUrl(), {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        model,
+        stream: false,
+        max_tokens: 800,
+        temperature: 0,
+        reasoning: { enabled: false },
+        messages: [
+          { role: 'system', content: system },
+          { role: 'user', content: user },
+        ],
+      }),
+      signal: controller.signal,
+    });
+    if (!res.ok) return { facts: [], fieldUpdates: [], openQuestions: [], relations: [] };
+    const data = (await res.json()) as { choices?: Array<{ message?: { content?: string } }> };
+    const content = data?.choices?.[0]?.message?.content || '';
+    return parseWriteBackExtract(extractJsonObject(content));
+  } catch {
     return { facts: [], fieldUpdates: [], openQuestions: [], relations: [] };
+  } finally {
+    clearTimeout(timer);
   }
-  return parseWriteBackExtract(extractJsonObject(res.content));
 }
 
 async function loadTranscript(
@@ -662,10 +597,9 @@ export async function memoryWriteBackActivity(input: MemoryWriteBackInput): Prom
     };
   }
 
-  const extracted = await extractWithLiteLLM({ orgId, transcript, toolResults, closed });
+  const extracted = await extractWithLiteLLM({ transcript, toolResults, closed });
   let factCount = 0;
   let skippedDuplicates = 0;
-  let droppedIgnoranceFacts = 0;
   let fieldUpdatesApplied = 0;
   let needsAttention = false;
   const attentionReasons: string[] = [];
@@ -688,12 +622,17 @@ export async function memoryWriteBackActivity(input: MemoryWriteBackInput): Prom
       else skippedDuplicates += 1;
     }
 
+    const writeEvent = classifyWriteBackEvent({
+      conversationClosed: closed,
+      durableFactConfirmed: fromToolResults,
+    });
+
     for (const fact of extracted.facts) {
-      // A fact that only records our own ignorance is not a fact. Dropped here
-      // rather than filtered at read time: once written it outranks the truth
-      // for the very question it fails to answer, and it never expires.
-      if (recordsOnlyOurIgnorance(fact.text)) {
-        droppedIgnoranceFacts += 1;
+      // Policy allows conversation_closed and durable_fact_confirmed (and the
+      // other WRITEBACK_EVENTS). Restricting to durable_fact_confirmed alone
+      // dropped every extracted fact on close — only the blob summary wrote.
+      if (!isAllowedWriteBack(writeEvent)) {
+        skippedDuplicates += 1;
         continue;
       }
       const hash = fact.contentHash || hashFactText(fact.text);
@@ -806,6 +745,45 @@ export async function memoryWriteBackActivity(input: MemoryWriteBackInput): Prom
       conversationId: input.conversationId,
       message: 'Memory updated',
     }).catch(() => undefined);
+
+    // Also populate Cognee Knowledge Graph. Awaited (not fire-and-forget):
+    // this activity already runs off the webhook thread with a 3-minute
+    // budget, so a dropped `void` promise that diverges PG from the graph is
+    // worse than the extra latency. Failure is logged, never fatal.
+    // Hindsight: retain the transcript (it extracts its own facts). document_id =
+    // conversation id, so later turns upsert instead of duplicating. The server
+    // queues extraction (async), so this returns fast. Non-fatal.
+    if (process.env.USE_HINDSIGHT !== 'false' && transcript.trim()) {
+      const retained = await retainHindsight({
+        orgId,
+        text: transcript.slice(0, 8000),
+        documentId: input.conversationId,
+      });
+      if (!retained) console.warn('[hindsight] retain write-back returned false');
+    }
+
+    if (process.env.USE_COGNEE !== 'false') {
+      const factTexts = extracted.facts.map((f) => f.text).join('\n');
+      const payload = factTexts || transcript.slice(0, 4000);
+      if (payload.trim()) {
+        try {
+          // Cognify (LLM extraction + graph build) takes 60-90s on small
+          // boxes — verified 71s against the live service. Well within this
+          // activity's 3-minute budget; failure stays non-fatal.
+          const remembered = await rememberCognee({
+            orgId,
+            text: payload,
+            sessionId: input.conversationId,
+            timeoutMs: 90_000,
+          });
+          if (!remembered) {
+            console.warn('[cognee] remember write-back returned false (PG and graph now diverge for this turn)');
+          }
+        } catch (cogneeErr) {
+          console.warn('[cognee] remember write-back failed:', cogneeErr instanceof Error ? cogneeErr.message : cogneeErr);
+        }
+      }
+    }
   }
 
   return {

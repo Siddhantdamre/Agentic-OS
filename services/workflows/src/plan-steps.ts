@@ -14,6 +14,8 @@ export type PlanStepLike = {
   action?: string;
   payload?: Record<string, unknown>;
   enabled?: boolean;
+  /** Stamped at plan creation; the step runs as this employee. */
+  employeeId?: string;
 };
 
 export function isDurablePlanRisk(risk: ToolRisk): boolean {
@@ -26,6 +28,7 @@ export function isDurablePlanRisk(risk: ToolRisk): boolean {
     case 'sign':
     case 'publish':
     case 'delete':
+    case 'execute':
       return true;
     default: {
       const _exhaustive: never = risk;
@@ -64,26 +67,54 @@ export function wireDependencies(step: PlanStepLike, previousResults: Array<Reco
     .filter((r) => r && r.status === 'executed')
     .map((r) => (r.data && typeof r.data === 'object' ? (r.data as Record<string, unknown>) : {}));
   const pick = (keys: string[]): string | undefined => {
-    for (const result of lastNonFailed) {
+    for (let rIdx = lastNonFailed.length - 1; rIdx >= 0; rIdx--) {
+      const result = lastNonFailed[rIdx];
       for (const key of keys) {
         const value = result?.[key];
         if (value) return String(value);
+      }
+      for (const sub of Object.values(result)) {
+        if (sub && typeof sub === 'object') {
+          for (const key of keys) {
+            const val = (sub as Record<string, unknown>)?.[key];
+            if (val) return String(val);
+          }
+        }
       }
     }
     return undefined;
   };
 
-  if (step.tool === 'google-sheets' && !payload.spreadsheetId && (step.action === 'sheets_read' || step.action === 'sheets_append_row')) {
+  const normTool = String(step.tool || '').toLowerCase().replace(/_/g, '-');
+  const action = String(step.action || '');
+
+  if (normTool === 'google-sheets' && !payload.spreadsheetId && !payload.spreadsheet_id && (action === 'sheets_read' || action === 'sheets_append_row' || action === 'sheets_append')) {
     const spreadsheetId = pick(['spreadsheetId', 'spreadsheet_id', 'id']);
-    if (spreadsheetId) payload.spreadsheetId = spreadsheetId;
+    if (spreadsheetId) {
+      payload.spreadsheetId = spreadsheetId;
+      payload.spreadsheet_id = spreadsheetId;
+    }
   }
-  if (step.tool === 'google-docs' && !payload.documentId && (step.action === 'docs_read' || step.action === 'docs_append')) {
+  if (normTool === 'google-docs' && !payload.documentId && !payload.document_id && (action === 'docs_read' || action === 'docs_append')) {
     const documentId = pick(['documentId', 'document_id', 'id']);
-    if (documentId) payload.documentId = documentId;
+    if (documentId) {
+      payload.documentId = documentId;
+      payload.document_id = documentId;
+    }
   }
-  if (step.tool === 'google-drive' && !payload.fileId && (step.action === 'drive_get_text' || step.action === 'drive_share')) {
+  if (normTool === 'google-drive' && !payload.fileId && !payload.file_id && (action === 'drive_get_text' || action === 'drive_share')) {
     const fileId = pick(['fileId', 'file_id', 'id']);
-    if (fileId) payload.fileId = fileId;
+    if (fileId) {
+      payload.fileId = fileId;
+      payload.file_id = fileId;
+    }
+  }
+  if (normTool === 'google-slides' && !payload.presentationId && !payload.presentation_id && (action === 'slides_add_slide' || action === 'slides_get')) {
+    const presentationId = pick(['presentationId', 'presentation_id', 'id']);
+    if (presentationId) {
+      payload.presentationId = presentationId;
+      payload.presentation_id = presentationId;
+    }
   }
 
   function interpolate(value: unknown): unknown {
@@ -120,18 +151,78 @@ export type StagedPlanStep = { s: PlanStepLike; i: number };
 
 export function stageSteps(steps: PlanStepLike[]): StagedPlanStep[][] {
   const stages: StagedPlanStep[][] = [];
-  const dependsOnEarlier = (step: PlanStepLike) => {
+  const stagedIndices = new Set<number>();
+
+  const dependsOnEarlier = (step: PlanStepLike, currentRemainingIndex: number) => {
     const payloadStr = String(JSON.stringify(step.payload || ''));
-    if (/\{\{step\d+_output\}\}/.test(payloadStr)) return true;
-    if (step.tool === 'google-sheets' && ['sheets_read', 'sheets_append_row'].includes(String(step.action)) && !(step.payload as { spreadsheetId?: string } | undefined)?.spreadsheetId) {
-      return true;
+    const stepOutputMatches = payloadStr.matchAll(/\{\{step(\d+)_output\}\}/g);
+    for (const match of stepOutputMatches) {
+      const stepIdx = parseInt(match[1], 10) - 1;
+      if (!stagedIndices.has(stepIdx)) {
+        return true;
+      }
     }
-    if (step.tool === 'google-docs' && ['docs_read', 'docs_append'].includes(String(step.action)) && !(step.payload as { documentId?: string } | undefined)?.documentId) {
-      return true;
+
+    const normTool = String(step.tool || '').toLowerCase().replace(/_/g, '-');
+    const action = String(step.action || '');
+    const p = step.payload as Record<string, any> | undefined;
+
+    if (normTool === 'google-sheets' && ['sheets_read', 'sheets_append_row', 'sheets_append'].includes(action) && !p?.spreadsheetId && !p?.spreadsheet_id) {
+      const hasPriorCreator = steps.slice(0, currentRemainingIndex).some((prev) => {
+        const prevTool = String(prev.tool || '').toLowerCase().replace(/_/g, '-');
+        return prevTool === 'google-sheets';
+      });
+      if (hasPriorCreator) {
+        const priorCreatorStaged = steps.slice(0, currentRemainingIndex).some((prev, prevIdx) => {
+          const prevTool = String(prev.tool || '').toLowerCase().replace(/_/g, '-');
+          return prevTool === 'google-sheets' && stagedIndices.has(prevIdx);
+        });
+        if (!priorCreatorStaged) return true;
+      }
     }
-    if (step.tool === 'google-drive' && ['drive_get_text', 'drive_share'].includes(String(step.action)) && !(step.payload as { fileId?: string } | undefined)?.fileId) {
-      return true;
+
+    if (normTool === 'google-docs' && ['docs_read', 'docs_append'].includes(action) && !p?.documentId && !p?.document_id) {
+      const hasPriorCreator = steps.slice(0, currentRemainingIndex).some((prev) => {
+        const prevTool = String(prev.tool || '').toLowerCase().replace(/_/g, '-');
+        return prevTool === 'google-docs';
+      });
+      if (hasPriorCreator) {
+        const priorCreatorStaged = steps.slice(0, currentRemainingIndex).some((prev, prevIdx) => {
+          const prevTool = String(prev.tool || '').toLowerCase().replace(/_/g, '-');
+          return prevTool === 'google-docs' && stagedIndices.has(prevIdx);
+        });
+        if (!priorCreatorStaged) return true;
+      }
     }
+
+    if (normTool === 'google-drive' && ['drive_get_text', 'drive_share'].includes(action) && !p?.fileId && !p?.file_id) {
+      const hasPriorCreator = steps.slice(0, currentRemainingIndex).some((prev) => {
+        const prevTool = String(prev.tool || '').toLowerCase().replace(/_/g, '-');
+        return prevTool === 'google-drive' || prevTool === 'google-docs' || prevTool === 'google-sheets' || prevTool === 'google-slides';
+      });
+      if (hasPriorCreator) {
+        const priorCreatorStaged = steps.slice(0, currentRemainingIndex).some((prev, prevIdx) => {
+          const prevTool = String(prev.tool || '').toLowerCase().replace(/_/g, '-');
+          return (prevTool === 'google-drive' || prevTool === 'google-docs' || prevTool === 'google-sheets' || prevTool === 'google-slides') && stagedIndices.has(prevIdx);
+        });
+        if (!priorCreatorStaged) return true;
+      }
+    }
+
+    if (normTool === 'google-slides' && ['slides_add_slide', 'slides_get'].includes(action) && !p?.presentationId && !p?.presentation_id) {
+      const hasPriorCreator = steps.slice(0, currentRemainingIndex).some((prev) => {
+        const prevTool = String(prev.tool || '').toLowerCase().replace(/_/g, '-');
+        return prevTool === 'google-slides';
+      });
+      if (hasPriorCreator) {
+        const priorCreatorStaged = steps.slice(0, currentRemainingIndex).some((prev, prevIdx) => {
+          const prevTool = String(prev.tool || '').toLowerCase().replace(/_/g, '-');
+          return prevTool === 'google-slides' && stagedIndices.has(prevIdx);
+        });
+        if (!priorCreatorStaged) return true;
+      }
+    }
+
     return false;
   };
 
@@ -140,7 +231,7 @@ export function stageSteps(steps: PlanStepLike[]): StagedPlanStep[][] {
     const stage: StagedPlanStep[] = [];
     const stageIdx = new Set<number>();
     for (const item of remaining) {
-      if (!dependsOnEarlier(item.s)) {
+      if (!dependsOnEarlier(item.s, item.i)) {
         stage.push(item);
         stageIdx.add(item.i);
       }
@@ -149,6 +240,9 @@ export function stageSteps(steps: PlanStepLike[]): StagedPlanStep[][] {
       stage.push(remaining[0]);
       stageIdx.add(remaining[0].i);
     }
+    for (const id of stageIdx) {
+      stagedIndices.add(id);
+    }
     remaining = remaining.filter((item) => !stageIdx.has(item.i));
     stages.push(stage);
   }
@@ -156,7 +250,7 @@ export function stageSteps(steps: PlanStepLike[]): StagedPlanStep[][] {
 }
 
 export const CORE_PLAN_EXECUTE_TOOLS = [
-  'web_search', 'web_extract', 'deep_research', 'database_query', 'db_query', 'sql_analytics',
+  'web_search', 'web_extract', 'database_query', 'db_query', 'sql_analytics',
   'metrics', 'metrics_query',
   'file_ops', 'workspace_file', 'file_system', 'sandbox', 'code_execution', 'execute_code',
 ];
