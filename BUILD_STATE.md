@@ -1,5 +1,12 @@
 # Darex Build State
 
+## Ask your numbers (core)
+
+- New `services/workflows/src/bi/`: the pure core of "Ask your numbers". Not wired to chat or a screen yet.
+- `numbers.ts` pulls every number, rupee amount (lakh, crore, k, Indian grouping), percentage and date out of an answer and refuses the answer unless each one matches a value that was actually computed, with the right unit. `metrics.ts` holds 7 read-only metric queries over money owed and enquiries, each forced to one workspace and checked by the existing SQL guard. `answer.ts` builds the plain answer with its working shown, says "I can't compute that yet" instead of guessing, and lowers confidence when the question has a time word it did not parse.
+- Verified: 21 tests. Gold set 40 of 40 (34 answered, 6 correctly refused); 20 of 20 deliberately wrong answers caught; 0 of 20 correct answers flagged.
+- Honest limit: the right/wrong answers were written by the same author as the verifier, so 100% is a regression guard, not an independent accuracy figure. Blind spots: a real number attached to the wrong label passes if both values are supplied; spelled-out numbers and "up versus down" are not checked; question routing is keyword-based. Queries must run through the workspace-scoped client, not the model SQL role.
+
 ## Cited research pipeline (core)
 
 - New `services/workflows/src/research/`: the pure core of cited outside-world research (market, competitors, regulation). Not wired to a tool yet; the search, page fetch and model are injected.
