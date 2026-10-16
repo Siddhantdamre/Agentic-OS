@@ -1,5 +1,12 @@
 # Darex Build State
 
+## Cited research pipeline (core)
+
+- New `services/workflows/src/research/`: the pure core of cited outside-world research (market, competitors, regulation). Not wired to a tool yet; the search, page fetch and model are injected.
+- Plain rules: a factual sentence is kept only if a source page actually contains the quoted support and every figure in the sentence; anything still unsupported after one repair attempt is removed and listed as "could not verify", never kept. Two sources that disagree are both shown. Unsafe addresses (localhost, private ranges, metadata) are never fetched. Page text is treated as data, never as instructions. Budgets cap queries, pages and characters.
+- Verified: 14 tests including a hallucinated number removed, a repaired draft, disagreeing sources and blocked addresses.
+- Known limits: fact detection is a heuristic (a purely qualitative claim is not checked); a real quote taken out of context passes; the injected `fetchText` must use the safe fetcher (`safeGet`) because DNS and redirects are not checked here; nothing run against a live search or model.
+
 ## Safety rules for governed self-improvement
 
 - New `services/workflows/src/improve/`: the pure rules for letting an AI employee propose a change to itself safely. Nothing is wired into a running agent yet and nothing is stored in the database (in-memory registry only).
