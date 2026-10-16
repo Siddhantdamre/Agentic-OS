@@ -22,7 +22,7 @@
  */
 
 import { llmChat } from '../llm/gateway.js';
-import { searchWeb } from '../tools/search-providers.js';
+import { searchWeb } from '../tools/search-web.js';
 import {
   buildResearchPrompt,
   validateFindings,

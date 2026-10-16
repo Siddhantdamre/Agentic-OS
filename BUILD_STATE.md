@@ -1,5 +1,12 @@
 # Darex Build State
 
+## Restore Agentic-OS features the merge dropped
+
+- Features that only the Agentic-OS line had, and that the merge would otherwise have lost, are restored on top of the company line: the extra agent input fields (business name and type, model override, grounding context) and the "grounding" reply-gate verdict; the keyless web-search chain (kept as `tools/search-web.ts` next to the company line's `search-providers.ts`, which the web_search tool still uses); quota-exhausted detection for embeddings (a billing 429 is no longer retried); the activities for crew planning, reply revision, approval and commitment records, knowledge gaps, LLM budget, task supervision and market research; a work-item signal that reports whether it reached the workflow.
+- The pricing-question fix is restored: a customer asking "how much do you charge?" no longer parks a reply for an approval that never comes, and money words inside retrieved policy text no longer hold a reply. The company line's extra reply/send tool names are kept.
+- 561 tests from the Agentic-OS line were not in the test script; they are now. Data-erasure coverage lists the new tables (content tables erased, settings and the erasure record kept).
+- Verified: workflows tests 1,246 of 1,246 (685 company line + 561 Agentic-OS line); type check clean.
+
 ## Make merged migrations obey workspace isolation
 
 - The two histories of this project (the company copy and Agentic-OS) were joined. Migrations that only the Agentic-OS line had are renumbered 322-346 and run after the company line's 001-213; migration 347 brings their tables and functions up to the isolation rules the company line enforces.

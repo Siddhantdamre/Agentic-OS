@@ -272,25 +272,22 @@ export async function signalWorkItemDecision(params: {
   workflowId: string;
   decision: 'approved' | 'rejected';
   optionId?: string;
-}): Promise<void> {
+}): Promise<{ signalled: boolean; reason?: string }> {
   const client = await getTemporalClient();
-  if (!client || !params.workflowId) return;
+  if (!client) return { signalled: false, reason: 'Temporal unavailable' };
+  if (!params.workflowId) return { signalled: false, reason: 'no workflow to signal' };
   try {
     const handle = client.workflow.getHandle(params.workflowId);
-    if (params.decision === 'rejected') {
-      await handle.signal('rejectWorkItem');
-      return;
-    }
-    if (params.decision === 'approved') {
-      await handle.signal('approveWorkItem', params.optionId || 'approved');
-      return;
-    }
-    const _exhaustive: never = params.decision;
-    void _exhaustive;
+    if (params.decision === 'rejected') await handle.signal('rejectWorkItem');
+    else await handle.signal('approveWorkItem', params.optionId || 'approved');
+    return { signalled: true };
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
-    if (/not found|not running|no running/i.test(message)) return;
+    if (/not found|not running|no running|completed/i.test(message)) {
+      return { signalled: false, reason: 'the workflow had already finished waiting' };
+    }
     console.warn(`[HITL signal] ${params.workflowId}: ${message}`);
+    return { signalled: false, reason: message.slice(0, 120) };
   }
 }
 

@@ -13,6 +13,16 @@ const EMBED_BATCH_SIZE = 64;
 const MAX_EMBED_CHARS = 32000;
 const RETRYABLE_STATUSES = new Set([429, 500, 502, 503, 504]);
 
+/**
+ * An exhausted billing quota also answers 429, but waiting never clears it, so retrying only burns time. The wording
+ * of the body is the signal; anything ambiguous stays retryable, because a throttle wrongly treated as exhaustion
+ * loses work that a two-second wait would have saved.
+ */
+export function isQuotaExhausted(body: string): boolean {
+  return /exceeded\s+your\s+current\s+quota|check\s+your\s+plan\s+and\s+billing|insufficient[_\s]quota|quota[_\s]exceeded/i
+    .test(body || '');
+}
+
 export type EmbedSkipReason = 'hash' | 'kyc' | 'empty';
 export type EmbedJobStatus = 'embedded' | 'skipped' | 'failed';
 
@@ -598,6 +608,10 @@ async function embedBatchWithRetry(
 
       const body = await res.text().catch(() => '');
       const err = new Error(`LiteLLM embeddings HTTP ${res.status}: ${body.slice(0, 300)}`);
+      // Checked before the retryable-status test, because 429 is in that set and an exhausted quota will not clear by waiting.
+      if (res.status === 429 && isQuotaExhausted(body)) {
+        throw ApplicationFailure.nonRetryable(err.message, 'QuotaExhausted');
+      }
       if (!RETRYABLE_STATUSES.has(res.status) || attempt >= maxRetries) {
         if (res.status === 401 || res.status === 403) {
           throw ApplicationFailure.nonRetryable(err.message, 'AuthorizationError');

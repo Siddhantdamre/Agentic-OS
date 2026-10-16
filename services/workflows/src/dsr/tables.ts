@@ -81,6 +81,21 @@ export const CUSTOMER_DATA_TABLES = [
   'pm_charges',
   'pm_leases',
   'org_dues',
+  // From the parallel lineage (migrations 322-346): what customers said, who they are, and what was done for them.
+  'action_outcomes',
+  'agent_actions',
+  'approval_requests',
+  'commitments',
+  'contact_identities',
+  'contact_persons',
+  'knowledge_gaps',
+  'lead_followups',
+  'outcome_events',
+  'reply_edits',
+  'task_supervision',
+  'trigger_dispatches',
+  // Hive trust: this workspace's own approve/reject counts. Releases already published are noisy aggregates of many.
+  'hive_contributions',
 ] as const;
 
 /**
@@ -98,6 +113,15 @@ export const DSR_RETAINED_TABLES: Readonly<Record<string, string>> = {
   ai_employees: 'config: the org\'s employees',
   agent_activity_health: 'operations: activity names, timestamps and counts, error text cleaned of e-mail addresses and long numbers; no personal data',
   employee_skills: 'config',
+  duty_turn_grants: 'config: which duties an employee may run',
+  org_action_autonomy: 'config: earned autonomy settings',
+  org_automation: 'config: trigger automation settings',
+  org_llm_budget: 'config: model budget',
+  org_llm_usage_daily: 'operations: daily model usage counters, no personal data',
+  org_retention_policy: 'config: how long data is kept',
+  org_shadow_mode: 'config: shadow mode switch',
+  org_hive_optin: 'config: whether this workspace shares noisy approval counts (its own choice, kept so it stays off after an erase)',
+  erasure_requests: 'legal: the record that an erasure was requested and done must outlive the erasure',
   org_skills: 'config',
   org_packs: 'config',
   org_preferences: 'config',

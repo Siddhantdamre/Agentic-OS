@@ -11,7 +11,7 @@ import {
   KEYLESS_SEARCH_PROVIDERS,
   searchWeb,
   looksRelevant,
-} from './search-providers.js';
+} from './search-web.js';
 
 /** Captured verbatim from lite.duckduckgo.com on 3 September 2026. */
 const REAL_HTML = `

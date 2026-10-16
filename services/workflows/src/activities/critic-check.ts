@@ -5,7 +5,14 @@
 
 export type CriticIntent = 'send' | 'publish' | 'sign';
 
-export type CriticPolicy = 'fair_housing' | 'legal_promise' | 'rera' | 'ok' | 'model';
+export type CriticPolicy =
+  | 'fair_housing'
+  | 'legal_promise'
+  | 'rera'
+  | 'ok'
+  | 'model'
+  // Set by the reply gate: the draft asserted a figure, date or reference the retrieved evidence does not support.
+  | 'grounding';
 
 export interface CriticCheckParams {
   orgId: string;

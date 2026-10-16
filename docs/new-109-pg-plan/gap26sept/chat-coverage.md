@@ -170,7 +170,7 @@ Edit only the status cell; regeneration keeps it.
 | `zoho_list_deals` | zoho-crm.list_deals | read | no | 🔴 |
 | `zoho_update_deal` | zoho-crm.update_deal | draft | no | 🔴 |
 
-## Tab actions (88)
+## Tab actions (97)
 
 Mutating dashboard API routes a tab calls. Webhooks, auth, the chat itself, the public widget and platform admin are excluded.
 
@@ -181,6 +181,8 @@ Mutating dashboard API routes a tab calls. Webhooks, auth, the chat itself, the 
 | `POST /api/agent/run` | 🔴 |
 | `POST /api/agent/stream` | 🔴 |
 | `POST /api/agent/tools` | 🔴 |
+| `POST /api/approvals/[id]` | 🔴 |
+| `POST /api/approvals/revoke` | 🔴 |
 | `POST /api/billing/checkout` | 🔴 |
 | `POST /api/billing/portal` | 🔴 |
 | `PATCH /api/billing/subscription` | 🔴 |
@@ -189,10 +191,13 @@ Mutating dashboard API routes a tab calls. Webhooks, auth, the chat itself, the 
 | `PATCH /api/brain/[id]` | 🔴 |
 | `POST /api/brain/[id]` | 🔴 |
 | `POST /api/brain/reindex` | 🔴 |
+| `POST /api/brain/upload` | 🔴 |
 | `POST /api/brief/[id]/triage` | 🔴 |
 | `POST /api/conversations` | 🔴 |
 | `PATCH /api/conversations/[id]` | 🔴 |
 | `POST /api/conversations/[id]/messages` | 🔴 |
+| `POST /api/conversations/[id]/reply` | 🔴 |
+| `POST /api/decision-brief` | 🔴 |
 | `PATCH /api/decisions` | 🔴 |
 | `POST /api/decisions/sweep` | 🔴 |
 | `POST /api/dsr/delete` | 🔴 |
@@ -224,6 +229,8 @@ Mutating dashboard API routes a tab calls. Webhooks, auth, the chat itself, the 
 | `DELETE /api/integrations/whatsapp/evolution` | 🔴 |
 | `POST /api/integrations/whatsapp/evolution` | 🔴 |
 | `DELETE /api/integrations/whatsapp/numbers` | 🔴 |
+| `POST /api/knowledge-gaps/[id]` | 🔴 |
+| `POST /api/leaks` | 🔴 |
 | `POST /api/listings` | 🔴 |
 | `DELETE /api/listings/[id]` | 🔴 |
 | `PATCH /api/listings/[id]` | 🔴 |
@@ -240,6 +247,7 @@ Mutating dashboard API routes a tab calls. Webhooks, auth, the chat itself, the 
 | `PATCH /api/org/rollout` | 🔴 |
 | `POST /api/org/switch` | 🔴 |
 | `POST /api/org/workspaces` | 🔴 |
+| `POST /api/outcomes/value` | 🔴 |
 | `DELETE /api/packs` | 🔴 |
 | `POST /api/packs` | 🔴 |
 | `PATCH /api/packs/[id]/config` | 🔴 |
@@ -252,6 +260,7 @@ Mutating dashboard API routes a tab calls. Webhooks, auth, the chat itself, the 
 | `DELETE /api/settings/members/[id]` | 🔴 |
 | `PATCH /api/settings/members/[id]` | 🔴 |
 | `DELETE /api/settings/suppressions` | 🔴 |
+| `POST /api/shadow` | 🔴 |
 | `POST /api/showings` | 🔴 |
 | `DELETE /api/showings/[id]` | 🔴 |
 | `PATCH /api/showings/[id]` | 🔴 |

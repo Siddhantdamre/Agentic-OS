@@ -20,6 +20,11 @@ export interface AgentTaskInput {
   employeeName: string;
   employeeRole: string;
   employeePersona: string;
+  /** Business the agent works for, from the setup wizard. Optional: a workspace that skipped it says nothing. */
+  businessName?: string;
+  businessType?: string;
+  /** Pin this turn to a specific model alias (used when a workspace is over its token budget). */
+  modelOverride?: string;
   toolAllowlist: string[];
   connectedChannels?: string[];
   userMessage: string;
@@ -78,6 +83,8 @@ export interface AgentTaskResult {
   isDone?: boolean;
   forceEscalate?: boolean;
   confidenceScore?: number;
+  /** Facts the platform supplied in the prompt (e.g. a computed date). They count as grounded evidence for the reply gate. */
+  groundingContext?: string[];
   /** TrueForge session UUID — returned so the dashboard can resume a paused
    *  turn. Opaque id only; every resume re-signs tenant headers server-side. */
   sessionId?: string;
