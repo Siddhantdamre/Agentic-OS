@@ -22,6 +22,7 @@ export function widgetEmbedSrc(apiBase: string): string {
   var PRIMARY = SCRIPT.getAttribute('data-primary') || '#d97706';
   var STORAGE_V = 'dxw_visitor';
   var STORAGE_S = 'dxw_session';
+  var STORAGE_T = 'dxw_visitor_token';
 
   function escapeHtml(value) {
     return String(value || '')
@@ -30,6 +31,7 @@ export function widgetEmbedSrc(apiBase: string): string {
       .replace(/>/g, '&gt;')
       .replace(/"/g, '&quot;');
   }
+  void escapeHtml;
 
   function uuid() {
     if (window.crypto && window.crypto.randomUUID) return window.crypto.randomUUID();
@@ -56,11 +58,25 @@ export function widgetEmbedSrc(apiBase: string): string {
     try { localStorage.setItem(STORAGE_S, id); } catch (e) {}
   }
 
-  function apiHeaders() {
-    return {
+  function getVisitorToken() {
+    try { return localStorage.getItem(STORAGE_T) || ''; } catch (e) { return ''; }
+  }
+
+  function setVisitorToken(token) {
+    try { localStorage.setItem(STORAGE_T, token || ''); } catch (e) {}
+  }
+
+  function apiHeaders(extra) {
+    var h = {
       'Content-Type': 'application/json',
       'Authorization': 'Bearer ' + SITE_KEY
     };
+    var vt = getVisitorToken();
+    if (vt) h['X-Visitor-Token'] = vt;
+    if (extra) {
+      for (var k in extra) if (Object.prototype.hasOwnProperty.call(extra, k)) h[k] = extra[k];
+    }
+    return h;
   }
 
   function apiUrl(path) {
@@ -130,9 +146,25 @@ export function widgetEmbedSrc(apiBase: string): string {
     return;
   }
 
+  function pingIntent() {
+    try {
+      fetch(apiUrl('/api/widget/intent'), {
+        method: 'POST',
+        headers: apiHeaders(),
+        body: JSON.stringify({
+          visitorId: visitorId(),
+          path: window.location.pathname || '',
+          href: window.location.href || ''
+        }),
+        keepalive: true
+      }).catch(function () {});
+    } catch (e) {}
+  }
+  pingIntent();
+
   async function ensureSession() {
     var existing = getSession();
-    if (existing) return existing;
+    if (existing && getVisitorToken()) return existing;
     var res = await fetch(apiUrl('/api/widget/session'), {
       method: 'POST',
       headers: apiHeaders(),
@@ -144,13 +176,19 @@ export function widgetEmbedSrc(apiBase: string): string {
     }
     if (!data.sessionId) throw new Error('Session failed');
     setSession(data.sessionId);
+    if (data.visitorToken) setVisitorToken(data.visitorToken);
     return data.sessionId;
   }
 
   async function pollReplies(sessionId) {
     var res = await fetch(apiUrl('/api/widget/message?sessionId=' + encodeURIComponent(sessionId)), {
-      headers: { 'Authorization': 'Bearer ' + SITE_KEY }
+      headers: apiHeaders()
     });
+    if (res.status === 401 || res.status === 403) {
+      setVisitorToken('');
+      setSession('');
+      return;
+    }
     if (!res.ok) return;
     var data = await res.json().catch(function () { return {}; });
     var list = data.messages || [];
@@ -163,16 +201,24 @@ export function widgetEmbedSrc(apiBase: string): string {
   }
 
   function startPoll(sessionId) {
-    if (pollTimer) clearInterval(pollTimer);
-    var n = 0;
-    pollTimer = setInterval(function () {
-      n += 1;
+    if (pollTimer) clearTimeout(pollTimer);
+    var pollDelay = 1500;
+    var totalElapsedMs = 0;
+    var maxPollMs = 300000;
+
+    function tick() {
       pollReplies(sessionId);
-      if (n >= 40) {
-        clearInterval(pollTimer);
+      totalElapsedMs += pollDelay;
+      if (totalElapsedMs > 90000) pollDelay = 8000;
+      else if (totalElapsedMs > 30000) pollDelay = 4000;
+      else pollDelay = 1500;
+      if (totalElapsedMs < maxPollMs) {
+        pollTimer = setTimeout(tick, pollDelay);
+      } else {
         pollTimer = null;
       }
-    }, 1500);
+    }
+    pollTimer = setTimeout(tick, pollDelay);
   }
 
   root.querySelector('#dxw-form').addEventListener('submit', async function (ev) {
@@ -188,7 +234,7 @@ export function widgetEmbedSrc(apiBase: string): string {
       var res = await fetch(apiUrl('/api/widget/message'), {
         method: 'POST',
         headers: apiHeaders(),
-        body: JSON.stringify({ sessionId: sessionId, content: text })
+        body: JSON.stringify({ sessionId: sessionId, content: text, visitorToken: getVisitorToken() })
       });
       var data = await res.json().catch(function () { return {}; });
       if (!res.ok) {

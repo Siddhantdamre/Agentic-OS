@@ -1,6 +1,7 @@
 import type { ToolRisk } from './risk.js';
 import type { ToolActionContext, ToolModule } from './shared.js';
-import { apiError, confirmFromRisk, getNangoConnection, notConnected } from './shared.js';
+import { apiError, confirmFromRisk, nangoAuthError, notConnected, resolveNangoAuth, fetchWithTimeout } from './shared.js';
+import { decideHost, normaliseZendeskSubdomain, pickTrusted } from './host-guard.js';
 
 const ACTIONS = ['fetch_tickets', 'create_support_ticket', 'update_ticket'] as const;
 
@@ -13,17 +14,33 @@ function riskFor(action: string): ToolRisk {
 async function execute(ctx: ToolActionContext) {
   const { actionName, payload, orgId, timestamp } = ctx;
   const zendeskConnId = `${orgId}_zendesk`;
-  const zendeskConn = await getNangoConnection(zendeskConnId, 'zendesk');
-  const zendeskToken = zendeskConn?.credentials?.raw?.access_token || zendeskConn?.credentials?.access_token || null;
+  const _zdAuth = await resolveNangoAuth(zendeskConnId, 'zendesk');
+  const zendeskConn = _zdAuth.kind === 'connected' ? _zdAuth.connection : null;
+  const _zdAuthErr = _zdAuth.kind === 'connected' ? null : nangoAuthError('zendesk', actionName, timestamp, _zdAuth);
+  const zendeskToken = (zendeskConn as any)?.credentials?.raw?.access_token || (zendeskConn as any)?.credentials?.access_token || null;
   if (zendeskToken) {
     try {
-      const subdomain = payload.subdomain
-        || process.env.ZENDESK_SUBDOMAIN
-        || zendeskConn?.connection_config?.subdomain
-        || zendeskConn?.metadata?.subdomain;
-      if (!subdomain) {
-        return apiError('zendesk', actionName, timestamp, 'Zendesk subdomain is required (payload, ZENDESK_SUBDOMAIN, or Nango metadata).');
-      }
+      // The token below belongs to THIS workspace's Zendesk. The subdomain is
+      // interpolated into the middle of a hostname, so a model-written value such
+      // as `attacker.example/x?` would redirect the request and hand over the
+      // bearer token. The connection's own record comes first, and a payload
+      // value may only name that account (see host-guard.ts).
+      const { trusted, invalid: trustedInvalid } = pickTrusted([
+        (zendeskConn as any)?.connection_config?.subdomain,
+        (zendeskConn as any)?.metadata?.subdomain,
+        process.env.ZENDESK_SUBDOMAIN,
+      ], normaliseZendeskSubdomain);
+      const hostDecision = decideHost({
+        provider: 'Zendesk',
+        field: 'subdomain',
+        trusted,
+        trustedInvalid,
+        requested: payload.subdomain,
+        normalise: normaliseZendeskSubdomain,
+        missingMessage: 'Zendesk subdomain is required (payload, ZENDESK_SUBDOMAIN, or Nango metadata).',
+      });
+      if (!hostDecision.ok) return apiError('zendesk', actionName, timestamp, hostDecision.message as string);
+      const subdomain = hostDecision.host;
       if (subdomain) {
         if (actionName.includes('update') || actionName.includes('edit')) {
           const ticketId = payload.ticketId || payload.id;
@@ -39,10 +56,11 @@ async function execute(ctx: ToolActionContext) {
           if (Object.keys(ticket).length === 0) {
             return { tool: 'zendesk', action: 'update_ticket', status: 'error' as const, message: 'No updatable fields supplied (try status, priority, subject, comment, assignee_id)', data: null, timestamp };
           }
-          const zdRes = await fetch(`https://${subdomain}.zendesk.com/api/v2/tickets/${ticketId}.json`, {
+          const zdRes = await fetchWithTimeout(`https://${subdomain}.zendesk.com/api/v2/tickets/${ticketId}.json`, {
             method: 'PUT',
             headers: { Authorization: `Bearer ${zendeskToken}`, 'Content-Type': 'application/json' },
             body: JSON.stringify({ ticket }),
+            redirect: 'error',
           });
           if (zdRes.ok) {
             const zdData = await zdRes.json();
@@ -59,8 +77,9 @@ async function execute(ctx: ToolActionContext) {
           return { tool: 'zendesk', action: 'update_ticket', status: 'error' as const, message: `Zendesk update failed: ${zdRes.status} ${zdErr.slice(0, 200)}`, data: null, timestamp };
         }
         if (actionName.includes('list') || actionName.includes('fetch')) {
-          const zdRes = await fetch(`https://${subdomain}.zendesk.com/api/v2/tickets.json?sort_by=updated_at&sort_order=desc&per_page=10`, {
+          const zdRes = await fetchWithTimeout(`https://${subdomain}.zendesk.com/api/v2/tickets.json?sort_by=updated_at&sort_order=desc&per_page=10`, {
             headers: { Authorization: `Bearer ${zendeskToken}`, Accept: 'application/json' },
+            redirect: 'error',
           });
           if (zdRes.ok) {
             const zdData = await zdRes.json();
@@ -76,10 +95,11 @@ async function execute(ctx: ToolActionContext) {
         } else {
           const subject = payload.subject || 'Support Request via DareX AI';
           const description = payload.description || payload.message || 'Customer support request';
-          const zdRes = await fetch(`https://${subdomain}.zendesk.com/api/v2/tickets.json`, {
+          const zdRes = await fetchWithTimeout(`https://${subdomain}.zendesk.com/api/v2/tickets.json`, {
             method: 'POST',
             headers: { Authorization: `Bearer ${zendeskToken}`, 'Content-Type': 'application/json' },
             body: JSON.stringify({ ticket: { subject, comment: { body: description }, priority: payload.priority || 'normal' } }),
+            redirect: 'error',
           });
           if (zdRes.ok) {
             const zdData = await zdRes.json();
@@ -98,7 +118,7 @@ async function execute(ctx: ToolActionContext) {
       console.error('[Zendesk] API error:', e.message);
     }
   }
-  return notConnected('zendesk', actionName, timestamp);
+  return _zdAuthErr ?? notConnected('zendesk', actionName, timestamp);
 }
 
 export const zendesk: ToolModule = {

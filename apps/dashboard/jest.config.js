@@ -9,6 +9,9 @@ const customJestConfig = {
   testEnvironment: 'jest-environment-jsdom',
   moduleNameMapper: {
     '^@/(.*)$': '<rootDir>/$1',
+    // @darex/shared-types resolves to its src via tsconfig paths; its own
+    // internal imports use NodeNext-style ".js" extensions on ".ts" files.
+    '^(\\.{1,2}/.*)\\.js$': '$1',
   },
   testMatch: [
     '**/__tests__/**/*.[jt]s?(x)',

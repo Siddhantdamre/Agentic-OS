@@ -1,5 +1,5 @@
 #!/bin/sh
-# Production fail-fast for shipped images (dashboard, worker, atomic-bridge).
+# Production fail-fast for shipped images (dashboard, worker, mcp-bridge).
 # Local compose does NOT set DAREX_PROD_FAILFAST, so ${VAR:-dev} compose
 # defaults still work. The image CMD itself never bakes :-dev secrets.
 #
@@ -16,6 +16,12 @@ if [ "${DAREX_PROD_FAILFAST:-}" = "true" ]; then
     echo "darex-prod-failfast: DB_USER must be darex_app (got $DB_USER)" >&2
     exit 1
   fi
+  case "${CHANNEL_SECRETS_KEY:-}" in
+    ""|0000000000000000000000000000000000000000000000000000000000000000)
+      echo "darex-prod-failfast: CHANNEL_SECRETS_KEY is missing or the dev default" >&2
+      exit 1
+      ;;
+  esac
   case "${DB_PASSWORD:-}" in
     ""|changeme|darex_dev_secret|darex_app_dev_secret)
       echo "darex-prod-failfast: DB_PASSWORD is missing or a known dev default" >&2

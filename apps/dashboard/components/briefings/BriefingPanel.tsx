@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useEffect, useState } from 'react';
+import { networkErrorMessage } from '@/lib/client-error';
 import { Sunrise, AlertCircle } from 'lucide-react';
 
 /**
@@ -41,11 +42,11 @@ export function BriefingPanel() {
     fetch('/api/briefings?limit=5')
       .then(async (res) => {
         const body = await res.json().catch(() => ({}));
-        if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`);
+        if (!res.ok) throw new Error(body.error || 'Could not load your briefings.');
         return body;
       })
       .then((b) => setBriefings(b.briefings || []))
-      .catch((e) => setError(e instanceof Error ? e.message : String(e)));
+      .catch((e) => setError(networkErrorMessage(e, 'Could not load your briefings.')));
   }, []);
 
   if (error) {

@@ -1,7 +1,13 @@
+import { providerIdOf, stopEvolutionInstance } from '@darex/whatsapp-gateway';
 import { NextResponse } from 'next/server';
-import { getScopedClient } from '@/lib/db';
+import { getScopedClient, scopedAuthErrorResponse } from '@/lib/db';
+import { realtimeHub } from '@/lib/realtime-hub';
+import { recordAuditEvent } from '@/lib/audit-events';
+import { auditConnectorChange, denyUnlessConnectorManager } from '@/lib/connector-rbac';
+import { oauthChannelsToDemote } from '@/lib/channel-reconcile';
 import { getConnectorDef, listConnectorDefs, listOrgConnectors, upsertOrgConnector } from '@/lib/connector-registry';
-import { isPublicMetaKey, nangoUiUrl } from '@/lib/integrations-catalog';
+import { getIntegration, isPublicMetaKey, nangoUiUrl } from '@/lib/integrations-catalog';
+import { listWhatsAppChannels, promoteWhatsAppPrimary, publicWhatsAppNumber } from '@/lib/whatsapp-numbers';
 import {
   deleteNangoConnection,
   isNangoSecretConfigured,
@@ -10,6 +16,8 @@ import {
   nangoConnectionExists,
   primaryConnectionId,
 } from '@/lib/nango-server';
+import { jsonBodyOrEmpty } from '@/lib/safe-json';
+import { publicErrorMessage } from '@/lib/public-error';
 
 function publicMeta(meta: Record<string, unknown> | null | undefined): Record<string, unknown> {
   const src = meta && typeof meta === 'object' ? meta : {};
@@ -22,13 +30,27 @@ function publicMeta(meta: Record<string, unknown> | null | undefined): Record<st
   if (src.wabaId || src.whatsapp_business_account_id) {
     out.wabaId = src.wabaId || src.whatsapp_business_account_id;
   }
+  if (src.provider === 'evolution') out.provider = 'evolution';
+  // Safe-to-show identity of the connected WhatsApp (never the token itself).
+  if (typeof src.token_hint === 'string') out.tokenHint = src.token_hint;
+  const shownPhone = src.display_phone_number || src.linked_phone;
+  if (typeof shownPhone === 'string' && shownPhone) out.phone = shownPhone;
+  if (typeof src.verified_name === 'string' && src.verified_name) out.verifiedName = src.verified_name;
+  else if (typeof src.profile_name === 'string' && src.profile_name) out.verifiedName = src.profile_name;
   out.hasAccessToken = Boolean(src.accessToken || src.meta_access_token);
   out.hasApiKey = Boolean(src.keyId || src.key_id);
   return out;
 }
 
-function whatsappByokConnected(meta: Record<string, unknown> | null | undefined): boolean {
+function whatsappByokConnected(
+  meta: Record<string, unknown> | null | undefined,
+  status?: string | null
+): boolean {
   const src = meta && typeof meta === 'object' ? meta : {};
+  // QR-linked (Evolution): connected once the phone finished pairing.
+  if (providerIdOf(src) === 'evolution') {
+    return Boolean(src.evolution_instance) && status === 'connected';
+  }
   const token = src.accessToken || src.meta_access_token;
   const phone = src.phoneNumberId || src.phone_number_id;
   return Boolean(token && phone);
@@ -41,10 +63,12 @@ export async function GET() {
     try {
       // Fetch channels from DB strictly for current org_id
       const channelsRes = await client.query(
-        `SELECT channel_type, status, nango_connection_id, connected_at, meta FROM channels WHERE org_id = $1`,
+        `SELECT channel_type, status, nango_connection_id, connected_at, meta FROM channels WHERE org_id = $1 AND account_key = ''`,
         [orgId]
       );
       const dbChannelsMap = new Map(channelsRes.rows.map((r: any) => [r.channel_type, r]));
+      // Extra WhatsApp numbers hang off the WhatsApp card; the primary is the card itself.
+      const whatsappNumbers = (await listWhatsAppChannels(client, orgId)).map(publicWhatsAppNumber);
 
       const [defs, orgConnectors] = await Promise.all([
         listConnectorDefs(client),
@@ -52,15 +76,50 @@ export async function GET() {
       ]);
 
       const nangoSecretOk = isNangoSecretConfigured();
-      const [nangoConns, nangoConfigs] = await Promise.all([
+      const [nangoList, nangoConfigs] = await Promise.all([
         listNangoConnections(orgId),
         listNangoConfigs(),
       ]);
+      const nangoConns = nangoList.connections;
+      const nangoListOk = nangoList.ok;
+      // When the list call failed because Nango rejected the key or is unreachable, a probe per
+      // connector would fail the same way (and each can wait out the timeout), so skip them.
+      const canProbeNango = !nangoListOk && nangoList.reason === 'error';
       const nangoConnectedIds = new Set(
         nangoConns.map((c) => c.catalogId).filter((id): id is string => Boolean(id))
       );
-      const nangoListUsable = nangoConns.some((c) => Boolean(c.catalogId));
       const configByKey = new Map(nangoConfigs.map((c) => [c.uniqueKey, c]));
+
+      // Keep channels.status aligned with live Nango so Ask-AI allowlists don't
+      // keep tools for connections that Nango already revoked.
+      const dbStatuses = new Map<string, string>(
+        [...dbChannelsMap.entries()].map(([id, row]) => [id, String((row as { status?: string }).status || '')])
+      );
+      const staleOauth = oauthChannelsToDemote(defs, dbStatuses, nangoConnectedIds, nangoListOk);
+      if (staleOauth.length > 0) {
+        await client.query(
+          `UPDATE channels
+              SET status = 'disconnected', nango_connection_id = NULL, connected_at = NULL
+            WHERE org_id = $1
+              AND channel_type = ANY($2::text[])
+              AND status IN ('connected', 'active')`,
+          [orgId, staleOauth]
+        );
+        for (const key of staleOauth) {
+          await upsertOrgConnector(client, orgId, key, {
+            status: 'disconnected',
+            nangoConnectionId: null,
+            scopes: [],
+            lastOkAt: null,
+            lastError: 'Nango connection missing — demoted on connectors refresh',
+          });
+          const row = dbChannelsMap.get(key) as { status?: string; nango_connection_id?: string } | undefined;
+          if (row) {
+            row.status = 'disconnected';
+            row.nango_connection_id = undefined;
+          }
+        }
+      }
 
       // Connected badge is Nango (or verified BYOK) only — never org_connectors.status.
       const integrations = await Promise.all(
@@ -94,26 +153,41 @@ export async function GET() {
           let connectionSource: 'nango' | 'byok' | 'env' | null = null;
 
           if (item.authMode === 'oauth') {
-            if (nangoConnectedIds.has(item.id)) {
+            const isGoogleApp =
+              item.id === 'google-workspace' ||
+              item.id === 'google' ||
+              item.id === 'gmail' ||
+              item.id.startsWith('google-');
+            const hasGoogleConnection =
+              nangoConnectedIds.has('google-workspace') ||
+              nangoConnectedIds.has('google') ||
+              nangoConnectedIds.has('gmail');
+
+            if (nangoConnectedIds.has(item.id) || (isGoogleApp && hasGoogleConnection)) {
               isConnected = true;
               connectionSource = 'nango';
-            } else if (!nangoListUsable) {
+            } else if (canProbeNango) {
               const exists = await nangoConnectionExists(orgId, item.id);
               isConnected = exists;
               connectionSource = exists ? 'nango' : null;
             }
           } else if (item.id === 'whatsapp') {
-            const byok = whatsappByokConnected(dbRecord?.meta);
-            const nangoWa = nangoConnectedIds.has('whatsapp') || (await nangoConnectionExists(orgId, 'whatsapp'));
+            const byok = whatsappByokConnected(dbRecord?.meta, dbRecord?.status);
+            const nangoWa =
+              nangoConnectedIds.has('whatsapp') ||
+              (canProbeNango && (await nangoConnectionExists(orgId, 'whatsapp')));
             isConnected = byok || nangoWa;
             connectionSource = byok ? 'byok' : nangoWa ? 'nango' : null;
           } else if (item.id === 'razorpay') {
+            // Agent may fall back to env only with ALLOW_GLOBAL_RAZORPAY_DEV —
+            // UI "connected" is per-org keys only so Disconnect actually clears it.
             const perOrg = Boolean(
-              dbRecord?.meta && (dbRecord.meta.keyId || dbRecord.meta.key_id) && (dbRecord.meta.keySecret || dbRecord.meta.key_secret)
+              dbRecord?.meta &&
+                (dbRecord.meta.keyId || dbRecord.meta.key_id) &&
+                (dbRecord.meta.keySecret || dbRecord.meta.key_secret)
             );
-            const envKeys = Boolean(process.env.RAZORPAY_KEY_ID && process.env.RAZORPAY_KEY_SECRET);
-            isConnected = perOrg || envKeys;
-            connectionSource = perOrg ? 'byok' : envKeys ? 'env' : null;
+            isConnected = perOrg;
+            connectionSource = perOrg ? 'byok' : null;
           }
 
           return {
@@ -130,6 +204,7 @@ export async function GET() {
             connectionSource,
             meta,
             nangoUiUrl: nangoUiUrl(),
+            ...(item.id === 'whatsapp' ? { whatsappNumbers } : {}),
           };
         })
       );
@@ -170,6 +245,7 @@ export async function GET() {
         logs: logsRes.rows,
         nango: {
           secretConfigured: nangoSecretOk,
+          publicKeyConfigured: Boolean(process.env.NEXT_PUBLIC_NANGO_PUBLIC_KEY),
           uiUrl: nangoUiUrl(),
         },
       });
@@ -177,20 +253,21 @@ export async function GET() {
       client.release();
     }
   } catch (err: any) {
-    if (err.message === 'Unauthorized') {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
+    const __scopedAuth = scopedAuthErrorResponse(err);
+    if (__scopedAuth) return __scopedAuth;
     console.error('Integrations GET error:', err);
-    return NextResponse.json({ message: err.message, integrations: [], stats: {}, logs: [] }, { status: 500 });
+    return NextResponse.json({ message: publicErrorMessage(err), integrations: [], stats: {}, logs: [] }, { status: 500 });
   }
 }
 
 // ── POST: Connect or Disconnect an integration for current orgId ──────────────
 export async function POST(request: Request) {
   try {
-    const { client, orgId } = await getScopedClient();
+    const { client, orgId, userId } = await getScopedClient();
     try {
-      const { provider, action, extra } = await request.json();
+      const forbidden = await denyUnlessConnectorManager(client, userId);
+      if (forbidden) return forbidden;
+      const { provider, action, extra } = await jsonBodyOrEmpty(request);
 
       if (!provider || !action) {
         return NextResponse.json({ message: 'provider and action are required' }, { status: 400 });
@@ -224,7 +301,9 @@ export async function POST(request: Request) {
           return NextResponse.json(
             {
               success: false,
+              connected: false,
               message: `No real Nango OAuth connection found for ${provider}. Complete the OAuth popup first — the connection was not persisted.`,
+              reconnectUrl: '/connectors',
               setupUrl: '/connectors',
               nangoUiUrl: nangoUiUrl(),
             },
@@ -242,7 +321,7 @@ export async function POST(request: Request) {
         await client.query(
           `INSERT INTO channels (org_id, channel_type, status, nango_connection_id, connected_at, meta)
            VALUES ($1, $2, 'connected', $3, NOW(), $4::jsonb)
-           ON CONFLICT (org_id, channel_type)
+           ON CONFLICT (org_id, channel_type, account_key)
            DO UPDATE SET status = 'connected', nango_connection_id = $3, connected_at = NOW(),
              meta = COALESCE(channels.meta, '{}'::jsonb) || $4::jsonb`,
           [orgId, provider, nangoConnId, JSON.stringify(extraMeta)]
@@ -262,6 +341,56 @@ export async function POST(request: Request) {
           lastError: null,
         });
 
+        if (provider === 'google-workspace' || provider === 'google' || provider === 'gmail' || provider.startsWith('google-')) {
+          const googleFamily = [
+            'gmail',
+            'google-calendar',
+            'google-drive',
+            'google-docs',
+            'google-sheets',
+            'google-slides',
+            'google-workspace',
+          ];
+          for (const gProvider of googleFamily) {
+            if (gProvider === provider) continue;
+            const gSpec = getIntegration(gProvider);
+            await client.query(
+              `INSERT INTO channels (org_id, channel_type, status, nango_connection_id, connected_at, meta)
+               VALUES ($1, $2, 'connected', $3, NOW(), $4::jsonb)
+               ON CONFLICT (org_id, channel_type, account_key)
+               DO UPDATE SET status = 'connected', nango_connection_id = $3, connected_at = NOW(),
+                 meta = COALESCE(channels.meta, '{}'::jsonb) || $4::jsonb`,
+              [orgId, gProvider, nangoConnId, JSON.stringify(extraMeta)]
+            );
+            await upsertOrgConnector(client, orgId, gProvider, {
+              status: 'connected',
+              nangoConnectionId: nangoConnId,
+              scopes: gSpec?.scopes || [],
+              lastOkAt: new Date(),
+              lastError: null,
+            });
+          }
+        }
+
+        try {
+          await recordAuditEvent(
+            {
+              orgId,
+              kind: 'connector.connect',
+              actor: { actorType: 'user', userId },
+              tool: provider,
+              action: 'connect',
+              resultStatus: 'ok',
+              riskClass: 'high',
+              payload: { connectionId: nangoConnId, accountId: 'primary' },
+            },
+            { client, orgId }
+          );
+        } catch {
+          // audit_events may be unavailable in partial migrations
+        }
+
+        realtimeHub.publish(orgId, { type: 'integration_updated', message: provider });
         return NextResponse.json({
           success: true,
           message: `${provider} connected successfully`,
@@ -270,12 +399,121 @@ export async function POST(request: Request) {
       }
 
       if (action === 'disconnect') {
-        await deleteNangoConnection(orgId, provider);
+        // OAuth: must revoke in Nango before clearing local state — otherwise tools
+        // keep working via leftover Nango tokens while the UI shows Disconnected.
+        if (spec.authMode === 'oauth') {
+          if (!isNangoSecretConfigured()) {
+            return NextResponse.json(
+              {
+                success: false,
+                message:
+                  'NANGO_SECRET_KEY is not set — cannot revoke the OAuth connection. Local status left unchanged.',
+              },
+              { status: 503 }
+            );
+          }
+          const nangoRes = await deleteNangoConnection(orgId, provider);
+          if (!nangoRes.deleted && !nangoRes.nothingExisted) {
+            return NextResponse.json(
+              {
+                success: false,
+                message: `Failed to revoke Nango connection for ${provider}: ${nangoRes.error || 'unknown error'}. Local status left unchanged.`,
+              },
+              { status: 502 }
+            );
+          }
+
+          await client.query(
+            `INSERT INTO channels (org_id, channel_type, status, nango_connection_id, meta, connected_at)
+             VALUES ($1, $2, 'disconnected', NULL, '{}'::jsonb, NULL)
+             ON CONFLICT (org_id, channel_type, account_key)
+             DO UPDATE SET status = 'disconnected', nango_connection_id = NULL, meta = '{}'::jsonb, connected_at = NULL`,
+            [orgId, provider]
+          );
+
+          await client.query(
+            `INSERT INTO channel_logs (org_id, channel_type, event_type, status, status_code, message)
+             VALUES ($1, $2, 'disconnect', 'success', 200, $3)`,
+            [
+              orgId,
+              provider,
+              nangoRes.nothingExisted
+                ? `${provider} disconnected locally (no Nango connection existed)`
+                : `${provider} disconnected (Nango connection deleted)`,
+            ]
+          );
+
+          await upsertOrgConnector(client, orgId, provider, {
+            status: 'disconnected',
+            nangoConnectionId: null,
+            scopes: [],
+            lastOkAt: null,
+            lastError: null,
+          });
+
+          try {
+            await recordAuditEvent(
+              {
+                orgId,
+                kind: 'connector.disconnect',
+                actor: { actorType: 'user', userId },
+                tool: provider,
+                action: 'disconnect',
+                resultStatus: 'ok',
+                riskClass: 'high',
+                payload: { accountId: 'primary', nangoDeleted: Boolean(nangoRes.deleted) },
+              },
+              { client, orgId }
+            );
+          } catch {
+            // audit_events may be unavailable
+          }
+
+          realtimeHub.publish(orgId, { type: 'integration_updated', message: provider });
+          return NextResponse.json({ success: true, message: `${provider} disconnected` });
+        }
+
+        // QR-linked WhatsApp: unlink the phone and remove the instance first.
+        // It has no Nango twin, so the Nango revoke below is skipped for it.
+        let qrUnlinked = false;
+        if (provider === 'whatsapp') {
+          const cur = await client.query(
+            `SELECT meta FROM channels WHERE org_id = $1 AND channel_type = 'whatsapp' AND account_key = ''`,
+            [orgId]
+          );
+          const curMeta = cur.rows[0]?.meta as Record<string, unknown> | undefined;
+          if (providerIdOf(curMeta) === 'evolution' && typeof curMeta?.evolution_instance === 'string') {
+            const stopped = await stopEvolutionInstance(curMeta.evolution_instance);
+            if (!stopped.ok) {
+              return NextResponse.json(
+                { success: false, message: `${stopped.message}. Local status left unchanged.` },
+                { status: 502 }
+              );
+            }
+            qrUnlinked = true;
+          }
+        }
+
+        // BYOK / API-key: clear local secrets; best-effort delete any Nango twin.
+        // Direct channels (whatsapp, razorpay) are stored in Postgres only; they have no Nango twin.
+        const isDirectChannel = provider === 'whatsapp' || provider === 'razorpay';
+        const nangoRes = qrUnlinked || isDirectChannel
+          ? { deleted: false, nothingExisted: true, error: undefined }
+          : await deleteNangoConnection(orgId, provider);
+        if (isNangoSecretConfigured() && nangoRes.error && !nangoRes.deleted && !nangoRes.nothingExisted) {
+          return NextResponse.json(
+            {
+              success: false,
+              message: `Failed to revoke Nango connection for ${provider}: ${nangoRes.error}. Local credentials left unchanged.`,
+            },
+            { status: 502 }
+          );
+        }
 
         await client.query(
           `INSERT INTO channels (org_id, channel_type, status, nango_connection_id, meta, connected_at)
            VALUES ($1, $2, 'disconnected', NULL, '{}'::jsonb, NULL)
-           ON CONFLICT (org_id, channel_type)
+           ON CONFLICT (org_id, channel_type, account_key)
            DO UPDATE SET status = 'disconnected', nango_connection_id = NULL, meta = '{}'::jsonb, connected_at = NULL`,
           [orgId, provider]
         );
@@ -283,7 +521,7 @@ export async function POST(request: Request) {
         await client.query(
           `INSERT INTO channel_logs (org_id, channel_type, event_type, status, status_code, message)
            VALUES ($1, $2, 'disconnect', 'success', 200, $3)`,
-          [orgId, provider, `${provider} disconnected (Nango connection deleted)`]
+          [orgId, provider, `${provider} disconnected (local credentials cleared)`]
         );
 
         await upsertOrgConnector(client, orgId, provider, {
@@ -293,7 +531,36 @@ export async function POST(request: Request) {
           lastOkAt: null,
           lastError: null,
         });
+        // Another number is still linked: it becomes the primary and the connector stays connected.
+        if (provider === 'whatsapp' && (await promoteWhatsAppPrimary(client, orgId))) {
+          await upsertOrgConnector(client, orgId, 'whatsapp', {
+            status: 'connected',
+            nangoConnectionId: null,
+            scopes: [],
+            lastOkAt: new Date(),
+            lastError: null,
+          });
+        }
 
+        try {
+          await recordAuditEvent(
+            {
+              orgId,
+              kind: 'connector.disconnect',
+              actor: { actorType: 'user', userId },
+              tool: provider,
+              action: 'disconnect',
+              resultStatus: 'ok',
+              riskClass: 'high',
+              payload: { accountId: 'primary', nangoDeleted: Boolean(nangoRes.deleted) },
+            },
+            { client, orgId }
+          );
+        } catch {
+          // audit_events may be unavailable
+        }
+
+        realtimeHub.publish(orgId, { type: 'integration_updated', message: provider });
         return NextResponse.json({ success: true, message: `${provider} disconnected` });
       }
 
@@ -307,10 +574,21 @@ export async function POST(request: Request) {
         await client.query(
           `INSERT INTO channels (org_id, channel_type, status, meta)
            VALUES ($1, $2, 'disconnected', $3::jsonb)
-           ON CONFLICT (org_id, channel_type)
+           ON CONFLICT (org_id, channel_type, account_key)
            DO UPDATE SET meta = COALESCE(channels.meta, '{}'::jsonb) || $3::jsonb`,
           [orgId, provider, JSON.stringify(extraMeta)]
         );
+        await auditConnectorChange(client, {
+          orgId,
+          kind: 'settings.update',
+          actor: { actorType: 'user', userId },
+          tool: provider,
+          action: 'update_config',
+          resultStatus: 'ok',
+          riskClass: 'medium',
+          payload: { keys: Object.keys(extraMeta) },
+        });
+        realtimeHub.publish(orgId, { type: 'integration_updated', message: provider });
         return NextResponse.json({ success: true, message: `${provider} config saved` });
       }
 
@@ -319,10 +597,9 @@ export async function POST(request: Request) {
       client.release();
     }
   } catch (err: any) {
-    if (err.message === 'Unauthorized') {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
+    const __scopedAuth2 = scopedAuthErrorResponse(err);
+    if (__scopedAuth2) return __scopedAuth2;
     console.error('Integration POST error:', err);
-    return NextResponse.json({ message: err.message }, { status: 500 });
+    return NextResponse.json({ message: publicErrorMessage(err) }, { status: 500 });
   }
 }

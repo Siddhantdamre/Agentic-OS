@@ -7,6 +7,9 @@ export const MEMORY_TIERS = [
   'conversation',
   'working',
   'edge',
+  // Cognee graph snippets. Kept separate from 'org' because cognified
+  // content includes transcripts, so persona exclusions must see it.
+  'graph',
 ] as const;
 
 export type MemoryTier = (typeof MEMORY_TIERS)[number];
@@ -41,6 +44,7 @@ export const MEMORY_SOURCE_KINDS = [
   'human',
   'web',
   'public_official',
+  'graph',
 ] as const;
 
 export type MemorySourceKind = (typeof MEMORY_SOURCE_KINDS)[number];
@@ -186,6 +190,7 @@ export interface RetrieveMemoryRequest {
   orgId: string;
   query: string;
   employeeId?: string;
+  employeeRole?: string;
   conversationId?: string;
   workItemId?: string;
   entityType?: string;

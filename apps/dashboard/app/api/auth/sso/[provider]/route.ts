@@ -1,12 +1,14 @@
 import { NextResponse } from 'next/server';
 import ThirdParty from 'supertokens-node/recipe/thirdparty';
-import { PENDING_INVITE_COOKIE } from '@/lib/session-cookie';
+import { PENDING_INVITE_COOKIE, cookieSecure } from '@/lib/session-cookie';
 import {
   ensureSuperTokensInit,
   listSsoProviders,
   parseSsoProvider,
   ssoThirdPartyId,
 } from '@/lib/supertokens';
+import { clientIpFromRequest, denyAuthIfLimited } from '@/lib/rate-limit';
+import { resolveAppUrl } from '@/lib/oauth-providers';
 
 export const dynamic = 'force-dynamic';
 
@@ -21,11 +23,15 @@ export async function GET(
   request: Request,
   { params }: { params: Promise<{ provider: string }> }
 ) {
+  const limited = denyAuthIfLimited(clientIpFromRequest(request), 'sso');
+  if (limited) return limited;
+
   ensureSuperTokensInit();
   const { provider: rawProvider } = await params;
   const provider = parseSsoProvider(rawProvider);
   const url = new URL(request.url);
-  const loginUrl = new URL('/login', url.origin);
+  const appUrl = resolveAppUrl(request);
+  const loginUrl = new URL('/login', appUrl);
 
   if (!provider) {
     loginUrl.searchParams.set('error', 'Unsupported SSO provider');
@@ -41,7 +47,6 @@ export async function GET(
     return NextResponse.redirect(loginUrl);
   }
 
-  const appUrl = process.env.NEXT_PUBLIC_APP_URL || url.origin;
   const redirectURIOnProviderDashboard = `${appUrl}/api/auth/sso/callback/${provider}`;
   const inviteToken = url.searchParams.get('invite') || undefined;
 
@@ -58,6 +63,7 @@ export async function GET(
     const res = NextResponse.redirect(auth.urlWithQueryParams);
     const cookieBase = {
       httpOnly: true,
+      secure: cookieSecure(),
       path: '/',
       maxAge: 600,
       sameSite: 'lax' as const,
@@ -76,7 +82,7 @@ export async function GET(
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
     console.error(`[sso] start ${provider}:`, message);
-    loginUrl.searchParams.set('error', `SSO start failed: ${message.slice(0, 180)}`);
+    loginUrl.searchParams.set('error', 'SSO start failed. Please try again.');
     return NextResponse.redirect(loginUrl);
   }
 }

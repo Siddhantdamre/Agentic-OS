@@ -1,38 +1,76 @@
 import { llmChat, countLlmCalls } from '../llm/gateway.js';
-import { ApplicationFailure, Context } from '@temporalio/activity';
-import { Pool, PoolClient } from 'pg';
-import type { AgentTaskInput, AgentTaskResult } from '../agent-engine.js';
-import { runAutonomousAgentDirect, buildSessionId } from '../atomic-agent-client.js';
-import { recordTurnGrant, clearTurnGrant } from '../tools/turn-grant.js';
-import { retrieveMemory, toRetrieveActivityResult } from '../memory/retrieve.js';
-import type { RetrieveMemoryActivityResult } from '../memory/retrieve.js';
-import { enqueueEmbedJobFromWorker } from './embed.js';
-import { criticCheck as runCriticCheck } from './critic-check.js';
 import { reviseUntilAllowed, reviseDraftWithLiteLLM } from './critic-revise.js';
 import { buildReplyCritique, buildReplyReviser } from '../reply-gate.js';
+import { buildCrewPlanPrompt, extractPlanJson, validateCrewPlan, type CrewCandidate, type CrewPlan } from '../crew-planner.js';
+import { ApplicationFailure, Context } from '@temporalio/activity';
+import type { AgentTaskInput, AgentTaskResult } from '../agent-engine.js';
+import { claimIdempotent, readIdempotent, sideEffectKey, withOrgClient, writeIdempotent } from '../db.js';
+import { runAutonomousAgentDirect } from '../agent-client.js';
+import { logWorkerTurnTrace } from '../langfuse-trace.js';
+import { toRetrieveActivityResult } from '../memory/retrieve.js';
+import { retrieveForEmployee } from '../memory/employee-retrieve.js';
+import type { RetrieveMemoryActivityResult } from '../memory/retrieve.js';
+import { enqueueEmbedJobFromWorker } from './embed.js';
+import { isAllowedWriteBack, type WriteBackEvent } from '../memory/writeback-policy.js';
+import { criticCheck as runCriticCheck } from './critic-check.js';
 import {
-  buildCrewPlanPrompt,
-  extractPlanJson,
-  validateCrewPlan,
-  type CrewCandidate,
-  type CrewPlan,
-} from '../crew-planner.js';
-import {
+  mergeRoutedForCaller,
   personaText,
   route,
   type RouteEmployee,
 } from '../route-employee.js';
 import { memoryWriteBackActivity as runMemoryWriteBack } from './memory-writeback.js';
+import { evaluateConfidenceGate, ESCALATION_HOLDING_REPLY } from '../customer/confidence-gate.js';
+import { ragTopSimilarity } from '../memory/retrieve.js';
+import {
+  attachDecisionCardActivity,
+  logCustomerLedgerActivity,
+  persistOperationalStateActivity,
+} from './customer.js';
 
 export { memoryWriteBackActivity } from './memory-writeback.js';
 
+export { assertCrewSpendAllowedActivity } from './crew-budget.js';
+
 export { redactForEmbedActivity } from './redact.js';
-export { checkLlmBudgetActivity } from './llm-budget.js';
-export { recordTaskSupervisionActivity } from './task-supervision.js';
-export { researchTopicActivity } from './market-research.js';
 export { embedIngestionJobActivity, embedQueuedJobsActivity } from './embed.js';
 export { ingestFileActivity, syncConnectorActivity } from './ingest-file.js';
+export { countDueSweepActivity, nowIsoActivity } from './sweeps.js';
+export {
+  sweepOrgActiveActivity,
+  claimSweepRunActivity,
+  expirePendingDecisionsActivity,
+  breachWorkItemSlaActivity,
+} from './sweep-governance.js';
 export { evaluateCriticDraft, KNOWN_BAD_FAIR_HOUSING_DRAFT } from './critic-check.js';
+export {
+  persistOperationalStateActivity,
+  logCustomerLedgerActivity,
+  attachDecisionCardActivity,
+  extractObligationActivity,
+  clusterConversationalInsightsActivity,
+  listKnowledgeGapClustersActivity,
+  rollupDecisionLedgerActivity,
+} from './customer.js';
+export {
+  guardedSendActivity,
+  recordRoiActivity,
+  inQuietHours,
+  consumeOutboundBudget,
+} from './guarded-send.js';
+export { attachWorkItemCardActivity, appendCardEventActivity } from './work-item-card.js';
+export {
+  dueLoopsActivity,
+  acquireLeaseActivity,
+  releaseLeaseActivity,
+  handleDueLoopActivity,
+  runMorningCheckActivity,
+  runStuckWorkActivity,
+  deliverBriefActivity,
+  registerExpectationActivity,
+  checkCustomerHealthActivity,
+  sendCheckInActivity,
+} from './open-loop-sweep.js';
 export {
   loadApprovedPlanActivity,
   updateAgentPlanActivity,
@@ -42,6 +80,7 @@ export {
   narrateBriefingActivity,
   persistBriefingActivity,
   msUntilNextHourActivity,
+  getOrgTimeZoneActivity,
   listStaleConversationsActivity,
   markStaleNeedsAttentionActivity,
   nurtureGateActivity,
@@ -49,17 +88,43 @@ export {
   queryInsightMetricActivity,
   persistInsightActionActivity,
 } from './orchestration.js';
-
-// A real import, not a re-export. The block above forwards names to callers of
-// this module; it does not bring them into scope here, which is why the first
-// attempt compiled to "Cannot find name 'publishOrgEvent'".
-import { publishOrgEvent } from './orchestration.js';
 export {
   installPackActivity,
   uninstallPackActivity,
   bookShowingActivity,
   rentReminderActivity,
 } from './packs.js';
+export { sendShowingReminderActivity } from './showing-reminders.js';
+export {
+  loadOrBuildIcpActivity,
+  searchLookalikeCandidatesActivity,
+  pollSignalsActivity,
+  persistSignalsActivity,
+  loadPreferencesActivity,
+  rankCandidatesActivity,
+  createOpportunityActivity,
+  synthesizePreferencesActivity,
+  listDormantLeadsActivity,
+  runGrowthWatchActivity,
+  recordGrowthRoiActivity,
+  runMarketScoutActivity,
+  compileMeetingDossiersActivity,
+  classifyInboundRepliesActivity,
+} from './growth.js';
+export { auditReconciliationActivity } from './reconciliation.js';
+export { auditMeetingPrepActivity, auditCalendarDeadlocksActivity } from './meeting-prep.js';
+export { runRepFollowUpSlaActivity } from './rep-followup-sla.js';
+export { balanceWorkloadActivity } from './workload-balancer.js';
+export { checkContactDuplicateActivity } from './dedup.js';
+export { backfillContactFieldsActivity } from './enrichment.js';
+export {
+  runDsrDeleteActivity,
+  runDsrExportActivity,
+  markDsrRequestFailedActivity,
+} from './dsr.js';
+
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 type WorkItemChannel = 'whatsapp' | 'chatwoot' | 'inbox' | 'ask_ai' | 'unknown';
 type WorkItemStatus = 'open' | 'in_progress' | 'waiting_approval' | 'needs_attention' | 'done' | 'cancelled';
@@ -77,64 +142,7 @@ type WorkEventKind =
   | 'confirm_requested'
   | 'confirm_approved'
   | 'confirm_rejected'
-  | 'critic_blocked'
-  // Emitted whenever self-revision ran, successful or not — measuring how often
-  // it rescues a reply (vs. just adding latency) is the point.
-  | 'critic_revised'
-  // Emitted when the pre-send sanitiser had to strip internal identifiers or
-  // discard a draft that described its own operating instructions. A stream of
-  // these means someone is probing the agent, so it is audited, not silent.
-  | 'reply_sanitised'
-  // The per-tenant token budget was at or past its warning line when the turn
-  // started. Recorded for a warning as well as a breach.
-  | 'budget_exceeded';
-
-const pool = new Pool({
-  host: process.env.DB_HOST || 'localhost',
-  port: parseInt(process.env.DB_PORT || '5432'),
-  user: process.env.DB_USER || 'darex_app',
-  password: process.env.DB_PASSWORD,
-  database: process.env.DB_NAME || 'darex',
-});
-
-async function withOrgClient<T>(orgId: string, fn: (client: PoolClient) => Promise<T>): Promise<T> {
-  const client = await pool.connect();
-  try {
-    await client.query("SELECT set_config('app.current_org_id', $1, false)", [orgId]);
-    return await fn(client);
-  } finally {
-    try {
-      await client.query('RESET app.current_org_id');
-    } catch {
-      // always release
-    }
-    client.release();
-  }
-}
-
-async function readIdempotent<T>(orgId: string, key: string | undefined): Promise<T | null> {
-  if (!key) return null;
-  return withOrgClient(orgId, async (client) => {
-    const res = await client.query(
-      `SELECT result FROM idempotency_keys WHERE key = $1 AND org_id = $2 AND expires_at > NOW()`,
-      [key, orgId]
-    );
-    if (res.rows.length === 0) return null;
-    return (res.rows[0].result as T) ?? null;
-  });
-}
-
-async function writeIdempotent(orgId: string, key: string | undefined, result: unknown): Promise<void> {
-  if (!key) return;
-  await withOrgClient(orgId, async (client) => {
-    await client.query(
-      `INSERT INTO idempotency_keys (key, org_id, result, expires_at)
-       VALUES ($1, $2, $3, NOW() + INTERVAL '24 hours')
-       ON CONFLICT (key) DO UPDATE SET result = EXCLUDED.result, expires_at = EXCLUDED.expires_at`,
-      [key, orgId, JSON.stringify(result)]
-    );
-  });
-}
+  | 'critic_blocked';
 
 function workflowIdempotencyKey(suffix: string): string | undefined {
   try {
@@ -147,11 +155,6 @@ function workflowIdempotencyKey(suffix: string): string | undefined {
   }
 }
 
-/** O3: idempotency key is orgId + activityName + businessKey. */
-function sideEffectKey(orgId: string, activityName: string, businessKey: string): string {
-  return `${orgId}:${activityName}:${businessKey}`;
-}
-
 function requireOrgId(orgId: string | undefined): string {
   if (!orgId) {
     throw ApplicationFailure.nonRetryable('orgId is required', 'InvalidArgumentError');
@@ -159,47 +162,103 @@ function requireOrgId(orgId: string | undefined): string {
   return orgId;
 }
 
-export async function runAgentTurnActivity(input: AgentTaskInput): Promise<AgentTaskResult> {
-  /**
-   * EVERY TURN WITH AN EMPLOYEE RECORDS ITS GRANT FIRST. Two problems, one row.
-   *
-   * The tool calls of a turn arrive at the MCP bridge — a separate process that
-   * sees only what the model put in the call. So it knew neither the allowlist
-   * nor the employee, and both failures were live:
-   *
-   *   TOO MUCH. `duties.ts` promises a duty runs with the minimum tool and
-   *   never the employee's full authority. `planDuty` computed it; the bridge
-   *   fell back to the org-wide union. Emma's duty, granted `database_query`
-   *   alone, reached metrics_list, metrics_query and intercom.
-   *
-   *   TOO LITTLE. The executor refuses every non-read when no employee is
-   *   named. Nothing named one here, so EVERY write through the bridge was
-   *   refused: create_event, draft_email, create_crm_contact. The agent could
-   *   answer a question and could not book, draft or record anything — and a
-   *   customer asking to book a viewing was told "please provide the name of
-   *   the employee handling the booking".
-   *
-   * One grant fixes both, because it carries the allowlist AND the employee.
-   * Keyed by the same session id the client builds, which the host sets and the
-   * model never sees.
-   *
-   * Now for EVERY turn that has an employee, not just self-directed ones — a
-   * customer conversation needs to act, and it was the path most damaged by
-   * having no attribution.
-   *
-   * Awaited for ORDERING, not for correctness: it must land before the first
-   * tool call. A grant that fails to write leaves the previous behaviour rather
-   * than failing the turn.
-   */
-  if (input.orgId && input.employeeId && Array.isArray(input.toolAllowlist) && input.toolAllowlist.length > 0) {
-    await recordTurnGrant({
-      orgId: input.orgId,
-      sessionId: buildSessionId(input),
-      employeeId: input.employeeId,
-      allowlist: input.toolAllowlist,
-    });
+/**
+ * RT-B03: Temporal retries this activity only when the previous attempt timed
+ * out or its worker died, so a retry can find the first attempt's tools
+ * (send/charge) already dispatched, or still running. The key is per activity
+ * execution (run id + activity id), so retries share it and the workflow's
+ * own follow-up turns do not.
+ */
+export function agentTurnClaimKey(): string | undefined {
+  try {
+    const info = Context.current().info;
+    const { workflowId, runId } = info.workflowExecution;
+    if (!workflowId || !runId || !info.activityId) return undefined;
+    return `wf:${workflowId}:${runId}:agent-turn:${info.activityId}`;
+  } catch {
+    return undefined;
+  }
+}
+
+export const TURN_RETRY_HELD_ERROR = 'turn_retry_held';
+
+/** Result for a retry whose earlier attempt never finished: hand to a human. */
+export function turnRetryHeldResult(input: AgentTaskInput): AgentTaskResult {
+  const isCustomerInbound = Boolean(
+    input.customerIdentifier || (input.employeeRole && /customer/i.test(input.employeeRole))
+  );
+  return {
+    success: false,
+    replyMessage: isCustomerInbound
+      ? ESCALATION_HOLDING_REPLY
+      : 'This request timed out partway through, so I did not run it again. ' +
+        'Check whether any message, charge or update already went out before asking again.',
+    executedSteps: [
+      { step: 1, action: 'Agent Turn', result: 'Earlier attempt did not finish; not retried so no tool runs twice' },
+    ],
+    usedTools: [],
+    error: TURN_RETRY_HELD_ERROR,
+    retryable: false,
+    isDone: true,
+    forceEscalate: true,
+  };
+}
+
+export interface TurnClaimStore {
+  claim(orgId: string, key: string): Promise<{ claimed: boolean; cached: AgentTaskResult | null }>;
+  write(orgId: string, key: string, result: AgentTaskResult): Promise<void>;
+}
+
+const dbTurnClaimStore: TurnClaimStore = {
+  claim: (orgId, key) => claimIdempotent<AgentTaskResult>(orgId, key),
+  write: (orgId, key, result) => writeIdempotent(orgId, key, result),
+};
+
+/** Runs `run` at most once per claim key; see `agentTurnClaimKey`. */
+export async function runGuardedAgentTurn(
+  input: AgentTaskInput,
+  claimKey: string | undefined,
+  run: (input: AgentTaskInput) => Promise<AgentTaskResult>,
+  store: TurnClaimStore = dbTurnClaimStore
+): Promise<AgentTaskResult> {
+  let claimed = false;
+  if (claimKey && input.orgId) {
+    try {
+      const claim = await store.claim(input.orgId, claimKey);
+      if (!claim.claimed) {
+        if (claim.cached) return claim.cached;
+        console.warn(`[Temporal Activity] runAgentTurn retry held, earlier attempt unfinished: ${claimKey}`);
+        return turnRetryHeldResult(input);
+      }
+      claimed = true;
+    } catch (err) {
+      // Without idempotency_keys the guard cannot exist; any other error is
+      // thrown so Temporal retries the claim rather than running unguarded.
+      // Checks the SQLSTATE only: isUndefinedTable also matches any message
+      // with "does not exist" (a missing role or database).
+      if ((err as { code?: string } | null)?.code !== '42P01') throw err;
+      console.warn('[Temporal Activity] idempotency_keys missing; agent turn runs without retry guard');
+    }
   }
 
+  const result = await run(input);
+
+  if (claimed && claimKey) {
+    try {
+      await store.write(input.orgId, claimKey, result);
+    } catch (err) {
+      // A retry then sees an unfinished claim and holds, the safe direction.
+      console.error('[Temporal Activity] failed to record agent turn result:', err instanceof Error ? err.message : err);
+    }
+  }
+  return result;
+}
+
+export async function runAgentTurnActivity(input: AgentTaskInput): Promise<AgentTaskResult> {
+  return runGuardedAgentTurn(input, agentTurnClaimKey(), runAgentTurnOnce);
+}
+
+async function runAgentTurnOnce(input: AgentTaskInput): Promise<AgentTaskResult> {
   try {
     let priorMessages: { role: string; content: string }[] = [];
     if (input.conversationId) {
@@ -223,16 +282,86 @@ export async function runAgentTurnActivity(input: AgentTaskInput): Promise<Agent
     }
     let retrievedMemory;
     try {
-      retrievedMemory = await retrieveMemory({
+      retrievedMemory = await retrieveForEmployee({
         orgId: input.orgId,
         query: input.userMessage,
         employeeId: input.employeeId,
         conversationId: input.conversationId,
+        employeeRole: input.employeeRole,
+        customerIdentifier: input.customerIdentifier,
       });
     } catch {
       retrievedMemory = { orgId: input.orgId, citations: [], emptyIndex: true };
     }
-    return await runAutonomousAgentDirect(input, { priorMessages, retrievedMemory });
+    const isCustomerInbound = Boolean(
+      input.customerIdentifier ||
+      (input.employeeRole && /customer/i.test(input.employeeRole))
+    );
+    const toolHit = Array.isArray(input.priorToolResults) && input.priorToolResults.length > 0;
+    const gate = isCustomerInbound
+      ? evaluateConfidenceGate({ topSimilarity: ragTopSimilarity(retrievedMemory), toolHit })
+      : { allow: true, reason: 'ok' as const, topSimilarity: ragTopSimilarity(retrievedMemory) };
+
+    if (input.conversationId && isCustomerInbound) {
+      await persistOperationalStateActivity({
+        orgId: input.orgId,
+        conversationId: input.conversationId,
+        userMessage: input.userMessage,
+        customerIdentifier: input.customerIdentifier,
+        forceEscalate: input.forceEscalate || !gate.allow,
+      });
+    }
+    if (!gate.allow || input.forceEscalate) {
+      const validWorkItemId = input.sessionKey && UUID_RE.test(input.sessionKey) ? input.sessionKey : undefined;
+      if (validWorkItemId) {
+        await attachDecisionCardActivity({
+          orgId: input.orgId,
+          workItemId: validWorkItemId,
+          customer: input.customerIdentifier || input.conversationId || 'customer',
+          situation: input.userMessage.slice(0, 280),
+        });
+      }
+      await logCustomerLedgerActivity({
+        orgId: input.orgId,
+        employeeRole: input.employeeRole,
+        employeeId: input.employeeId,
+        actionConsidered: 'customer_reply',
+        decision: 'suppressed',
+        reasonCode: gate.reason === 'low_rag_no_tool' ? 'low_rag_no_tool' : 'confidence_below_threshold',
+        reasonSummary: 'Low RAG similarity and no tool hit — no external guess',
+        confidence: gate.topSimilarity,
+        workItemId: validWorkItemId,
+        context: { conversationId: input.conversationId, question: input.userMessage.slice(0, 500) },
+      });
+      return {
+        success: true,
+        replyMessage: ESCALATION_HOLDING_REPLY,
+        executedSteps: [{ step: 1, action: 'Confidence gate', result: gate.reason }],
+        usedTools: [],
+        isDone: true,
+        forceEscalate: true,
+        confidenceScore: gate.topSimilarity,
+      };
+    }
+    const result = await runAutonomousAgentDirect(input, { priorMessages, retrievedMemory });
+    // OPS-B03: worker turns (inbound channels, crews) were never traced.
+    void logWorkerTurnTrace({
+      name: 'AgentTurn-Worker',
+      orgId: input.orgId,
+      input: input.userMessage,
+      output: result.replyMessage,
+      usage: result.usage,
+      level: result.success ? 'DEFAULT' : 'ERROR',
+      metadata: {
+        employeeId: input.employeeId ?? null,
+        employeeRole: input.employeeRole ?? null,
+        conversationId: input.conversationId ?? null,
+        usedTools: result.usedTools,
+        steps: result.executedSteps.length,
+        error: result.error ?? null,
+      },
+    });
+    return result;
   } catch (err: any) {
     console.error('[Temporal Activity] runAgentTurn failed:', err.message);
     return {
@@ -246,18 +375,6 @@ export async function runAgentTurnActivity(input: AgentTaskInput): Promise<Agent
       retryable: /timeout|timed out|abort/i.test(String(err.message || '')),
       isDone: true,
     };
-  } finally {
-    /**
-     * The grant lives no longer than the turn.
-     *
-     * In `finally` so it is dropped on the failure path too — an aborted duty
-     * must not leave a narrowing behind that a later call could inherit. The
-     * TTL in the table is the backstop for a worker that dies before reaching
-     * here, not the primary mechanism.
-     */
-    if (input.orgId && input.employeeId) {
-      await clearTurnGrant(input.orgId, buildSessionId(input));
-    }
   }
 }
 
@@ -309,41 +426,6 @@ export async function logChannelActivity(params: {
   });
 
   await writeIdempotent(params.orgId, key, saved);
-
-  /**
-   * Say it out loud, so an operator can watch the agent work.
-   *
-   * Every agent run was written to channel_logs and published nowhere. The SSE
-   * bus existed, per-org and working, and the only screen subscribing to it was
-   * the conversations list — so the honest answer to "what is my AI employee
-   * doing right now" was: open the database.
-   *
-   * Published here rather than in each workflow because every agent run already
-   * passes through this function. One insertion point, and no workflow can
-   * forget to emit.
-   *
-   * Deliberately never throws. A dead Redis must cost the live view, never the
-   * work: the row above is already committed and is the durable record. The
-   * feed is a window onto that record, not the record itself.
-   */
-  if (params.logType === 'AGENT_EXECUTION') {
-    try {
-      const p = (params.payload || {}) as Record<string, unknown>;
-      await publishOrgEvent(params.orgId, 'agent.activity', {
-        employeeName: p.employeeName ?? null,
-        employeeId: p.employeeId ?? null,
-        // A duty the employee gave itself, versus work a customer triggered.
-        selfDirected: Boolean(p.selfDirected),
-        succeeded: p.succeeded !== false,
-        usedTools: Array.isArray(p.usedTools) ? p.usedTools : [],
-        stepsCount: Number(p.stepsCount ?? 0),
-        at: new Date().toISOString(),
-      });
-    } catch {
-      // Intentionally swallowed — see above.
-    }
-  }
-
   return saved;
 }
 
@@ -509,9 +591,6 @@ export async function appendWorkEventActivity(params: {
     case 'confirm_approved':
     case 'confirm_rejected':
     case 'critic_blocked':
-    case 'critic_revised':
-    case 'reply_sanitised':
-    case 'budget_exceeded':
       break;
     default: {
       const _exhaustive: never = params.kind;
@@ -561,18 +640,20 @@ export async function retrieveMemoryActivity(params: {
   businessKey: string;
   query?: string;
   employeeId?: string;
+  employeeRole?: string;
 }): Promise<RetrieveMemoryActivityResult> {
   const orgId = requireOrgId(params.orgId);
   const key = sideEffectKey(orgId, 'retrieveMemory', params.businessKey);
   const cached = await readIdempotent<RetrieveMemoryActivityResult>(orgId, key);
   if (cached) return cached;
 
-  const retrieved = await retrieveMemory({
+  const retrieved = await retrieveForEmployee({
     orgId,
     query: params.query || '',
     employeeId: params.employeeId,
     conversationId: params.conversationId,
     workItemId: params.workItemId,
+    employeeRole: params.employeeRole,
   });
   const result = toRetrieveActivityResult(retrieved);
   await writeIdempotent(orgId, key, result);
@@ -597,8 +678,6 @@ export async function routeEmployeeActivity(params: {
   employeeRole: string;
   employeePersona: string;
   toolAllowlist: string[];
-  businessName?: string;
-  businessType?: string;
   passthrough: boolean;
   destination: 'employee' | 'human' | 'dispatch';
   confidence: number;
@@ -613,8 +692,6 @@ export async function routeEmployeeActivity(params: {
     employeeRole: string;
     employeePersona: string;
     toolAllowlist: string[];
-    businessName?: string;
-    businessType?: string;
     passthrough: boolean;
     destination: 'employee' | 'human' | 'dispatch';
     confidence: number;
@@ -622,35 +699,6 @@ export async function routeEmployeeActivity(params: {
     locked: boolean;
   }>(orgId, key);
   if (cached?.employeeName || cached?.destination) return cached;
-
-  /**
-   * Loaded here rather than in a new activity: this function already opens a
-   * tenant-scoped client for the roster, so the business identity costs one
-   * more query on a connection that is already open, and no extra workflow
-   * step to replay.
-   *
-   * LEFT JOIN, not JOIN. A workspace that never finished the onboarding wizard
-   * still has an org row and still has to answer its customers.
-   */
-  const business = await withOrgClient(orgId, async (client) => {
-    const res = await client.query(
-      `SELECT o.name AS org_name,
-              ob.business_name,
-              ob.business_type
-         FROM orgs o
-         LEFT JOIN org_onboarding ob ON ob.org_id = o.id
-        WHERE o.id = $1
-        LIMIT 1`,
-      [orgId]
-    );
-    const row = res.rows[0] as
-      { org_name?: string; business_name?: string; business_type?: string } | undefined;
-    if (!row) return {};
-    return {
-      businessName: String(row.business_name || row.org_name || '').trim() || undefined,
-      businessType: String(row.business_type || '').trim() || undefined,
-    };
-  });
 
   const roster = await withOrgClient(orgId, async (client) => {
     const res = await client.query(
@@ -683,37 +731,56 @@ export async function routeEmployeeActivity(params: {
     employees: roster,
   });
 
-  const fallbackAllowlist = params.toolAllowlist;
+  const merged = mergeRoutedForCaller(routed, {
+    employeeId: params.employeeId,
+    toolAllowlist: params.toolAllowlist,
+    employeeName: params.employeeName,
+    employeeRole: params.employeeRole,
+    employeePersona: params.employeePersona,
+  });
   const result = {
-    employeeId: routed.employeeId,
-    employeeName: routed.employeeName || params.employeeName,
-    employeeRole: routed.employeeRole || params.employeeRole,
-    employeePersona: routed.employeePersona || params.employeePersona,
-    toolAllowlist: routed.toolAllowlist.length > 0 ? routed.toolAllowlist : fallbackAllowlist,
-    businessName: business.businessName,
-    businessType: business.businessType,
+    employeeId: merged.employeeId,
+    employeeName: merged.employeeName,
+    employeeRole: merged.employeeRole,
+    employeePersona: merged.employeePersona,
+    toolAllowlist: merged.toolAllowlist,
     passthrough: false,
-    destination: routed.destination,
-    confidence: routed.confidence,
-    reason: routed.reason,
-    locked: routed.locked,
+    destination: merged.destination,
+    confidence: merged.confidence,
+    reason: merged.reason,
+    locked: merged.locked,
   };
 
   await writeIdempotent(orgId, key, result);
   return result;
 }
 
-/** Enqueue EmbedWorkflow off the inbound HTTP thread. Does not await embed. */
+/**
+ * Enqueue EmbedWorkflow off the inbound HTTP thread. Does not await embed.
+ *
+ * Gated by writeback-policy like every other memory write: a raw inbound
+ * customer message is not a durable fact, and embedding it made it
+ * retrievable org-wide (another customer's persona could cite it). The
+ * inbound WorkItem path passes no event, so it records a policy no-op;
+ * durable facts land through MemoryWriteBackWorkflow instead.
+ */
 export async function enqueueEmbedActivity(params: {
   orgId: string;
   workItemId: string;
   conversationId: string;
   businessKey: string;
-}): Promise<{ enqueued: boolean; noOp: boolean }> {
+  event?: WriteBackEvent | null;
+}): Promise<{ enqueued: boolean; noOp: boolean; policyBlocked?: boolean }> {
   const orgId = requireOrgId(params.orgId);
   const key = sideEffectKey(orgId, 'enqueueEmbed', params.businessKey);
-  const cached = await readIdempotent<{ enqueued: boolean; noOp: boolean }>(orgId, key);
+  const cached = await readIdempotent<{ enqueued: boolean; noOp: boolean; policyBlocked?: boolean }>(orgId, key);
   if (cached) return cached;
+
+  if (!isAllowedWriteBack(params.event ?? null)) {
+    const blocked = { enqueued: false, noOp: true, policyBlocked: true };
+    await writeIdempotent(orgId, key, blocked);
+    return blocked;
+  }
 
   const text = await withOrgClient(orgId, async (client) => {
     const res = await client.query(
@@ -857,7 +924,9 @@ export async function criticCheck(params: {
   await writeIdempotent(orgId, key, result);
   return result;
 }
-
+export { refreshAllOrgMetersActivity } from './billing-sweep.js';
+export { purgeFailedWebhooksActivity } from './dlq-retention.js';
+export { reapStaleDsrActivity } from './dsr-reaper.js';
 /**
  * Choose which employees work on a request, from the org's real roster.
  *
@@ -1226,3 +1295,7 @@ export async function recordCommitmentActivity(params: {
     return { commitmentId: null };
   }
 }
+
+export { checkLlmBudgetActivity } from './llm-budget.js';
+export { recordTaskSupervisionActivity } from './task-supervision.js';
+export { researchTopicActivity } from './market-research.js';

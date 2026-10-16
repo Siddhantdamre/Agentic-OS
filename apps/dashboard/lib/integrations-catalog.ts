@@ -7,6 +7,14 @@
  * lib/connector-registry.ts.
  */
 
+// Source file, not the package barrel: Jest cannot resolve the barrel's .js specifiers.
+import {
+  CONNECTOR_SIGN_IN_IDS,
+  connectorSignInPath as signInPathForTool,
+  providerKeyForTool,
+  type ConnectorSignInId,
+} from '../../../packages/shared-types/src/connector-signin';
+
 export type IntegrationAuthMode = 'oauth' | 'api_key' | 'byok' | 'service_account';
 export type IntegrationExecutorStatus = 'live' | 'catalog_only';
 
@@ -36,42 +44,23 @@ export interface IntegrationCatalogItem {
   operatorHint?: string;
 }
 
-export const INTEGRATION_IDS = [
-  'whatsapp',
-  'gmail',
-  'google-calendar',
-  'google-ads',
-  'meta-ads',
-  'hubspot',
-  'stripe',
-  'notion',
-  'slack',
-  'shopify',
-  'zendesk',
-  'intercom',
-  'github',
-  'razorpay',
-  'google-drive',
-  'google-docs',
-  'google-sheets',
-  'google-slides',
-  'google-forms',
-  'google-chat',
-  'google-meet',
-  'google-contacts',
-  'google-tasks',
-  'google-analytics',
-  'google-search-console',
-  'google-business-profile',
-  'google-cloud',
-] as const;
-
-export type IntegrationId = (typeof INTEGRATION_IDS)[number];
+export const INTEGRATION_IDS = CONNECTOR_SIGN_IN_IDS;
+export type IntegrationId = ConnectorSignInId;
 
 const ID_SET = new Set<string>(INTEGRATION_IDS);
 
 export function isIntegrationId(id: string): id is IntegrationId {
   return ID_SET.has(id);
+}
+
+/** Which connector account a chat tool needs before it can read or send. */
+export function providerIdForTool(raw: string): IntegrationId | null {
+  const id = providerKeyForTool(raw);
+  return id && isIntegrationId(id) ? id : null;
+}
+
+export function connectorSignInPath(raw: string): string {
+  return providerIdForTool(raw) ? signInPathForTool(raw) : '/connectors';
 }
 
 const GOOGLE_OAUTH_ENV = [
@@ -85,7 +74,7 @@ export const INTEGRATION_CATALOG: IntegrationCatalogItem[] = [
     name: 'WhatsApp Business',
     category: 'Messaging',
     icon: 'MessageSquare',
-    desc: 'Meta Cloud API for inbound & outbound WhatsApp customer messaging',
+    desc: 'Link WhatsApp by scanning a QR, or connect the official Meta Cloud API, for inbound & outbound customer messaging',
     authMode: 'byok',
     extraConnectFields: [
       { key: 'accessToken', label: 'System User Access Token', placeholder: 'EAAG...', required: true, secret: true, type: 'password' },
@@ -160,12 +149,13 @@ export const INTEGRATION_CATALOG: IntegrationCatalogItem[] = [
     extraTestFields: [
       { key: 'customerId', label: 'Google Ads customer ID', placeholder: '123-456-7890', required: false },
     ],
-    executorStatus: 'live',
+    executorStatus: 'catalog_only',
     testable: true,
     scopes: ['https://www.googleapis.com/auth/adwords'],
     envVars: [...GOOGLE_OAUTH_ENV, { name: 'GOOGLE_ADS_DEVELOPER_TOKEN', desc: 'Google Ads API developer token' }],
     webhookEvents: ['conversion_recorded'],
-    operatorHint: 'Needs a real Google OAuth client in Nango plus GOOGLE_ADS_DEVELOPER_TOKEN for metrics.',
+    operatorHint:
+      'Needs a real Google OAuth client in Nango plus GOOGLE_ADS_DEVELOPER_TOKEN. Until the developer token is set, Darex marks this catalog_only — OAuth alone is not enough for live Ads API calls.',
   },
   {
     id: 'meta-ads',
@@ -576,6 +566,94 @@ export const INTEGRATION_CATALOG: IntegrationCatalogItem[] = [
     webhookEvents: [],
     operatorHint: 'Needs a real Google OAuth client in Nango with cloud-platform scope. Agent tool: cloud_list_projects.',
   },
+  {
+    id: 'quickbooks',
+    name: 'QuickBooks Online',
+    category: 'Payments',
+    icon: 'Calculator',
+    desc: 'List customers and invoices from Intuit QuickBooks Online',
+    authMode: 'oauth',
+    extraConnectFields: [],
+    extraTestFields: [],
+    executorStatus: 'live',
+    testable: true,
+    scopes: ['com.intuit.quickbooks.accounting'],
+    envVars: [
+      { name: 'QUICKBOOKS_CLIENT_ID', desc: 'Intuit OAuth client ID (paste into Nango UI for quickbooks)' },
+      { name: 'QUICKBOOKS_CLIENT_SECRET', desc: 'Intuit OAuth client secret (paste into Nango UI)' },
+    ],
+    webhookEvents: [],
+    operatorHint:
+      'Needs a real Intuit OAuth client in the Nango UI (provider key quickbooks / quickbooks-sandbox). Until configured, connect returns not-configured / notConnected — invoices are never invented.',
+  },
+  {
+    id: 'microsoft-outlook',
+    name: 'Microsoft Outlook',
+    category: 'Email',
+    icon: 'Mail',
+    desc: 'Outlook mail via Microsoft Graph — list, draft, and send',
+    authMode: 'oauth',
+    extraConnectFields: [],
+    extraTestFields: [
+      { key: 'recipient', label: 'Recipient email (optional send)', placeholder: 'user@example.com', required: false, type: 'email' },
+    ],
+    executorStatus: 'live',
+    testable: true,
+    scopes: ['offline_access', 'User.Read', 'Mail.Read', 'Mail.ReadWrite', 'Mail.Send'],
+    envVars: [
+      { name: 'MICROSOFT_CLIENT_ID', desc: 'Azure AD app client ID (paste into Nango UI)' },
+      { name: 'MICROSOFT_CLIENT_SECRET', desc: 'Azure AD app client secret (paste into Nango UI)' },
+    ],
+    webhookEvents: ['message_received'],
+    operatorHint: 'Needs a real Microsoft OAuth client in Nango. Agent tools: outlook_list_messages, outlook_read_message, outlook_draft_email, outlook_draft_reply, outlook_send, outlook_reply.',
+  },
+  {
+    id: 'microsoft-calendar',
+    name: 'Microsoft Calendar',
+    category: 'Calendar',
+    icon: 'Calendar',
+    desc: 'Outlook calendar via Microsoft Graph — list events, check availability, create',
+    authMode: 'oauth',
+    extraConnectFields: [],
+    extraTestFields: [
+      { key: 'title', label: 'Event title (optional create)', placeholder: 'Darex strategy call', required: false },
+    ],
+    executorStatus: 'live',
+    testable: true,
+    scopes: ['offline_access', 'User.Read', 'Calendars.Read', 'Calendars.ReadWrite'],
+    envVars: [
+      { name: 'MICROSOFT_CLIENT_ID', desc: 'Azure AD app client ID (paste into Nango UI)' },
+      { name: 'MICROSOFT_CLIENT_SECRET', desc: 'Azure AD app client secret (paste into Nango UI)' },
+    ],
+    webhookEvents: ['event_created', 'event_updated'],
+    operatorHint: 'Same Microsoft OAuth client as Outlook. Agent tools: outlook_calendar_list_events, outlook_calendar_create_event.',
+  },
+  {
+    id: 'google-workspace',
+    name: 'Google Workspace',
+    category: 'Productivity',
+    icon: 'Cloud',
+    desc: 'All-in-one Google Workspace connection authorizing Gmail, Calendar, Drive, Docs, Sheets, Slides, Forms, Contacts, and Tasks in a single OAuth flow.',
+    authMode: 'oauth',
+    extraConnectFields: [],
+    extraTestFields: [],
+    executorStatus: 'live',
+    testable: true,
+    scopes: [
+      'https://mail.google.com/',
+      'https://www.googleapis.com/auth/calendar',
+      'https://www.googleapis.com/auth/drive',
+      'https://www.googleapis.com/auth/documents',
+      'https://www.googleapis.com/auth/spreadsheets',
+      'https://www.googleapis.com/auth/presentations',
+      'https://www.googleapis.com/auth/forms.body',
+      'https://www.googleapis.com/auth/contacts',
+      'https://www.googleapis.com/auth/tasks',
+    ],
+    envVars: GOOGLE_OAUTH_ENV,
+    webhookEvents: [],
+    operatorHint: 'Authorize once via Google OAuth to connect all Google Workspace apps simultaneously.',
+  },
 ];
 
 export const INTEGRATION_BY_ID: Record<string, IntegrationCatalogItem> = Object.fromEntries(
@@ -586,6 +664,28 @@ export function getIntegration(id: string): IntegrationCatalogItem | undefined {
   return INTEGRATION_BY_ID[id];
 }
 
+/** OAuth accounts that can open the Nango popup without extra form fields. */
+export function canStartOAuthInline(raw: string): boolean {
+  const id = providerIdForTool(raw);
+  if (!id) return false;
+  const item = INTEGRATION_BY_ID[id];
+  if (!item || item.authMode !== 'oauth') return false;
+  return !item.extraConnectFields.some((field) => field.required);
+}
+
+export function providerIdFromConnectHref(href: string): IntegrationId | null {
+  const raw = String(href || '').trim();
+  if (!raw) return null;
+  try {
+    const url = new URL(raw, 'https://darex.local');
+    if (url.pathname !== '/connectors') return null;
+    const connect = url.searchParams.get('connect');
+    return connect ? providerIdForTool(decodeURIComponent(connect)) : null;
+  } catch {
+    return null;
+  }
+}
+
 export const PUBLIC_META_KEYS = ['shopDomain', 'subdomain', 'adAccountId', 'customerId', 'phoneNumberId', 'wabaId'] as const;
 
 export type PublicMetaKey = (typeof PUBLIC_META_KEYS)[number];
@@ -594,37 +694,17 @@ export function isPublicMetaKey(key: string): key is PublicMetaKey {
   return (PUBLIC_META_KEYS as readonly string[]).includes(key);
 }
 
-/**
- * Rewrite a container-internal origin into one a browser can actually open.
- *
- * The same Nango server has two different addresses depending on who is asking.
- * This container reaches it at its compose service name, `http://nango-server:3003`;
- * a browser cannot resolve that name at all, because it exists only inside the
- * Docker network. So any URL we hand to the browser — the OAuth popup host, and
- * the "go and register a client id" link — has to be a published address.
- *
- * A single-label hostname (no dot, and not `localhost`) can only be a compose
- * service name, so we rewrite it to loopback and keep the port, which is where
- * compose publishes it. Set NEXT_PUBLIC_NANGO_HOST to state the public origin
- * explicitly; it is honoured ahead of this and is what production should use.
- *
- * This failure is silent without the guard: the popup opens on an unresolvable
- * host and the user gets a blank window with nothing in any log to explain it.
- */
-export function browserReachableOrigin(raw: string): string {
-  try {
-    const url = new URL(raw);
-    if (!url.hostname.includes('.') && url.hostname !== 'localhost') {
-      url.hostname = '127.0.0.1';
-    }
-    return url.toString().replace(/\/$/, '');
-  } catch {
-    return raw;
-  }
-}
-
 export function nangoUiUrl(): string {
-  return browserReachableOrigin(
-    process.env.NEXT_PUBLIC_NANGO_HOST || process.env.NANGO_HOST || 'http://localhost:3003'
-  );
+  // Browser-facing Nango URL. NEXT_PUBLIC_NANGO_HOST is the public address.
+  // NANGO_HOST is server-to-server (in compose: http://nango-server:3003,
+  // container DNS browsers cannot resolve) — only reuse it when it looks
+  // browser-reachable. Compose passes NEXT_PUBLIC_NANGO_HOST through so the
+  // browser never receives container DNS.
+  const publicHost = process.env.NEXT_PUBLIC_NANGO_HOST?.trim();
+  if (publicHost) return publicHost;
+  const serverUrl = process.env.NANGO_SERVER_URL?.trim();
+  if (serverUrl) return serverUrl;
+  const serverHost = process.env.NANGO_HOST?.trim() || '';
+  if (serverHost && !/nango-server/i.test(serverHost)) return serverHost;
+  return 'http://localhost:3003';
 }

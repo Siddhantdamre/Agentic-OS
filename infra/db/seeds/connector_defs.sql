@@ -215,7 +215,7 @@ INSERT INTO connector_defs (
     'send',
     'confirm',
     ARRAY['core', 'messaging']::text[],
-    ARRAY['slack_send']::text[],
+    ARRAY['slack_send', 'slack_read_channel', 'slack_post_decision_card']::text[],
     $j$[]$j$::jsonb,
     $j$[]$j$::jsonb,
     'live',

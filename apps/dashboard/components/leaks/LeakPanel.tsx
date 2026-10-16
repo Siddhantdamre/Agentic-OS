@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useCallback, useEffect, useState } from 'react';
+import { networkErrorMessage } from '@/lib/client-error';
 import { Eye, EyeOff, Zap, ShieldCheck } from 'lucide-react';
 
 /**
@@ -111,6 +112,8 @@ export function LeakPanel() {
       const json = await res.json();
       setNote(json.message || json.error || null);
       await load();
+    } catch (e) {
+      setNote(networkErrorMessage(e, 'Could not change that.'));
     } finally {
       setBusy(false);
     }

@@ -9,10 +9,30 @@
 
 import { NangoConnectorClient } from './client';
 import { NANGO_PING_SPECS } from './providers';
-import { ConnectionPingResult, RazorpayCredentials, WhatsAppCredentials } from './types';
+import {
+  CONNECTORS_RECONNECT_URL,
+  ConnectionPingResult,
+  RazorpayCredentials,
+  WhatsAppCredentials,
+  notConnectedResult,
+} from './types';
 
-function pingFail(provider: string, status: number, message: string, data?: unknown): ConnectionPingResult {
-  return { connected: false, provider, ok: false, status, message, data };
+function pingFail(
+  provider: string,
+  status: number,
+  message: string,
+  data?: unknown,
+  reconnect = true
+): ConnectionPingResult {
+  return {
+    connected: false,
+    provider,
+    ok: false,
+    status,
+    message,
+    data,
+    reconnectUrl: reconnect ? CONNECTORS_RECONNECT_URL : undefined,
+  };
 }
 
 function pingOk(provider: string, status: number, message: string, data?: unknown): ConnectionPingResult {
@@ -34,12 +54,16 @@ export async function pingNangoProvider(
 
   const live = await client.resolveLiveConnection(orgId, provider);
   if (!live) {
-    return pingFail(
-      provider,
-      404,
-      `No Nango OAuth connection for ${provider}. Complete OAuth at /connectors.`,
-      { setupUrl: '/connectors' }
+    const honest = notConnectedResult(
+      'not_connected',
+      `No Nango OAuth connection for ${provider}. Complete OAuth at ${CONNECTORS_RECONNECT_URL}.`,
+      provider
     );
+    return pingFail(provider, 404, honest.message, {
+      reconnectUrl: honest.reconnectUrl,
+      setupUrl: honest.setupUrl,
+      reason: honest.reason,
+    });
   }
 
   const spec = NANGO_PING_SPECS[provider];
@@ -78,11 +102,18 @@ export async function pingNangoProvider(
     return pingOk(provider, 200, `${provider} connection ping succeeded`, data);
   } catch (err: any) {
     const status = err.status || err.response?.status || 502;
+    const reconnectUrl = err.reconnectUrl || CONNECTORS_RECONNECT_URL;
     return pingFail(
       provider,
       status,
       err.message || `${provider} ping failed`,
-      err.response?.data || err.data
+      {
+        ...(typeof err.response?.data === 'object' ? err.response.data : {}),
+        ...(typeof err.data === 'object' ? err.data : {}),
+        reconnectUrl,
+        setupUrl: reconnectUrl,
+        reason: err.reason || (status === 401 || status === 403 ? 'expired' : undefined),
+      }
     );
   }
 }
@@ -95,7 +126,7 @@ export async function pingWhatsApp(creds: WhatsAppCredentials): Promise<Connecti
   try {
     const res = await fetch(
       `https://graph.facebook.com/v18.0/${encodeURIComponent(phoneNumberId)}?fields=display_phone_number,verified_name,quality_rating`,
-      { headers: { Authorization: `Bearer ${accessToken}` } }
+      { headers: { Authorization: `Bearer ${accessToken}` }, signal: AbortSignal.timeout(15_000) }
     );
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
@@ -125,6 +156,7 @@ export async function pingRazorpay(creds: RazorpayCredentials): Promise<Connecti
     const basic = Buffer.from(`${keyId}:${keySecret}`).toString('base64');
     const res = await fetch('https://api.razorpay.com/v1/payments?count=1', {
       headers: { Authorization: `Basic ${basic}` },
+      signal: AbortSignal.timeout(15_000),
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
@@ -146,6 +178,7 @@ export async function sendWhatsAppWithCreds(
       Authorization: `Bearer ${creds.accessToken}`,
       'Content-Type': 'application/json',
     },
+    signal: AbortSignal.timeout(15_000),
     body: JSON.stringify({
       messaging_product: 'whatsapp',
       to: payload.recipient,
@@ -168,6 +201,7 @@ export async function createRazorpayInvoiceWithCreds(
       Authorization: `Basic ${basic}`,
       'Content-Type': 'application/json',
     },
+    signal: AbortSignal.timeout(15_000),
     body: JSON.stringify({
       type: 'invoice',
       description: payload.description,
@@ -184,4 +218,121 @@ export async function createRazorpayInvoiceWithCreds(
   });
   const data = await res.json().catch(() => ({}));
   return { ok: res.ok, status: res.status, data };
+}
+
+export interface GoogleServiceDiagnostic {
+  id: string;
+  name: string;
+  ok: boolean;
+  status: number;
+  message: string;
+  data?: unknown;
+  latencyMs?: number;
+}
+
+export interface GoogleWorkspaceSuiteResult {
+  connected: boolean;
+  ok: boolean;
+  provider: 'google-workspace';
+  accountEmail?: string;
+  accountName?: string;
+  message: string;
+  services: GoogleServiceDiagnostic[];
+  allPassed: boolean;
+  passedCount: number;
+  totalCount: number;
+}
+
+/**
+ * Diagnostic test across all Google Workspace services under a single connection.
+ */
+export async function testGoogleWorkspace(
+  client: NangoConnectorClient,
+  orgId: string
+): Promise<GoogleWorkspaceSuiteResult> {
+  const live = await client.resolveLiveConnection(orgId, 'google');
+  if (!live) {
+    return {
+      connected: false,
+      ok: false,
+      provider: 'google-workspace',
+      message: 'Google Workspace is not connected. Click "Connect Google Workspace" to authorize all services at once.',
+      services: [],
+      allPassed: false,
+      passedCount: 0,
+      totalCount: 0,
+    };
+  }
+
+  const workspaceTargets: Array<{ id: string; name: string }> = [
+    { id: 'gmail', name: 'Gmail' },
+    { id: 'google-calendar', name: 'Google Calendar' },
+    { id: 'google-drive', name: 'Google Drive' },
+    { id: 'google-docs', name: 'Google Docs' },
+    { id: 'google-sheets', name: 'Google Sheets' },
+    { id: 'google-slides', name: 'Google Slides' },
+    { id: 'google-forms', name: 'Google Forms' },
+    { id: 'google-contacts', name: 'Google Contacts' },
+    { id: 'google-tasks', name: 'Google Tasks' },
+  ];
+
+  let accountEmail: string | undefined;
+  let accountName: string | undefined;
+
+  const results = await Promise.all(
+    workspaceTargets.map(async (target) => {
+      const start = Date.now();
+      try {
+        const ping = await pingNangoProvider(client, orgId, target.id);
+        const latencyMs = Date.now() - start;
+
+        if (target.id === 'gmail' && ping.ok && ping.data && typeof ping.data === 'object') {
+          const d = ping.data as any;
+          if (d.emailAddress) accountEmail = d.emailAddress;
+        } else if (target.id === 'google-drive' && ping.ok && ping.data && typeof ping.data === 'object') {
+          const d = ping.data as any;
+          if (d.user?.displayName) accountName = d.user.displayName;
+          if (d.user?.emailAddress && !accountEmail) accountEmail = d.user.emailAddress;
+        }
+
+        return {
+          id: target.id,
+          name: target.name,
+          ok: ping.ok,
+          status: ping.status,
+          message: ping.message,
+          data: ping.data,
+          latencyMs,
+        };
+      } catch (err: any) {
+        return {
+          id: target.id,
+          name: target.name,
+          ok: false,
+          status: err.status || 500,
+          message: err.message || `${target.name} ping failed`,
+          latencyMs: Date.now() - start,
+        };
+      }
+    })
+  );
+
+  const passedCount = results.filter((r) => r.ok).length;
+  const totalCount = results.length;
+  const allPassed = passedCount === totalCount;
+
+  return {
+    connected: true,
+    ok: passedCount > 0,
+    provider: 'google-workspace',
+    accountEmail,
+    accountName,
+    message: allPassed
+      ? `All ${totalCount} Google Workspace services verified successfully`
+      : `${passedCount} of ${totalCount} Google Workspace services verified`,
+    services: results,
+    allPassed,
+    passedCount,
+    totalCount,
+  };
 }

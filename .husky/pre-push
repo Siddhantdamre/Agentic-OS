@@ -1,1 +1,3 @@
+pnpm --filter @darex/workflows build
+pnpm --filter @darex/workflows test
 pnpm --filter @darex/dashboard exec tsc --noEmit

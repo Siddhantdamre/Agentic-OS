@@ -30,10 +30,16 @@ function defaultSlotLocal(): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
-function toIso(local: string): string {
-  const d = new Date(local);
-  if (Number.isNaN(d.getTime())) return '';
-  return d.toISOString();
+function toIsoWithZone(local: string, _timeZone: string): { startIso: string; endIso: string; durationMinutes: number } | null {
+  // datetime-local is wall clock without offset; interpret as the caller's IANA zone.
+  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(local)) return null;
+  const asUtcGuess = new Date(local);
+  if (Number.isNaN(asUtcGuess.getTime())) return null;
+  // `new Date(local)` uses the browser's local TZ — correct for client components.
+  const startIso = asUtcGuess.toISOString();
+  const durationMinutes = 60;
+  const endIso = new Date(asUtcGuess.getTime() + durationMinutes * 60_000).toISOString();
+  return { startIso, endIso, durationMinutes };
 }
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -45,18 +51,25 @@ function isUuid(value: string | undefined): value is string {
 export function BookShowingControl(props: {
   listingId?: string;
   inquiryId?: string;
+  showingId?: string;
   title?: string;
   onBooked?: () => void;
+  onCancelled?: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const [startLocal, setStartLocal] = useState(defaultSlotLocal);
+  const [durationMinutes, setDurationMinutes] = useState(60);
   const [pending, setPending] = useState(false);
+  const [cancelling, setCancelling] = useState(false);
   const [result, setResult] = useState<ShowingResult | null>(null);
+  const timezone =
+    typeof Intl !== 'undefined' ? Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC' : 'UTC';
 
   async function onSubmit(event: React.FormEvent) {
     event.preventDefault();
-    const startTime = toIso(startLocal);
-    if (!startTime) return;
+    const parsed = toIsoWithZone(startLocal, timezone);
+    if (!parsed) return;
+    const endTime = new Date(new Date(parsed.startIso).getTime() + durationMinutes * 60_000).toISOString();
     setPending(true);
     setResult(null);
     try {
@@ -66,17 +79,50 @@ export function BookShowingControl(props: {
         body: JSON.stringify({
           listingId: isUuid(props.listingId) ? props.listingId : undefined,
           inquiryId: isUuid(props.inquiryId) ? props.inquiryId : undefined,
-          startTime,
+          startTime: parsed.startIso,
+          endTime,
+          durationMinutes,
+          timezone,
           summary: props.title ? `Showing: ${props.title}` : 'Property showing',
         }),
       });
-      const data = (await res.json().catch(() => ({}))) as ShowingResult;
-      setResult(data);
+      const data = (await res.json().catch(() => ({}))) as ShowingResult & {
+        reconnectUrl?: string;
+        conflict?: boolean;
+      };
+      setResult({
+        ...data,
+        setupUrl: data.setupUrl || data.reconnectUrl || '/connectors',
+      });
       if (data.booked === true) props.onBooked?.();
     } catch {
       setResult({ booked: false, message: 'Could not reach the showing API.' });
     } finally {
       setPending(false);
+    }
+  }
+
+  async function cancelShowing() {
+    if (!isUuid(props.showingId)) {
+      setOpen(false);
+      return;
+    }
+    if (!confirm('Cancel this showing? It will be removed from Google Calendar if connected.')) return;
+    setCancelling(true);
+    try {
+      const res = await fetch(`/api/showings/${props.showingId}`, { method: 'DELETE' });
+      const data = (await res.json().catch(() => ({}))) as ShowingResult;
+      if (res.ok) {
+        setResult({ booked: false, message: data.message || 'Showing cancelled.' });
+        props.onCancelled?.();
+        setOpen(false);
+      } else {
+        setResult({ booked: false, error: data.error || 'Failed to cancel showing.' });
+      }
+    } catch {
+      setResult({ booked: false, error: 'Could not reach the showing API.' });
+    } finally {
+      setCancelling(false);
     }
   }
 
@@ -94,7 +140,7 @@ export function BookShowingControl(props: {
       ) : (
         <form onSubmit={onSubmit} className="space-y-2">
           <label className="block text-[11px] text-slate-500">
-            Start
+            Start ({timezone})
             <input
               type="datetime-local"
               required
@@ -103,7 +149,19 @@ export function BookShowingControl(props: {
               className="mt-1 w-full text-xs border border-cream-300 rounded-lg px-2 py-1 bg-white text-heading"
             />
           </label>
-          <div className="flex gap-2">
+          <label className="block text-[11px] text-slate-500">
+            Duration (minutes)
+            <input
+              type="number"
+              min={15}
+              max={480}
+              step={15}
+              value={durationMinutes}
+              onChange={(e) => setDurationMinutes(Math.max(15, Number(e.target.value) || 60))}
+              className="mt-1 w-full text-xs border border-cream-300 rounded-lg px-2 py-1 bg-white text-heading"
+            />
+          </label>
+          <div className="flex gap-2 flex-wrap">
             <ConfirmButton
               type="submit"
               disabled={pending}
@@ -111,12 +169,24 @@ export function BookShowingControl(props: {
             >
               {pending ? 'Booking…' : 'Confirm slot'}
             </ConfirmButton>
-            <ConfirmButton
-              className="px-2.5 py-1 text-[11px] font-semibold rounded-lg border border-cream-300 text-slate-600"
-              onClick={() => setOpen(false)}
-            >
-              Cancel
-            </ConfirmButton>
+            {isUuid(props.showingId) ? (
+              <ConfirmButton
+                type="button"
+                disabled={cancelling}
+                className="px-2.5 py-1 text-[11px] font-semibold rounded-lg border border-rose-300 text-rose-700"
+                onClick={() => void cancelShowing()}
+              >
+                {cancelling ? 'Cancelling…' : 'Cancel showing'}
+              </ConfirmButton>
+            ) : (
+              <ConfirmButton
+                type="button"
+                className="px-2.5 py-1 text-[11px] font-semibold rounded-lg border border-cream-300 text-slate-600"
+                onClick={() => setOpen(false)}
+              >
+                Close
+              </ConfirmButton>
+            )}
           </div>
         </form>
       )}
@@ -127,7 +197,7 @@ export function BookShowingControl(props: {
             <>
               {' '}
               <Link href={result.setupUrl || '/connectors'} className="font-semibold text-amber-800 underline">
-                /connectors
+                Connectors
               </Link>
             </>
           ) : null}
@@ -180,7 +250,7 @@ export function RentChargesPanel() {
       setMessage(
         data.error ||
           data.message ||
-          (data.closed ? 'Unexpected close — charge should stay open without a PSP webhook.' : 'Reminder recorded.')
+          (data.closed ? 'This charge was closed without a confirmed payment. It should stay open until the payment is confirmed.' : 'Reminder recorded.')
       );
       await load();
     } catch {
@@ -197,7 +267,7 @@ export function RentChargesPanel() {
       <div>
         <h2 className="text-sm font-semibold text-heading">Rent reminders</h2>
         <p className="text-xs text-slate-500 mt-0.5">
-          Schedule from SoR charges only. Tenant “I paid” does not close a charge.
+          Schedules come from the charges on record only. Tenant “I paid” does not close a charge.
         </p>
       </div>
       {message ? (

@@ -5,7 +5,6 @@ import {
   inboundJobFromPersist,
   persistInboundMessage,
   resolveChannelByMeta,
-  resolveSingleOrgChannel,
 } from '@/lib/channel-normalize';
 import { denyWebhookIfLimited, isRateLimitError, responseFromRateLimit } from '@/lib/rate-limit';
 
@@ -41,12 +40,10 @@ export async function POST(req: Request) {
       (await resolveChannelByMeta('twilio', 'phone', to)) ||
       (await resolveChannelByMeta('twilio', 'from_number', to)) ||
       (await resolveChannelByMeta('sms', 'phone', process.env.TWILIO_FROM_NUMBER || '')) ||
-      (await resolveChannelByMeta('twilio', 'from_number', process.env.TWILIO_FROM_NUMBER || '')) ||
-      (await resolveSingleOrgChannel('sms')) ||
-      (await resolveSingleOrgChannel('twilio'));
+      (await resolveChannelByMeta('twilio', 'from_number', process.env.TWILIO_FROM_NUMBER || ''));
 
     if (!matched?.org_id) {
-      console.error('[SMS Webhook] Cannot resolve org for To', to);
+      console.error('[SMS Webhook] Cannot resolve org for To', to, '- no single-org fallback');
       return new NextResponse('OK', { status: 200 });
     }
 

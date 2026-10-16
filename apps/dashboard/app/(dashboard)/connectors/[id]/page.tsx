@@ -22,13 +22,15 @@ import {
   Activity,
   Key,
   AlertCircle,
+  Cloud,
 } from 'lucide-react';
 import {
   connectRazorpayByok,
-  connectWhatsAppByok,
   disconnectProvider,
   startRealNangoOAuth,
 } from '@/lib/nango-client';
+import WhatsAppConnectModal from '@/components/connectors/whatsapp-connect-modal';
+import { networkErrorMessage } from '@/lib/client-error';
 
 interface ConnectorSpec {
   name: string;
@@ -57,10 +59,62 @@ interface ConnectorDisplay {
 }
 
 const CONNECTOR_SPECS: Record<string, ConnectorSpec> = {
+  'google-workspace': {
+    name: 'Google Workspace (All-in-One)',
+    category: 'Productivity',
+    desc: 'Unified Google Workspace connection authorizing Gmail, Calendar, Drive, Docs, Sheets, Slides, Forms, Contacts, and Tasks with a single sign-in.',
+    icon: Cloud,
+    authMode: 'OAuth 2.0 (Google Workspace)',
+    nangoKey: 'google',
+    envVars: [
+      { name: 'GOOGLE_CLIENT_ID', desc: 'Google Cloud Console Client ID' },
+      { name: 'GOOGLE_CLIENT_SECRET', desc: 'Google Cloud Console Client Secret' },
+    ],
+    scopes: [
+      'https://mail.google.com/',
+      'https://www.googleapis.com/auth/calendar',
+      'https://www.googleapis.com/auth/drive',
+      'https://www.googleapis.com/auth/documents',
+      'https://www.googleapis.com/auth/spreadsheets',
+      'https://www.googleapis.com/auth/presentations',
+      'https://www.googleapis.com/auth/forms.body',
+      'https://www.googleapis.com/auth/contacts',
+      'https://www.googleapis.com/auth/tasks',
+    ],
+    testFields: [],
+    codeSnippet: "import { testGoogleWorkspace } from '@darex/connectors';\n\nconst result = await testGoogleWorkspace(nangoClient, orgId);\nconsole.log(result.services);",
+    webhookEvents: ['gmail.message_received', 'calendar.event_created', 'drive.file_updated'],
+  },
+  google: {
+    name: 'Google Workspace (All-in-One)',
+    category: 'Productivity',
+    desc: 'Unified Google Workspace connection authorizing Gmail, Calendar, Drive, Docs, Sheets, Slides, Forms, Contacts, and Tasks with a single sign-in.',
+    icon: Cloud,
+    authMode: 'OAuth 2.0 (Google Workspace)',
+    nangoKey: 'google',
+    envVars: [
+      { name: 'GOOGLE_CLIENT_ID', desc: 'Google Cloud Console Client ID' },
+      { name: 'GOOGLE_CLIENT_SECRET', desc: 'Google Cloud Console Client Secret' },
+    ],
+    scopes: [
+      'https://mail.google.com/',
+      'https://www.googleapis.com/auth/calendar',
+      'https://www.googleapis.com/auth/drive',
+      'https://www.googleapis.com/auth/documents',
+      'https://www.googleapis.com/auth/spreadsheets',
+      'https://www.googleapis.com/auth/presentations',
+      'https://www.googleapis.com/auth/forms.body',
+      'https://www.googleapis.com/auth/contacts',
+      'https://www.googleapis.com/auth/tasks',
+    ],
+    testFields: [],
+    codeSnippet: "import { testGoogleWorkspace } from '@darex/connectors';\n\nconst result = await testGoogleWorkspace(nangoClient, orgId);\nconsole.log(result.services);",
+    webhookEvents: ['gmail.message_received', 'calendar.event_created', 'drive.file_updated'],
+  },
   whatsapp: {
     name: 'WhatsApp Business',
     category: 'Messaging',
-    desc: 'Meta Cloud API for inbound & outbound WhatsApp Business customer chats and template notifications.',
+    desc: 'Link WhatsApp by scanning a QR code, or use the official WhatsApp Business connection, to chat with customers. Your AI employees reply either way.',
     icon: MessageSquare,
     authMode: 'OAuth 2.0 (Meta Cloud API)',
     nangoKey: 'whatsapp',
@@ -74,7 +128,7 @@ const CONNECTOR_SPECS: Record<string, ConnectorSpec> = {
       { key: 'recipient', label: 'Recipient Phone Number', placeholder: '+14155552671' },
       { key: 'text', label: 'Message Text', placeholder: 'Hello from DareX AI Employee!' },
     ],
-    codeSnippet: "import { sendWhatsAppMessage } from '@darex/connectors';\n\nconst result = await sendWhatsAppMessage(orgId, {\n  recipient: '+14155552671',\n  text: 'Hi! Your appointment has been confirmed by Sarah - Sales Rep.',\n});",
+    codeSnippet: "import { NangoConnectorClient, sendWhatsAppMessage } from '@darex/connectors';\n\nconst client = new NangoConnectorClient();\nconst result = await sendWhatsAppMessage(client, orgId, phoneNumberId, {\n  recipient: '+14155552671',\n  text: 'Hi! Your appointment has been confirmed by Sarah - Sales Rep.',\n});",
     webhookEvents: ['messages', 'message_template_status_update', 'phone_number_name_update'],
   },
   gmail: {
@@ -85,15 +139,15 @@ const CONNECTOR_SPECS: Record<string, ConnectorSpec> = {
     authMode: 'OAuth 2.0 (Google APIs)',
     nangoKey: 'gmail',
     envVars: [
-      { name: 'GOOGLE_CLIENT_ID', desc: 'Google Cloud Console OAuth Client ID' },
-      { name: 'GOOGLE_CLIENT_SECRET', desc: 'Google Cloud Console OAuth Client Secret' },
+      { name: 'GOOGLE_CLIENT_ID', desc: 'Google Cloud Console Client ID' },
+      { name: 'GOOGLE_CLIENT_SECRET', desc: 'Google Cloud Console Client Secret' },
     ],
     scopes: ['https://www.googleapis.com/auth/gmail.send', 'https://www.googleapis.com/auth/gmail.readonly'],
     testFields: [
       { key: 'recipient', label: 'Recipient Email Address', placeholder: 'client@example.com' },
       { key: 'text', label: 'Email Content', placeholder: 'Here is your requested proposal from DareX AI.' },
     ],
-    codeSnippet: "import { sendGmailEmail } from '@darex/connectors';\n\nconst result = await sendGmailEmail(orgId, {\n  recipient: 'client@example.com',\n  text: 'Hello, thank you for reaching out to our team.',\n});",
+    codeSnippet: "import { NangoConnectorClient, sendGmailEmail } from '@darex/connectors';\n\nconst client = new NangoConnectorClient();\nconst result = await sendGmailEmail(client, orgId, {\n  recipient: 'client@example.com',\n  text: 'Hello, thank you for reaching out to our team.',\n});",
     webhookEvents: ['message_received', 'thread_replied', 'bounce_detected'],
   },
   'google-calendar': {
@@ -104,15 +158,15 @@ const CONNECTOR_SPECS: Record<string, ConnectorSpec> = {
     authMode: 'OAuth 2.0 (Google APIs)',
     nangoKey: 'google-calendar',
     envVars: [
-      { name: 'GOOGLE_CLIENT_ID', desc: 'Google Cloud Console OAuth Client ID' },
-      { name: 'GOOGLE_CLIENT_SECRET', desc: 'Google Cloud Console OAuth Client Secret' },
+      { name: 'GOOGLE_CLIENT_ID', desc: 'Google Cloud Console Client ID' },
+      { name: 'GOOGLE_CLIENT_SECRET', desc: 'Google Cloud Console Client Secret' },
     ],
     scopes: ['https://www.googleapis.com/auth/calendar', 'https://www.googleapis.com/auth/calendar.events'],
     testFields: [
       { key: 'title', label: 'Event Title', placeholder: 'DareX Strategy Call' },
       { key: 'attendeesStr', label: 'Attendee Emails (comma separated)', placeholder: 'lead@example.com, owner@darex.dev' },
     ],
-    codeSnippet: "import { createGoogleCalendarEvent } from '@darex/connectors';\n\nconst result = await createGoogleCalendarEvent(orgId, {\n  title: 'AI Consultation Call',\n  attendeeEmails: ['lead@example.com'],\n  startTime: new Date().toISOString(),\n});",
+    codeSnippet: "import { NangoConnectorClient, createGoogleCalendarEvent } from '@darex/connectors';\n\nconst client = new NangoConnectorClient();\nconst result = await createGoogleCalendarEvent(client, orgId, {\n  title: 'AI Consultation Call',\n  attendeeEmails: ['lead@example.com'],\n  startTime: new Date().toISOString(),\n  endTime: new Date(Date.now() + 3600000).toISOString(),\n});",
     webhookEvents: ['event_created', 'event_updated', 'event_cancelled'],
   },
   hubspot: {
@@ -132,7 +186,7 @@ const CONNECTOR_SPECS: Record<string, ConnectorSpec> = {
       { key: 'firstName', label: 'First Name', placeholder: 'Alex' },
       { key: 'lastName', label: 'Last Name', placeholder: 'Morgan' },
     ],
-    codeSnippet: "import { createHubspotContact } from '@darex/connectors';\n\nconst result = await createHubspotContact(orgId, {\n  email: 'lead@example.com',\n  firstName: 'Alex',\n  lastName: 'Morgan',\n});",
+    codeSnippet: "import { NangoConnectorClient, createHubspotContact } from '@darex/connectors';\n\nconst client = new NangoConnectorClient();\nconst result = await createHubspotContact(client, orgId, {\n  email: 'lead@example.com',\n  firstName: 'Alex',\n  lastName: 'Morgan',\n});",
     webhookEvents: ['contact.creation', 'contact.propertyChange', 'deal.creation'],
   },
   razorpay: {
@@ -151,7 +205,7 @@ const CONNECTOR_SPECS: Record<string, ConnectorSpec> = {
       { key: 'customerEmail', label: 'Customer Email', placeholder: 'customer@example.com' },
       { key: 'amountInPaisa', label: 'Amount (in Paisa — e.g. 499900)', placeholder: '499900', type: 'number' },
     ],
-    codeSnippet: "import { createRazorpayInvoice } from '@darex/connectors';\n\nconst result = await createRazorpayInvoice(orgId, {\n  customerEmail: 'customer@example.com',\n  amountInPaisa: 499900,\n});",
+    codeSnippet: "import { NangoConnectorClient, createRazorpayInvoice } from '@darex/connectors';\n\nconst client = new NangoConnectorClient();\nconst result = await createRazorpayInvoice(client, orgId, {\n  customerEmail: 'customer@example.com',\n  amountInPaisa: 499900,\n  description: 'Darex invoice',\n});",
     webhookEvents: ['payment.authorized', 'payment.failed', 'invoice.paid'],
   },
   'meta-ads': {
@@ -170,7 +224,7 @@ const CONNECTOR_SPECS: Record<string, ConnectorSpec> = {
     testFields: [
       { key: 'adAccountId', label: 'Meta Ad Account ID', placeholder: 'act_123456789' },
     ],
-    codeSnippet: "import { getMetaAdsInsights } from '@darex/connectors';\n\nconst insights = await getMetaAdsInsights(orgId, {\n  adAccountId: 'act_123456789',\n});",
+    codeSnippet: "import { NangoConnectorClient, getMetaAdsInsights } from '@darex/connectors';\n\nconst client = new NangoConnectorClient();\nconst insights = await getMetaAdsInsights(client, orgId, 'act_123456789');",
     webhookEvents: ['leadgen', 'campaign_updated', 'ad_review_approved'],
   },
   'google-ads': {
@@ -181,15 +235,15 @@ const CONNECTOR_SPECS: Record<string, ConnectorSpec> = {
     authMode: 'OAuth 2.0 (Google Ads API)',
     nangoKey: 'google-ads',
     envVars: [
-      { name: 'GOOGLE_CLIENT_ID', desc: 'Google OAuth Client ID' },
-      { name: 'GOOGLE_CLIENT_SECRET', desc: 'Google OAuth Client Secret' },
+      { name: 'GOOGLE_CLIENT_ID', desc: 'Google Client ID' },
+      { name: 'GOOGLE_CLIENT_SECRET', desc: 'Google Client Secret' },
       { name: 'GOOGLE_ADS_DEVELOPER_TOKEN', desc: 'Google Ads Developer Access Token' },
     ],
     scopes: ['https://www.googleapis.com/auth/adwords'],
     testFields: [
       { key: 'customerId', label: 'Google Ads Customer ID', placeholder: '123-456-7890' },
     ],
-    codeSnippet: "import { getGoogleAdsPerformance } from '@darex/connectors';\n\nconst perf = await getGoogleAdsPerformance(orgId, {\n  customerId: '123-456-7890',\n});",
+    codeSnippet: "import { NangoConnectorClient, getGoogleAdsPerformance } from '@darex/connectors';\n\nconst client = new NangoConnectorClient();\nconst perf = await getGoogleAdsPerformance(client, orgId, '123-456-7890');",
     webhookEvents: ['conversion_recorded', 'campaign_budget_exceeded'],
   },
 };
@@ -209,9 +263,8 @@ export default function ConnectorDetailPage() {
   const [extraConnectFields, setExtraConnectFields] = useState<Array<{ key: string; label: string; placeholder: string; required: boolean; secret?: boolean; type?: string }>>([]);
   const [testFieldsFromApi, setTestFieldsFromApi] = useState<Array<{ key: string; label: string; placeholder: string; type?: string }>>([]);
   const [connectExtras, setConnectExtras] = useState<Record<string, string>>({});
-  const [byokToken, setByokToken] = useState('');
-  const [byokPhone, setByokPhone] = useState('');
-  const [byokWaba, setByokWaba] = useState('');
+  const [showWaModal, setShowWaModal] = useState(false);
+  const [waStartAt, setWaStartAt] = useState<'choose' | 'auto-reply'>('choose');
   const [rzpKeyId, setRzpKeyId] = useState('');
   const [rzpKeySecret, setRzpKeySecret] = useState('');
 
@@ -221,6 +274,7 @@ export default function ConnectorDetailPage() {
   const [connecting, setConnecting] = useState(false);
   const [connectError, setConnectError] = useState<string | null>(null);
   const [connectSuccess, setConnectSuccess] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   // Test Runner State
   const [payload, setPayload] = useState<Record<string, any>>({});
@@ -233,9 +287,14 @@ export default function ConnectorDetailPage() {
 
   const checkConnectionStatus = useCallback(async () => {
     setLoadingStatus(true);
+    setLoadError(null);
     try {
       const res = await fetch('/api/integrations');
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setLoadError(data.error || data.message || `Failed to load connector status (HTTP ${res.status})`);
+        return;
+      }
       const current = data.integrations?.find((i: any) => i.id === connectorId);
       if (current) {
         setConnected(current.connected);
@@ -248,12 +307,15 @@ export default function ConnectorDetailPage() {
         if (Array.isArray(current.extraTestFields)) {
           setTestFieldsFromApi(current.extraTestFields);
         }
+      } else if (!CONNECTOR_SPECS[connectorId]) {
+        setLoadError(`Unknown connector "${connectorId}". Go to Connectors to see what you can connect.`);
       }
       if (data.logs) {
         setLogs(data.logs.filter((l: any) => l.channel_type === connectorId));
       }
     } catch (err) {
       console.error('Failed to load connector status:', err);
+      setLoadError(networkErrorMessage(err, 'Failed to load connector status'));
     } finally {
       setLoadingStatus(false);
     }
@@ -273,25 +335,19 @@ export default function ConnectorDetailPage() {
         const result = await disconnectProvider(connectorId);
         if (!result.success) throw new Error(result.error || 'Disconnect failed');
         setConnected(false);
-        setConnectSuccess('Disconnected successfully. Nango tokens were revoked.');
+        setConnectSuccess('Disconnected. Access to this tool has been removed.');
         await checkConnectionStatus();
         return;
       }
 
       if (liveAuthMode === 'service_account') {
-        throw new Error(operatorHint || 'This connector is not OAuth and cannot be connected from the dashboard.');
+        throw new Error(operatorHint || 'This app can’t be connected from the dashboard.');
       }
 
       if (liveAuthMode === 'byok' || connectorId === 'whatsapp') {
-        const result = await connectWhatsAppByok({
-          accessToken: byokToken,
-          phoneNumberId: byokPhone,
-          wabaId: byokWaba || undefined,
-        });
-        if (!result.success) throw new Error(result.error || 'WhatsApp connect failed');
-        setConnected(true);
-        setConnectSuccess('WhatsApp connected (token verified against Meta Graph).');
-        await checkConnectionStatus();
+        // QR or official API: the modal offers both and reports back via onConnected.
+        setWaStartAt('choose');
+        setShowWaModal(true);
         return;
       }
 
@@ -304,13 +360,20 @@ export default function ConnectorDetailPage() {
         return;
       }
 
+      if (oauthConfigured === false) {
+        // The OAuth app is not registered in Nango: the popup can only fail.
+        throw new Error(
+          operatorHint || `Connecting ${liveName} isn’t switched on yet. Ask your administrator to set it up.`
+        );
+      }
+
       const extras: Record<string, string> = { ...connectExtras };
       const result = await startRealNangoOAuth(connectorId, { extraParams: extras });
       if (!result.success) {
-        throw new Error(result.error || 'OAuth was cancelled or failed');
+        throw new Error(result.error || 'The sign-in was cancelled or didn’t work.');
       }
       setConnected(true);
-      setConnectSuccess(`${liveName} connected via Nango OAuth.`);
+      setConnectSuccess(`${liveName} is connected.`);
       await checkConnectionStatus();
     } catch (err: any) {
       setConnected(false);
@@ -377,6 +440,12 @@ export default function ConnectorDetailPage() {
           {connectError || connectSuccess}
         </div>
       )}
+      {loadError && (
+        <div className="p-4 rounded-2xl border border-red-300 bg-red-50 text-red-950 text-sm font-medium flex items-start space-x-2">
+          <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+          <span>{loadError}</span>
+        </div>
+      )}
       {/* Top Back Link */}
       <div>
         <Link
@@ -404,7 +473,7 @@ export default function ConnectorDetailPage() {
                     : 'bg-slate-100 text-slate-500'
                 }`}
               >
-                {connected && <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />}
+                {connected && <CheckCircle2 className="w-3.5 h-3.5 text-emerald-700" />}
                 <span>{connected ? 'Connected' : 'Disconnected'}</span>
               </span>
             </div>
@@ -422,6 +491,18 @@ export default function ConnectorDetailPage() {
             <RefreshCw className={`w-4 h-4 ${loadingStatus ? 'animate-spin' : ''}`} />
           </button>
 
+          {connected && connectorId === 'whatsapp' && (
+            <button
+              type="button"
+              onClick={() => {
+                setWaStartAt('auto-reply');
+                setShowWaModal(true);
+              }}
+              className="px-5 py-2.5 text-xs font-bold rounded-xl bg-white border border-cream-300 hover:bg-slate-50 text-slate-700 mr-2"
+            >
+              Auto-reply settings
+            </button>
+          )}
           <button
             onClick={handleToggleConnect}
             disabled={connecting || (!connected && liveAuthMode === 'service_account')}
@@ -436,12 +517,12 @@ export default function ConnectorDetailPage() {
               : connected
                 ? 'Disconnect'
                 : liveAuthMode === 'byok'
-                  ? 'Verify & Connect'
+                  ? 'Connect WhatsApp'
                   : liveAuthMode === 'api_key'
                     ? 'Save API Keys'
                     : liveAuthMode === 'service_account'
-                      ? 'Not OAuth'
-                      : 'Connect via Nango'}
+                      ? 'Can’t connect here'
+                      : 'Connect'}
           </button>
         </div>
       </div>
@@ -449,16 +530,13 @@ export default function ConnectorDetailPage() {
       {operatorHint && !connected && (
         <div className="p-4 rounded-2xl border border-amber-300 bg-amber-50 text-amber-950 text-xs font-medium flex items-start space-x-2">
           <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
-          <span>{operatorHint}{oauthConfigured === false ? ' Nango UI: http://localhost:3003' : ''}</span>
+          <span>{operatorHint}</span>
         </div>
       )}
 
       {!connected && liveAuthMode === 'byok' && (
-        <div className="bg-white border border-cream-300 rounded-3xl p-6 space-y-3">
-          <h3 className="text-sm font-bold text-heading">WhatsApp BYOK (verified against Meta Graph)</h3>
-          <input type="password" placeholder="EAAG... system user token" value={byokToken} onChange={(e) => setByokToken(e.target.value)} className="w-full text-xs p-3 rounded-xl border border-cream-300" />
-          <input type="text" placeholder="Phone Number ID" value={byokPhone} onChange={(e) => setByokPhone(e.target.value)} className="w-full text-xs p-3 rounded-xl border border-cream-300" />
-          <input type="text" placeholder="WABA ID (optional)" value={byokWaba} onChange={(e) => setByokWaba(e.target.value)} className="w-full text-xs p-3 rounded-xl border border-cream-300" />
+        <div className="bg-white border border-cream-300 rounded-3xl p-6 text-xs text-slate-600">
+          Connect WhatsApp by scanning a QR code or with the official WhatsApp Business connection. You pick when you click Connect.
         </div>
       )}
 
@@ -472,7 +550,7 @@ export default function ConnectorDetailPage() {
 
       {!connected && liveAuthMode === 'oauth' && extraConnectFields.length > 0 && (
         <div className="bg-white border border-cream-300 rounded-3xl p-6 space-y-3">
-          <h3 className="text-sm font-bold text-heading">Required before OAuth</h3>
+          <h3 className="text-sm font-bold text-heading">Needed before you sign in</h3>
           {extraConnectFields.map((field) => (
             <input
               key={field.key}
@@ -486,13 +564,25 @@ export default function ConnectorDetailPage() {
         </div>
       )}
 
+      <WhatsAppConnectModal
+        open={showWaModal}
+        startAt={waStartAt}
+        onClose={() => setShowWaModal(false)}
+        onConnected={async (message) => {
+          setShowWaModal(false);
+          setConnected(true);
+          setConnectSuccess(message);
+          await checkConnectionStatus();
+        }}
+      />
+
       {/* Tab Navigation */}
       <div className="flex items-center space-x-2 border-b border-cream-300 pb-2">
         {[
-          { id: 'test', label: 'Interactive API Runner', icon: Terminal },
-          { id: 'specs', label: 'Credentials & Scopes', icon: Key },
-          { id: 'webhooks', label: 'Webhook Listeners', icon: Webhook },
-          { id: 'logs', label: `Database Logs (${logs.length})`, icon: Activity },
+          { id: 'test', label: 'Try an action', icon: Terminal },
+          { id: 'specs', label: 'Access & permissions', icon: Key },
+          { id: 'webhooks', label: 'Incoming updates', icon: Webhook },
+          { id: 'logs', label: `Activity log (${logs.length})`, icon: Activity },
         ].map((tab) => (
           <button
             key={tab.id}
@@ -517,10 +607,10 @@ export default function ConnectorDetailPage() {
             <div className="flex items-center justify-between border-b border-cream-200 pb-3">
               <div className="flex items-center space-x-2">
                 <Terminal className="w-4 h-4 text-amber-700" />
-                <h3 className="font-bold text-heading text-sm">Try an action</h3>
+                <h3 className="font-bold text-heading text-sm">Try an action on {display.name}</h3>
               </div>
               <span className="text-[10px] font-mono bg-cream-200 text-amber-800 font-bold px-2 py-0.5 rounded">
-                Live Nango Execution
+                Runs for real
               </span>
             </div>
 
@@ -544,7 +634,7 @@ export default function ConnectorDetailPage() {
                 className="w-full py-3 bg-amber-500 hover:bg-amber-600 text-heading font-bold text-xs rounded-xl transition shadow-md flex items-center justify-center space-x-2 disabled:opacity-50"
               >
                 <Play className="w-4 h-4 fill-current" />
-                <span>{executing ? 'Executing Connector Request...' : `Run ${display.name} Action`}</span>
+                <span>{executing ? 'Running…' : `Run ${display.name} action`}</span>
               </button>
             </div>
 
@@ -552,9 +642,9 @@ export default function ConnectorDetailPage() {
             {testResult && (
               <div className="mt-4 p-4 bg-slate-950 text-slate-200 font-mono text-xs rounded-2xl space-y-2 border border-slate-800">
                 <div className="flex items-center justify-between text-slate-400 border-b border-slate-800 pb-1.5 text-[11px]">
-                  <span>Execution Output</span>
+                  <span>Result</span>
                   <span className={testResult.success ? 'text-emerald-400 font-bold' : 'text-amber-400 font-bold'}>
-                    {testResult.success ? '200 OK — Execution Logged to DB' : 'Proxy Response'}
+                    {testResult.success ? 'Done — saved to your activity log' : 'Response'}
                   </span>
                 </div>
                 <pre className="text-[11px] whitespace-pre-wrap max-h-60 overflow-y-auto">{JSON.stringify(testResult, null, 2)}</pre>
@@ -566,13 +656,13 @@ export default function ConnectorDetailPage() {
           <div className="lg:col-span-5 space-y-4">
             <div className="bg-slate-950 text-slate-200 rounded-3xl p-6 border border-slate-800 space-y-4 shadow-sm">
               <div className="flex items-center justify-between border-b border-slate-800 pb-3">
-                <span className="text-xs font-semibold text-slate-400 font-mono">TypeScript Agent Invocation</span>
+                <span className="text-xs font-semibold text-slate-400 font-mono">Example for developers</span>
                 <button
                   onClick={copyCode}
                   className="text-xs text-slate-400 hover:text-amber-400 flex items-center space-x-1 transition"
                 >
                   {copiedSnippet ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
-                  <span>{copiedSnippet ? 'Copied' : 'Copy Code'}</span>
+                  <span>{copiedSnippet ? 'Copied' : 'Copy example'}</span>
                 </button>
               </div>
 
@@ -582,9 +672,9 @@ export default function ConnectorDetailPage() {
             </div>
 
             <div className="p-4 bg-cream-100 border border-cream-300 rounded-2xl text-xs text-slate-600 space-y-1">
-              <span className="font-bold text-heading block">Safe to run more than once</span>
+              <span className="font-bold text-heading block">Safe to retry</span>
               <p className="text-[11px] leading-relaxed">
-                When an AI employee calls this connector during a customer conversation workflow, the call is wrapped in a retry-safe Temporal Activity with RLS tenant context.
+                When an AI employee uses this connection during a customer conversation, the call is retried safely if something goes wrong, and only ever touches your own business’s data.
               </p>
             </div>
           </div>
@@ -595,15 +685,15 @@ export default function ConnectorDetailPage() {
       {activeTab === 'specs' && (
         <div className="bg-white border border-cream-300 rounded-3xl p-8 space-y-6 shadow-sm">
           <div className="space-y-1">
-            <h3 className="text-lg font-bold text-heading">Credentials for this workspace</h3>
+            <h3 className="text-lg font-bold text-heading">Your connection</h3>
             <p className="text-xs text-slate-500">
-              Connection tokens are stored in self-hosted Nango database schema and isolated per tenant org.
+              Your sign-in details for this tool are stored securely and kept separate from every other business.
             </p>
           </div>
 
           <div className="grid grid-cols-2 gap-6">
             <div className="p-5 bg-cream-50 border border-cream-300 rounded-2xl space-y-2">
-              <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider block">Provider key</span>
+              <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider block">Connection name</span>
               <code className="text-sm font-bold font-mono text-amber-800 bg-cream-200 px-2 py-1 rounded">{display.nangoKey}</code>
             </div>
 
@@ -615,7 +705,7 @@ export default function ConnectorDetailPage() {
 
           {/* Required Env Vars */}
           <div className="space-y-3">
-            <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wider">Required Environment Variables</h4>
+            <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wider">Settings your administrator needs to provide</h4>
             <div className="border border-cream-300 rounded-2xl overflow-hidden divide-y divide-cream-200">
               {display.envVars.map((env, idx) => (
                 <div key={idx} className="p-4 flex items-center justify-between bg-white text-xs">
@@ -628,7 +718,7 @@ export default function ConnectorDetailPage() {
 
           {/* Scopes List */}
           <div className="space-y-3">
-            <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wider">Required OAuth Scopes</h4>
+            <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wider">Permissions requested</h4>
             <div className="flex flex-wrap gap-2">
               {display.scopes.map((scope, idx) => (
                 <span key={idx} className="px-3 py-1.5 bg-cream-200 text-slate-800 font-mono text-xs rounded-xl border border-cream-300">
@@ -644,22 +734,14 @@ export default function ConnectorDetailPage() {
       {activeTab === 'webhooks' && (
         <div className="bg-white border border-cream-300 rounded-3xl p-8 space-y-6 shadow-sm">
           <div className="space-y-1">
-            <h3 className="text-lg font-bold text-heading">Webhook URL</h3>
+            <h3 className="text-lg font-bold text-heading">How updates reach you</h3>
             <p className="text-xs text-slate-500">
-              Inbound webhooks from {display.name} are ingested into Postgres <code className="font-mono text-amber-800">channel_logs</code> and processed under &lt;500ms.
+              When {display.name} sends news — like a new message — it is received automatically and appears in your activity log. There is nothing to set up here.
             </p>
           </div>
 
-          <div className="p-4 bg-slate-950 text-slate-200 rounded-2xl font-mono text-xs flex items-center justify-between border border-slate-800">
-            {/* The URL the user must paste into their provider. Hardcoding
-                localhost printed a dead address on every deployment that is
-                not a developer laptop - and this field exists to be copied. */}
-            <span>{(typeof window !== 'undefined' ? window.location.origin : '')}/api/integrations/webhooks</span>
-            <span className="text-emerald-400 font-bold">POST Listener</span>
-          </div>
-
           <div className="space-y-3">
-            <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wider">Supported Webhook Events</h4>
+            <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wider">Updates we listen for</h4>
             <div className="grid grid-cols-3 gap-3">
               {display.webhookEvents.map((evt, idx) => (
                 <div key={idx} className="p-3 bg-cream-100 border border-cream-300 rounded-xl text-xs font-mono text-slate-700 flex items-center space-x-2">

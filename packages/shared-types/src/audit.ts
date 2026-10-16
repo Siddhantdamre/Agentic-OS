@@ -32,9 +32,31 @@ export type AuditActor =
   | { actorType: 'employee'; employeeId: string }
   | { actorType: 'system'; component: string };
 
-export const ORG_HUMAN_ROLES = ['owner', 'admin', 'member', 'auditor'] as const;
+export const ORG_HUMAN_ROLES = ['owner', 'admin', 'member', 'auditor', 'billing'] as const;
 
 export type OrgHumanRole = (typeof ORG_HUMAN_ROLES)[number];
+
+/**
+ * The single source of truth for which human roles may call pay tools
+ * (SEC-R01): shared so every enforcement point — the direct tool route in
+ * the dashboard and the pay-risk gate in the workflows executor — checks the
+ * same rule instead of each keeping its own copy that can drift apart.
+ */
+export function canCallPayTools(role: OrgHumanRole): boolean {
+  switch (role) {
+    case 'owner':
+    case 'admin':
+    case 'member':
+      return true;
+    case 'auditor':
+    case 'billing':
+      return false;
+    default: {
+      const _exhaustive: never = role;
+      return _exhaustive;
+    }
+  }
+}
 
 interface AuditEventBase {
   id: string;

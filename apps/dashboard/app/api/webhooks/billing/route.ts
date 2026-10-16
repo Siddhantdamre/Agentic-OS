@@ -7,8 +7,10 @@ import {
   finishWebhookEvent,
   processRazorpayEvent,
   processStripeEvent,
+  releaseWebhookClaim,
   type DetectedBillingProvider,
 } from '@/app/api/billing/_lib';
+import { publicErrorMessage } from '@/lib/public-error';
 
 export const dynamic = 'force-dynamic';
 
@@ -68,7 +70,7 @@ export async function POST(request: Request) {
     assertBillingWebhookSignature(provider, rawBody, request.headers);
   } catch (err) {
     if (err instanceof BillingSignatureError) {
-      return NextResponse.json({ error: err.message }, { status: err.status });
+      return NextResponse.json({ error: publicErrorMessage(err) }, { status: err.status });
     }
     return NextResponse.json({ error: 'Unsigned billing webhook rejected' }, { status: 401 });
   }
@@ -98,7 +100,14 @@ export async function POST(request: Request) {
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : 'webhook apply failed';
     console.error('[billing webhook] apply error:', message);
-    await finishWebhookEvent(provider, eventId, null, 'error', message.slice(0, 500));
-    return NextResponse.json({ received: true, status: 'error' });
+    // Unclaim + 5xx so Stripe/Razorpay retry. Finishing as 'error' with 200
+    // used to drop the event permanently (claim unique + no reprocess).
+    try {
+      await releaseWebhookClaim(provider, eventId);
+    } catch (releaseErr) {
+      console.error('[billing webhook] release claim failed:', releaseErr);
+      await finishWebhookEvent(provider, eventId, null, 'error', message.slice(0, 500));
+    }
+    return NextResponse.json({ error: message.slice(0, 200), status: 'error' }, { status: 500 });
   }
 }

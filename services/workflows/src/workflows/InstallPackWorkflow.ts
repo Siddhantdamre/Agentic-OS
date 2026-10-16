@@ -1,7 +1,3 @@
-/**
- * SUPERVISION: not-agent-work — provisions employees from a role pack at
- * setup time. An operator is present by definition.
- */
 import { ApplicationFailure, proxyActivities } from '@temporalio/workflow';
 import type * as activities from '../activities/index.js';
 import type { InstallPackWorkflowInput, InstallPackWorkflowResult } from '@darex/shared-types';

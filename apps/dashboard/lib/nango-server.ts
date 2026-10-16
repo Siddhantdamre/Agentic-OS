@@ -1,4 +1,4 @@
-import { catalogIdFromConnectionId, connectionIdsFor, nangoKeysFor } from '@darex/connectors';
+import { catalogIdFromConnectionId, catalogIdsFromConnectionId, connectionIdsFor, nangoKeysFor } from '@darex/connectors';
 import { nangoUiUrl } from '@/lib/integrations-catalog';
 
 const PLACEHOLDER_CLIENT_RE = /^(placeholder|changeme|your_?client|xxxx+|demo|example|todo|replace.?me)?$/i;
@@ -23,13 +23,18 @@ export function isNangoSecretConfigured(): boolean {
   return Boolean(process.env.NANGO_SECRET_KEY);
 }
 
+function nangoTimeoutMs(): number {
+  const n = parseInt(process.env.NANGO_TIMEOUT_MS || '', 10);
+  return Number.isFinite(n) && n > 0 ? n : 10_000;
+}
+
 async function nangoFetch(path: string, init: RequestInit = {}): Promise<Response> {
   const { host, secretKey } = getNangoServerConfig();
   if (!secretKey) {
     throw new Error('NANGO_SECRET_KEY is not set');
   }
   const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), 10_000);
+  const timer = setTimeout(() => ctrl.abort(), nangoTimeoutMs());
   try {
     return await fetch(`${host}${path}`, {
       ...init,
@@ -111,11 +116,30 @@ export interface NangoConnectionSummary {
   catalogId: string | null;
 }
 
-export async function listNangoConnections(orgId: string): Promise<NangoConnectionSummary[]> {
-  if (!isNangoSecretConfigured()) return [];
+export interface NangoConnectionListResult {
+  /** True only when Nango answered successfully — empty list then means truly none. */
+  ok: boolean;
+  connections: NangoConnectionSummary[];
+  /**
+   * Why `ok` is false. `auth` (401/403) and `unreachable` mean per-connection probes
+   * cannot succeed either, so callers should skip them; `error` (other HTTP failure) may
+   * still allow a single-connection lookup.
+   */
+  reason?: 'auth' | 'unreachable' | 'error' | 'unconfigured';
+}
+
+/**
+ * List live Nango connections for an org. Distinguishes "Nango unreachable /
+ * misconfigured" (`ok: false`) from "org has zero connections" (`ok: true`).
+ * Callers must not demote local channel rows when `ok` is false.
+ */
+export async function listNangoConnections(orgId: string): Promise<NangoConnectionListResult> {
+  if (!isNangoSecretConfigured()) return { ok: false, connections: [], reason: 'unconfigured' };
   try {
     const res = await nangoFetch('/connection');
-    if (!res.ok) return [];
+    if (!res.ok) {
+      return { ok: false, connections: [], reason: res.status === 401 || res.status === 403 ? 'auth' : 'error' };
+    }
     const body = await res.json();
     const rows: any[] = Array.isArray(body) ? body : body.connections || body.data || [];
     const out: NangoConnectionSummary[] = [];
@@ -123,16 +147,19 @@ export async function listNangoConnections(orgId: string): Promise<NangoConnecti
       const connectionId = String(row.connection_id || row.connectionId || '');
       const providerConfigKey = String(row.provider_config_key || row.providerConfigKey || row.provider || '');
       if (!connectionId || !connectionId.startsWith(`${orgId}_`)) continue;
-      out.push({
-        connectionId,
-        providerConfigKey,
-        catalogId: catalogIdFromConnectionId(orgId, connectionId),
-      });
+      const ids = catalogIdsFromConnectionId(orgId, connectionId);
+      for (const catId of ids) {
+        out.push({
+          connectionId,
+          providerConfigKey,
+          catalogId: catId,
+        });
+      }
     }
-    return out;
+    return { ok: true, connections: out };
   } catch (err: any) {
     console.warn('[Nango] list connections failed:', err.message);
-    return [];
+    return { ok: false, connections: [], reason: 'unreachable' };
   }
 }
 
@@ -177,13 +204,14 @@ export async function getNangoConnection(
 export async function deleteNangoConnection(
   orgId: string,
   provider: string
-): Promise<{ deleted: boolean; error?: string }> {
+): Promise<{ deleted: boolean; error?: string; nothingExisted?: boolean }> {
   if (!isNangoSecretConfigured()) {
     return { deleted: false, error: 'NANGO_SECRET_KEY is not set' };
   }
   const keys = nangoKeysFor(provider);
   const ids = connectionIdsFor(orgId, provider);
   let deleted = false;
+  let foundAny = false;
   let lastError: string | undefined;
   for (const key of keys) {
     for (const connectionId of ids) {
@@ -192,14 +220,24 @@ export async function deleteNangoConnection(
           `/connection/${encodeURIComponent(connectionId)}?provider_config_key=${encodeURIComponent(key)}`,
           { method: 'DELETE' }
         );
-        if (res.ok) deleted = true;
-        else if (res.status !== 404) lastError = `HTTP ${res.status}`;
+        if (res.ok) {
+          deleted = true;
+          foundAny = true;
+        } else if (res.status === 404 || res.status === 400) {
+          // Nothing at this key/id pair (404 = connection not found, 400 = provider not configured in Nango) — not an error, keep looking.
+        } else {
+          foundAny = true;
+          lastError = `HTTP ${res.status}`;
+        }
       } catch (err: any) {
+        foundAny = true;
         lastError = err.message;
       }
     }
   }
-  return { deleted: deleted || !lastError, error: deleted ? undefined : lastError };
+  if (deleted) return { deleted: true };
+  if (!foundAny) return { deleted: false, nothingExisted: true };
+  return { deleted: false, error: lastError };
 }
 
 export function primaryConnectionId(orgId: string, provider: string): string {

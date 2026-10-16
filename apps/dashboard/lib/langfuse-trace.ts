@@ -21,6 +21,9 @@ export interface TraceParams {
   provider?: string;
   model?: string;
   usage?: TraceUsage;
+  /** Known USD cost of the generation; sets costDetails so Langfuse does not
+   *  have to price an unknown model name at 0. */
+  costUsd?: number;
   level?: 'DEBUG' | 'DEFAULT' | 'WARNING' | 'ERROR';
 }
 
@@ -198,6 +201,9 @@ function buildIngestBatch(params: TraceParams): { traceId: string; batch: Ingest
         metadata,
         level,
         ...(usage ? { usage } : {}),
+        ...(params.costUsd != null && Number.isFinite(params.costUsd) && params.costUsd > 0
+          ? { costDetails: { total: params.costUsd } }
+          : {}),
       },
     });
   }
@@ -230,7 +236,7 @@ export async function logLangfuseTrace(params: TraceParams): Promise<void> {
     });
 
     const errBody = await res.text().catch(() => '');
-    if (res.status !== 201 && res.status !== 200) {
+    if (res.status !== 201 && res.status !== 200 && res.status !== 207) {
       throw new LangfuseIngestError(
         `Ingestion HTTP ${res.status}: ${errBody.slice(0, 300)}`
       );

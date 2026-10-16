@@ -8,6 +8,9 @@ CREATE DATABASE nango;
 CREATE DATABASE litellm;
 CREATE DATABASE temporal_visibility;
 CREATE DATABASE supertokens;
+-- TrueForge agent harness session store (in-compose service; existing volumes:
+-- run `CREATE DATABASE trueforge;` once manually — init scripts run on first boot only).
+CREATE DATABASE trueforge;
 
 -- Connect to the primary darex DB and enable pgvector
 \connect darex
@@ -32,4 +35,7 @@ $$;
 
 -- Grant usage on the public schema to the app role
 GRANT USAGE ON SCHEMA public TO darex_app;
-GRANT CREATE ON SCHEMA public TO darex_app;
+-- No CREATE on public for the app role: nothing at runtime runs DDL, and the grant only helps an injected statement (migration 207).
+-- Hindsight agent memory (in-compose service; existing volumes:
+-- run `CREATE DATABASE hindsight;` once manually).
+CREATE DATABASE hindsight;

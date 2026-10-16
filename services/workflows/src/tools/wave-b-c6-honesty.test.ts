@@ -18,10 +18,14 @@ function ctx(tool: string, action: string) {
   };
 }
 
-function assertHonestDisconnect(result: { status: string; data?: any; message?: string }, tool: string) {
+function assertHonestDisconnect(
+  result: { status: string; data?: any; message?: string },
+  tool: string,
+  setupUrl = '/connectors',
+) {
   assert.equal(result.status, 'error');
   assert.equal(result.data?.connected, false);
-  assert.equal(result.data?.setupUrl, '/connectors');
+  assert.equal(result.data?.setupUrl, setupUrl);
   assert.match(String(result.message || ''), /not connected/i);
   assert.doesNotMatch(JSON.stringify(result), /fake-|INV-FAKE|ADA@EXAMPLE/i);
   assert.equal(result.data?.contacts, undefined);
@@ -48,5 +52,5 @@ test('leegality never-configured is honest notConnected', async () => {
 
 test('quickbooks never-configured is honest notConnected', async () => {
   const result = await quickbooks.execute(ctx('quickbooks', 'list_customers'));
-  assertHonestDisconnect(result, 'quickbooks');
+  assertHonestDisconnect(result, 'quickbooks', '/connectors?connect=quickbooks');
 });

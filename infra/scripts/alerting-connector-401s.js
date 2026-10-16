@@ -16,7 +16,7 @@ const { execSync } = require('child_process');
 
 const REQUIRE_401 = process.argv.includes('--require-401');
 const SINCE = process.env.ALERT_LOG_SINCE || '24h';
-const CONTAINERS = ['darex-worker', 'darex-dashboard', 'darex-atomic-bridge'];
+const CONTAINERS = ['darex-worker', 'darex-dashboard', 'darex-mcp-bridge'];
 const PATTERN = '401|notConnected|connected.:.false|status.:.error';
 
 let fail = 0;

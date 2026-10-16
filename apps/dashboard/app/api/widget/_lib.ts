@@ -9,10 +9,42 @@ import { NextResponse } from 'next/server';
 import { pool, getOrgScopedClient } from '@/lib/db';
 import { parseAllowedOrigins } from '@/lib/widget-embed';
 
-export const WIDGET_ALLOWLIST = ['listings.search'] as const;
+export const WIDGET_CORE_ALLOWLIST = ['kb.search', 'faq.query'] as const;
+export const WIDGET_ALLOWLIST = ['listings.search', ...WIDGET_CORE_ALLOWLIST] as const;
 export type WidgetAllowlistedTool = (typeof WIDGET_ALLOWLIST)[number];
 
 export type WidgetToolKind = WidgetAllowlistedTool | 'denied';
+
+export async function resolveWidgetToolAllowlist(orgId: string): Promise<string[]> {
+  const allowlist = new Set<string>(WIDGET_CORE_ALLOWLIST);
+  const { client } = await getOrgScopedClient(orgId);
+  try {
+    const packRes = await client.query(
+      `SELECT pack_id FROM org_packs WHERE org_id = $1 AND status = 'installed'`,
+      [orgId]
+    );
+    for (const row of packRes.rows) {
+      const packId = String(row.pack_id || '');
+      if (
+        packId.includes('real-estate') ||
+        packId.includes('real_estate') ||
+        packId.includes('brokerage')
+      ) {
+        allowlist.add('listings.search');
+        allowlist.add('showings.available_slots');
+      }
+      if (packId.includes('ecommerce') || packId.includes('retail') || packId.includes('shopify')) {
+        allowlist.add('catalog.search');
+        allowlist.add('order.public_status');
+      }
+    }
+  } catch {
+    allowlist.add('listings.search');
+  } finally {
+    client.release();
+  }
+  return Array.from(allowlist);
+}
 
 export function hashWidgetToken(token: string): string {
   return createHash('sha256').update(token, 'utf8').digest('hex');
@@ -64,7 +96,7 @@ export async function resolveWidgetOrg(token: string): Promise<string | null> {
   }
 }
 
-export async function loadWidgetAllowedOrigins(orgId: string): Promise<string[]> {
+export async function loadWidgetAllowedOrigins(orgId: string): Promise<string[] | null> {
   const { client } = await getOrgScopedClient(orgId);
   try {
     const res = await client.query(
@@ -74,7 +106,8 @@ export async function loadWidgetAllowedOrigins(orgId: string): Promise<string[]>
     const meta = (res.rows[0]?.meta || {}) as Record<string, unknown>;
     return parseAllowedOrigins(meta.allowed_origins);
   } catch {
-    return [];
+    // DB error -> null (deny) so we never fail open to allow-all.
+    return null;
   } finally {
     client.release();
   }
@@ -85,9 +118,15 @@ export function requestOrigin(request: Request): string | null {
   return origin || null;
 }
 
-export function originAllowed(origin: string | null, allowlist: string[]): boolean {
+export function originAllowed(origin: string | null, allowlist: string[] | null): boolean {
+  // No Origin (curl / server-to-server) is allowed past the origin check —
+  // the bearer token is still required by requireWidgetOrg.
   if (!origin) return true;
-  if (allowlist.length === 0 || allowlist.includes('*')) return true;
+  // DB error or unconfigured allowlist -> deny browser origins (fail closed).
+  // Explicit '*' in DB is the only way to allow all.
+  if (!allowlist) return false;
+  if (allowlist.includes('*')) return true;
+  if (allowlist.length === 0) return false;
   return allowlist.includes(origin);
 }
 
@@ -98,7 +137,7 @@ export function applyWidgetCors(request: Request, headers: Headers, allowedOrigi
   if (list.length > 0 && !list.includes('*') && !list.includes(origin)) return;
   headers.set('Access-Control-Allow-Origin', origin);
   headers.set('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-  headers.set('Access-Control-Allow-Headers', 'Authorization, Content-Type');
+  headers.set('Access-Control-Allow-Headers', 'Authorization, Content-Type, X-Visitor-Token');
   headers.set('Access-Control-Max-Age', '86400');
   headers.set('Vary', 'Origin');
 }
@@ -141,6 +180,10 @@ export function normalizeWidgetTool(raw: string | null | undefined): WidgetToolK
     case 'listings.search.list':
     case 're.listings.search':
       return 'listings.search';
+    case 'kb.search':
+      return 'kb.search';
+    case 'faq.query':
+      return 'faq.query';
     default:
       return 'denied';
   }
@@ -188,6 +231,16 @@ export async function requireWidgetOrg(request: Request): Promise<WidgetAuthOk |
     return { ok: false, response: withWidgetCors(request, widgetUnauthorized(), ['*']) };
   }
   const allowedOrigins = await loadWidgetAllowedOrigins(orgId);
+  if (allowedOrigins === null) {
+    return {
+      ok: false,
+      response: withWidgetCors(
+        request,
+        NextResponse.json({ error: 'Configuration unavailable', connected: false }, { status: 503 }),
+        []
+      ),
+    };
+  }
   const origin = requestOrigin(request);
   if (!originAllowed(origin, allowedOrigins)) {
     return {

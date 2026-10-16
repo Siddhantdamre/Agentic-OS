@@ -7,6 +7,8 @@
 import { existsSync, readFileSync } from 'fs';
 import { join } from 'path';
 import type { PoolClient } from 'pg';
+import { parse as parseYaml } from 'yaml';
+import { z } from 'zod';
 import {
   METRIC_VALUE_KINDS,
   type GeneratedPlan,
@@ -25,6 +27,9 @@ export const INSIGHT_METRIC_IDS = [
   'core.work_items_open',
   'core.messages_inbound',
   'core.revenue_collected_7d',
+  'core.plans_rejected_7d',
+  'core.work_items_waiting_approval',
+  'core.agent_plans_pending',
 ] as const;
 
 export type InsightMetricId = (typeof INSIGHT_METRIC_IDS)[number];
@@ -84,10 +89,13 @@ export function recommendedWorkflowForMetric(metricId: string): InsightNamedWork
   switch (metricId) {
     case 'core.inquiries_unworked':
     case 'core.needs_attention':
+    case 'core.work_items_waiting_approval':
       return 'StaleChaseWorkflow';
     case 'core.conversations_open':
     case 'core.work_items_open':
     case 'core.messages_inbound':
+    case 'core.plans_rejected_7d':
+    case 'core.agent_plans_pending':
       return 'OwnerBriefingWorkflow';
     case 'core.revenue_collected_7d':
       return null;
@@ -98,14 +106,25 @@ export function recommendedWorkflowForMetric(metricId: string): InsightNamedWork
   }
 }
 
+/** What a card says when a number cannot be shown, without the internal metric id. */
+export function plainGapNarrative(gap: string): string {
+  const base = 'Darex shows a number only when it is real, so this one is left out for now.';
+  return gap.toLowerCase().includes('not connected')
+    ? `Not available yet. Connect the app this comes from and it will fill in. ${base}`
+    : `Not available yet. ${base}`;
+}
+
 export function cardTypeForMetric(metricId: string): InsightCardType {
   if (!isInsightMetricId(metricId)) return 'efficiency';
   switch (metricId) {
     case 'core.inquiries_unworked':
     case 'core.needs_attention':
+    case 'core.work_items_waiting_approval':
+    case 'core.plans_rejected_7d':
       return 'attention';
     case 'core.conversations_open':
     case 'core.work_items_open':
+    case 'core.agent_plans_pending':
       return 'efficiency';
     case 'core.messages_inbound':
     case 'core.revenue_collected_7d':
@@ -127,11 +146,15 @@ export function categoryForMetric(metricId: string): string {
     case 'core.conversations_open':
       return 'Conversations';
     case 'core.work_items_open':
+    case 'core.work_items_waiting_approval':
       return 'Work items';
     case 'core.messages_inbound':
       return 'Volume';
     case 'core.revenue_collected_7d':
       return 'Revenue';
+    case 'core.plans_rejected_7d':
+    case 'core.agent_plans_pending':
+      return 'Autonomy';
     default: {
       const _exhaustive: never = metricId;
       return _exhaustive;
@@ -148,9 +171,13 @@ function actionHrefForMetric(metricId: string): string {
     case 'core.messages_inbound':
       return '/conversations';
     case 'core.work_items_open':
-      return '/conversations';
+    case 'core.work_items_waiting_approval':
+      return '/brief';
     case 'core.revenue_collected_7d':
       return '/analytics';
+    case 'core.plans_rejected_7d':
+    case 'core.agent_plans_pending':
+      return '/ask-ai';
     default: {
       const _exhaustive: never = metricId;
       return _exhaustive;
@@ -172,83 +199,54 @@ function parseFlowList(raw: string): string[] {
   return inner.split(',').map((part) => part.trim().replace(/^["']|["']$/g, '')).filter(Boolean);
 }
 
+const KpiYamlEntrySchema = z.object({
+  id: z.string().min(1),
+  description: z.string().optional(),
+  valueKind: z.string().optional(),
+  sql: z.string().optional(),
+  source: z.string().optional(),
+  insightCopy: z.string().optional(),
+  recommendedAction: z.string().optional(),
+  packId: z.string().optional(),
+  aliases: z.union([z.array(z.string()), z.string()]).optional(),
+});
+
+const KpiYamlRootSchema = z.object({
+  metrics: z.array(KpiYamlEntrySchema).min(1),
+});
+
 function parseKpiYaml(raw: string): RegisteredMetric[] {
-  const metrics: RegisteredMetric[] = [];
-  let current: Record<string, string | string[]> | null = null;
-  let multilineKey: string | null = null;
-  let multiline: string[] = [];
-
-  const flushMulti = () => {
-    if (current && multilineKey) {
-      current[multilineKey] = multiline.join('\n').replace(/\n+$/, '');
-    }
-    multilineKey = null;
-    multiline = [];
-  };
-
-  const flushCurrent = () => {
-    flushMulti();
-    if (!current || typeof current.id !== 'string' || !current.id) {
-      current = null;
-      return;
-    }
-    const valueKindRaw = typeof current.valueKind === 'string' ? current.valueKind : 'count';
-    const valueKind: MetricValueKind = isMetricValueKind(valueKindRaw) ? valueKindRaw : 'count';
-    const aliases = Array.isArray(current.aliases)
-      ? current.aliases
-      : typeof current.aliases === 'string'
-        ? parseFlowList(current.aliases)
-        : [];
-    metrics.push({
-      id: current.id,
-      description: typeof current.description === 'string' ? current.description : current.id,
-      valueKind,
-      sql: typeof current.sql === 'string' ? current.sql : undefined,
-      source: typeof current.source === 'string' ? current.source : undefined,
-      insightCopy: typeof current.insightCopy === 'string' ? current.insightCopy : undefined,
-      recommendedAction: typeof current.recommendedAction === 'string' ? current.recommendedAction : undefined,
-      packId: typeof current.packId === 'string' ? current.packId : undefined,
-      aliases,
-    });
-    current = null;
-  };
-
-  for (const line of raw.split('\n')) {
-    if (multilineKey) {
-      if (/^(\s{6}|\s{8})/.test(line) || (line.startsWith('      ') && !/^\s*-\s+id:/.test(line))) {
-        multiline.push(line.replace(/^ {6,}/, '').replace(/^ {4}/, ''));
-        continue;
-      }
-      if (line.trim() === '') {
-        multiline.push('');
-        continue;
-      }
-      flushMulti();
-    }
-    if (/^\s*#/.test(line) || line.trim() === '' || line.trim() === 'metrics:') continue;
-    const item = line.match(/^\s*-\s+id:\s*(.+)\s*$/);
-    if (item) {
-      flushCurrent();
-      current = { id: item[1].trim().replace(/^["']|["']$/g, '') };
-      continue;
-    }
-    const kv = line.match(/^\s{2,}([A-Za-z][A-Za-z0-9_]*)\s*:\s*(.*)$/);
-    if (!kv || !current) continue;
-    const key = kv[1];
-    const value = kv[2];
-    if (value === '|' || value === '>') {
-      multilineKey = key;
-      multiline = [];
-      continue;
-    }
-    if (value.startsWith('[')) {
-      current[key] = parseFlowList(value);
-      continue;
-    }
-    current[key] = value.replace(/^["']|["']$/g, '');
+  let parsed: unknown;
+  try {
+    parsed = parseYaml(raw);
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    throw new Error(`Failed to parse core-kpis.yaml: ${message}`);
   }
-  flushCurrent();
-  return metrics;
+  const validated = KpiYamlRootSchema.safeParse(parsed);
+  if (!validated.success) {
+    throw new Error(`Invalid core-kpis.yaml schema: ${validated.error.message}`);
+  }
+  return validated.data.metrics.map((entry) => {
+    const valueKindRaw = entry.valueKind || 'count';
+    const valueKind: MetricValueKind = isMetricValueKind(valueKindRaw) ? valueKindRaw : 'count';
+    const aliases = Array.isArray(entry.aliases)
+      ? entry.aliases
+      : typeof entry.aliases === 'string'
+        ? parseFlowList(entry.aliases)
+        : [];
+    return {
+      id: entry.id,
+      description: entry.description || entry.id,
+      valueKind,
+      sql: entry.sql,
+      source: entry.source,
+      insightCopy: entry.insightCopy,
+      recommendedAction: entry.recommendedAction,
+      packId: entry.packId,
+      aliases,
+    };
+  });
 }
 
 function kpiYamlCandidates(): string[] {
@@ -402,7 +400,7 @@ export function buildInsightCards(query: InsightMetricQuery, generatedAt = new D
     const title = `${formatMetricValue(point.value, point.metricId)} — ${point.description}`;
     const narrative =
       point.insightCopy ||
-      `${point.description} = ${formatMetricValue(point.value, point.metricId)} from the metrics registry SQL.`;
+      'Counted from your own business data, not estimated.';
     cards.push({
       id: `ins-${point.metricId}`,
       orgId: query.orgId,
@@ -433,7 +431,7 @@ export function buildInsightCards(query: InsightMetricQuery, generatedAt = new D
       orgId: query.orgId,
       metricId,
       title: def ? `${def.description} — not available` : `Metric unavailable`,
-      narrative: `Honest gap: ${gap}. Darex will not invent this KPI.`,
+      narrative: plainGapNarrative(gap),
       value: 0,
       status: 'gap',
       recommendedWorkflow: null,

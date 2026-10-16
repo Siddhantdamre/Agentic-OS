@@ -27,10 +27,12 @@ export function SnippetCard({
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(snippet.snippet);
   const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const save = async () => {
     if (!draft.trim() || busy) return;
     setBusy(true);
+    setError(null);
     try {
       const res = await fetch(`/api/brain/${encodeURIComponent(snippet.id)}`, {
         method: 'PATCH',
@@ -40,7 +42,12 @@ export function SnippetCard({
       if (res.ok) {
         onCorrected(snippet.id, draft.trim());
         setEditing(false);
+        return;
       }
+      const body = await res.json().catch(() => ({}));
+      setError(typeof body?.error === 'string' ? body.error : 'We couldn’t save that. Please try again.');
+    } catch {
+      setError('Save failed. Check your connection and try again.');
     } finally {
       setBusy(false);
     }
@@ -49,9 +56,17 @@ export function SnippetCard({
   const remove = async () => {
     if (busy) return;
     setBusy(true);
+    setError(null);
     try {
       const res = await fetch(`/api/brain/${encodeURIComponent(snippet.id)}`, { method: 'DELETE' });
-      if (res.ok) onDeleted(snippet.id);
+      if (res.ok) {
+        onDeleted(snippet.id);
+        return;
+      }
+      const body = await res.json().catch(() => ({}));
+      setError(typeof body?.error === 'string' ? body.error : 'We couldn’t delete that. Please try again.');
+    } catch {
+      setError('Delete failed. Check your connection and try again.');
     } finally {
       setBusy(false);
     }
@@ -117,6 +132,7 @@ export function SnippetCard({
       {snippet.updatedAt && (
         <p className="text-[10px] font-mono text-slate-400">{snippet.updatedAt.slice(0, 10)}</p>
       )}
+      {error && <p className="text-[11px] text-red-700">{error}</p>}
     </div>
   );
 }

@@ -1,7 +1,3 @@
-/**
- * SUPERVISION: not-agent-work — pulls connector data and hands each document
- * to IngestWorkflow. It makes no claim on behalf of the business.
- */
 import { proxyActivities, executeChild, ApplicationFailure } from '@temporalio/workflow';
 import type * as activities from '../activities/index.js';
 import { IngestWorkflow } from './IngestWorkflow.js';

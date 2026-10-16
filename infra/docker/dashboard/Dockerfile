@@ -6,7 +6,7 @@
 # Run (managed by infra/docker-compose.yml):
 #   docker run --rm -p 3000:3000 --net darex-net \
 #     -e DB_HOST=postgres -e SUPERTOKENS_CONNECTION_URI=http://supertokens:3567 \
-#     -e ATOMIC_AGENT_URL=http://atomic-agent:8787 darex-dashboard
+#     -e TRUEFORGE_URL=http://trueforge:8790 darex-dashboard
 
 # ── deps: install the full workspace graph (frozen lockfile) ────────────────
 FROM node:22-bookworm-slim AS deps
@@ -14,13 +14,16 @@ RUN corepack enable
 WORKDIR /app
 
 COPY package.json pnpm-workspace.yaml pnpm-lock.yaml ./
-RUN mkdir -p apps/dashboard apps/inbox services/connectors services/workflows packages/shared-types
+RUN mkdir -p apps/dashboard apps/inbox services/connectors services/workflows packages/shared-types packages/whatsapp-gateway
 COPY apps/dashboard/package.json apps/dashboard/package.json
 COPY apps/inbox/package.json apps/inbox/package.json
 COPY services/connectors/package.json services/connectors/package.json
 COPY services/workflows/package.json services/workflows/package.json
 COPY packages/shared-types/package.json packages/shared-types/package.json
-RUN pnpm install --frozen-lockfile
+COPY packages/whatsapp-gateway/package.json packages/whatsapp-gateway/package.json
+# Download cache survives rebuilds, so a dependency change re-downloads only what changed.
+RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store \
+    pnpm config set store-dir /pnpm/store && pnpm install --frozen-lockfile
 
 # ── builder: compile workspace deps, then run `next build` ─────────────────
 FROM deps AS builder
@@ -28,6 +31,9 @@ WORKDIR /app
 
 COPY packages/shared-types packages/shared-types
 RUN pnpm --filter @darex/shared-types build
+
+COPY packages/whatsapp-gateway packages/whatsapp-gateway
+RUN pnpm --filter @darex/whatsapp-gateway build
 
 COPY services/connectors/tsconfig.json services/connectors/tsconfig.json
 COPY services/connectors/src services/connectors/src
@@ -43,7 +49,21 @@ COPY apps/dashboard apps/dashboard
 # but `next build` stats it unconditionally and ENOENTs instead of treating
 # a missing file as "no local overrides". An empty placeholder satisfies it.
 RUN touch apps/dashboard/.env.local
-RUN pnpm --filter @darex/dashboard build
+# next build imports the DB pool while collecting pages. This value exists
+# only in the builder stage. The runner image does not inherit it; compose
+# supplies the real password at container start.
+ENV DB_PASSWORD=build-only-not-a-runtime-secret \
+    APP_DB_PASSWORD=build-only-not-a-runtime-secret
+# Type-check and lint run in CI and the pre-push hook; skipping them here saves 5+ minutes on a small box.
+ENV SKIP_NEXT_CHECKS=1
+# The Next build cache survives rebuilds (a mount is not part of the image), so a code-only
+# change recompiles just what changed instead of the whole app.
+RUN --mount=type=cache,id=next-cache,target=/app/apps/dashboard/.next/cache \
+    pnpm --filter @darex/dashboard build
+
+# Slim the runtime tree: drop the .next build cache and the native binaries this image never
+# loads (musl builds on a glibc/Debian base, and the turbo CLI used only for monorepo builds).
+RUN rm -rf apps/dashboard/.next/cache node_modules/.pnpm/*linux-*-musl* node_modules/.pnpm/@turbo+*
 
 # ── runner: production `next start` with workspace dist available ──────────
 FROM node:22-bookworm-slim AS runner

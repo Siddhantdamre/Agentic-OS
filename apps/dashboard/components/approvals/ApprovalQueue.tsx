@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useCallback, useEffect, useState } from 'react';
+import { networkErrorMessage } from '@/lib/client-error';
 import { ShieldCheck, Check, X, Lock } from 'lucide-react';
 
 /**
@@ -109,6 +110,8 @@ export function ApprovalQueue() {
       await fetch('/api/approvals/revoke', { method: 'POST' });
       setNote('Everything is back to asking you first.');
       await load();
+    } catch (e) {
+      setNote(networkErrorMessage(e, 'Could not do that.'));
     } finally {
       setBusy(null);
     }

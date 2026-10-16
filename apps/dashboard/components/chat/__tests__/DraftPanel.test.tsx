@@ -37,12 +37,13 @@ describe('DraftPanel', () => {
     expect(screen.getByText('Accepted')).toBeInTheDocument();
   });
 
-  it('handles regenerate action', async () => {
+  it('handles regenerate action and passes status', async () => {
     (global.fetch as jest.Mock).mockResolvedValueOnce({
       ok: true,
       json: async () => ({
         success: true,
         draft: { ...mockDraft, version: 2, content: 'Regenerated content' },
+        status: 'pending',
       }),
     });
 
@@ -53,16 +54,20 @@ describe('DraftPanel', () => {
     fireEvent.click(regenerateBtn);
 
     await waitFor(() => {
-      expect(onRevised).toHaveBeenCalled();
+      expect(onRevised).toHaveBeenCalledWith(
+        expect.objectContaining({ version: 2, content: 'Regenerated content' }),
+        'pending'
+      );
     });
   });
 
-  it('handles feedback submission', async () => {
+  it('handles feedback submission and passes status', async () => {
     (global.fetch as jest.Mock).mockResolvedValueOnce({
       ok: true,
       json: async () => ({
         success: true,
         draft: { ...mockDraft, version: 2 },
+        status: 'pending',
       }),
     });
 
@@ -77,6 +82,10 @@ describe('DraftPanel', () => {
 
     await waitFor(() => {
       expect(global.fetch).toHaveBeenCalled();
+      expect(onRevised).toHaveBeenCalledWith(
+        expect.objectContaining({ version: 2 }),
+        'pending'
+      );
     });
   });
 

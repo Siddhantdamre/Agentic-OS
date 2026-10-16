@@ -9,7 +9,7 @@ Shared TypeScript contracts for Darex apps and services.
 - Domain: `Org`, `User`, `AIEmployee`, `Channel`, `Conversation`, `Message`
 - Agent: `AgentTaskInput`, `AgentTaskResult`, `ToolExecutionResult`
 - Ask AI: `ClassifyResult`, `PlanStep`, `GeneratedPlan`
-- Crew: `CrewPlan`, `CrewWorkflowInput`, `MAX_CREW_SPAWN`
+- Crew: `CrewPlan`, `CrewWorkflowInput`, `FixedCrewMember`, `planFixedMemberCrew`, `MAX_CREW_SPAWN`
 - Memory: `MemoryRecord`, `KnowledgeSource`, `RetrieveMemoryRequest`, `MemoryWriteBackPayload`
 - Work item: `WorkItem`, `WorkEvent`, `WorkItemWorkflowInput`
 - Risk: `RiskClass`, `ConfirmPolicy`, `ToolRiskMeta`, `DataClass`

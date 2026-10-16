@@ -22,7 +22,10 @@
  */
 
 import crypto from 'crypto';
+import { summarizeStripeItems, type StripePriceConfig } from './_stripe-items';
+import { resolveOrgPlan, type PlanRow } from './_plan-resolve';
 import type { PoolClient } from 'pg';
+import { recordAuditEvent } from '@/lib/audit-events';
 import {
   fetchOrgWeeklyCost,
   LangfuseUnavailableError,
@@ -32,6 +35,7 @@ import {
   type OrgWeeklyCost,
 } from '@/lib/org-cost';
 import { LangfuseConfigError } from '@/lib/langfuse-trace';
+import { realtimeHub } from '@/lib/realtime-hub';
 import { isProductionEnv } from '@/lib/boot-guards';
 import { getOrgScopedClient, pool } from '@/lib/db';
 import { loadHumanRole, type HumanRole } from '@/lib/rbac';
@@ -41,6 +45,8 @@ import {
   type BillingPlanType,
   type BillingProvider,
 } from '@darex/shared-types';
+
+export type { BillingProvider, BillingPlanType };
 
 export type OrgPlanKey = 'free' | BillingPlanType;
 export type CheckoutPlanKey = BillingPlanType;
@@ -143,6 +149,7 @@ export function canManageBilling(role: HumanRole): boolean {
   switch (role) {
     case 'owner':
     case 'admin':
+    case 'billing':
       return true;
     case 'member':
     case 'auditor':
@@ -160,7 +167,10 @@ export async function requireBillingManager(
 ): Promise<{ role: HumanRole } | { error: string; status: number }> {
   const role = await loadHumanRole(client, userId);
   if (!canManageBilling(role)) {
-    return { error: 'Only owners and admins can change Darex billing', status: 403 };
+    return {
+      error: 'Only owners, admins, and billing can change Darex billing',
+      status: 403,
+    };
   }
   return { role };
 }
@@ -242,6 +252,41 @@ export function stripeAddonSeatPriceId(): string | undefined {
   return envString('DAREX_STRIPE_PRICE_ADDON_SEAT');
 }
 
+/** Every configured Stripe plan price id → plan key, for webhook item resolution. */
+export function stripePriceConfig(): StripePriceConfig {
+  const planByPriceId: Record<string, string> = {};
+  for (const plan of BILLING_PLAN_TYPES) {
+    const id = stripePriceId(plan);
+    if (id) planByPriceId[id] = plan;
+  }
+  return { planByPriceId, addonSeatPriceId: stripeAddonSeatPriceId() ?? null };
+}
+
+/** Reads a subscription's items from Stripe; null when unavailable (no key, 4xx, network). */
+async function fetchStripeSubscriptionItems(subscriptionId: string | null): Promise<unknown | null> {
+  if (!subscriptionId || !stripeSecretKey()) return null;
+  try {
+    const res = await stripeGet(`/subscriptions/${encodeURIComponent(subscriptionId)}`);
+    if (res.status >= 400) {
+      console.error(`[billing] Stripe subscription fetch ${subscriptionId} failed: ${res.status}`);
+      return null;
+    }
+    return res.json.items ?? null;
+  } catch (err) {
+    console.error(`[billing] Stripe subscription fetch ${subscriptionId} failed:`, err);
+    return null;
+  }
+}
+
+/** Razorpay plan_id → Darex plan key; null when the id is not a configured plan. */
+export function razorpayPlanKeyFromPlanId(planId: string | null): CheckoutPlanKey | null {
+  if (!planId) return null;
+  for (const plan of BILLING_PLAN_TYPES) {
+    if (razorpayPlanId(plan) === planId) return plan;
+  }
+  return null;
+}
+
 export function razorpayPlanId(plan: CheckoutPlanKey): string | undefined {
   switch (plan) {
     case 'starter':
@@ -273,6 +318,88 @@ export function meterCaps(): {
     seatSoft: envInt('DAREX_METER_SEAT_SOFT', 5),
     seatHard: envInt('DAREX_METER_SEAT_HARD', 25),
   };
+}
+
+type MeterCapPair = { soft: number | null; hard: number | null };
+
+type OrgPlanOverrideCaps = {
+  seatCap: number | null;
+  meterCaps: Record<string, MeterCapPair>;
+};
+
+function isUndefinedRelation(err: unknown): boolean {
+  return (err as { code?: string })?.code === '42P01';
+}
+
+function parseOverrideCapPair(raw: unknown): MeterCapPair | null {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const softRaw = (raw as { soft?: unknown }).soft;
+  const hardRaw = (raw as { hard?: unknown }).hard;
+  const soft =
+    softRaw == null || softRaw === ''
+      ? null
+      : Number.isFinite(Number(softRaw))
+        ? Number(softRaw)
+        : null;
+  const hard =
+    hardRaw == null || hardRaw === ''
+      ? null
+      : Number.isFinite(Number(hardRaw))
+        ? Number(hardRaw)
+        : null;
+  return { soft, hard };
+}
+
+/**
+ * Tenant-readable org_plan_overrides (migration 120). Missing table → null.
+ * Never invents usage; only returns stored soft/hard / seat_cap.
+ */
+async function loadOrgPlanOverrideCaps(
+  client: PoolClient,
+  orgId: string
+): Promise<OrgPlanOverrideCaps | null> {
+  try {
+    const res = await client.query<{ seat_cap: number | null; meter_caps: unknown }>(
+      `SELECT seat_cap, meter_caps
+         FROM org_plan_overrides
+        WHERE org_id = $1`,
+      [orgId]
+    );
+    const row = res.rows[0];
+    if (!row) return null;
+    const meterCaps: Record<string, MeterCapPair> = {};
+    if (row.meter_caps && typeof row.meter_caps === 'object' && !Array.isArray(row.meter_caps)) {
+      for (const [kind, value] of Object.entries(row.meter_caps as Record<string, unknown>)) {
+        const parsed = parseOverrideCapPair(value);
+        if (parsed) meterCaps[kind] = parsed;
+      }
+    }
+    const seatCap =
+      row.seat_cap == null
+        ? null
+        : Number.isFinite(Number(row.seat_cap)) && Number(row.seat_cap) >= 1
+          ? Math.floor(Number(row.seat_cap))
+          : null;
+    return { seatCap, meterCaps };
+  } catch (err) {
+    if (isUndefinedRelation(err)) return null;
+    throw err;
+  }
+}
+
+/** Env soft/hard for a meter kind, overridden by org_plan_overrides.meter_caps when set. */
+function resolveMeterSoftHard(
+  kind: MeterKind | 'llm_tokens' | 'whatsapp_conversations' | 'seats',
+  envSoft: number,
+  envHard: number,
+  override: OrgPlanOverrideCaps | null
+): { soft: number; hard: number } {
+  const cap = override?.meterCaps?.[kind];
+  const soft =
+    cap?.soft != null && Number.isFinite(cap.soft) ? Number(cap.soft) : envSoft;
+  const hard =
+    cap?.hard != null && Number.isFinite(cap.hard) ? Number(cap.hard) : envHard;
+  return { soft, hard };
 }
 
 export function providerConfigured(provider: BillingProvider): boolean {
@@ -360,11 +487,29 @@ export function assertCheckoutReady(provider: BillingProvider, plan: CheckoutPla
   );
 }
 
-export function assertPortalReady(): void {
-  if (stripeSecretKey()) return;
+export function assertPortalReady(provider?: BillingProvider): void {
+  if (!provider || provider === 'stripe') {
+    if (stripeSecretKey()) return;
+    if (provider === 'stripe') {
+      const mode = isProductionEnv() ? 'production fail-fast' : 'dev';
+      throw new BillingConfigError(
+        `Darex Stripe billing is not configured (${mode}). Missing: DAREX_STRIPE_SECRET_KEY. See .env.example.`
+      );
+    }
+  }
+  if (!provider || provider === 'razorpay') {
+    if (razorpayKeyId() && razorpayKeySecret()) return;
+    if (provider === 'razorpay') {
+      const mode = isProductionEnv() ? 'production fail-fast' : 'dev';
+      throw new BillingConfigError(
+        `Darex Razorpay billing is not configured (${mode}). Missing: DAREX_RAZORPAY_KEY_ID / DAREX_RAZORPAY_KEY_SECRET. See .env.example.`
+      );
+    }
+  }
+  if (stripeSecretKey() || (razorpayKeyId() && razorpayKeySecret())) return;
   const mode = isProductionEnv() ? 'production fail-fast' : 'dev';
   throw new BillingConfigError(
-    `Darex Stripe billing is not configured (${mode}). Missing: DAREX_STRIPE_SECRET_KEY. See .env.example.`
+    `Darex billing portal is not configured (${mode}). Configure Stripe and/or Razorpay. See .env.example.`
   );
 }
 
@@ -417,8 +562,22 @@ async function stripePost(
   return { status: res.status, json };
 }
 
+async function stripeGet(path: string): Promise<{ status: number; json: Record<string, unknown> }> {
+  const secret = stripeSecretKey();
+  if (!secret) throw new BillingConfigError('DAREX_STRIPE_SECRET_KEY is not configured');
+  const res = await fetch(`https://api.stripe.com/v1${path}`, {
+    method: 'GET',
+    headers: {
+      Authorization: `Bearer ${secret}`,
+    },
+    signal: AbortSignal.timeout(PROVIDER_TIMEOUT_MS),
+  });
+  const json = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+  return { status: res.status, json };
+}
+
 async function razorpayRequest(
-  method: 'GET' | 'POST',
+  method: 'GET' | 'POST' | 'PATCH',
   path: string,
   jsonBody?: Record<string, unknown>
 ): Promise<{ status: number; json: Record<string, unknown> }> {
@@ -697,6 +856,21 @@ export async function finishWebhookEvent(
   ]);
 }
 
+/**
+ * Drop an in-flight webhook claim so the PSP can retry after a 5xx.
+ * Only removes rows still in 'received' (never delete processed/ignored).
+ */
+export async function releaseWebhookClaim(
+  provider: BillingProvider,
+  eventId: string
+): Promise<void> {
+  await pool.query(
+    `DELETE FROM billing_webhook_events
+     WHERE provider = $1 AND provider_event_id = $2 AND status = 'received'`,
+    [provider, eventId]
+  );
+}
+
 async function setOrgPlan(orgId: string, plan: OrgPlanKey): Promise<void> {
   await pool.query(`SELECT billing_set_org_plan($1::uuid, $2)`, [orgId, plan]);
 }
@@ -713,6 +887,7 @@ export type SubscriptionRow = {
   current_period_start: Date | null;
   current_period_end: Date | null;
   cancel_at_period_end: boolean;
+  dunning_grace_ends_at?: Date | null;
 };
 
 export type InvoiceRow = {
@@ -754,12 +929,34 @@ export async function upsertSubscription(
      ON CONFLICT (org_id, provider) DO UPDATE SET
        provider_customer_id = COALESCE(EXCLUDED.provider_customer_id, billing_subscriptions.provider_customer_id),
        provider_subscription_id = COALESCE(EXCLUDED.provider_subscription_id, billing_subscriptions.provider_subscription_id),
-       plan_key = EXCLUDED.plan_key,
-       status = EXCLUDED.status,
-       seats = EXCLUDED.seats,
+       -- Checkout visits write status='incomplete'. Never demote an active/trialing
+       -- paid row (or its plan/seats) just because someone opened checkout again.
+       plan_key = CASE
+         WHEN billing_subscriptions.status IN ('active', 'trialing')
+              AND EXCLUDED.status = 'incomplete'
+           THEN billing_subscriptions.plan_key
+         ELSE EXCLUDED.plan_key
+       END,
+       status = CASE
+         WHEN billing_subscriptions.status IN ('active', 'trialing')
+              AND EXCLUDED.status = 'incomplete'
+           THEN billing_subscriptions.status
+         ELSE EXCLUDED.status
+       END,
+       seats = CASE
+         WHEN billing_subscriptions.status IN ('active', 'trialing')
+              AND EXCLUDED.status = 'incomplete'
+           THEN billing_subscriptions.seats
+         ELSE EXCLUDED.seats
+       END,
        current_period_start = COALESCE(EXCLUDED.current_period_start, billing_subscriptions.current_period_start),
        current_period_end = COALESCE(EXCLUDED.current_period_end, billing_subscriptions.current_period_end),
-       cancel_at_period_end = EXCLUDED.cancel_at_period_end
+       cancel_at_period_end = CASE
+         WHEN billing_subscriptions.status IN ('active', 'trialing')
+              AND EXCLUDED.status = 'incomplete'
+           THEN billing_subscriptions.cancel_at_period_end
+         ELSE EXCLUDED.cancel_at_period_end
+       END
      RETURNING id, org_id, provider, provider_customer_id, provider_subscription_id,
                plan_key, status, seats, current_period_start, current_period_end, cancel_at_period_end`,
     [
@@ -776,13 +973,19 @@ export async function upsertSubscription(
     ]
   );
   const row = res.rows[0];
-  if (input.status === 'canceled' || input.status === 'unpaid') {
-    await setOrgPlan(input.orgId, 'free');
-  } else if (input.status === 'active' || input.status === 'trialing') {
-    if (input.planKey !== 'free') {
-      await setOrgPlan(input.orgId, input.planKey);
-    }
+  // Derive the plan from every provider row, not just the one that changed:
+  // cancelling Razorpay must not drop an org with a live Stripe sub to free.
+  const all = await client.query<PlanRow>(
+    `SELECT provider, plan_key, status FROM billing_subscriptions WHERE org_id = $1`,
+    [input.orgId]
+  );
+  const rows = all.rows.length > 0 ? all.rows : [row];
+  const next = resolveOrgPlan(rows);
+  if (next.action === 'set' && isOrgPlanKey(next.plan)) {
+    await setOrgPlan(input.orgId, next.plan);
   }
+  // Webhook or user-driven change: refresh any open billing tab.
+  realtimeHub.publish(input.orgId, { type: 'billing_updated', message: 'subscription' });
   return row;
 }
 
@@ -832,6 +1035,7 @@ export async function upsertInvoice(
       input.failedAt ?? null,
     ]
   );
+  realtimeHub.publish(input.orgId, { type: 'billing_updated', message: 'invoice' });
 }
 
 async function upsertMeter(
@@ -845,7 +1049,7 @@ async function upsertMeter(
     unit: string;
     soft: number | null;
     hard: number | null;
-    source: 'langfuse' | 'conversations' | 'users' | 'env';
+    source: 'langfuse' | 'conversations' | 'users' | 'env' | 'model_spend';
     truncated: boolean;
   }
 ): Promise<void> {
@@ -856,7 +1060,11 @@ async function upsertMeter(
      ) VALUES ($1, $2::date, $3::date, $4, $5, $6, $7, $8, $9, $10, NOW())
      ON CONFLICT (org_id, period_start, meter_kind) DO UPDATE SET
        period_end = EXCLUDED.period_end,
-       quantity = EXCLUDED.quantity,
+       -- llm_tokens is also written by the worker from org_model_spend; keep
+       -- the larger reading so a partial Langfuse window cannot lower it.
+       quantity = CASE WHEN EXCLUDED.meter_kind = 'llm_tokens'
+                       THEN GREATEST(billing_meters.quantity, EXCLUDED.quantity)
+                       ELSE EXCLUDED.quantity END,
        unit = EXCLUDED.unit,
        soft_limit = EXCLUDED.soft_limit,
        hard_limit = EXCLUDED.hard_limit,
@@ -902,6 +1110,32 @@ function overFlags(quantity: number, soft: number | null, hard: number | null): 
   };
 }
 
+/**
+ * Aggregates actual model spend from Postgres `org_model_spend` (RT-G01).
+ * Always reflects every in-process, worker, sweep, and sidecar turn recorded by `recordModelSpend`.
+ */
+export async function getOrgModelSpend(
+  client: PoolClient,
+  orgId: string,
+  fromDate?: Date | string
+): Promise<{ spendCents: number; spendUsd: number; modelCalls: number }> {
+  const from = fromDate instanceof Date ? fromDate.toISOString().slice(0, 10) : fromDate;
+  const res = await client.query<{ total_cents: string; total_calls: string }>(
+    `SELECT COALESCE(SUM(spend_cents), 0)::text AS total_cents,
+            COALESCE(SUM(model_calls), 0)::text AS total_calls
+       FROM org_model_spend
+      WHERE org_id = $1 ${from ? 'AND spend_date >= $2' : ''}`,
+    from ? [orgId, from] : [orgId]
+  );
+  const spendCents = parseInt(res.rows[0]?.total_cents || '0', 10) || 0;
+  const modelCalls = parseInt(res.rows[0]?.total_calls || '0', 10) || 0;
+  return {
+    spendCents,
+    spendUsd: spendCents / 100,
+    modelCalls,
+  };
+}
+
 export type MeterRefresh = {
   meters: MeterSnapshot[];
   llm: OrgWeeklyCost | null;
@@ -921,9 +1155,11 @@ export async function refreshOrgMeters(orgId: string): Promise<MeterRefresh> {
   let confirmReject: ConfirmRejectDrift | null = null;
   let whatsappConversations = 0;
   let seatsUsed = 0;
+  let override: OrgPlanOverrideCaps | null = null;
 
   const scoped = await getOrgScopedClient(orgId);
   try {
+    override = await loadOrgPlanOverrideCaps(scoped.client, orgId);
     confirmReject = await queryConfirmRejectDrift(scoped.client, orgId, from);
     const wa = await scoped.client.query<{ count: string }>(
       `SELECT COUNT(*)::text AS count
@@ -947,6 +1183,15 @@ export async function refreshOrgMeters(orgId: string): Promise<MeterRefresh> {
     scoped.client.release();
   }
 
+  const waCaps = resolveMeterSoftHard(
+    'whatsapp_conversations',
+    caps.whatsappSoft,
+    caps.whatsappHard,
+    override
+  );
+  const seatCaps = resolveMeterSoftHard('seats', caps.seatSoft, caps.seatHard, override);
+  const llmCaps = resolveMeterSoftHard('llm_tokens', caps.llmSoftUsd, caps.llmHardUsd, override);
+
   let llm: OrgWeeklyCost | null = null;
   let llmError: string | null = null;
   try {
@@ -959,8 +1204,15 @@ export async function refreshOrgMeters(orgId: string): Promise<MeterRefresh> {
     }
   }
 
+  let totalLlmCostUsd = 0;
+  let llmSource: 'langfuse' | 'model_spend' = 'model_spend';
+
   const write = await getOrgScopedClient(orgId);
   try {
+    const modelSpend = await getOrgModelSpend(write.client, orgId, periodStart);
+    totalLlmCostUsd = Math.max(llm?.weeklyCostUsd ?? 0, modelSpend.spendUsd);
+    llmSource = modelSpend.spendUsd > (llm?.weeklyCostUsd ?? 0) ? 'model_spend' : (llm ? 'langfuse' : 'model_spend');
+
     await upsertMeter(write.client, {
       orgId,
       periodStart,
@@ -968,8 +1220,8 @@ export async function refreshOrgMeters(orgId: string): Promise<MeterRefresh> {
       kind: 'whatsapp_conversations',
       quantity: whatsappConversations,
       unit: 'conversations',
-      soft: caps.whatsappSoft,
-      hard: caps.whatsappHard,
+      soft: waCaps.soft,
+      hard: waCaps.hard,
       source: 'conversations',
       truncated: false,
     });
@@ -980,24 +1232,24 @@ export async function refreshOrgMeters(orgId: string): Promise<MeterRefresh> {
       kind: 'seats',
       quantity: seatsUsed,
       unit: 'seats',
-      soft: caps.seatSoft,
-      hard: caps.seatHard,
+      soft: seatCaps.soft,
+      hard: seatCaps.hard,
       source: 'users',
       truncated: false,
     });
+    await upsertMeter(write.client, {
+      orgId,
+      periodStart: llm?.period.from.slice(0, 10) || periodStart,
+      periodEnd: llm?.period.to.slice(0, 10) || periodEnd,
+      kind: 'llm_tokens',
+      quantity: totalLlmCostUsd,
+      unit: 'usd',
+      soft: llmCaps.soft,
+      hard: llmCaps.hard,
+      source: llmSource,
+      truncated: llm?.truncated ?? false,
+    });
     if (llm) {
-      await upsertMeter(write.client, {
-        orgId,
-        periodStart: llm.period.from.slice(0, 10),
-        periodEnd: llm.period.to.slice(0, 10),
-        kind: 'llm_tokens',
-        quantity: llm.weeklyCostUsd,
-        unit: 'usd',
-        soft: caps.llmSoftUsd,
-        hard: caps.llmHardUsd,
-        source: 'langfuse',
-        truncated: llm.truncated,
-      });
       await upsertMeter(write.client, {
         orgId,
         periodStart: llm.period.from.slice(0, 10),
@@ -1027,19 +1279,29 @@ export async function refreshOrgMeters(orgId: string): Promise<MeterRefresh> {
     write.client.release();
   }
 
-  const llmFlags = llm
-    ? overFlags(llm.weeklyCostUsd, caps.llmSoftUsd, caps.llmHardUsd)
-    : { overSoft: false, overHard: false };
-  const waMeterFlags = overFlags(whatsappConversations, caps.whatsappSoft, caps.whatsappHard);
-  const seatFlags = overFlags(seatsUsed, caps.seatSoft, caps.seatHard);
+  const llmFlags = overFlags(totalLlmCostUsd, llmCaps.soft, llmCaps.hard);
+  const waMeterFlags = overFlags(whatsappConversations, waCaps.soft, waCaps.hard);
+  const seatFlags = overFlags(seatsUsed, seatCaps.soft, seatCaps.hard);
 
   const meters: MeterSnapshot[] = [
+    {
+      kind: 'llm_tokens',
+      quantity: totalLlmCostUsd,
+      unit: 'usd',
+      softLimit: llmCaps.soft,
+      hardLimit: llmCaps.hard,
+      ...llmFlags,
+      source: llmSource,
+      truncated: llm?.truncated ?? false,
+      periodStart: llm?.period.from.slice(0, 10) || periodStart,
+      periodEnd: llm?.period.to.slice(0, 10) || periodEnd,
+    },
     {
       kind: 'whatsapp_conversations',
       quantity: whatsappConversations,
       unit: 'conversations',
-      softLimit: caps.whatsappSoft,
-      hardLimit: caps.whatsappHard,
+      softLimit: waCaps.soft,
+      hardLimit: waCaps.hard,
       ...waMeterFlags,
       source: 'conversations',
       truncated: false,
@@ -1050,8 +1312,8 @@ export async function refreshOrgMeters(orgId: string): Promise<MeterRefresh> {
       kind: 'seats',
       quantity: seatsUsed,
       unit: 'seats',
-      softLimit: caps.seatSoft,
-      hardLimit: caps.seatHard,
+      softLimit: seatCaps.soft,
+      hardLimit: seatCaps.hard,
       ...seatFlags,
       source: 'users',
       truncated: false,
@@ -1060,18 +1322,6 @@ export async function refreshOrgMeters(orgId: string): Promise<MeterRefresh> {
     },
   ];
   if (llm) {
-    meters.unshift({
-      kind: 'llm_tokens',
-      quantity: llm.weeklyCostUsd,
-      unit: 'usd',
-      softLimit: caps.llmSoftUsd,
-      hardLimit: caps.llmHardUsd,
-      ...llmFlags,
-      source: 'langfuse',
-      truncated: llm.truncated,
-      periodStart: llm.period.from.slice(0, 10),
-      periodEnd: llm.period.to.slice(0, 10),
-    });
     meters.push({
       kind: 'successful_actions',
       quantity: llm.successfulActions,
@@ -1111,29 +1361,452 @@ export async function refreshOrgMeters(orgId: string): Promise<MeterRefresh> {
   };
 }
 
-export async function listInvoices(client: PoolClient, orgId: string): Promise<InvoiceRow[]> {
+export async function listInvoices(
+  client: PoolClient,
+  orgId: string,
+  opts?: { limit?: number; offset?: number }
+): Promise<{ invoices: InvoiceRow[]; total: number; limit: number; offset: number }> {
+  const limit = Math.min(100, Math.max(1, opts?.limit ?? 50));
+  const offset = Math.max(0, opts?.offset ?? 0);
+  const countRes = await client.query<{ count: string }>(
+    `SELECT COUNT(*)::text AS count FROM billing_invoices WHERE org_id = $1`,
+    [orgId]
+  );
+  const total = parseInt(countRes.rows[0]?.count || '0', 10) || 0;
   const res = await client.query<InvoiceRow>(
     `SELECT id, org_id, provider, provider_invoice_id, status, amount_cents, currency,
             hosted_invoice_url, period_start, period_end, paid_at, failed_at, created_at
      FROM billing_invoices
      WHERE org_id = $1
      ORDER BY created_at DESC
-     LIMIT 50`,
-    [orgId]
+     LIMIT $2 OFFSET $3`,
+    [orgId, limit, offset]
   );
-  return res.rows;
+  return { invoices: res.rows, total, limit, offset };
+}
+
+export type BillingAuditAction =
+  | 'checkout_started'
+  | 'plan_changed'
+  | 'cancel_requested'
+  | 'cancel_immediate'
+  | 'portal_opened'
+  | 'dunning_entered'
+  | 'dunning_cleared'
+  | 'downgrade_to_free';
+
+/**
+ * Append-only billing mutation audit. Org must already be RLS-scoped on client.
+ * Never accepts orgId from a client body — caller passes session/webhook-resolved id.
+ */
+export async function recordBillingAudit(
+  client: PoolClient,
+  input: {
+    orgId: string;
+    action: BillingAuditAction;
+    actorUserId?: string | null;
+    provider?: BillingProvider | null;
+    planKey?: string | null;
+    payload?: Record<string, unknown>;
+  }
+): Promise<void> {
+  try {
+    await client.query(
+      `INSERT INTO billing_audit_log (org_id, actor_user_id, action, provider, plan_key, payload)
+       VALUES ($1, $2, $3, $4, $5, $6::jsonb)`,
+      [
+        input.orgId,
+        input.actorUserId ?? null,
+        input.action,
+        input.provider ?? null,
+        input.planKey ?? null,
+        JSON.stringify(input.payload ?? {}),
+      ]
+    );
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    if (/billing_audit_log|does not exist|relation/i.test(message)) {
+      console.warn('[billing] billing_audit_log missing — apply 093_billing_packs_gaps.sql');
+      return;
+    }
+    throw err;
+  }
+  // Mirror into the shared audit trail so billing changes show on /audit-log.
+  try {
+    await recordAuditEvent(
+      {
+        orgId: input.orgId,
+        kind: 'billing.change',
+        actor: input.actorUserId
+          ? { actorType: 'user', userId: input.actorUserId }
+          : { actorType: 'system', component: 'billing' },
+        action: input.action,
+        resultStatus: 'ok',
+        riskClass: 'high',
+        payload: { provider: input.provider ?? null, planKey: input.planKey ?? null, ...(input.payload ?? {}) },
+      },
+      { client, orgId: input.orgId }
+    );
+  } catch (err) {
+    console.warn('[billing] audit_events insert failed:', err instanceof Error ? err.message : String(err));
+  }
+}
+
+export function dunningGraceDays(): number {
+  return Math.max(1, envInt('DAREX_BILLING_DUNNING_GRACE_DAYS', 7));
+}
+
+/**
+ * Enter or clear dunning grace on past_due / unpaid. Auto-downgrades to free after grace.
+ * Writes orgs.status: past_due while grace open; suspended (by dunning) when grace elapsed.
+ * Clearing only lifts past_due / dunning suspensions — never a platform suspension.
+ */
+export async function applyDunningState(
+  client: PoolClient,
+  input: {
+    orgId: string;
+    provider: BillingProvider;
+    status: SubscriptionStatus;
+    actorUserId?: string | null;
+  }
+): Promise<{ dunning: boolean; downgraded: boolean; graceEndsAt: string | null }> {
+  const now = Date.now();
+  if (input.status === 'past_due' || input.status === 'unpaid') {
+    const existing = await client.query<{ dunning_grace_ends_at: Date | null }>(
+      `SELECT dunning_grace_ends_at FROM billing_subscriptions
+       WHERE org_id = $1 AND provider = $2 LIMIT 1`,
+      [input.orgId, input.provider]
+    );
+    let graceEnds = existing.rows[0]?.dunning_grace_ends_at
+      ? new Date(existing.rows[0].dunning_grace_ends_at).getTime()
+      : null;
+    if (graceEnds == null) {
+      graceEnds = now + dunningGraceDays() * 24 * 60 * 60 * 1000;
+      try {
+        await client.query(
+          `UPDATE billing_subscriptions
+              SET dunning_grace_ends_at = to_timestamp($3 / 1000.0), updated_at = NOW()
+            WHERE org_id = $1 AND provider = $2`,
+          [input.orgId, input.provider, graceEnds]
+        );
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        if (!/dunning_grace_ends_at|does not exist/i.test(message)) throw err;
+      }
+      await recordBillingAudit(client, {
+        orgId: input.orgId,
+        action: 'dunning_entered',
+        actorUserId: input.actorUserId,
+        provider: input.provider,
+        payload: { graceEndsAt: new Date(graceEnds).toISOString(), status: input.status },
+      });
+    }
+    if (graceEnds <= now) {
+      await setOrgPlan(input.orgId, 'free');
+      try {
+        await client.query(
+          `UPDATE orgs
+              SET status = 'suspended',
+                  suspended_by = 'dunning',
+                  suspended_at = NOW(),
+                  updated_at = NOW()
+            WHERE id = $1`,
+          [input.orgId]
+        );
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        if (!/suspended_by|orgs_status_check|does not exist/i.test(message)) throw err;
+      }
+      await recordBillingAudit(client, {
+        orgId: input.orgId,
+        action: 'downgrade_to_free',
+        actorUserId: input.actorUserId,
+        provider: input.provider,
+        payload: { reason: 'dunning_grace_elapsed', status: input.status },
+      });
+      return { dunning: true, downgraded: true, graceEndsAt: new Date(graceEnds).toISOString() };
+    }
+    try {
+      await client.query(
+        `UPDATE orgs
+            SET status = 'past_due', updated_at = NOW()
+          WHERE id = $1
+            AND status IS DISTINCT FROM 'suspended'
+            AND status IS DISTINCT FROM 'soft_deleted'`,
+        [input.orgId]
+      );
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      if (!/orgs_status_check|does not exist/i.test(message)) throw err;
+    }
+    return { dunning: true, downgraded: false, graceEndsAt: new Date(graceEnds).toISOString() };
+  }
+
+  if (input.status === 'active' || input.status === 'trialing') {
+    try {
+      await client.query(
+        `UPDATE billing_subscriptions
+            SET dunning_grace_ends_at = NULL, updated_at = NOW()
+          WHERE org_id = $1 AND provider = $2 AND dunning_grace_ends_at IS NOT NULL`,
+        [input.orgId, input.provider]
+      );
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      if (!/dunning_grace_ends_at|does not exist/i.test(message)) throw err;
+    }
+    try {
+      await client.query(
+        `UPDATE orgs
+            SET status = 'active',
+                suspended_by = NULL,
+                suspended_at = NULL,
+                updated_at = NOW()
+          WHERE id = $1
+            AND (
+              status = 'past_due'
+              OR (status = 'suspended' AND suspended_by = 'dunning')
+            )`,
+        [input.orgId]
+      );
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      if (!/suspended_by|orgs_status_check|does not exist/i.test(message)) throw err;
+    }
+    await recordBillingAudit(client, {
+      orgId: input.orgId,
+      action: 'dunning_cleared',
+      actorUserId: input.actorUserId,
+      provider: input.provider,
+      payload: { status: input.status },
+    });
+  }
+  return { dunning: false, downgraded: false, graceEndsAt: null };
+}
+
+export async function listBillingAudit(
+  client: PoolClient,
+  orgId: string,
+  opts?: { limit?: number }
+): Promise<
+  Array<{
+    id: string;
+    action: string;
+    provider: string | null;
+    plan_key: string | null;
+    payload: Record<string, unknown>;
+    created_at: Date;
+    actor_user_id: string | null;
+  }>
+> {
+  const limit = Math.min(100, Math.max(1, opts?.limit ?? 25));
+  try {
+    const res = await client.query(
+      `SELECT id, action, provider, plan_key, payload, created_at, actor_user_id
+       FROM billing_audit_log
+       WHERE org_id = $1
+       ORDER BY created_at DESC
+       LIMIT $2`,
+      [orgId, limit]
+    );
+    return res.rows as Array<{
+      id: string;
+      action: string;
+      provider: string | null;
+      plan_key: string | null;
+      payload: Record<string, unknown>;
+      created_at: Date;
+      actor_user_id: string | null;
+    }>;
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    if (/billing_audit_log|does not exist|relation/i.test(message)) return [];
+    throw err;
+  }
 }
 
 export async function listSubscriptions(client: PoolClient, orgId: string): Promise<SubscriptionRow[]> {
-  const res = await client.query<SubscriptionRow>(
-    `SELECT id, org_id, provider, provider_customer_id, provider_subscription_id,
-            plan_key, status, seats, current_period_start, current_period_end, cancel_at_period_end
+  try {
+    const res = await client.query<SubscriptionRow>(
+      `SELECT id, org_id, provider, provider_customer_id, provider_subscription_id,
+              plan_key, status, seats, current_period_start, current_period_end, cancel_at_period_end,
+              dunning_grace_ends_at
+       FROM billing_subscriptions
+       WHERE org_id = $1
+       ORDER BY updated_at DESC`,
+      [orgId]
+    );
+    return res.rows;
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    if (!/dunning_grace_ends_at/i.test(message)) throw err;
+    const res = await client.query<SubscriptionRow>(
+      `SELECT id, org_id, provider, provider_customer_id, provider_subscription_id,
+              plan_key, status, seats, current_period_start, current_period_end, cancel_at_period_end
+       FROM billing_subscriptions
+       WHERE org_id = $1
+       ORDER BY updated_at DESC`,
+      [orgId]
+    );
+    return res.rows.map((r) => ({ ...r, dunning_grace_ends_at: null }));
+  }
+}
+
+/**
+ * Seat limit at invite / add-user time.
+ * When org_plan_overrides.seat_cap is non-null it is the hard ceiling (even above
+ * subscription seats). Else purchased seats from active|trialing subscriptions;
+ * else env meter hard cap. Missing override table → current behavior.
+ * Never trusts client-sent seat counts. Invite routes under auth/settings should call this.
+ */
+export type SeatAvailability = {
+  allowed: boolean;
+  seatsUsed: number;
+  seatLimit: number;
+  source: 'plan_override' | 'subscription' | 'meter_hard_cap';
+  reason?: string;
+};
+
+/**
+ * Seats in use = members (users.org_id ∪ organization_memberships) plus open,
+ * unexpired invites for emails that are not members yet (BIZ-B08). Invites
+ * reserve a seat, otherwise N parallel invites each saw the same free seat.
+ */
+export const SEATS_IN_USE_SQL = `SELECT (
+     (SELECT COUNT(*) FROM (
+        SELECT id AS user_id FROM users WHERE org_id = $1
+        UNION
+        SELECT user_id FROM organization_memberships WHERE org_id = $1
+      ) m)
+   + (SELECT COUNT(*) FROM org_invites i
+       WHERE i.org_id = $1 AND i.accepted_at IS NULL AND i.expires_at > NOW()
+         AND NOT EXISTS (
+           SELECT 1 FROM users u WHERE u.org_id = $1 AND lower(u.email) = lower(i.email)
+         ))
+   )::text AS count`;
+
+const SEATS_IN_USE_FALLBACK_SQL = `SELECT (
+     (SELECT COUNT(*) FROM users WHERE org_id = $1)
+   + (SELECT COUNT(*) FROM org_invites
+       WHERE org_id = $1 AND accepted_at IS NULL AND expires_at > NOW())
+   )::text AS count`;
+
+async function countSeatsInUse(client: PoolClient, orgId: string): Promise<number> {
+  let res;
+  try {
+    res = await client.query<{ count: string }>(SEATS_IN_USE_SQL, [orgId]);
+  } catch (err) {
+    // organization_memberships (097) missing on partial migrations.
+    if (!isUndefinedRelation(err)) throw err;
+    res = await client.query<{ count: string }>(SEATS_IN_USE_FALLBACK_SQL, [orgId]);
+  }
+  return parseInt(res.rows[0]?.count || '0', 10) || 0;
+}
+
+export async function checkSeatAvailability(
+  orgId: string,
+  additionalSeats = 1,
+  opts: { client?: PoolClient } = {}
+): Promise<SeatAvailability> {
+  if (opts.client) return checkSeatAvailabilityWith(opts.client, orgId, additionalSeats);
+  const scoped = await getOrgScopedClient(orgId);
+  try {
+    return await checkSeatAvailabilityWith(scoped.client, orgId, additionalSeats);
+  } finally {
+    scoped.client.release();
+  }
+}
+
+/**
+ * Invite with a seat reservation, serialised per org (BIZ-B08). Runs the
+ * existing-invite check, the seat check and `write` in one transaction under
+ * an org advisory lock, so two concurrent invites cannot both take the last
+ * seat. Resending a pending invite does not consume a seat.
+ */
+export async function reserveInviteSeat(
+  client: PoolClient,
+  orgId: string,
+  email: string,
+  write: () => Promise<void>
+): Promise<SeatAvailability | null> {
+  await client.query('BEGIN');
+  try {
+    await client.query(`SELECT pg_advisory_xact_lock(hashtext('darex-seats:' || $1))`, [orgId]);
+    const existingInvite = await client.query<{ id: string }>(
+      `SELECT id FROM org_invites
+       WHERE org_id = $1 AND lower(email) = $2 AND accepted_at IS NULL AND expires_at > NOW()
+       LIMIT 1`,
+      [orgId, email]
+    );
+    if (existingInvite.rows.length === 0) {
+      const seats = await checkSeatAvailabilityWith(client, orgId, 1);
+      if (!seats.allowed) {
+        await client.query('ROLLBACK');
+        return seats;
+      }
+    }
+    await write();
+    await client.query('COMMIT');
+    return null;
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => undefined);
+    throw err;
+  }
+}
+
+async function checkSeatAvailabilityWith(
+  client: PoolClient,
+  orgId: string,
+  additionalSeats: number
+): Promise<SeatAvailability> {
+  const caps = meterCaps();
+  const seatsUsed = await countSeatsInUse(client, orgId);
+
+  const override = await loadOrgPlanOverrideCaps(client, orgId);
+  if (override?.seatCap != null) {
+    const seatLimit = Math.max(1, override.seatCap);
+    const next = seatsUsed + Math.max(0, additionalSeats);
+    if (next > seatLimit) {
+      return {
+        allowed: false,
+        seatsUsed,
+        seatLimit,
+        source: 'plan_override',
+        reason: `Seat limit reached (${seatsUsed}/${seatLimit}). Upgrade seats or remove a member before inviting.`,
+      };
+    }
+    return { allowed: true, seatsUsed, seatLimit, source: 'plan_override' };
+  }
+
+  const subRes = await client.query<{ seats: number }>(
+    `SELECT seats
      FROM billing_subscriptions
-     WHERE org_id = $1
-     ORDER BY updated_at DESC`,
+     WHERE org_id = $1 AND status IN ('active', 'trialing')
+     ORDER BY seats DESC
+     LIMIT 1`,
     [orgId]
   );
-  return res.rows;
+  const purchased = subRes.rows[0]?.seats;
+  const source: 'subscription' | 'meter_hard_cap' =
+    purchased != null && purchased > 0 ? 'subscription' : 'meter_hard_cap';
+  const seatLimit =
+    purchased != null && purchased > 0 ? Math.max(1, purchased) : Math.max(1, caps.seatHard);
+
+  const next = seatsUsed + Math.max(0, additionalSeats);
+  if (next > seatLimit) {
+    return {
+      allowed: false,
+      seatsUsed,
+      seatLimit,
+      source,
+      reason: `Seat limit reached (${seatsUsed}/${seatLimit}). Upgrade seats or remove a member before inviting.`,
+    };
+  }
+  return { allowed: true, seatsUsed, seatLimit, source };
+}
+
+export function hasPaidSubscription(row: SubscriptionRow | undefined | null): boolean {
+  if (!row) return false;
+  return row.status === 'active' || row.status === 'trialing';
 }
 
 export async function loadOrgPlan(client: PoolClient, orgId: string): Promise<OrgPlanKey> {
@@ -1174,6 +1847,8 @@ export async function createStripeCheckout(opts: {
     'metadata[darex_plan]': opts.plan,
     'subscription_data[metadata][darex_org_id]': opts.orgId,
     'subscription_data[metadata][darex_plan]': opts.plan,
+    'metadata[darex_seats]': String(Math.max(1, opts.seats)),
+    'subscription_data[metadata][darex_seats]': String(Math.max(1, opts.seats)),
     'line_items[0][price]': priceId,
     'line_items[0][quantity]': String(Math.max(1, opts.seats)),
   };
@@ -1259,6 +1934,183 @@ export async function createRazorpaySubscription(opts: {
   return { shortUrl, customerId, subscriptionId };
 }
 
+/**
+ * Cancel at period end (Stripe) or cancel immediately / at cycle end (Razorpay).
+ * Never trusts client-sent subscription ids — caller must pass the row from session org.
+ */
+export async function cancelProviderSubscription(opts: {
+  provider: BillingProvider;
+  subscriptionId: string;
+  atPeriodEnd?: boolean;
+}): Promise<{ status: string; cancelAtPeriodEnd: boolean; raw: Record<string, unknown> }> {
+  if (!opts.subscriptionId) {
+    throw new BillingConfigError('No provider subscription id to cancel');
+  }
+  switch (opts.provider) {
+    case 'stripe': {
+      const atPeriodEnd = opts.atPeriodEnd !== false;
+      if (atPeriodEnd) {
+        const updated = await stripePost(`/subscriptions/${encodeURIComponent(opts.subscriptionId)}`, {
+          cancel_at_period_end: 'true',
+        });
+        if (updated.status >= 400) {
+          throw new BillingConfigError(
+            `Stripe cancel failed: ${updated.status} ${JSON.stringify(updated.json).slice(0, 200)}`
+          );
+        }
+        return {
+          status: asString(updated.json.status) || 'active',
+          cancelAtPeriodEnd: true,
+          raw: updated.json,
+        };
+      }
+      const secret = stripeSecretKey();
+      if (!secret) throw new BillingConfigError('DAREX_STRIPE_SECRET_KEY is not configured');
+      const cancel = await fetch(
+        `https://api.stripe.com/v1/subscriptions/${encodeURIComponent(opts.subscriptionId)}`,
+        {
+          method: 'DELETE',
+          headers: { Authorization: `Bearer ${secret}` },
+          signal: AbortSignal.timeout(PROVIDER_TIMEOUT_MS),
+        }
+      );
+      const json = (await cancel.json().catch(() => ({}))) as Record<string, unknown>;
+      if (cancel.status >= 400) {
+        throw new BillingConfigError(
+          `Stripe cancel failed: ${cancel.status} ${JSON.stringify(json).slice(0, 200)}`
+        );
+      }
+      return {
+        status: asString(json.status) || 'canceled',
+        cancelAtPeriodEnd: false,
+        raw: json,
+      };
+    }
+    case 'razorpay': {
+      const atCycleEnd = opts.atPeriodEnd !== false;
+      const canceled = await razorpayRequest(
+        'POST',
+        `/subscriptions/${encodeURIComponent(opts.subscriptionId)}/cancel`,
+        { cancel_at_cycle_end: atCycleEnd ? 1 : 0 }
+      );
+      if (canceled.status >= 400) {
+        throw new BillingConfigError(
+          `Razorpay cancel failed: ${canceled.status} ${JSON.stringify(canceled.json).slice(0, 200)}`
+        );
+      }
+      return {
+        status: asString(canceled.json.status) || (atCycleEnd ? 'active' : 'cancelled'),
+        cancelAtPeriodEnd: atCycleEnd,
+        raw: canceled.json,
+      };
+    }
+    default: {
+      const _exhaustive: never = opts.provider;
+      return _exhaustive;
+    }
+  }
+}
+
+/**
+ * Modify-in-place plan change. Stripe uses subscriptions.update + create_prorations.
+ * Razorpay uses subscriptions update with schedule_change_at=now (no Stripe-style proration API).
+ */
+export async function changeProviderPlan(opts: {
+  provider: BillingProvider;
+  subscriptionId: string;
+  plan: CheckoutPlanKey;
+  seats: number;
+  orgId: string;
+}): Promise<{
+  status: string;
+  plan: CheckoutPlanKey;
+  seats: number;
+  prorated: boolean;
+  raw: Record<string, unknown>;
+}> {
+  const seats = Math.max(1, Math.min(seatMax(), opts.seats));
+  switch (opts.provider) {
+    case 'stripe': {
+      const priceId = stripePriceId(opts.plan);
+      if (!priceId) {
+        throw new BillingConfigError(`DAREX_STRIPE_PRICE_${opts.plan.toUpperCase()} is not configured`);
+      }
+      const current = await stripeGet(
+        `/subscriptions/${encodeURIComponent(opts.subscriptionId)}?expand[]=items.data`
+      );
+      if (current.status >= 400) {
+        throw new BillingConfigError(
+          `Stripe subscription fetch failed: ${current.status} ${JSON.stringify(current.json).slice(0, 200)}`
+        );
+      }
+      const itemsObj = asRecord(current.json.items);
+      const data = Array.isArray(itemsObj.data) ? itemsObj.data : [];
+      const first = data.length > 0 ? asRecord(data[0]) : {};
+      const itemId = asString(first.id);
+      if (!itemId) {
+        throw new BillingConfigError('Stripe subscription has no line items to update');
+      }
+      const fields: Record<string, string> = {
+        'items[0][id]': itemId,
+        'items[0][price]': priceId,
+        'items[0][quantity]': String(seats),
+        proration_behavior: 'create_prorations',
+        'metadata[darex_org_id]': opts.orgId,
+        'metadata[darex_plan]': opts.plan,
+      };
+      const updated = await stripePost(
+        `/subscriptions/${encodeURIComponent(opts.subscriptionId)}`,
+        fields
+      );
+      if (updated.status >= 400) {
+        throw new BillingConfigError(
+          `Stripe plan change failed: ${updated.status} ${JSON.stringify(updated.json).slice(0, 200)}`
+        );
+      }
+      return {
+        status: asString(updated.json.status) || 'active',
+        plan: opts.plan,
+        seats,
+        prorated: true,
+        raw: updated.json,
+      };
+    }
+    case 'razorpay': {
+      const planId = razorpayPlanId(opts.plan);
+      if (!planId) {
+        throw new BillingConfigError(`DAREX_RAZORPAY_PLAN_${opts.plan.toUpperCase()} is not configured`);
+      }
+      const updated = await razorpayRequest(
+        'PATCH',
+        `/subscriptions/${encodeURIComponent(opts.subscriptionId)}`,
+        {
+          plan_id: planId,
+          quantity: seats,
+          schedule_change_at: 'now',
+          customer_notify: 1,
+          notes: { darex_org_id: opts.orgId, darex_plan: opts.plan },
+        }
+      );
+      if (updated.status >= 400) {
+        throw new BillingConfigError(
+          `Razorpay plan change failed: ${updated.status} ${JSON.stringify(updated.json).slice(0, 200)}`
+        );
+      }
+      return {
+        status: asString(updated.json.status) || 'active',
+        plan: opts.plan,
+        seats,
+        prorated: false,
+        raw: updated.json,
+      };
+    }
+    default: {
+      const _exhaustive: never = opts.provider;
+      return _exhaustive;
+    }
+  }
+}
+
 async function resolveWebhookOrg(opts: {
   provider: BillingProvider;
   customerId: string | null;
@@ -1304,16 +2156,22 @@ export async function processStripeEvent(raw: Record<string, unknown>): Promise<
       const existing =
         (await lookupBySubscription('stripe', subscriptionId)) ||
         (await lookupByCustomer('stripe', customerId));
+      // The session carries no line items; read them off the subscription.
+      const items = summarizeStripeItems(await fetchStripeSubscriptionItems(subscriptionId), stripePriceConfig());
       const scoped = await getOrgScopedClient(orgId);
       try {
         await upsertSubscription(scoped.client, {
           orgId,
           provider: 'stripe',
           planKey: parseOrgPlanKey(
-            asString(metadata.darex_plan) || asString(metadata.plan) || existing?.plan_key || 'starter'
+            items.planKey ||
+              asString(metadata.darex_plan) ||
+              asString(metadata.plan) ||
+              existing?.plan_key ||
+              'starter'
           ),
           status: 'active',
-          seats: asInt(data.quantity, existing?.seats ?? 1),
+          seats: items.seats ?? asInt(metadata.darex_seats, existing?.seats ?? 1),
           customerId,
           subscriptionId,
         });
@@ -1327,9 +2185,7 @@ export async function processStripeEvent(raw: Record<string, unknown>): Promise<
       const customerId = asString(data.customer);
       const subscriptionId = asString(data.id);
       const metadata = asRecord(data.metadata);
-      const items = asRecord(data.items);
-      const itemData = Array.isArray(items.data) ? items.data : [];
-      const firstItem = asRecord(itemData[0]);
+      const items = summarizeStripeItems(data.items, stripePriceConfig());
       const orgId = await resolveWebhookOrg({
         provider: 'stripe',
         customerId,
@@ -1339,7 +2195,15 @@ export async function processStripeEvent(raw: Record<string, unknown>): Promise<
       if (!orgId) return { orgId: null, status: 'ignored' };
       const status =
         kind === 'customer.subscription.deleted' ? 'canceled' : mapStripeSubStatus(asString(data.status));
-      const planKey = parseOrgPlanKey(asString(metadata.plan) || asString(metadata.darex_plan) || 'starter');
+      const existing = await lookupBySubscription('stripe', subscriptionId);
+      // Price id wins: a portal plan switch leaves metadata.darex_plan stale.
+      const planKey = parseOrgPlanKey(
+        items.planKey ||
+          asString(metadata.plan) ||
+          asString(metadata.darex_plan) ||
+          existing?.plan_key ||
+          'starter'
+      );
       const scoped = await getOrgScopedClient(orgId);
       try {
         await upsertSubscription(scoped.client, {
@@ -1347,7 +2211,7 @@ export async function processStripeEvent(raw: Record<string, unknown>): Promise<
           provider: 'stripe',
           planKey,
           status,
-          seats: asInt(firstItem.quantity, asInt(data.quantity, 1)),
+          seats: items.seats ?? existing?.seats ?? 1,
           customerId,
           subscriptionId,
           periodStart: unixToIso(data.current_period_start),
@@ -1402,6 +2266,17 @@ export async function processStripeEvent(raw: Record<string, unknown>): Promise<
             seats: existing?.seats || 1,
             customerId,
             subscriptionId,
+          });
+          await applyDunningState(scoped.client, {
+            orgId,
+            provider: 'stripe',
+            status: 'past_due',
+          });
+        } else if (kind === 'invoice.paid') {
+          await applyDunningState(scoped.client, {
+            orgId,
+            provider: 'stripe',
+            status: 'active',
           });
         }
       } finally {
@@ -1463,14 +2338,21 @@ export async function processRazorpayEvent(raw: Record<string, unknown>): Promis
           status = 'incomplete';
         }
       }
+      const existing = await lookupBySubscription('razorpay', asString(subEntity.id));
       const scoped = await getOrgScopedClient(orgId);
       try {
         await upsertSubscription(scoped.client, {
           orgId,
           provider: 'razorpay',
-          planKey: parseOrgPlanKey(asString(notes.darex_plan) || 'starter'),
+          // plan_id wins over notes: a plan change via PATCH keeps the old notes.
+          planKey: parseOrgPlanKey(
+            razorpayPlanKeyFromPlanId(asString(subEntity.plan_id)) ||
+              asString(notes.darex_plan) ||
+              existing?.plan_key ||
+              'starter'
+          ),
           status,
-          seats: asInt(subEntity.quantity, 1),
+          seats: asInt(subEntity.quantity, existing?.seats ?? 1),
           customerId: asString(subEntity.customer_id),
           subscriptionId: asString(subEntity.id),
           periodStart: unixToIso(subEntity.current_start),
@@ -1489,6 +2371,12 @@ export async function processRazorpayEvent(raw: Record<string, unknown>): Promis
             paidAt: kind === 'subscription.charged' ? new Date().toISOString() : null,
             failedAt: kind === 'subscription.pending' ? new Date().toISOString() : null,
           });
+        }
+        // Mirror Stripe invoice.paid / payment_failed dunning for Razorpay status events.
+        if (status === 'active') {
+          await applyDunningState(scoped.client, { orgId, provider: 'razorpay', status: 'active' });
+        } else if (status === 'past_due' || status === 'unpaid') {
+          await applyDunningState(scoped.client, { orgId, provider: 'razorpay', status });
         }
       } finally {
         scoped.client.release();
@@ -1527,6 +2415,11 @@ export async function processRazorpayEvent(raw: Record<string, unknown>): Promis
           seats: existing?.seats || 1,
           customerId: asString(paymentEntity.customer_id),
           subscriptionId: asString(paymentEntity.subscription_id),
+        });
+        await applyDunningState(scoped.client, {
+          orgId,
+          provider: 'razorpay',
+          status: 'past_due',
         });
       } finally {
         scoped.client.release();

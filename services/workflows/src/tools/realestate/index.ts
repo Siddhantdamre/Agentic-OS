@@ -5,7 +5,7 @@
 
 import { createHash } from 'crypto';
 import type { PoolClient } from 'pg';
-import type { ToolExecutionResult } from '@darex/shared-types';
+import { connectorSignInPath, type ToolExecutionResult } from '@darex/shared-types';
 import type { ToolRisk } from '../risk.js';
 import type { ToolActionContext, ToolModule } from '../shared.js';
 import {
@@ -28,6 +28,7 @@ const ACTIONS = [
   'listings_sync_sheet',
   'inquiry_create',
   'inquiry_list',
+  'inquiry_listing_match',
   'showing_book',
   'validate_draft',
   'charge_claim_paid',
@@ -46,6 +47,7 @@ function riskFor(action: string): ToolRisk {
       return 'read';
     case 'listings_sync_sheet':
     case 'inquiry_create':
+    case 'inquiry_listing_match':
     case 'charge_claim_paid':
       return 'draft';
     case 'showing_book':
@@ -61,6 +63,9 @@ function riskFor(action: string): ToolRisk {
 
 function normalizeAction(action: string): ReAction {
   const a = action.toLowerCase().replace(/[.-]/g, '_');
+  if (a.includes('inquiry_listing_match') || (a.includes('inquiry') && a.includes('match')) || a.includes('listing_match')) {
+    return 'inquiry_listing_match';
+  }
   if (a.includes('sync')) return 'listings_sync_sheet';
   if (a.includes('search') || a.includes('match')) return 'listings_search';
   if (a.includes('listings_get') || a === 'get' || a.includes('listing_get')) return 'listings_get';
@@ -159,6 +164,8 @@ async function execute(ctx: ToolActionContext): Promise<ToolExecutionResult> {
         return await createInquiry(ctx, action);
       case 'inquiry_list':
         return await listInquiries(ctx, action);
+      case 'inquiry_listing_match':
+        return await matchInquiriesToListings(ctx, action);
       case 'showing_book':
         return await bookShowing(ctx, action);
       case 'validate_draft': {
@@ -381,6 +388,63 @@ async function createInquiry(ctx: ToolActionContext, action: ReAction): Promise<
   return withOrgScopedClient(orgId, async (client) => {
     const statusRaw = String(payload.status || 'new');
     const status = isInquiryStatus(statusRaw) ? statusRaw : 'new';
+    const contactId =
+      (payload.contactId as string | undefined) ||
+      (payload.contact_id as string | undefined) ||
+      (payload.contact as string | undefined) ||
+      null;
+    const listingId = payload.listingId || payload.listing_id || null;
+    const conversationId = payload.conversationId || payload.conversation_id || null;
+    const channel = payload.channel || null;
+    const bhk = parseBhk(payload.bhk);
+    const locality = payload.locality || payload.area || null;
+    const city = payload.city || null;
+    const budgetMax = parseBudget(payload.budget_max || payload.budgetMax || payload.maxPrice);
+    const currency = payload.currency || 'INR';
+
+    // Idempotent for same org+contact: refresh an active inquiry within 7 days
+    // instead of inserting a duplicate (mirrors /api/inquiries POST).
+    if (contactId) {
+      const existing = await client.query(
+        `SELECT id, status FROM re_inquiries
+          WHERE org_id = $1 AND contact_id = $2
+            AND status IN ('new', 'contacted')
+            AND (deleted_at IS NULL)
+            AND created_at > NOW() - INTERVAL '7 days'
+          ORDER BY updated_at DESC LIMIT 1`,
+        [orgId, contactId]
+      );
+      if (existing.rowCount && existing.rows[0]) {
+        const id = existing.rows[0].id as string;
+        const updated = await client.query(
+          `UPDATE re_inquiries
+              SET updated_at = NOW(),
+                  bhk = COALESCE($1, bhk),
+                  locality = COALESCE($2, locality),
+                  city = COALESCE($3, city),
+                  budget_max = COALESCE($4, budget_max),
+                  listing_id = COALESCE($5, listing_id),
+                  conversation_id = COALESCE($6, conversation_id),
+                  channel = COALESCE($7, channel)
+            WHERE id = $8 AND org_id = $9
+            RETURNING id, status, created_at, updated_at`,
+          [bhk, locality, city, budgetMax, listingId, conversationId, channel, id, orgId]
+        );
+        const row = updated.rows[0];
+        return {
+          tool: 're',
+          action,
+          status: 'executed' as const,
+          message: 'Inquiry deduplicated — refreshed existing active lead for contact.',
+          data: {
+            inquiry: { id: row.id, status: row.status, createdAt: row.created_at, updatedAt: row.updated_at },
+            deduplicated: true,
+          },
+          timestamp,
+        };
+      }
+    }
+
     const res = await client.query(
       `INSERT INTO re_inquiries (
          org_id, listing_id, conversation_id, contact_id, channel, status,
@@ -389,16 +453,16 @@ async function createInquiry(ctx: ToolActionContext, action: ReAction): Promise<
        RETURNING id, status, created_at`,
       [
         orgId,
-        payload.listingId || payload.listing_id || null,
-        payload.conversationId || payload.conversation_id || null,
-        payload.contactId || payload.contact_id || payload.contact || null,
-        payload.channel || null,
+        listingId,
+        conversationId,
+        contactId,
+        channel,
         status,
-        parseBhk(payload.bhk),
-        payload.locality || payload.area || null,
-        payload.city || null,
-        parseBudget(payload.budget_max || payload.budgetMax || payload.maxPrice),
-        payload.currency || 'INR',
+        bhk,
+        locality,
+        city,
+        budgetMax,
+        currency,
         JSON.stringify({ source: payload.source || 'api' }),
       ]
     );
@@ -417,7 +481,10 @@ async function createInquiry(ctx: ToolActionContext, action: ReAction): Promise<
       action,
       status: 'executed' as const,
       message: 'Inquiry stored.',
-      data: { inquiry: { id: row.id, status: row.status, createdAt: row.created_at } },
+      data: {
+        inquiry: { id: row.id, status: row.status, createdAt: row.created_at },
+        deduplicated: false,
+      },
       timestamp,
     };
   });
@@ -440,6 +507,117 @@ async function listInquiries(ctx: ToolActionContext, action: ReAction): Promise<
       status: 'executed' as const,
       message: `${res.rows.length} inquir${res.rows.length === 1 ? 'y' : 'ies'} in this org.`,
       data: { inquiries: res.rows },
+      timestamp,
+    };
+  });
+}
+
+/**
+ * Chat-facing port of POST /api/growth/listings/match — matches active listings
+ * to open inquiries and queues waiting_approval opportunity cards. Never sends.
+ */
+async function matchInquiriesToListings(
+  ctx: ToolActionContext,
+  action: ReAction,
+): Promise<ToolExecutionResult> {
+  const { orgId, timestamp } = ctx;
+  return withOrgScopedClient(orgId, async (client) => {
+    let listings: Array<{
+      id: string;
+      title: string | null;
+      bhk: number | null;
+      locality: string | null;
+      list_price: string | null;
+    }> = [];
+    try {
+      const listingRes = await client.query(
+        `SELECT id, title, bhk, locality, list_price
+           FROM re_listings
+          WHERE org_id = $1 AND status IN ('active', 'under_offer', 'reserved')
+          ORDER BY updated_at DESC
+          LIMIT 20`,
+        [orgId],
+      );
+      listings = listingRes.rows;
+    } catch (err) {
+      const code = err && typeof err === 'object' ? (err as { code?: string }).code : undefined;
+      if (code === '42P01' || /does not exist|relation/i.test(err instanceof Error ? err.message : String(err))) {
+        return {
+          tool: 're',
+          action,
+          status: 'executed' as const,
+          message: 're_listings table not available — no matches.',
+          data: { matched: 0, createdWorkItems: [], connected: true },
+          timestamp,
+        };
+      }
+      throw err;
+    }
+
+    const createdWorkItems: string[] = [];
+    let matched = 0;
+
+    for (const listing of listings) {
+      let inquiries: Array<{ id: string; contact_id: string | null; channel: string | null; name?: string }> = [];
+      try {
+        const inq = await client.query(
+          `SELECT id, contact_id, channel, COALESCE(payload->>'name', contact_id) AS name
+             FROM re_inquiries
+            WHERE org_id = $1
+              AND status IN ('new', 'contacted')
+              AND (bhk IS NULL OR $2::int IS NULL OR bhk = $2)
+              AND (budget_max IS NULL OR $3::numeric IS NULL OR budget_max >= $3::numeric)
+            ORDER BY updated_at DESC
+            LIMIT 5`,
+          [orgId, listing.bhk, listing.list_price],
+        );
+        inquiries = inq.rows;
+      } catch (err) {
+        const code = err && typeof err === 'object' ? (err as { code?: string }).code : undefined;
+        if (code === '42P01' || /does not exist|relation/i.test(err instanceof Error ? err.message : String(err))) {
+          break;
+        }
+        throw err;
+      }
+
+      for (const inq of inquiries) {
+        matched += 1;
+        const card = {
+          companyName: listing.title || `Listing ${listing.id.slice(0, 8)}`,
+          whyThisCompany: `Listing in ${listing.locality || 'your area'}${listing.bhk ? ` (${listing.bhk} BHK)` : ''}`,
+          whyThisPerson: `Inquiry ${inq.id.slice(0, 8)} matched on BHK/budget filters`,
+          whyNow: 'New or updated listing matches an open inquiry — draft only until you approve.',
+          listingId: listing.id,
+          inquiryId: inq.id,
+          targetContact: {
+            name: inq.name || inq.contact_id || 'Lead',
+            email: typeof inq.contact_id === 'string' && inq.contact_id.includes('@') ? inq.contact_id : undefined,
+          },
+          draftedMessage: {
+            subject: `A property matching your search: ${listing.title || 'new listing'}`,
+            body: `Hi${inq.name ? ` ${inq.name}` : ''},\n\nA property that may match your search was listed: ${listing.title || 'new listing'} in ${listing.locality || 'your preferred area'}${listing.list_price ? ` (listed around ${listing.list_price})` : ''}.\n\nWould you like to schedule a tour?\n`,
+          },
+        };
+
+        const inserted = await client.query<{ id: string }>(
+          `INSERT INTO work_items (org_id, type, status, source, priority, metadata, payload)
+           VALUES ($1, 'growth_opportunity', 'waiting_approval', 'growth_listing_match', 'normal', $2::jsonb, $2::jsonb)
+           RETURNING id`,
+          [orgId, JSON.stringify({ card, recommendedAction: 'send_outreach', requiresHumanApproval: true })],
+        );
+        if (inserted.rows[0]?.id) createdWorkItems.push(inserted.rows[0].id);
+      }
+    }
+
+    return {
+      tool: 're',
+      action,
+      status: 'executed' as const,
+      message:
+        createdWorkItems.length > 0
+          ? 'Matches queued as opportunity cards — outreach requires explicit Approve'
+          : 'No new listing/inquiry matches',
+      data: { matched, createdWorkItems, connected: true, invented: false },
       timestamp,
     };
   });
@@ -480,12 +658,12 @@ async function bookShowing(ctx: ToolActionContext, action: ReAction): Promise<To
       ...cal,
       tool: 're',
       action,
-      message: 'Google Calendar is not connected. Showing was not booked. Authorize at /connectors.',
+      message: `Google Calendar is not connected. Showing was not booked. Authorize at ${connectorSignInPath('google-calendar')}.`,
       data: {
         ...(typeof cal.data === 'object' && cal.data ? cal.data : {}),
         booked: false,
         connected: false,
-        setupUrl: '/connectors',
+        setupUrl: connectorSignInPath('google-calendar'),
       },
     };
   }

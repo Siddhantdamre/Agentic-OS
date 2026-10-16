@@ -1,13 +1,13 @@
 import { NextResponse } from 'next/server';
 import { fireInboundAgent } from '@/lib/inbound-agent';
-import { assertGmailPushToken } from '@/lib/webhook-crypto';
+import { assertGmailPushToken, assertWebhookBodySize } from '@/lib/webhook-crypto';
+import { recordFailedWebhook } from '@/lib/failed-webhooks';
 import { getNangoConnection } from '@/lib/nango-server';
 import { parsePortalEmail } from '@/lib/portal-email-parse';
 import {
   inboundJobFromPersist,
   persistInboundMessage,
   resolveChannelByMeta,
-  resolveSingleOrgChannel,
 } from '@/lib/channel-normalize';
 import { getOrgScopedClient } from '@/lib/db';
 import { denyWebhookIfLimited, isRateLimitError, responseFromRateLimit } from '@/lib/rate-limit';
@@ -194,8 +194,24 @@ async function insertPortalInquiry(
  */
 export async function POST(req: Request) {
   const rawBody = await req.text();
-  const sig = assertGmailPushToken(req, rawBody);
+  const size = assertWebhookBodySize(req, rawBody);
+  if (!size.ok) {
+    await recordFailedWebhook({
+      channel: 'gmail',
+      headers: req.headers,
+      rawPayload: rawBody,
+      errorMessage: size.error || 'body too large',
+    });
+    return new NextResponse(size.error || 'Payload Too Large', { status: size.status });
+  }
+  const sig = await assertGmailPushToken(req, rawBody);
   if (!sig.ok) {
+    await recordFailedWebhook({
+      channel: 'gmail',
+      headers: req.headers,
+      rawPayload: rawBody,
+      errorMessage: sig.error || 'Unauthorized',
+    });
     return new NextResponse(sig.error || 'Unauthorized', { status: sig.status });
   }
 
@@ -218,11 +234,14 @@ export async function POST(req: Request) {
   const matched =
     (await resolveChannelByMeta('gmail', 'email', emailAddress)) ||
     (await resolveChannelByMeta('gmail', 'emailAddress', emailAddress)) ||
-    (await resolveChannelByMeta('gmail', 'email_address', emailAddress)) ||
-    (await resolveSingleOrgChannel('gmail'));
+    (await resolveChannelByMeta('gmail', 'email_address', emailAddress));
 
   if (!matched?.org_id) {
-    console.error('[Gmail Webhook] Cannot resolve org for mailbox', emailAddress);
+    console.error(
+      '[Gmail Webhook] Cannot resolve org for mailbox',
+      emailAddress,
+      '- no single-org fallback'
+    );
     return new NextResponse('OK', { status: 200 });
   }
 
@@ -237,8 +256,8 @@ export async function POST(req: Request) {
 
     if (!token || mails.length === 0) {
       const content = token
-        ? `[Gmail push] ${emailAddress} history ${notice.historyId || 'unknown'} — no new messages readable.`
-        : `[Gmail push] ${emailAddress} — Gmail not connected. Authorize at /connectors.`;
+        ? `[Gmail push] ${emailAddress} history ${notice.historyId || 'unknown'} - no new messages readable.`
+        : `[Gmail push] ${emailAddress} - Gmail not connected. Authorize at /connectors.`;
       const persisted = await persistInboundMessage({
         orgId: matched.org_id,
         channelKey: 'gmail',

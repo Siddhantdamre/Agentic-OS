@@ -97,14 +97,8 @@ async function execute(ctx: ToolActionContext) {
       }
       if (res.ok) {
         await dbPool.query(
-          `INSERT INTO rera_cache (rera_id, market, url, retrieved_at, expires_at, payload)
-           VALUES ($1, $2, $3, $4, $5, $6)
-           ON CONFLICT (rera_id, market) DO UPDATE SET
-             url = EXCLUDED.url,
-             retrieved_at = EXCLUDED.retrieved_at,
-             expires_at = EXCLUDED.expires_at,
-             payload = EXCLUDED.payload,
-             updated_at = NOW()`,
+          // SECURITY DEFINER (migration 201): only official hosts, bounded payload.
+          `SELECT rera_cache_put($1::text, $2::text, $3::text, $4::timestamptz, $5::timestamptz, $6::jsonb)`,
           [reraId, market, url, retrievedAt.toISOString(), expiresAt.toISOString(), JSON.stringify(payloadJson)]
         );
         return {

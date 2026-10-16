@@ -1,6 +1,6 @@
 import type { ToolRisk } from './risk.js';
 import type { ToolActionContext, ToolModule } from './shared.js';
-import { apiError, confirmFromRisk, fetchWithTimeout, getNangoAccessToken, notConnected } from './shared.js';
+import { apiError, confirmFromRisk, fetchWithTimeout, nangoAuthError, notConnected, resolveGoogleAuth } from './shared.js';
 
 const ACTIONS = ['meet_create_space', 'meet_get_space'] as const;
 
@@ -12,13 +12,10 @@ function riskFor(action: string): ToolRisk {
 
 async function execute(ctx: ToolActionContext) {
   const { actionName, payload, orgId, timestamp } = ctx;
-  const gConnId = `${orgId}_google-meet`;
-  let gToken: string | null = null;
-  for (const providerKey of ['google-meet', 'google']) {
-    gToken = await getNangoAccessToken(gConnId, providerKey);
-    if (gToken) break;
-  }
-  if (!gToken) return notConnected('google-meet', actionName, timestamp);
+  const _gAuth = await resolveGoogleAuth(orgId, 'google-meet');
+  const gToken: string | null = _gAuth.kind === 'connected' ? _gAuth.accessToken : null;
+  const _gAuthErr = _gAuth.kind === 'connected' ? null : nangoAuthError('google-meet', actionName, timestamp, _gAuth);
+  if (!gToken) return _gAuthErr ?? notConnected('google-meet', actionName, timestamp);
 
   try {
     if (actionName.includes('get') || actionName.includes('fetch')) {

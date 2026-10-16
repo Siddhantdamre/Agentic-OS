@@ -1,6 +1,7 @@
 /**
  * Onboarding → pack + connector recommendations (U5 / P2).
  * Recommendations never imply a live OAuth connection.
+ * Pack ids must be LIVE_PACK_IDS only — never recommend RFC drafts like `ecommerce`.
  */
 
 export interface RecommendedConnector {
@@ -19,6 +20,8 @@ export interface PackRecommendation {
 
 const NOT_CONNECTED = false as const;
 
+/** Keep in sync with apps/dashboard/app/api/packs/_lib.ts LIVE_PACK_IDS */
+const LIVE_PACK_IDS = ['core-b2b', 'real-estate-brokerage'] as const;
 const CORE_B2B = 'core-b2b';
 
 function connector(id: string, name: string, reason: string): RecommendedConnector {
@@ -31,47 +34,56 @@ const GMAIL = connector('gmail', 'Gmail', 'Portal leads and follow-up');
 const CALENDAR = connector('google-calendar', 'Google Calendar', 'Showings and bookings');
 const HUBSPOT = connector('hubspot', 'HubSpot CRM', 'Pipeline (optional)');
 
+function liveOnly(packIds: string[]): string[] {
+  const live = new Set<string>(LIVE_PACK_IDS);
+  const filtered = packIds.filter((id) => live.has(id));
+  return filtered.length > 0 ? filtered : [CORE_B2B];
+}
+
 const BY_TYPE: Record<string, PackRecommendation> = {
   'real estate — brokerage': {
-    packIds: [CORE_B2B, 'real-estate-brokerage'],
+    packIds: liveOnly([CORE_B2B, 'real-estate-brokerage']),
     label: 'Core B2B + Real estate brokerage',
     connectors: [SHEETS, WHATSAPP, GMAIL, CALENDAR],
     copy: 'Recommended for a brokerage. Connectors stay disconnected until you finish OAuth.',
   },
   'real estate & property': {
-    packIds: [CORE_B2B, 'real-estate-brokerage'],
+    packIds: liveOnly([CORE_B2B, 'real-estate-brokerage']),
     label: 'Core B2B + Real estate brokerage',
     connectors: [SHEETS, WHATSAPP, GMAIL, CALENDAR],
     copy: 'Recommended for a brokerage. Connectors stay disconnected until you finish OAuth.',
   },
   'e-commerce & retail': {
-    packIds: [CORE_B2B, 'ecommerce'],
-    label: 'Core B2B + Ecommerce',
+    // Catalog has RFC id `ecommerce` (live=false). Installer LIVE_PACK_IDS has no
+    // ecommerce entry — wire the live id packs code accepts: core-b2b.
+    packIds: [CORE_B2B],
+    label: 'Core B2B',
     connectors: [GMAIL, WHATSAPP, HUBSPOT],
-    copy: 'Recommended storefront stack. Nothing is marked connected.',
+    copy:
+      'No live ecommerce pack id in the installer catalog. Onboarding installs core-b2b via the packs installer. Connectors stay disconnected until OAuth.',
   },
   'software / saas': {
-    packIds: [CORE_B2B, 'saas-gtm'],
-    label: 'Core B2B + SaaS GTM',
+    packIds: liveOnly([CORE_B2B, 'saas-gtm']),
+    label: 'Core B2B',
     connectors: [GMAIL, CALENDAR, HUBSPOT],
-    copy: 'Recommended GTM stack. Nothing is marked connected.',
+    copy: 'Recommended GTM stack (core pack live). Nothing is marked connected.',
   },
   'professional services / consulting': {
-    packIds: [CORE_B2B, 'prof-services'],
-    label: 'Core B2B + Professional services',
+    packIds: liveOnly([CORE_B2B, 'prof-services']),
+    label: 'Core B2B',
     connectors: [GMAIL, CALENDAR, WHATSAPP],
-    copy: 'Recommended services stack. Nothing is marked connected.',
+    copy: 'Recommended services stack (core pack live). Nothing is marked connected.',
   },
   'marketing & creative agency': {
-    packIds: [CORE_B2B, 'agencies'],
-    label: 'Core B2B + Agencies',
+    packIds: liveOnly([CORE_B2B, 'agencies']),
+    label: 'Core B2B',
     connectors: [GMAIL, WHATSAPP, HUBSPOT],
-    copy: 'Recommended agency stack. Nothing is marked connected.',
+    copy: 'Recommended agency stack (core pack live). Nothing is marked connected.',
   },
 };
 
 const FALLBACK: PackRecommendation = {
-  packIds: [CORE_B2B],
+  packIds: liveOnly([CORE_B2B]),
   label: 'Core B2B',
   connectors: [GMAIL, WHATSAPP],
   copy: 'Default pack when the business type is other or unknown. Nothing is marked connected.',

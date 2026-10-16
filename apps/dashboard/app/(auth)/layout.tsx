@@ -31,7 +31,7 @@ export default function AuthLayout({
               Build your AI-powered workforce.
             </h2>
             <p className="text-sm text-emerald-200/70 leading-relaxed">
-              Multi-tenant autonomous AI employees with custom personas, durable memory, and cross-channel execution across WhatsApp, Email, CRM, and Ads.
+              AI employees that answer your customers, remember your business, and work across WhatsApp, email, your CRM and your ads.
             </p>
           </div>
 
@@ -45,13 +45,13 @@ export default function AuthLayout({
               },
               {
                 icon: ShieldCheck,
-                title: 'Multi-Tenant Security',
-                desc: 'Row Level Security (RLS) data isolation per organization.',
+                title: 'Your data stays yours',
+                desc: 'Each business is kept completely separate from every other.',
               },
               {
                 icon: Zap,
-                title: 'Durable & Idempotent',
-                desc: 'Temporal workflow execution — zero conversation context loss.',
+                title: 'Never loses the thread',
+                desc: 'Conversations pick up where they left off, even after a restart.',
               },
             ].map((item, idx) => (
               <div
@@ -72,7 +72,7 @@ export default function AuthLayout({
           {/* Footer Badge */}
           <div className="flex items-center gap-2 text-[11px] text-emerald-500 font-mono pt-2 border-t border-emerald-950">
             <CheckCircle className="w-3.5 h-3.5 text-emerald-400" />
-            <span>Secure • Private to your business</span>
+            <span>Private by design • Your data stays in your account</span>
           </div>
         </div>
 

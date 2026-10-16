@@ -88,6 +88,9 @@ Resolves Nango access tokens (`NANGO_HOST`/`NANGO_SECRET_KEY`), then executes pe
 | `zendesk_fetch_tickets` / `zendesk_create_ticket` | fetch_tickets / create_support_ticket | Zendesk API v2 |
 | `intercom_fetch_conversations` | fetch_conversations | Intercom v2.11 |
 | `razorpay_create_payment_link` | create_payment_link | Razorpay (env keys, amount in paise) |
+| `drive_list` / `drive_search` | list_files / search_files | Google Drive v3 (`supportsAllDrives`, folder-first sort, URL & name resolver) |
+| `drive_get_text` | get_file_text | Google Drive v3 (Docs export, plain files, Colab `.ipynb` cell parser) |
+| `drive_create_folder` | create_folder | Google Drive v3 (`mimeType: application/vnd.google-apps.folder`) |
 | `web_search` | search | Jina `s.jina.ai` (sends `Bearer $JINA_API_KEY` when set) |
 | `web_extract` | extract | Jina Reader `r.jina.ai` (sends `Bearer $JINA_API_KEY` when set) |
 | `database_query` | query | **read-only SELECT** against `darex` DB (RLS-scoped, max 25 rows; rejects non-SELECT) |
@@ -115,6 +118,9 @@ Resolves Nango access tokens (`NANGO_HOST`/`NANGO_SECRET_KEY`), then executes pe
   - `PATCH /api/ask-ai/plan` approves/cancels/toggles steps; `GET /api/ask-ai/execute` streams the
     approved plan step-by-step through `tool-executor.ts` (`execution_start`/`step_start`/`step_done`/`execution_error`/`execution_done`).
   - `POST /api/ask-ai/revise` regenerates a draft from feedback (`reviseDraft`).
+- **Email Draft Preview Modal & Execution Stop Controls**:
+  - `components/chat/EmailDraftPreviewModal.tsx`: Dedicated executive email preview modal accessible from `DraftPanel.tsx`. Offers "Preview" (formatted email layout with From, To, Subject, DareX Executive badge, and professional signature) and "Edit" tabs, header parsing, in-dialog AI prompt revisions (`/api/ask-ai/revise`), clipboard copy, and direct draft accept/send actions.
+  - **Execution Stop & Abort Controls**: Real-time Stop button rendered in `ExecutionStrip.tsx`, `AgentTrajectory.tsx`, and the chat input bar. Uses `AbortController` on the frontend and plan cancellation queries (`SELECT status FROM agent_plans` and `request.signal.aborted`) in `execute/route.ts` to cleanly halt running agent plans with `status: 'cancelled'`.
 - **`/api/agent/run`**: `triggerAutonomousAgentWorkflow` first; if it returns null, `runAutonomousAgentDirect`. Persists user + assistant messages when `conversationId` is given, logs `AGENT_EXECUTION` to `channel_logs`, and traces to Langfuse.
 - **`/api/webhooks/whatsapp`**: resolves org → upserts conversation → runs AI (Temporal first, direct fallback) → sends the real reply via Meta → logs inbound/outbound.
 
@@ -138,3 +144,4 @@ Resolves Nango access tokens (`NANGO_HOST`/`NANGO_SECRET_KEY`), then executes pe
 - **Complex prompts return `simple` or hang**: the classifier must reach LiteLLM (check dashboard `NODE_ENV=production` → base URL `http://litellm:4000/v1`). If atomic-agent is being called instead, the tool grammar + parse loop stalls it. Never route classify/plan/revise through atomic-agent.
 - **Tool returns `simulated/not connected`**: the org's Nango connection for that provider is missing; authorize at `/connectors` (Nango OAuth). For `database_query`/`web_search`/`web_extract`/`file_ops` no Nango is needed.
 - **Gmail `draft_email` 403 insufficient scopes**: the stored token predates `gmail.compose`. Re-connect gmail (disconnect → Connect OAuth on `/connectors`) after `infra/scripts/seed-nango-configs.sql` has updated the config, then retry.
+- **Google Drive folder access & Colab notebooks**: `drive_list` and `drive_search` support folder names, folder IDs, and web URLs (`https://drive.google.com/drive/folders/...`) directly. Root listings apply `orderBy: 'folder,modifiedTime desc'` to ensure folders are not crowded out by recent files. `isGoogleScopeSufficient` ensures OAuth tokens have the required `drive` scope before executing requests, avoiding 403 `ACCESS_TOKEN_SCOPE_INSUFFICIENT` errors. Colab `.ipynb` notebooks are natively supported in `drive_get_text` with formatted markdown/code extraction.

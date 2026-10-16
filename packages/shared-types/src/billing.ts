@@ -13,11 +13,14 @@ export const BILLING_METER_TYPES = [
   'whatsapp_conversations',
   'seats',
   'embeddings',
+  'successful_actions',
+  'disconnected_actions',
 ] as const;
 
 export type BillingMeterType = (typeof BILLING_METER_TYPES)[number];
 
 export const SUBSCRIPTION_STATUSES = [
+  'incomplete',
   'trialing',
   'active',
   'past_due',
@@ -86,6 +89,22 @@ export type UsageMeter =
       orgId: string;
       used: number;
       unit: 'tokens';
+      periodStart: string;
+      periodEnd: string;
+    }
+  | {
+      meterType: 'successful_actions';
+      orgId: string;
+      used: number;
+      unit: 'actions';
+      periodStart: string;
+      periodEnd: string;
+    }
+  | {
+      meterType: 'disconnected_actions';
+      orgId: string;
+      used: number;
+      unit: 'actions';
       periodStart: string;
       periodEnd: string;
     };

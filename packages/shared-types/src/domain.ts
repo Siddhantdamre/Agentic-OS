@@ -1,7 +1,12 @@
 /** Shared domain shapes. Callers: dashboard + workflows. Not a DB schema. */
 
 export type OrgPlan = 'free' | 'starter' | 'growth' | 'enterprise' | string;
-export type OrgStatus = 'provisioning' | 'active' | 'paused' | 'deleted' | string;
+export type OrgStatus =
+  | 'provisioning'
+  | 'active'
+  | 'past_due'
+  | 'suspended'
+  | 'soft_deleted';
 export type UserRole = 'owner' | 'admin' | 'member' | string;
 export type EmployeeStatus = 'active' | 'paused' | 'archived' | string;
 export type ChannelStatus = 'connected' | 'active' | 'disconnected' | 'error' | string;
@@ -69,7 +74,6 @@ export interface Message {
 
 export const CORE_TOOLS = [
   'web_search',
-  'deep_research',
   'web_extract',
   'database_query',
   'file_ops',

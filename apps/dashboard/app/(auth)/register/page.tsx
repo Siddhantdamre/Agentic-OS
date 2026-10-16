@@ -13,7 +13,7 @@ function RegisterForm() {
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
-  const [agreedTerms, setAgreedTerms] = useState(true);
+  const [agreedTerms, setAgreedTerms] = useState(false);
   const [loading, setLoading] = useState(false);
   const [oauthLoading, setOauthLoading] = useState<string | null>(null);
   const [error, setError] = useState('');
@@ -53,7 +53,7 @@ function RegisterForm() {
       const res = await fetch('/api/auth/signup', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password, inviteToken }),
+        body: JSON.stringify({ email, password, inviteToken, agreedTerms }),
       });
 
       const data = await res.json();
@@ -65,8 +65,19 @@ function RegisterForm() {
         throw new Error(data.message || 'Registration failed. Please try again.');
       }
 
+      const rawRedirect = searchParams?.get('redirect');
+      const safeRedirect =
+        rawRedirect &&
+        rawRedirect.startsWith('/') &&
+        !rawRedirect.startsWith('//') &&
+        !rawRedirect.startsWith('/login') &&
+        !rawRedirect.startsWith('/register') &&
+        !rawRedirect.startsWith('/api/')
+          ? rawRedirect
+          : '/';
+
       if (data.onboardingComplete) {
-        router.push('/');
+        router.push(safeRedirect);
       } else {
         router.push('/onboarding/name');
       }
@@ -170,7 +181,7 @@ function RegisterForm() {
 
         <div className="relative flex py-0.5 items-center">
           <div className="flex-grow border-t border-emerald-950"></div>
-          <span className="flex-shrink mx-3 text-[10px] text-emerald-600 font-semibold uppercase">Or register with email</span>
+          <span className="flex-shrink mx-3 text-[10px] text-emerald-400 font-semibold uppercase">Or register with email</span>
           <div className="flex-grow border-t border-emerald-950"></div>
         </div>
       </div>
@@ -263,7 +274,7 @@ function RegisterForm() {
               className="mt-0.5 rounded bg-[#1C2825] border-emerald-800 text-[#F0C05A] focus:ring-0"
             />
             <span className="text-[11px] leading-tight">
-              I agree to the DareX <a href="#" onClick={(e) => e.preventDefault()} className="text-[#F0C05A] hover:underline">Terms of Service</a> & <a href="#" onClick={(e) => e.preventDefault()} className="text-[#F0C05A] hover:underline">Privacy Policy</a>
+              I agree to the DareX <a href="/terms" target="_blank" rel="noopener" className="text-[#F0C05A] hover:underline">Terms of Service</a> & <a href="/privacy" target="_blank" rel="noopener" className="text-[#F0C05A] hover:underline">Privacy Policy</a>
             </span>
           </label>
         </div>

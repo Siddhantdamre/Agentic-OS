@@ -5,12 +5,13 @@
  */
 
 import { ApplicationFailure } from '@temporalio/activity';
-import { llmChat } from '../llm/gateway.js';
 import { createConnection, type Socket } from 'node:net';
 import { connect as tlsConnect } from 'node:tls';
-import { Pool, PoolClient } from 'pg';
+import type { PoolClient } from 'pg';
 import { executeAutonomousToolAction } from '../tool-executor.js';
+import { resolvePlanStepActor } from '../plan-step-actor.js';
 import { resolveMetrics } from '../tools/metrics.js';
+import { withOrgClient as withOrgScopedDb } from '../db.js';
 import { withOrgScopedClient } from '../tools/shared.js';
 import {
   planExecuteAllowlist,
@@ -26,27 +27,8 @@ import {
 } from '../quiet-hours.js';
 import type { NurtureTick } from '../quiet-hours.js';
 
-const pool = new Pool({
-  host: process.env.DB_HOST || 'localhost',
-  port: parseInt(process.env.DB_PORT || '5432', 10),
-  user: process.env.DB_USER || 'darex_app',
-  password: process.env.DB_PASSWORD,
-  database: process.env.DB_NAME || 'darex',
-});
-
 async function withOrgClient<T>(orgId: string, fn: (client: PoolClient) => Promise<T>): Promise<T> {
-  const client = await pool.connect();
-  try {
-    await client.query("SELECT set_config('app.current_org_id', $1, false)", [orgId]);
-    return await fn(client);
-  } finally {
-    try {
-      await client.query('RESET app.current_org_id');
-    } catch {
-      // always release
-    }
-    client.release();
-  }
+  return withOrgScopedDb(orgId, fn);
 }
 
 async function readIdempotent<T>(orgId: string, key: string | undefined): Promise<T | null> {
@@ -96,13 +78,39 @@ async function claimIdempotent<T>(
     if (inserted.rows.length > 0) return { claimed: true, cached: null };
 
     const existing = await client.query(
-      `SELECT result FROM idempotency_keys WHERE key = $1 AND org_id = $2 AND expires_at > NOW()`,
+      `SELECT result, expires_at, created_at FROM idempotency_keys WHERE key = $1 AND org_id = $2`,
       [key, orgId]
     );
-    if (existing.rows.length === 0 || existing.rows[0].result === null) {
+    if (existing.rows.length === 0) {
+      // Row expired and GC'd between INSERT and SELECT — reclaim it.
+      await client.query(
+        `INSERT INTO idempotency_keys (key, org_id, result, expires_at)
+         VALUES ($1, $2, NULL, NOW() + INTERVAL '24 hours')
+         ON CONFLICT (key) DO UPDATE SET result = NULL, expires_at = NOW() + INTERVAL '24 hours', created_at = NOW()`,
+        [key, orgId]
+      );
+      return { claimed: true, cached: null };
+    }
+    const row = existing.rows[0];
+    // Stale in-flight claim (process died before writeIdempotent): the old
+    // code blocked forever with "Manual review required". Reclaim claims
+    // older than 1h so retries can proceed; the 24h expiry still bounds replays.
+    if (row.result === null) {
+      const createdAt = row.created_at ? new Date(row.created_at).getTime() : 0;
+      if (Date.now() - createdAt > 60 * 60 * 1000) {
+        await client.query(
+          `UPDATE idempotency_keys SET created_at = NOW(), expires_at = NOW() + INTERVAL '24 hours'
+           WHERE key = $1 AND org_id = $2 AND result IS NULL`,
+          [key, orgId]
+        );
+        return { claimed: true, cached: null };
+      }
       return { claimed: false, cached: null };
     }
-    return { claimed: false, cached: existing.rows[0].result as T };
+    if (new Date(row.expires_at).getTime() < Date.now()) {
+      return { claimed: false, cached: null };
+    }
+    return { claimed: false, cached: row.result as T };
   });
 }
 
@@ -163,15 +171,7 @@ function encodeRedis(args: string[]): Buffer {
   return Buffer.concat(parts);
 }
 
-/**
- * Exported so logChannelActivity can announce agent runs on the same bus.
- *
- * One publisher, not two. It already carries the Redis target resolution, the
- * per-org channel naming and the failure handling that a live view must not be
- * allowed to break; a second copy in another module would drift from this one
- * the first time the channel format changed.
- */
-export async function publishOrgEvent(orgId: string, type: string, extra: Record<string, unknown>): Promise<void> {
+async function publishOrgEvent(orgId: string, type: string, extra: Record<string, unknown>): Promise<void> {
   const target = redisTarget();
   if (!target) return;
   const payload = JSON.stringify({ type, orgId, ts: Date.now(), ...extra });
@@ -220,14 +220,15 @@ export async function loadApprovedPlanActivity(params: {
   planTools: string[];
   enabledCount: number;
   status: string;
+  userId?: string;
 }> {
   const orgId = requireOrgId(params.orgId);
   const row = await withOrgClient(orgId, async (client) => {
-    const res = await client.query(`SELECT steps, status FROM agent_plans WHERE id = $1 AND org_id = $2`, [
+    const res = await client.query(`SELECT steps, status, user_id FROM agent_plans WHERE id = $1 AND org_id = $2`, [
       params.planId,
       orgId,
     ]);
-    return res.rows[0] as { steps: unknown; status: string } | undefined;
+    return res.rows[0] as { steps: unknown; status: string; user_id: string | null } | undefined;
   });
   if (!row) {
     throw ApplicationFailure.nonRetryable('Plan not found', 'InvalidArgumentError');
@@ -239,6 +240,7 @@ export async function loadApprovedPlanActivity(params: {
     planTools: planExecuteAllowlist(steps),
     enabledCount: steps.filter((s) => s.enabled !== false).length,
     status: row.status,
+    userId: row.user_id || undefined,
   };
 }
 
@@ -247,6 +249,8 @@ export async function updateAgentPlanActivity(params: {
   planId: string;
   status?: string;
   currentStep?: number;
+  /** Partial-failure freeze log — never used to mark status "completed". */
+  compensationSteps?: unknown;
   businessKey: string;
 }): Promise<{ planId: string; status?: string }> {
   const orgId = requireOrgId(params.orgId);
@@ -258,16 +262,26 @@ export async function updateAgentPlanActivity(params: {
     const sets: string[] = ['updated_at = NOW()'];
     const values: unknown[] = [];
     if (params.status) {
-      values.push(params.status);
+      const status =
+        params.compensationSteps != null && params.status === 'completed'
+          ? 'completed_with_errors'
+          : params.status;
+      values.push(status);
       sets.push(`status = $${values.length}`);
     }
     if (params.currentStep !== undefined) {
       values.push(params.currentStep);
       sets.push(`current_step = $${values.length}`);
     }
+    if (params.compensationSteps !== undefined) {
+      values.push(JSON.stringify(params.compensationSteps));
+      sets.push(`compensation_steps = $${values.length}::jsonb`);
+    }
     values.push(params.planId, orgId);
+    // A user cancel wins over a late completion write (ASK-B02).
+    const keepCancelled = params.status && params.status !== 'cancelled' ? ` AND status <> 'cancelled'` : '';
     await client.query(
-      `UPDATE agent_plans SET ${sets.join(', ')} WHERE id = $${values.length - 1} AND org_id = $${values.length}`,
+      `UPDATE agent_plans SET ${sets.join(', ')} WHERE id = $${values.length - 1} AND org_id = $${values.length}${keepCancelled}`,
       values
     );
     return { planId: params.planId, status: params.status };
@@ -282,7 +296,9 @@ export async function executePlanStepActivity(params: {
   stepIndex: number;
   step: PlanStepLike;
   previousResults: Array<Record<string, unknown>>;
-  toolAllowlist: string[];
+  /** Ignored: each step resolves its stamped employee's card (ASK-S02). Kept for in-flight workflow histories. */
+  toolAllowlist?: string[];
+  userId?: string;
   businessKey: string;
 }): Promise<{ status: string; message: string; data: unknown }> {
   const orgId = requireOrgId(params.orgId);
@@ -298,13 +314,29 @@ export async function executePlanStepActivity(params: {
   }
 
   try {
+    const actor = await resolvePlanStepActor(
+      orgId,
+      params.step,
+      (params.step as any).employeeId || (params as any).employeeId,
+      (params.step as any).employeeRole || (params as any).employeeRole
+    );
+    if (actor.ok === false) {
+      const denied = { status: 'error', message: actor.message, data: { allowed: false, reason: actor.reason } };
+      await writeIdempotent(orgId, key, denied);
+      return denied;
+    }
     const payload = wireDependencies(params.step, params.previousResults);
     const result = await executeAutonomousToolAction({
       tool: String(params.step.tool || ''),
       action: String(params.step.action || ''),
       payload,
       orgId,
-      toolAllowlist: params.toolAllowlist,
+      toolAllowlist: actor.toolAllowlist,
+      employeeRole: actor.employeeRole,
+      employeeId: actor.employeeId,
+      actorUserId: params.userId,
+      source: 'plan',
+      workflowId: `plan-${params.planId}`,
     });
     const saved = { status: result.status, message: result.message, data: result.data };
     await writeIdempotent(orgId, key, saved);
@@ -416,30 +448,53 @@ export async function listNeedsAttentionActivity(params: {
   return saved;
 }
 
-async function litellmNarrative(aggregatesJson: string, orgId: string): Promise<string | null> {
-  // Through the gateway: the owner briefing is a paid call on the workspace's
-  // budget like any other. It used to read LITELLM_MODEL directly.
-  const res = await llmChat({
-    orgId,
-    purpose: 'research',
-    maxTokens: 280,
-    temperature: 0,
-    timeoutMs: 15_000,
-    messages: [
-      {
-        role: 'system',
-        content: [
-          'You write a short owner morning briefing from pre-aggregated KPI numbers only.',
-          'Never invent counts. Never ask for raw messages or scan inboxes.',
-          'If a metric is listed in gaps, say the connector or table is missing -- do not guess.',
-          'Reply with 3-6 sentences of plain prose, no JSON.',
-        ].join(' '),
+async function litellmNarrative(aggregatesJson: string): Promise<string | null> {
+  const isProd = process.env.NODE_ENV === 'production';
+  const rawBase = process.env.LITELLM_BASE_URL || (isProd ? '' : 'http://localhost:4000/v1');
+  const apiKey = process.env.LITELLM_API_KEY || process.env.LITELLM_MASTER_KEY || '';
+  const model = process.env.LITELLM_MODEL || 'darex-default';
+  if (!rawBase || !apiKey) return null;
+  const baseUrl = rawBase.replace(/\/$/, '');
+  const url = baseUrl.endsWith('/v1') ? `${baseUrl}/chat/completions` : `${baseUrl}/v1/chat/completions`;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 15_000);
+  try {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${apiKey}`,
       },
-      { role: 'user', content: aggregatesJson },
-    ],
-  });
-  if (res.error || !res.content) return null;
-  return res.content.trim() || null;
+      body: JSON.stringify({
+        model,
+        stream: false,
+        max_tokens: 280,
+        temperature: 0,
+        reasoning: { enabled: false },
+        messages: [
+          {
+            role: 'system',
+            content: [
+              'You write a short owner morning briefing from pre-aggregated KPI numbers only.',
+              'Never invent counts. Never ask for raw messages or scan inboxes.',
+              'If a metric is listed in gaps, say the connector or table is missing — do not guess.',
+              'Reply with 3-6 sentences of plain prose, no JSON.',
+            ].join(' '),
+          },
+          { role: 'user', content: aggregatesJson },
+        ],
+      }),
+      signal: controller.signal,
+    });
+    if (!res.ok) return null;
+    const data = (await res.json()) as { choices?: Array<{ message?: { content?: string } }> };
+    const content = (data?.choices?.[0]?.message?.content || '').trim();
+    return content || null;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 function templateNarrative(
@@ -475,7 +530,7 @@ export async function narrateBriefingActivity(params: {
     gaps: params.gaps,
     needsAttentionCount: params.needsAttentionCount,
   });
-  const modeled = await litellmNarrative(aggregates, params.orgId);
+  const modeled = await litellmNarrative(aggregates);
   if (modeled) return { narrative: modeled, source: 'litellm' };
   return {
     narrative: templateNarrative(params.points, params.gaps, params.needsAttentionCount),
@@ -527,6 +582,29 @@ export async function msUntilNextHourActivity(params: {
   hour: number;
 }): Promise<number> {
   return msUntilHour(new Date(), params.timeZone || 'UTC', params.hour);
+}
+
+/** Org-configured IANA timezone, defaulting to UTC. Used to align daily crons to local time. */
+export async function getOrgTimeZoneActivity(params: { orgId: string }): Promise<{ timeZone: string }> {
+  const orgId = requireOrgId(params.orgId);
+  try {
+    const timeZone = await withOrgClient(orgId, async (client) => {
+      const res = await client.query<{ timezone: string | null }>(
+        `SELECT COALESCE(
+                  (SELECT NULLIF(timezone, '') FROM org_onboarding WHERE org_id = $1),
+                  NULLIF(meta->>'timezone', ''),
+                  NULLIF(meta->>'time_zone', ''),
+                  'UTC'
+                ) AS timezone
+           FROM orgs WHERE id = $1`,
+        [orgId],
+      );
+      return String(res.rows[0]?.timezone || 'UTC');
+    });
+    return { timeZone };
+  } catch {
+    return { timeZone: 'UTC' };
+  }
 }
 
 export type StaleConversationRow = {

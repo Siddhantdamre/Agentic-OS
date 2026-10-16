@@ -1,12 +1,20 @@
+import { usageBlockedResponse } from '@/lib/usage-gate';
 import { NextResponse } from 'next/server';
-import { getScopedClient } from '@/lib/db';
-import { planCrew, parseEmployeeAllowlist } from '@/lib/crew-planner';
+import { getScopedClient, scopedAuthErrorResponse } from '@/lib/db';
+import { recordAuditEvent } from '@/lib/audit-events';
+import { readJsonBody } from '@/lib/safe-json';
+import {
+  isActiveCrewMember,
+  planCrew,
+  parseEmployeeAllowlist,
+  resolveCrewAssignments,
+} from '@/lib/crew-planner';
 import { logLangfuseTrace } from '@/lib/langfuse-trace';
-import type { AgentTaskInput, CrewRosterMember, CrewWorkflowInput } from '@darex/shared-types';
-import { MAX_CREW_SPAWN } from '@darex/shared-types';
+import type { AgentTaskInput, CrewRosterMember, CrewWorkflowInput, CrewWorkflowResult } from '@darex/shared-types';
 import { channelTypesFromRows, mergeRuntimeAllowlist } from '@darex/workflows/dist/tool-executor';
-import { triggerCrewWorkflow } from '@darex/workflows/dist/workflow-client';
+import { startCrewWorkflow } from '@darex/workflows/dist/workflow-client';
 import { runCrewDirect } from '@darex/workflows/dist/crew-runner';
+import { awaitCrewHandleWithAbort } from '@/lib/crew-abort';
 
 function personaText(raw: unknown): string {
   if (typeof raw === 'string' && raw.trim()) return raw;
@@ -14,21 +22,32 @@ function personaText(raw: unknown): string {
   return 'A helpful business AI assistant.';
 }
 
+export const dynamic = 'force-dynamic';
+
 export async function POST(request: Request) {
   try {
-    const { client, orgId } = await getScopedClient();
+    const parsed = await readJsonBody<{ userMessage?: unknown; conversationId?: unknown; channelId?: unknown; org_id?: unknown }>(request);
+    if (!parsed.ok) return parsed.response;
+    const earlyBody = parsed.body;
+    if (earlyBody.org_id) {
+      return NextResponse.json({ error: 'org_id is not accepted in the body' }, { status: 400 });
+    }
+    if (!earlyBody.userMessage || !String(earlyBody.userMessage).trim()) {
+      return NextResponse.json({ error: 'userMessage is required' }, { status: 400 });
+    }
+
+    const { client, orgId, userId } = await getScopedClient();
+    const usageDenied = await usageBlockedResponse(orgId);
+    if (usageDenied) {
+      client.release();
+      return usageDenied;
+    }
     let roster: CrewRosterMember[] = [];
     let connectedChannels: string[] = [];
-    let body: { userMessage?: string; conversationId?: string; channelId?: string; org_id?: unknown };
+    // Reuse the already-validated body; never re-parse request.json() here.
+    const body = earlyBody as { userMessage?: string; conversationId?: string; channelId?: string; org_id?: unknown };
 
     try {
-      body = await request.json();
-      if (body.org_id) {
-        return NextResponse.json({ error: 'org_id is not accepted in the body' }, { status: 400 });
-      }
-      if (!body.userMessage || !String(body.userMessage).trim()) {
-        return NextResponse.json({ error: 'userMessage is required' }, { status: 400 });
-      }
 
       const empRes = await client.query(
         `SELECT id, name, role, persona, tool_allowlist, status
@@ -74,19 +93,31 @@ export async function POST(request: Request) {
     }
 
     const userMessage = String(body.userMessage);
-    const plan = await planCrew(userMessage, roster, orgId);
-    const byId = new Map(roster.map((e) => [e.id, e]));
+    const plan = await planCrew(userMessage, roster);
     const stamp = `crew:${Date.now()}`;
 
-    const specialistInputs: AgentTaskInput[] = plan.specialists.slice(0, MAX_CREW_SPAWN).flatMap((assignment) => {
-      const emp = byId.get(assignment.employeeId);
-      if (!emp) return [];
+    const { resolved, unmatchedEmployeeIds, inactiveEmployeeIds } = resolveCrewAssignments(
+      plan.specialists,
+      roster,
+    );
+    if (unmatchedEmployeeIds.length > 0) {
+      console.warn(
+        `[Agent Crew] plan referenced unknown employeeId(s): ${unmatchedEmployeeIds.join(', ')}`,
+      );
+    }
+    if (inactiveEmployeeIds.length > 0) {
+      console.warn(
+        `[Agent Crew] skipped inactive employeeId(s) before dispatch: ${inactiveEmployeeIds.join(', ')}`,
+      );
+    }
+
+    const specialistInputs: AgentTaskInput[] = resolved.map(({ assignment, employee: emp }) => {
       const employeeTools = emp.tool_allowlist;
-      const toolAllowlist = mergeRuntimeAllowlist(employeeTools, undefined);
+      const toolAllowlist = mergeRuntimeAllowlist(employeeTools, connectedChannels, emp.role);
       const visibleChannels = connectedChannels.filter((ch) =>
         toolAllowlist.some((t) => t === ch || t.startsWith(`${ch}-`) || ch.startsWith(`${t}-`))
       );
-      return [{
+      return {
         orgId,
         employeeId: emp.id,
         employeeName: emp.name,
@@ -97,11 +128,15 @@ export async function POST(request: Request) {
         userMessage: assignment.task || userMessage,
         sessionKey: `crew:${stamp}:${emp.id}`,
         skipPersist: true,
-      }];
+      };
     });
 
-    const managerEmp = byId.get(plan.specialists[0]?.employeeId) || roster[0];
-    const managerAllowlist = mergeRuntimeAllowlist(managerEmp.tool_allowlist, undefined);
+    const activeRoster = roster.filter(isActiveCrewMember);
+    const managerEmp = resolved[0]?.employee || activeRoster[0];
+    if (!managerEmp) {
+      return NextResponse.json({ error: 'No active AI employees available for crew.' }, { status: 400 });
+    }
+    const managerAllowlist = mergeRuntimeAllowlist(managerEmp.tool_allowlist, connectedChannels, managerEmp.role);
     const manager: AgentTaskInput = {
       orgId,
       conversationId: body.conversationId,
@@ -129,12 +164,43 @@ export async function POST(request: Request) {
       specialists: specialistInputs.length > 0 ? specialistInputs : [manager],
     };
 
+    // ASK-E01: who dispatched which crew. Each member's tools are gated and audited on their own.
+    await recordAuditEvent({
+      orgId: orgId,
+      kind: 'crew.dispatch',
+      actor: { actorType: 'user', userId: userId },
+      resultStatus: 'ok',
+      payload: {
+        crewKey: crewInput.idempotencyKey,
+        conversationId: body.conversationId || null,
+        reason: crewInput.reason ?? null,
+        managerEmployeeId: crewInput.manager.employeeId ?? null,
+        specialistEmployeeIds: crewInput.specialists.map((s) => s.employeeId ?? null),
+      },
+    }).catch((auditErr: unknown) =>
+      console.warn('crew.dispatch audit failed:', auditErr instanceof Error ? auditErr.message : auditErr),
+    );
+
     let usedTemporal = false;
-    let result = await triggerCrewWorkflow(crewInput);
-    if (result) {
-      usedTemporal = true;
-    } else {
-      result = await runCrewDirect(crewInput);
+    let result: CrewWorkflowResult;
+    try {
+      const handle = await startCrewWorkflow(crewInput);
+      if (handle) {
+        usedTemporal = true;
+        result = await awaitCrewHandleWithAbort(handle, request.signal);
+      } else {
+        console.warn('[Agent Crew] Temporal unavailable, falling back to direct execution');
+        result = await runCrewDirect(crewInput, { signal: request.signal });
+      }
+    } catch (crewErr: any) {
+      if (crewErr?.name === 'AbortError' || request.signal.aborted) {
+        return NextResponse.json({ error: 'Client aborted' }, { status: 499 });
+      }
+      console.error('[Agent Crew] Temporal workflow failed (no direct re-run):', crewErr?.message);
+      return NextResponse.json(
+        { error: 'Crew workflow failed', detail: String(crewErr?.message || 'unknown').slice(0, 300) },
+        { status: 502 }
+      );
     }
 
     if (body.conversationId && !usedTemporal && result.replyMessage) {
@@ -166,7 +232,13 @@ export async function POST(request: Request) {
       mode: result.mode,
       reason: result.reason || plan.reason,
       replyMessage: result.replyMessage,
-      spawned: result.spawned.map((s) => ({
+      spawned: (result.spawned as Array<{
+        employeeId: string;
+        employeeName: string;
+        employeeRole: string;
+        task: string;
+        result: { replyMessage: string; usedTools: string[]; success: boolean };
+      }>).map((s) => ({
         employeeId: s.employeeId,
         employeeName: s.employeeName,
         employeeRole: s.employeeRole,
@@ -179,9 +251,8 @@ export async function POST(request: Request) {
       usedTemporal,
     });
   } catch (error: any) {
-    if (error.message === 'Unauthorized') {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
+    const __scopedAuth = scopedAuthErrorResponse(error);
+    if (__scopedAuth) return __scopedAuth;
     console.error('API /api/agent/crew Error:', error);
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
   }

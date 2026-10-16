@@ -6,14 +6,15 @@ import { useOnboardingStore } from '@/lib/store';
 import { ArrowLeft, Check, MessageSquare, Mail, Calendar, Database, CreditCard, Sparkles, Megaphone } from 'lucide-react';
 import { LiveRegion, StatusBadge } from '@/components/a11y';
 import { recommendPacksForBusinessType } from '@/app/(onboarding)/pack-recommendations';
+import { responseErrorMessage } from '@/lib/client-error';
 
 const CHANNELS = [
-  { id: 'whatsapp', name: 'WhatsApp Business', icon: MessageSquare, desc: 'Meta Cloud API' },
-  { id: 'email', name: 'Gmail / Email', icon: Mail, desc: 'Inbound & Outbound' },
-  { id: 'google_calendar', name: 'Google Calendar', icon: Calendar, desc: 'Slot Booking' },
-  { id: 'hubspot', name: 'HubSpot CRM', icon: Database, desc: 'Lead Sync' },
-  { id: 'razorpay', name: 'Razorpay / Payments', icon: CreditCard, desc: 'Invoices & Refunds' },
-  { id: 'meta_ads', name: 'Meta Ads', icon: Megaphone, desc: 'Campaign Monitoring' },
+  { id: 'whatsapp', name: 'WhatsApp Business', icon: MessageSquare, desc: 'Customer chats' },
+  { id: 'email', name: 'Gmail / Email', icon: Mail, desc: 'Read and send email' },
+  { id: 'google_calendar', name: 'Google Calendar', icon: Calendar, desc: 'Book appointments' },
+  { id: 'hubspot', name: 'HubSpot CRM', icon: Database, desc: 'Keep leads in sync' },
+  { id: 'razorpay', name: 'Razorpay / Payments', icon: CreditCard, desc: 'Invoices and refunds' },
+  { id: 'meta_ads', name: 'Meta Ads', icon: Megaphone, desc: 'Watch ad results' },
 ];
 
 const CHANNEL_TO_CONNECTOR: Record<string, string> = {
@@ -24,6 +25,8 @@ const CHANNEL_TO_CONNECTOR: Record<string, string> = {
   razorpay: 'razorpay',
   meta_ads: 'meta-ads',
 };
+
+const SAVE_FAILED = 'We couldn’t save your setup. Please check your connection and try again.';
 
 export default function OnboardingChannelsPage() {
   const router = useRouter();
@@ -40,7 +43,7 @@ export default function OnboardingChannelsPage() {
 
     setSubmitting(true);
     setError('');
-    setLiveMessage('Saving organization and requesting pack install');
+    setLiveMessage('Saving your setup');
 
     try {
       const res = await fetch('/api/org/create', {
@@ -55,18 +58,26 @@ export default function OnboardingChannelsPage() {
       });
 
       if (!res.ok) {
-        const err = await res.json();
-        throw new Error(err.message || 'Failed to create organization');
+        throw new Error(await responseErrorMessage(res, SAVE_FAILED));
       }
 
       const payload = await res.json();
       if (payload.connectorsMarkedConnected) {
-        throw new Error('Onboarding must not mark connectors connected');
+        throw new Error(SAVE_FAILED);
       }
 
-      router.push('/?warmup=true');
+      router.push(
+        `/?warmup=true&setup=${encodeURIComponent(
+          selectedChannels.includes('whatsapp')
+            ? 'whatsapp'
+            : selectedChannels.includes('email')
+              ? 'gmail'
+              : 'connectors'
+        )}`
+      );
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : 'An error occurred during onboarding';
+      // A network failure surfaces as a TypeError ("Failed to fetch"): show the plain sentence, not the browser's.
+      const message = err instanceof Error && !(err instanceof TypeError) ? err.message : SAVE_FAILED;
       setError(message);
       setLiveMessage(message);
       setSubmitting(false);
@@ -81,7 +92,7 @@ export default function OnboardingChannelsPage() {
           Select channels & integrations used
         </h1>
         <p className="text-sm text-slate-500 mt-1">
-          Selecting a channel seeds a pending row. It does not mark the connector connected.
+          Pick the tools you use. Nothing is connected yet — you’ll link each one from your dashboard.
         </p>
       </div>
 
@@ -119,7 +130,7 @@ export default function OnboardingChannelsPage() {
               }`}
             >
               <div className="flex items-center justify-between">
-                <Icon className={`w-5 h-5 ${isSelected ? 'text-amber-600' : 'text-slate-400'}`} />
+                <Icon className={`w-5 h-5 ${isSelected ? 'text-amber-700' : 'text-slate-400'}`} />
                 {isSelected && (
                   <span className="w-5 h-5 rounded-full bg-amber-500 text-heading flex items-center justify-center">
                     <Check className="w-3.5 h-3.5" />
@@ -138,9 +149,16 @@ export default function OnboardingChannelsPage() {
         })}
       </div>
 
+      {selectedChannels.length === 0 && (
+        <p className="text-sm text-slate-600" role="status">
+          Choose at least one channel to continue — you can connect each one later.
+        </p>
+      )}
+
       <div className="flex items-center space-x-3 max-w-md mx-auto">
         <button
           type="button"
+          aria-label="Back"
           onClick={() => router.push('/onboarding/business-type')}
           disabled={submitting}
           className="py-4 px-5 bg-cream-200 hover:bg-cream-300 text-heading font-semibold rounded-2xl transition-colors disabled:opacity-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
@@ -154,11 +172,11 @@ export default function OnboardingChannelsPage() {
           className="flex-1 py-4 px-6 bg-amber-500 hover:bg-amber-600 disabled:opacity-50 text-heading font-semibold rounded-2xl flex items-center justify-center space-x-2 transition-all shadow-md hover:shadow-lg disabled:cursor-not-allowed focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-600"
         >
           {submitting ? (
-            <span>Provisioning…</span>
+            <span>Setting things up…</span>
           ) : (
             <>
               <Sparkles className="w-5 h-5" />
-              <span>Complete Setup & Bring Online</span>
+              <span>Finish setup</span>
             </>
           )}
         </button>

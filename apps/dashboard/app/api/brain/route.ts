@@ -1,8 +1,17 @@
+import { createHash, randomUUID } from 'crypto';
 import { NextResponse } from 'next/server';
 import type { PoolClient } from 'pg';
-import { getScopedClient } from '@/lib/db';
+import { getScopedClient, scopedAuthErrorResponse } from '@/lib/db';
 import { enqueueEmbedJob } from '@/lib/embed-enqueue';
+import { enqueueReindexEmbed, loadKnowledgeSourceForReindex } from '@/lib/brain-reindex';
 import { lookupUserById } from '@/lib/auth-user';
+import {
+  embedQueryText,
+  searchMemoryHybrid,
+} from '@darex/workflows/dist/memory/retrieve';
+import { hindsightEnabled, listHindsight, searchHindsight } from '@darex/workflows/dist/memory/hindsight-client';
+import { cogneeEnabled, searchCognee } from '@darex/workflows/dist/memory/cognee-client';
+import { jsonBodyOrEmpty, stripNulChars } from '@/lib/safe-json';
 
 export const dynamic = 'force-dynamic';
 
@@ -13,6 +22,7 @@ const SNIPPET_CHARS = 480;
 
 type BrainTier = 'org' | 'employee' | 'entity' | 'conversation';
 type SourceStatus = 'pending' | 'syncing' | 'ready' | 'stale' | 'error' | 'disabled' | 'conflict';
+type SearchMode = 'list' | 'hybrid' | 'keyword';
 
 export type BrainSnippet = {
   id: string;
@@ -111,12 +121,16 @@ function canMutateBrain(role: string): boolean {
   }
 }
 
+function contentHash(text: string): string {
+  return createHash('sha256').update(text, 'utf8').digest('hex');
+}
+
 const DISABLED_SOURCE_SQL = `
   NOT EXISTS (
     SELECT 1 FROM knowledge_sources ks
     WHERE ks.org_id = t.org_id
       AND ks.connector = t.source
-      AND ks.path = t.source_ref
+      AND ks.path IN (t.source_ref, regexp_replace(t.source_ref, '#(c|chunk-)[0-9]+$', ''))
       AND ks.status = 'disabled'
   )
 `;
@@ -184,20 +198,8 @@ LIMIT 50
 `;
 }
 
-async function loadBrain(
-  client: PoolClient,
-  orgId: string,
-  query: string
-): Promise<{ snippets: BrainSnippet[]; entities: BrainEntity[]; sources: BrainSource[] }> {
-  const q = query.trim();
-  const staleDays = Number.isFinite(STALE_AFTER_DAYS) && STALE_AFTER_DAYS > 0 ? STALE_AFTER_DAYS : 21;
-  const snippetRes = await client.query<SnippetRow>(searchSql(Boolean(q)), [
-    orgId,
-    q.slice(0, 2000) || ' ',
-    staleDays,
-  ]);
-
-  const snippets: BrainSnippet[] = snippetRes.rows
+function mapSnippetRows(rows: SnippetRow[]): BrainSnippet[] {
+  return rows
     .filter((row) => (row.snippet || '').trim())
     .map((row) => ({
       id: `${asTier(row.tier)}:${row.id}`,
@@ -212,7 +214,50 @@ async function loadBrain(
       entityId: row.entity_id,
       conversationId: row.conversation_id,
     }));
+}
 
+async function loadSources(
+  client: PoolClient,
+  orgId: string,
+  query: string
+): Promise<BrainSource[]> {
+  const q = query.trim();
+  const sourceRes = await client.query<{
+    id: string;
+    connector: string;
+    path: string;
+    status: string;
+    last_synced: Date | string | null;
+  }>(
+    `SELECT id, connector, path, status, last_synced
+       FROM knowledge_sources
+      WHERE org_id = $1::uuid
+        ${q ? `AND (connector ILIKE $2 OR path ILIKE $2)` : ''}
+      ORDER BY updated_at DESC
+      LIMIT 50`,
+    q ? [orgId, `%${q.slice(0, 200)}%`] : [orgId]
+  );
+
+  return sourceRes.rows.map((row) => {
+    const status = asSourceStatus(row.status);
+    return {
+      id: `source:${row.id}`,
+      connector: row.connector,
+      path: row.path,
+      status,
+      lastSynced: iso(row.last_synced) || null,
+      disabled: status === 'disabled',
+    };
+  });
+}
+
+async function loadEntities(
+  client: PoolClient,
+  orgId: string,
+  query: string,
+  staleDays: number
+): Promise<BrainEntity[]> {
+  const q = query.trim();
   const entityRes = await client.query<{
     entity_type: string;
     entity_id: string;
@@ -231,7 +276,7 @@ async function loadBrain(
           SELECT 1 FROM knowledge_sources ks
            WHERE ks.org_id = entity_memory.org_id
              AND ks.connector = entity_memory.source
-             AND ks.path = entity_memory.source_ref
+             AND ks.path IN (entity_memory.source_ref, regexp_replace(entity_memory.source_ref, '#(c|chunk-)[0-9]+$', ''))
              AND ks.status = 'disabled'
         )
         ${q ? `AND body_tsv @@ plainto_tsquery('english', $3)` : ''}
@@ -240,7 +285,7 @@ async function loadBrain(
     q ? [orgId, staleDays, q.slice(0, 2000)] : [orgId, staleDays]
   );
 
-  const entities: BrainEntity[] = entityRes.rows.map((row) => ({
+  return entityRes.rows.map((row) => ({
     entityType: row.entity_type,
     entityId: row.entity_id,
     title: row.title,
@@ -248,95 +293,191 @@ async function loadBrain(
     stale: Boolean(row.stale),
     updatedAt: iso(row.updated_at),
   }));
+}
 
-  const sourceRes = await client.query<{
-    id: string;
-    connector: string;
-    path: string;
-    status: string;
-    last_synced: Date | string | null;
-  }>(
-    `SELECT id, connector, path, status, last_synced
-       FROM knowledge_sources
-      WHERE org_id = $1::uuid
-        ${q ? `AND (connector ILIKE $2 OR path ILIKE $2)` : ''}
-      ORDER BY updated_at DESC
-      LIMIT 50`,
-    q ? [orgId, `%${q.slice(0, 200)}%`] : [orgId]
-  );
-
-  const sources: BrainSource[] = sourceRes.rows.map((row) => {
-    const status = asSourceStatus(row.status);
-    return {
-      id: `source:${row.id}`,
-      connector: row.connector,
-      path: row.path,
-      status,
-      lastSynced: iso(row.last_synced) || null,
-      disabled: status === 'disabled',
-    };
-  });
-
+async function loadBrainKeyword(
+  client: PoolClient,
+  orgId: string,
+  query: string
+): Promise<{ snippets: BrainSnippet[]; entities: BrainEntity[]; sources: BrainSource[] }> {
+  const q = query.trim();
+  const staleDays = Number.isFinite(STALE_AFTER_DAYS) && STALE_AFTER_DAYS > 0 ? STALE_AFTER_DAYS : 21;
+  const snippetRes = await client.query<SnippetRow>(searchSql(Boolean(q)), [
+    orgId,
+    q.slice(0, 2000) || ' ',
+    staleDays,
+  ]);
+  const snippets = mapSnippetRows(snippetRes.rows);
+  const entities = await loadEntities(client, orgId, q, staleDays);
+  const sources = await loadSources(client, orgId, q);
   return { snippets, entities, sources };
 }
 
-async function reindexSource(
+async function loadBrainHybrid(
   client: PoolClient,
   orgId: string,
-  sourceId: string
-): Promise<{ enqueued: boolean; skipped?: string }> {
-  const src = await client.query<{
-    id: string;
-    connector: string;
-    path: string;
-    metadata: Record<string, unknown> | null;
-  }>(
-    `SELECT id, connector, path, metadata FROM knowledge_sources WHERE id = $1 AND org_id = $2 LIMIT 1`,
-    [sourceId, orgId]
-  );
-  const row = src.rows[0];
-  if (!row) return { enqueued: false, skipped: 'missing' };
+  query: string,
+  queryEmbedding: number[] | null
+): Promise<{ snippets: BrainSnippet[]; entities: BrainEntity[]; sources: BrainSource[]; searchMode: SearchMode }> {
+  const q = query.trim();
+  const staleDays = Number.isFinite(STALE_AFTER_DAYS) && STALE_AFTER_DAYS > 0 ? STALE_AFTER_DAYS : 21;
 
-  const pending =
-    row.metadata && typeof row.metadata.pendingText === 'string' ? row.metadata.pendingText : '';
-  let text = pending.trim();
-  if (!text) {
-    const bodies = await client.query<{ body: string }>(
-      `SELECT body FROM org_memory WHERE org_id = $1 AND source = $2 AND source_ref = $3
-       UNION ALL
-       SELECT body FROM conversation_memory WHERE org_id = $1 AND source = $2 AND source_ref = $3
-       UNION ALL
-       SELECT body FROM entity_memory WHERE org_id = $1 AND source = $2 AND source_ref = $3
-       LIMIT 8`,
-      [orgId, row.connector, row.path]
-    );
-    text = bodies.rows.map((r) => r.body).join('\n\n').trim();
+  try {
+    const hits = await searchMemoryHybrid(client, {
+      orgId,
+      query: q,
+      queryEmbedding,
+      limit: 50,
+      staleAfterDays: staleDays,
+    });
+    const snippets: BrainSnippet[] = hits
+      .filter((row) => (row.snippet || '').trim())
+      .map((row) => ({
+        id: `${asTier(row.tier)}:${row.id}`,
+        tier: asTier(row.tier),
+        title: null,
+        snippet: row.snippet.replace(/\s+/g, ' ').trim(),
+        source: row.source || '',
+        sourceRef: row.source_ref,
+        stale: Boolean(row.stale),
+        updatedAt: iso(row.updated_at),
+      }));
+    const entities = await loadEntities(client, orgId, q, staleDays);
+    const sources = await loadSources(client, orgId, q);
+    return {
+      snippets,
+      entities,
+      sources,
+      searchMode: queryEmbedding ? 'hybrid' : 'keyword',
+    };
+  } catch (err: unknown) {
+    // Honest fallback when pgvector / extension / operator is unavailable.
+    const code = err && typeof err === 'object' && 'code' in err ? String((err as { code?: string }).code) : '';
+    const message = err instanceof Error ? err.message : String(err);
+    if (
+      code === '42704' ||
+      code === '42883' ||
+      code === '42P01' ||
+      /vector|pgvector|operator does not exist/i.test(message)
+    ) {
+      console.warn(`[brain] hybrid search unavailable (${code || message}); falling back to keyword`);
+      const kw = await loadBrainKeyword(client, orgId, q);
+      return { ...kw, searchMode: 'keyword' };
+    }
+    throw err;
   }
-  if (!text) return { enqueued: false, skipped: 'empty' };
+}
 
-  const result = await enqueueEmbedJob({
-    orgId,
-    source: row.connector,
-    sourceRef: row.path,
-    text,
-  });
-  if (result.enqueued) return { enqueued: true };
-  return { enqueued: false, skipped: result.skipReason };
+export type BrainGraphFact = { id: string; text: string; type: string; updatedAt: string };
+
+/**
+ * Facts the AI extracted from conversations (Hindsight), for this org only:
+ * `orgId` always comes from the session. A failure is reported as
+ * `graphUnavailable` so an outage never looks like "nothing learned".
+ */
+async function loadGraph(
+  orgId: string,
+  query: string
+): Promise<{ graph: BrainGraphFact[]; graphUnavailable: boolean }> {
+  const hasHindsight = hindsightEnabled();
+  const hasCognee = cogneeEnabled();
+  if (!hasHindsight && !hasCognee) return { graph: [], graphUnavailable: false };
+
+  const graphFacts: BrainGraphFact[] = [];
+  let graphUnavailable = false;
+
+  if (hasHindsight) {
+    try {
+      if (query) {
+        const hits = await searchHindsight({ orgId, query, topK: 25, timeoutMs: 4000 });
+        for (const h of hits) {
+          graphFacts.push({ id: h.id, text: h.snippet, type: 'fact', updatedAt: h.updatedAt });
+        }
+      } else {
+        const list = await listHindsight(orgId, 25);
+        graphFacts.push(...list);
+      }
+    } catch (err) {
+      console.warn('[brain] hindsight unavailable:', err instanceof Error ? err.message : err);
+      graphUnavailable = true;
+    }
+  }
+
+  if (hasCognee && query) {
+    try {
+      const cogHits = await searchCognee({ orgId, query, topK: 15, timeoutMs: 4000 });
+      for (const ch of cogHits) {
+        if (!graphFacts.some((f) => f.text === ch.snippet)) {
+          graphFacts.push({ id: ch.id, text: ch.snippet, type: 'fact', updatedAt: ch.updatedAt || '' });
+        }
+      }
+      graphUnavailable = false;
+    } catch (err) {
+      console.warn('[brain] cognee search unavailable:', err instanceof Error ? err.message : err);
+    }
+  }
+
+  return { graph: graphFacts, graphUnavailable: graphUnavailable && graphFacts.length === 0 };
 }
 
 export async function GET(request: Request) {
   try {
-    const { client, orgId, userId } = await getScopedClient();
+    const { searchParams } = new URL(request.url);
+    const query = stripNulChars(searchParams.get('q') || '').trim();
+
+    // Resolve session + role, then release before any LiteLLM embed call.
+    const first = await getScopedClient();
+    let canMutate = false;
+    let orgId = first.orgId;
     try {
-      const { searchParams } = new URL(request.url);
-      const query = searchParams.get('q') || '';
-      const user = await lookupUserById(client, userId);
-      const { snippets, entities, sources } = await loadBrain(client, orgId, query);
-      const empty = snippets.length === 0 && entities.length === 0 && sources.length === 0;
+      const user = await lookupUserById(first.client, first.userId);
+      canMutate = canMutateBrain(user?.role || '');
+      orgId = first.orgId;
+    } finally {
+      first.client.release();
+    }
+
+    let queryEmbedding: number[] | null = null;
+    if (query) {
+      queryEmbedding = await embedQueryText(query, 800);
+    }
+
+    const { client } = await getScopedClient();
+    try {
+      if (!query) {
+        const { snippets, entities, sources } = await loadBrainKeyword(client, orgId, '');
+        const { graph, graphUnavailable } = await loadGraph(orgId, '');
+        const empty =
+          snippets.length === 0 && entities.length === 0 && sources.length === 0 && graph.length === 0;
+        return NextResponse.json({
+          graph,
+          graphUnavailable,
+          empty,
+          query,
+          canMutate,
+          searchMode: 'list' as SearchMode,
+          snippets,
+          entities,
+          sources,
+        });
+      }
+
+      const { snippets, entities, sources, searchMode } = await loadBrainHybrid(
+        client,
+        orgId,
+        query,
+        queryEmbedding
+      );
+      const { graph, graphUnavailable } = await loadGraph(orgId, query);
+      const empty =
+        snippets.length === 0 && entities.length === 0 && sources.length === 0 && graph.length === 0;
       return NextResponse.json({
+        graph,
+        graphUnavailable,
         empty,
         query,
-        canMutate: canMutateBrain(user?.role || ''),
+        canMutate,
+        searchMode,
         snippets,
         entities,
         sources,
@@ -346,9 +487,8 @@ export async function GET(request: Request) {
     }
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
-    if (message === 'Unauthorized') {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
+    const __scopedAuth = scopedAuthErrorResponse(err instanceof Error ? err : new Error(message));
+    if (__scopedAuth) return __scopedAuth;
     console.error('GET /api/brain Error:', err);
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
   }
@@ -356,83 +496,79 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
+    const body = await jsonBodyOrEmpty(request);
+    const action = typeof body?.action === 'string' ? body.action : '';
+
     const { client, orgId, userId } = await getScopedClient();
+    let createPayload: {
+      id: string;
+      source: string;
+      sourceRef: string;
+      text: string;
+    } | null = null;
+    let reindexLookup: Awaited<ReturnType<typeof loadKnowledgeSourceForReindex>> | null = null;
+
     try {
       const user = await lookupUserById(client, userId);
       if (!canMutateBrain(user?.role || '')) {
         return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
       }
-      const body = await request.json().catch(() => ({}));
-      const action = typeof body?.action === 'string' ? body.action : '';
+
       switch (action) {
-        // ── Type a fact ─────────────────────────────────────────────────────
-        // Until now the ONLY way to teach the agent anything was to upload a
-        // file. For an SMB owner that is the difference between a thirty-second
-        // action and a task that never happens — and it showed: reply_edits and
-        // typed knowledge were both at zero while the agent answered 719
-        // conversations from pack defaults.
-        //
-        // Written at priority 100, the value migration 026 defines as "human
-        // correction". A person stating a fact outranks a PDF that contradicts
-        // it, which is the same rule an operator's reply edit already gets.
-        case 'add-fact': {
-          const title = String(body?.title || '').trim();
-          const factBody = String(body?.body || '').trim();
-          const kind = ['faq', 'policy', 'sop'].includes(String(body?.kind))
-            ? String(body.kind) : 'faq';
-
-          if (!factBody) {
-            return NextResponse.json(
-              { error: 'Write the fact you want the assistant to know.' }, { status: 400 });
-          }
-          if (factBody.length > 4000) {
-            return NextResponse.json(
-              { error: 'Keep it under 4000 characters. Upload a file for anything longer.' },
-              { status: 400 });
-          }
-
-          // Same conflict target as every other writer: the unique index is
-          // (org_id, source, source_ref, content_hash). Naming content_hash
-          // alone does not match it, and the insert silently does nothing.
-          const inserted = await client.query(
-            `INSERT INTO org_memory
-               (org_id, kind, title, body, source, source_ref, content_hash, priority, metadata)
-             VALUES ($1, $2, $3, $4, 'operator', $5,
-                     encode(digest($4, 'sha256'), 'hex'), 100,
-                     jsonb_build_object('author_user_id', $6::text))
-             ON CONFLICT (org_id, source, source_ref, content_hash) DO UPDATE
-               SET title = EXCLUDED.title,
-                   kind = EXCLUDED.kind,
-                   updated_at = NOW()
-             RETURNING id, (xmax = 0) AS created`,
-            [orgId, kind, title || factBody.slice(0, 60), factBody, `fact:${userId}`, userId],
-          );
-          const row = inserted.rows[0];
-
-          // Deliberately NOT enqueued for embedding. enqueueEmbedJob runs the
-          // whole ingestion path — it writes its own knowledge_source and its
-          // own org_memory rows — so calling it here would store the fact
-          // twice. Retrieval is full-text today (0 of 1,127 rows carry an
-          // embedding, and there is no GEMINI_API_KEY), so the fact is
-          // searchable the moment this returns. When embeddings are switched
-          // on, backfill from org_memory rather than double-writing here.
-
-          return NextResponse.json({
-            id: row.id,
-            created: row.created,
-            message: row.created
-              ? 'Learned. Your assistant will use this from now on.'
-              : 'You had already told it this — updated.',
-          });
-        }
         case 'reindex': {
           const rawId = typeof body?.sourceId === 'string' ? body.sourceId : '';
           const sourceId = rawId.startsWith('source:') ? rawId.slice(7) : rawId;
           if (!isUuid(sourceId)) {
             return NextResponse.json({ error: 'sourceId is required' }, { status: 400 });
           }
-          const result = await reindexSource(client, orgId, sourceId);
-          return NextResponse.json(result);
+          reindexLookup = await loadKnowledgeSourceForReindex(client, orgId, sourceId);
+          break;
+        }
+        case 'create':
+        case 'upload': {
+          const nextBody = typeof body?.body === 'string' ? body.body.trim() : '';
+          const nextTitle = typeof body?.title === 'string' ? body.title.trim() : '';
+          const filename = typeof body?.filename === 'string' ? body.filename.trim() : '';
+          if (action === 'upload' && filename) {
+            const lower = filename.toLowerCase();
+            if (lower.endsWith('.pdf') || lower.endsWith('.docx') || lower.endsWith('.xlsx')) {
+              return NextResponse.json(
+                {
+                  error:
+                    'Binary PDF/DOCX/XLSX upload is not supported on this endpoint — paste text or use /api/brain/reindex with a connected Drive source.',
+                },
+                { status: 400 }
+              );
+            }
+            if (!lower.endsWith('.txt') && !lower.endsWith('.md') && !lower.endsWith('.markdown')) {
+              return NextResponse.json(
+                { error: 'Only .txt / .md text uploads are accepted here' },
+                { status: 400 }
+              );
+            }
+          }
+          if (!nextBody) {
+            return NextResponse.json({ error: 'body is required' }, { status: 400 });
+          }
+          const sourceRef = filename ? `upload:${filename}` : `manual:${randomUUID()}`;
+          const hash = contentHash(nextBody);
+          const inserted = await client.query<{ id: string }>(
+            `INSERT INTO org_memory (org_id, kind, title, body, source, source_ref, content_hash)
+             VALUES ($1, 'sop', $2, $3, $4, $5, $6)
+             RETURNING id`,
+            [orgId, nextTitle || filename || null, nextBody, filename ? 'upload' : 'human', sourceRef, hash]
+          );
+          const id = inserted.rows[0]?.id;
+          if (!id) {
+            return NextResponse.json({ error: 'Insert failed' }, { status: 500 });
+          }
+          createPayload = {
+            id,
+            source: filename ? 'upload' : 'human',
+            sourceRef,
+            text: nextBody,
+          };
+          break;
         }
         default:
           return NextResponse.json({ error: 'Unknown action' }, { status: 400 });
@@ -440,11 +576,37 @@ export async function POST(request: Request) {
     } finally {
       client.release();
     }
+
+    if (reindexLookup) {
+      if (!reindexLookup.ok) {
+        return NextResponse.json({ enqueued: false, skipped: reindexLookup.skipped });
+      }
+      const result = await enqueueReindexEmbed(orgId, reindexLookup);
+      return NextResponse.json(result);
+    }
+
+    if (createPayload) {
+      // DB client already released before embed.
+      const embed = await enqueueEmbedJob({
+        orgId,
+        source: createPayload.source,
+        sourceRef: createPayload.sourceRef,
+        text: createPayload.text,
+        replaceMemory: { tier: 'org', id: createPayload.id },
+      });
+      return NextResponse.json({
+        ok: true,
+        id: `org:${createPayload.id}`,
+        enqueued: embed.enqueued,
+        skipped: embed.enqueued ? undefined : embed.skipReason,
+      });
+    }
+
+    return NextResponse.json({ error: 'Unknown action' }, { status: 400 });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
-    if (message === 'Unauthorized') {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
+    const __scopedAuth2 = scopedAuthErrorResponse(err instanceof Error ? err : new Error(message));
+    if (__scopedAuth2) return __scopedAuth2;
     console.error('POST /api/brain Error:', err);
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
   }

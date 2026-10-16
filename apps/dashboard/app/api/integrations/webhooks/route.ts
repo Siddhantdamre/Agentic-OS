@@ -1,16 +1,21 @@
 import { NextResponse } from 'next/server';
-import { getScopedClient } from '@/lib/db';
+import { getScopedClient, scopedAuthErrorResponse } from '@/lib/db';
+import { denyUnlessConnectorManager } from '@/lib/connector-rbac';
 import { denyWebhookIfLimited, isRateLimitError, responseFromRateLimit } from '@/lib/rate-limit';
+import { jsonBodyOrEmpty } from '@/lib/safe-json';
+import { publicErrorMessage } from '@/lib/public-error';
 
 export async function POST(request: Request) {
   try {
-    const { client, orgId } = await getScopedClient();
+    const { client, orgId, userId } = await getScopedClient();
     try {
+      const forbidden = await denyUnlessConnectorManager(client, userId);
+      if (forbidden) return forbidden;
       const limited = denyWebhookIfLimited(orgId);
       if (limited) {
         return limited;
       }
-      const payload = await request.json().catch(() => ({}));
+      const payload = await jsonBodyOrEmpty(request);
 
       const provider = payload.provider || payload.type || 'nango';
       const eventType = payload.event || 'webhook_received';
@@ -30,10 +35,9 @@ export async function POST(request: Request) {
     if (isRateLimitError(err)) {
       return responseFromRateLimit(err);
     }
-    if (err.message === 'Unauthorized') {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
+    const __scopedAuth = scopedAuthErrorResponse(err);
+    if (__scopedAuth) return __scopedAuth;
     console.error('Webhook Endpoint Error:', err);
-    return NextResponse.json({ message: err.message }, { status: 500 });
+    return NextResponse.json({ message: publicErrorMessage(err) }, { status: 500 });
   }
 }

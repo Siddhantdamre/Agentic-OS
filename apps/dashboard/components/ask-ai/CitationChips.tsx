@@ -21,15 +21,7 @@ export function parseMemoryCitations(text: string): string[] {
 
 export function CitationChips({ text }: { text: string }) {
   const ids = parseMemoryCitations(text);
-  if (ids.length === 0) {
-    return (
-      <div className="flex items-center gap-1.5 px-1">
-        <span className="text-[10px] font-mono px-2 py-0.5 rounded-md bg-cream-100 text-slate-500 border border-cream-300">
-          no memory
-        </span>
-      </div>
-    );
-  }
+  if (ids.length === 0) return null;
 
   return (
     <div className="flex flex-wrap items-center gap-1.5 px-1">

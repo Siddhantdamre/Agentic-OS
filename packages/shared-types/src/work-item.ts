@@ -24,6 +24,7 @@ export const CORE_WORK_ITEM_TYPES = [
   'document',
   'event',
   'invoice',
+  'growth_opportunity',
 ] as const;
 
 export type CoreWorkItemType = (typeof CORE_WORK_ITEM_TYPES)[number];
@@ -62,6 +63,10 @@ export const WORK_EVENT_KINDS = [
   'completed',
   'cancelled',
   'compensation',
+  'card_approved',
+  'card_rejected',
+  'card_snoozed',
+  'card_reason',
 ] as const;
 
 export type WorkEventKind = (typeof WORK_EVENT_KINDS)[number];

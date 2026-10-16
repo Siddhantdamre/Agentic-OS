@@ -1,6 +1,8 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import { humanizeId } from '@/lib/humanize-id';
+import React, { useState, useEffect, useCallback } from 'react';
+import { useLiveRefresh } from '@/lib/use-live-refresh';
 import Link from 'next/link';
 import {
   Lightbulb,
@@ -12,6 +14,7 @@ import {
   Loader2,
   CheckCircle2,
 } from 'lucide-react';
+import { networkErrorMessage, responseErrorMessage } from '@/lib/client-error';
 
 type InsightCardType = 'growth' | 'efficiency' | 'integration' | 'attention';
 
@@ -39,28 +42,60 @@ interface ConfirmRejectDrift {
   sampleSize: number;
 }
 
+const INSIGHT_EVENTS = [
+  'conversation_updated',
+  'inquiry_updated',
+  'inquiry_deleted',
+  'work_item_updated',
+  'rent_charge_paid',
+] as const;
+
+const INSIGHT_LOAD_FAILED = 'We couldn’t load your insights just now. Please try again in a moment.';
+
 export default function InsightPage() {
   const [insights, setInsights] = useState<InsightItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [weeklyCost, setWeeklyCost] = useState<number | null>(null);
+  const [costTruncated, setCostTruncated] = useState(false);
+  const [costTraceCount, setCostTraceCount] = useState<number | null>(null);
   const [confirmReject, setConfirmReject] = useState<ConfirmRejectDrift | null>(null);
   const [enqueueingId, setEnqueueingId] = useState<string | null>(null);
   const [started, setStarted] = useState<Record<string, { workflowId: string; namedWorkflow: string }>>({});
   const [actionError, setActionError] = useState<Record<string, string>>({});
+  const [loadError, setLoadError] = useState('');
+
+  const load = useCallback(async () => {
+    try {
+      const res = await fetch('/api/insight');
+      if (!res.ok) {
+        setLoadError(await responseErrorMessage(res, INSIGHT_LOAD_FAILED));
+        return;
+      }
+      const data = await res.json();
+      setLoadError('');
+      setInsights(data.insights || []);
+      if (data.weeklyCost && typeof data.weeklyCost.weeklyCostUsd === 'number') {
+        setWeeklyCost(data.weeklyCost.weeklyCostUsd);
+        setCostTruncated(Boolean(data.weeklyCost.truncated));
+        setCostTraceCount(
+          typeof data.weeklyCost.traceCount === 'number' ? data.weeklyCost.traceCount : null
+        );
+      }
+      if (data.confirmReject) setConfirmReject(data.confirmReject);
+    } catch (err: unknown) {
+      console.error(err);
+      setLoadError(networkErrorMessage(err, INSIGHT_LOAD_FAILED));
+    } finally {
+      setLoading(false);
+    }
+  }, []);
 
   useEffect(() => {
-    fetch('/api/insight')
-      .then((res) => res.json())
-      .then((data) => {
-        setInsights(data.insights || []);
-        if (data.weeklyCost && typeof data.weeklyCost.weeklyCostUsd === 'number') {
-          setWeeklyCost(data.weeklyCost.weeklyCostUsd);
-        }
-        if (data.confirmReject) setConfirmReject(data.confirmReject);
-      })
-      .catch(console.error)
-      .finally(() => setLoading(false));
-  }, []);
+    void load();
+  }, [load]);
+
+  // Quiet refetch: loading only ever goes false, so the cards do not flash.
+  useLiveRefresh({ events: INSIGHT_EVENTS, refetch: load });
 
   const handleReviewAction = async (item: InsightItem) => {
     if (!item.recommendedWorkflow || item.status === 'gap') return;
@@ -88,7 +123,7 @@ export default function InsightPage() {
     } catch (err: unknown) {
       setActionError((prev) => ({
         ...prev,
-        [item.id]: err instanceof Error ? err.message : 'Failed to start workflow',
+        [item.id]: networkErrorMessage(err, 'Failed to start workflow'),
       }));
     } finally {
       setEnqueueingId(null);
@@ -101,14 +136,13 @@ export default function InsightPage() {
         <div>
           <h1 className="text-3xl font-serif font-bold text-heading">AI Business Insights</h1>
           <p className="text-slate-500 text-sm mt-1">
-            Scheduled cards from the metrics registry SQL. Review Action starts a named Temporal
-            workflow — not a free-form agent, and not an LLM scan of messages.
+            These figures are worked out on a schedule from your business numbers, not by reading your customers’ messages. “Review action” starts one specific routine and nothing else.
           </p>
         </div>
 
         <div className="flex items-center space-x-2 px-3 py-1.5 bg-amber-500/10 text-amber-700 rounded-full border border-amber-500/20 text-xs font-bold">
-          <Sparkles className="w-4 h-4 text-amber-600" />
-          <span>Semantic metrics</span>
+          <Sparkles className="w-4 h-4 text-amber-700" />
+          <span>Business numbers</span>
         </div>
       </div>
 
@@ -118,7 +152,16 @@ export default function InsightPage() {
             <div className="bg-white border border-cream-300 rounded-2xl p-4">
               <p className="text-[11px] font-bold uppercase tracking-wider text-slate-500">Weekly LLM cost</p>
               <p className="text-2xl font-serif font-bold text-heading mt-1">${weeklyCost.toFixed(4)}</p>
-              <p className="text-xs text-slate-500 mt-1">From this workspace’s own activity. Failed/notConnected actions are not counted as success.</p>
+              <p className="text-xs text-slate-500 mt-1">
+                Based on this week’s AI activity for your business
+                {costTraceCount != null ? ` (${costTraceCount} requests)` : ''}. Actions that failed, or couldn’t
+                run because a tool wasn’t connected, aren’t counted as successful.
+              </p>
+              {costTruncated && (
+                <p className="mt-2 text-[11px] font-semibold text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-2 py-1 inline-block">
+                  Estimate — based on the first 2,000 requests this week
+                </p>
+              )}
             </div>
           )}
           {confirmReject?.highRejectFlag && (
@@ -134,6 +177,12 @@ export default function InsightPage() {
         </div>
       )}
 
+      {loadError && (
+        <div role="alert" className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
+          {loadError}
+        </div>
+      )}
+
       {loading ? (
         <div className="space-y-4">
           {[1, 2, 3].map((i) => (
@@ -144,7 +193,7 @@ export default function InsightPage() {
         <div className="space-y-6">
           {insights.length === 0 ? (
             <p className="text-sm text-slate-500">
-              No insight cards — the registry returned no metric points for this org.
+              No insights yet. They appear once your business has some activity to look at.
             </p>
           ) : null}
           {insights.map((item) => {
@@ -160,9 +209,9 @@ export default function InsightPage() {
                   <div
                     className={`p-3.5 rounded-2xl shrink-0 ${
                       item.type === 'growth'
-                        ? 'bg-emerald-500/10 text-emerald-600 border border-emerald-500/20'
+                        ? 'bg-emerald-500/10 text-emerald-700 border border-emerald-500/20'
                         : item.type === 'efficiency'
-                          ? 'bg-amber-500/10 text-amber-600 border border-amber-500/20'
+                          ? 'bg-amber-500/10 text-amber-700 border border-amber-500/20'
                           : item.type === 'attention'
                             ? 'bg-red-500/10 text-red-600 border border-red-500/20'
                             : 'bg-blue-500/10 text-blue-600 border border-blue-500/20'
@@ -191,8 +240,7 @@ export default function InsightPage() {
                       <span className="text-[11px] font-bold uppercase tracking-wider px-2.5 py-0.5 rounded-full bg-cream-200 text-slate-700">
                         {item.category}
                       </span>
-                      <span className="text-xs font-semibold text-emerald-600">Impact: {item.impact}</span>
-                      <span className="text-[10px] font-mono text-slate-400">{item.metricId}</span>
+                      <span className="text-xs font-semibold text-emerald-700">Impact: {item.impact}</span>
                     </div>
 
                     <h3 className="text-lg font-serif font-bold text-heading">{item.title}</h3>
@@ -202,7 +250,7 @@ export default function InsightPage() {
                     {queued && (
                       <p className="text-[11px] text-emerald-700 flex items-center gap-1.5">
                         <CheckCircle2 className="w-3.5 h-3.5" />
-                        {queued.namedWorkflow} started — Temporal id {queued.workflowId}
+                        {humanizeId(queued.namedWorkflow)} started.
                       </p>
                     )}
                     {err && <p className="text-[11px] text-red-600">{err}</p>}

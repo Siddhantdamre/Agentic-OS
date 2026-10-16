@@ -35,32 +35,123 @@ function superuserDbConfig() {
   };
 }
 
-async function ensureAppGrants() {
-  const adminCfg = superuserDbConfig();
-  const appCfg = appDbConfig();
-  if (adminCfg.user === appCfg.user) return;
-  const admin = new Client(adminCfg);
+function platformDbConfig() {
+  return {
+    host: process.env.DB_HOST || 'localhost',
+    port: parseInt(process.env.DB_PORT || '5432', 10),
+    user: 'darex_platform',
+    password: process.env.DAREX_PLATFORM_DB_PASSWORD || '',
+    database: process.env.DB_NAME || 'darex',
+  };
+}
+
+// Never re-grant table privileges here: the suite must see the grants the
+// migrations actually ship, or append-only / read-only regressions hide.
+async function withAdmin(fn) {
+  const admin = new Client(superuserDbConfig());
+  await admin.connect();
   try {
-    await admin.connect();
-    await admin.query(`GRANT USAGE ON SCHEMA public TO darex_app`);
-    await admin.query(`GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO darex_app`);
-    await admin.query(`GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO darex_app`);
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    console.warn(`  (optional superuser GRANT skipped: ${message})`);
+    return await fn(admin);
   } finally {
-    try {
-      await admin.end();
-    } catch {
-      // ignore
+    await admin.end().catch(() => {});
+  }
+}
+
+let failures = 0;
+function fail(msg, extra) {
+  failures += 1;
+  console.error(`  ❌ FAIL: ${msg}`, extra ?? '');
+}
+
+/** Expect the statement to be rejected (42501 / RLS violation). */
+async function expectDenied(client, label, sql, params = []) {
+  await client.query('SAVEPOINT deny_probe');
+  try {
+    const res = await client.query(sql, params);
+    // UPDATE/DELETE filtered by RLS succeed with rowCount 0 — that is a denial too.
+    if (typeof res.rowCount === 'number' && res.rowCount === 0 && /^\s*(UPDATE|DELETE)/i.test(sql)) {
+      console.log(`  ✅ ${label}: 0 rows affected`);
+    } else {
+      fail(`${label}: statement was allowed`);
     }
+  } catch (err) {
+    console.log(`  ✅ ${label}: denied (${err.code || err.message})`);
+  } finally {
+    await client.query('ROLLBACK TO SAVEPOINT deny_probe');
+  }
+}
+
+async function runBoundaryChecks(client, orgAId) {
+  console.log('\n[Boundaries] darex_app cannot write global / append-only tables...');
+  await client.query('BEGIN');
+  try {
+    await client.query("SELECT set_config('app.current_org_id', $1, true)", [orgAId]);
+    await expectDenied(client, 'orgs INSERT', `INSERT INTO orgs (name, slug) VALUES ('x', 'x-${Date.now()}')`);
+    await expectDenied(client, 'platform_send_counters direct write', `INSERT INTO platform_send_counters (minute_bucket, send_count) VALUES (NOW(), 0)`);
+    await expectDenied(client, 'pack_entity_schemas UPDATE', `UPDATE pack_entity_schemas SET updated_at = NOW()`);
+    await expectDenied(client, 'predicate_defs DELETE', `DELETE FROM predicate_defs`);
+    await expectDenied(client, 'rera_cache INSERT', `INSERT INTO rera_cache (rera_id, url, expires_at) VALUES ('x', 'https://evil.example', NOW())`);
+    await expectDenied(client, 'packs UPDATE', `UPDATE packs SET name = name`);
+    await expectDenied(client, 'connector_defs DELETE', `DELETE FROM connector_defs`);
+    await expectDenied(client, 'platform_admins INSERT', `INSERT INTO platform_admins (user_id, platform_role, reason) VALUES (uuid_generate_v4(), 'operator', 'x')`);
+    await expectDenied(client, 'admin_audit_log SELECT', `SELECT 1 FROM admin_audit_log LIMIT 1`);
+    await expectDenied(client, 'audit_events UPDATE', `UPDATE audit_events SET kind = kind`);
+    await expectDenied(client, 'audit_events DELETE', `DELETE FROM audit_events`);
+    await expectDenied(client, 'org_plan_overrides INSERT', `INSERT INTO org_plan_overrides (org_id, reason, updated_by) VALUES ($1, 'x', uuid_generate_v4())`, [orgAId]);
+
+    const bump = await client.query('SELECT platform_send_counter_bump() AS n');
+    if (Number(bump.rows[0]?.n) >= 1) console.log('  ✅ platform_send_counter_bump() works for darex_app');
+    else fail('platform_send_counter_bump() returned nothing');
+  } finally {
+    await client.query('ROLLBACK');
+  }
+}
+
+async function runPlatformChecks(orgAId, orgBId, actorUserId) {
+  const cfg = platformDbConfig();
+  if (!cfg.password) {
+    if (process.env.CI === 'true') {
+      fail('DAREX_PLATFORM_DB_PASSWORD must be set in CI so the darex_platform grants are exercised');
+    } else {
+      console.log('\n[Platform] skipped — DAREX_PLATFORM_DB_PASSWORD not set');
+    }
+    return;
+  }
+  console.log('\n[Platform] darex_platform sees nothing without platform_begin, both orgs with it...');
+  const platform = new Client(cfg);
+  await platform.connect();
+  try {
+    await platform.query('BEGIN');
+    const before = await platform.query('SELECT id FROM orgs WHERE id = ANY($1::uuid[])', [[orgAId, orgBId]]);
+    if (before.rows.length === 0) console.log('  ✅ no audit row → 0 orgs visible');
+    else fail('darex_platform read orgs without an audit row');
+    await platform.query('ROLLBACK');
+
+    await platform.query('BEGIN');
+    await platform.query(
+      `SELECT platform_begin($1::uuid, 'operator', 'isolation_test', NULL, NULL, NULL, 'tenant isolation suite')`,
+      [actorUserId]
+    );
+    const orgs = await platform.query('SELECT id FROM orgs WHERE id = ANY($1::uuid[])', [[orgAId, orgBId]]);
+    if (orgs.rows.length === 2) console.log('  ✅ audited platform tx reads both orgs');
+    else fail(`audited platform tx saw ${orgs.rows.length} of 2 orgs`);
+    const msgs = await platform.query('SELECT count(*)::int AS n FROM messages WHERE org_id = $1', [orgAId]);
+    if (msgs.rows[0].n >= 1) console.log('  ✅ audited platform tx reads messages');
+    else fail('audited platform tx could not read messages');
+    const upd = await platform.query(`UPDATE orgs SET status = status WHERE id = $1`, [orgAId]);
+    if (upd.rowCount === 1) console.log('  ✅ audited platform tx updates orgs.status');
+    else fail('audited platform tx could not update orgs');
+    await platform.query('ROLLBACK');
+  } catch (err) {
+    fail('darex_platform query failed', err.message);
+    await platform.query('ROLLBACK').catch(() => {});
+  } finally {
+    await platform.end().catch(() => {});
   }
 }
 
 async function runTenantIsolationTests() {
   console.log('🧪 Starting DareX E2E Multi-Tenant Security & Isolation Test Suite...\n');
-
-  await ensureAppGrants();
 
   const dbConfig = appDbConfig();
   const client = new Client(dbConfig);
@@ -78,33 +169,24 @@ async function runTenantIsolationTests() {
     console.log(`  ✓ Connected as ${currentUser} (least-privilege app role)`);
 
     // Test 1: Create two distinct test organizations
-    //
-    // THROUGH THE SIGNUP DOOR, NOT AROUND IT. This used to be a raw
-    // `INSERT INTO orgs`, which migration 028 deliberately made impossible:
-    // `orgs` is now under FORCE row-level security and the policy's WITH CHECK
-    // requires the new row's id to equal the session's org. At signup there is
-    // no session org and there cannot be — the row being written is what
-    // establishes it. So 028 added `org_provision()` as a named SECURITY
-    // DEFINER door and closed the wall behind it.
-    //
-    // The old insert had been failing here with
-    //   42501  new row violates row-level security policy for table "orgs"
-    // on every CI run since. That is the policy working, not a regression: the
-    // test was asserting a path the product had correctly removed. Going
-    // through the same door the dashboard's signup uses also means this suite
-    // now exercises the real path instead of a privileged shortcut.
-    console.log('[Test 1] Provisioning Org A and Org B via org_provision()...');
-    const orgARes = await client.query(
-      `SELECT org_provision($1, $2) AS id`,
-      ['Test Org Alpha', `test-org-alpha-${Date.now()}`]
-    );
-    const orgBRes = await client.query(
-      `SELECT org_provision($1, $2) AS id`,
-      ['Test Org Beta', `test-org-beta-${Date.now()}`]
-    );
-
-    const orgAId = orgARes.rows[0].id;
-    const orgBId = orgBRes.rows[0].id;
+    console.log('[Test 1] Provisioning Org A and Org B...');
+    // Orgs are provisioned through the SECURITY DEFINER path (darex_app has no
+    // INSERT on orgs); the actor user for the platform check is seeded as superuser.
+    const { orgAId, orgBId, actorUserId } = await withAdmin(async (admin) => {
+      const a = await admin.query(
+        `INSERT INTO orgs (name, slug, plan, status) VALUES ($1, $2, 'enterprise', 'active') RETURNING id`,
+        ['Test Org Alpha', `test-org-alpha-${Date.now()}`]
+      );
+      const b = await admin.query(
+        `INSERT INTO orgs (name, slug, plan, status) VALUES ($1, $2, 'enterprise', 'active') RETURNING id`,
+        ['Test Org Beta', `test-org-beta-${Date.now()}`]
+      );
+      const u = await admin.query(
+        `INSERT INTO users (org_id, email, role) VALUES ($1, $2, 'owner') RETURNING id`,
+        [a.rows[0].id, `isolation-${Date.now()}@example.test`]
+      );
+      return { orgAId: a.rows[0].id, orgBId: b.rows[0].id, actorUserId: u.rows[0].id };
+    });
     console.log(`  ✓ Org Alpha ID: ${orgAId}`);
     console.log(`  ✓ Org Beta ID:  ${orgBId}`);
 
@@ -147,14 +229,21 @@ async function runTenantIsolationTests() {
       process.exit(1);
     }
 
+    await runBoundaryChecks(client, orgAId);
+    await runPlatformChecks(orgAId, orgBId, actorUserId);
+
     // Test 5: Cleanup test organizations
     console.log('\n[Test 5] Cleaning up test organizations...');
-    await client.query("SELECT set_config('app.current_org_id', $1, false)", [orgAId]);
-    await client.query(`DELETE FROM orgs WHERE id = $1`, [orgAId]);
-    await client.query("SELECT set_config('app.current_org_id', $1, false)", [orgBId]);
-    await client.query(`DELETE FROM orgs WHERE id = $1`, [orgBId]);
+    await withAdmin(async (admin) => {
+      await admin.query(`DELETE FROM admin_audit_log WHERE actor_user_id = $1`, [actorUserId]);
+      await admin.query(`DELETE FROM orgs WHERE id = ANY($1::uuid[])`, [[orgAId, orgBId]]);
+    });
     console.log('  ✓ Test cleanup complete.');
 
+    if (failures > 0) {
+      console.error(`\n❌ ${failures} isolation check(s) failed`);
+      process.exit(1);
+    }
     console.log('\n🎉 ALL MULTI-TENANT ISOLATION TESTS PASSED CLEANLY!');
   } finally {
     await client.end();

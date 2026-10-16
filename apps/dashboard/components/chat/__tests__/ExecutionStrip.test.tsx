@@ -1,6 +1,10 @@
 import React from 'react';
-import { render, screen } from '@testing-library/react';
+import { render, screen, fireEvent } from '@testing-library/react';
 import { ExecutionStrip, StepRunStatus } from '../ExecutionStrip';
+
+jest.mock('@/lib/nango-client', () => ({
+  startRealNangoOAuth: jest.fn(async () => ({ success: true })),
+}));
 
 describe('ExecutionStrip', () => {
   const mockSteps = [
@@ -56,7 +60,7 @@ describe('ExecutionStrip', () => {
 
     render(<ExecutionStrip steps={mockSteps} statuses={statuses} running={false} />);
 
-    expect(screen.getByText('Execution completed successfully')).toBeInTheDocument();
+    expect(screen.getByText(/completed successfully/i)).toBeInTheDocument();
     expect(screen.getByText('100%')).toBeInTheDocument();
   });
 
@@ -69,7 +73,7 @@ describe('ExecutionStrip', () => {
 
     render(<ExecutionStrip steps={mockSteps} statuses={statuses} running={false} />);
 
-    expect(screen.getByText('Execution finished with errors')).toBeInTheDocument();
+    expect(screen.getByText(/Execution completed with errors/i)).toBeInTheDocument();
     expect(screen.getByText('Email service unavailable')).toBeInTheDocument();
   });
 
@@ -105,7 +109,7 @@ describe('ExecutionStrip', () => {
 
     render(<ExecutionStrip steps={mockSteps} statuses={statuses} running={false} />);
 
-    const pendingElements = screen.getAllByText('Pending');
+    const pendingElements = screen.getAllByText(/Queued/i);
     expect(pendingElements.length).toBeGreaterThan(0);
   });
 
@@ -128,5 +132,27 @@ describe('ExecutionStrip', () => {
 
     expect(screen.getByText('01')).toBeInTheDocument();
     expect(screen.getByText('10')).toBeInTheDocument();
+  });
+
+  it('renders Stop Execution button when running and triggers onStop when clicked', () => {
+    const onStop = jest.fn();
+    const statuses: StepRunStatus[] = [
+      { status: 'running' },
+      { status: 'pending' },
+    ];
+
+    render(
+      <ExecutionStrip
+        steps={mockSteps}
+        statuses={statuses}
+        running={true}
+        onStop={onStop}
+      />
+    );
+
+    const stopBtn = screen.getByRole('button', { name: /stop/i });
+    expect(stopBtn).toBeInTheDocument();
+    fireEvent.click(stopBtn);
+    expect(onStop).toHaveBeenCalledTimes(1);
   });
 });

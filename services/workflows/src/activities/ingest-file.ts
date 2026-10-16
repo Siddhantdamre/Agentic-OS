@@ -1,11 +1,13 @@
 import { createHash } from 'crypto';
 import { ApplicationFailure } from '@temporalio/activity';
+import { connectorSignInPath } from '@darex/shared-types';
 import type { PoolClient } from 'pg';
-import { enqueueEmbedJobFromWorker } from './embed.js';
+import { enqueueEmbedJobFromWorker, rollupChunkedSource } from './embed.js';
 import { redactErrorMessage, redactForEmbed } from './redact.js';
 import {
   fetchWithTimeout,
   getNangoAccessToken,
+  resolveGoogleAuth,
   withOrgScopedClient,
 } from '../tools/shared.js';
 
@@ -89,9 +91,9 @@ export interface SyncConnectorActivityResult {
   setupUrl?: string;
 }
 
-type VirusScanResult =
-  | { clean: true; scanner: 'stub' }
-  | { clean: false; scanner: 'stub'; reason: string };
+export type VirusScanResult =
+  | { clean: true; scanner: string }
+  | { clean: false; scanner: string; reason: string };
 
 type ParseResult =
   | { ok: true; text: string; parser: 'docling' | 'text' }
@@ -170,13 +172,123 @@ function knowledgeConnector(connector: IngestConnector): string {
   return memorySourceFor(connector);
 }
 
-/** Virus-scan stub (K2). Always clean unless the payload is empty. No third-party retain. */
-export function virusScanStub(bytes: Buffer | string): VirusScanResult {
-  const size = typeof bytes === 'string' ? Buffer.byteLength(bytes) : bytes.length;
-  if (size <= 0) {
-    return { clean: false, scanner: 'stub', reason: 'empty payload' };
+const EICAR_SIGNATURE = 'X5O!P%@AP[4\\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*';
+
+/**
+ * Synchronous file safety & heuristic signature check.
+ * Rejects empty payloads, standard EICAR test malware, and unsafe executable binaries.
+ */
+export function checkFileSafetyHeuristics(bytes: Buffer | string): VirusScanResult {
+  const buf = typeof bytes === 'string' ? Buffer.from(bytes) : bytes;
+  if (!buf || buf.length === 0) {
+    return { clean: false, scanner: 'heuristic', reason: 'empty payload' };
   }
-  return { clean: true, scanner: 'stub' };
+
+  // Check for EICAR test signature
+  if (buf.length < 2048) {
+    const textSample = buf.toString('utf8');
+    if (textSample.includes(EICAR_SIGNATURE)) {
+      return { clean: false, scanner: 'heuristic', reason: 'EICAR test malware signature detected' };
+    }
+  }
+
+  // Reject executable binaries attempting to masquerade as documents
+  if (buf.length >= 4) {
+    // Windows PE (MZ header)
+    if (buf[0] === 0x4d && buf[1] === 0x5a) {
+      return { clean: false, scanner: 'heuristic', reason: 'Executable binary rejected (Windows PE/MZ detected)' };
+    }
+    // Linux ELF (\x7fELF)
+    if (buf[0] === 0x7f && buf[1] === 0x45 && buf[2] === 0x4c && buf[3] === 0x46) {
+      return { clean: false, scanner: 'heuristic', reason: 'Executable binary rejected (Linux ELF detected)' };
+    }
+    // macOS Mach-O (32-bit & 64-bit, big & little endian)
+    if (
+      (buf[0] === 0xfe && buf[1] === 0xed && buf[2] === 0xfa && (buf[3] === 0xce || buf[3] === 0xcf)) ||
+      (buf[0] === 0xce && buf[1] === 0xfa && buf[2] === 0xed && buf[3] === 0xfe) ||
+      (buf[0] === 0xcf && buf[1] === 0xfa && buf[2] === 0xed && buf[3] === 0xfe)
+    ) {
+      return { clean: false, scanner: 'heuristic', reason: 'Executable binary rejected (Mach-O binary detected)' };
+    }
+  }
+
+  return { clean: true, scanner: 'heuristic' };
+}
+
+let warnedMissingScanner = false;
+
+/**
+ * Multi-layer anti-virus scan:
+ * 1. Fast heuristic checks (empty, EICAR test signature, binary executable rejection).
+ * 2. External Antivirus service (ClamAV REST / VirusScan HTTP) if configured via CLAMAV_URL or VIRUS_SCAN_URL.
+ * 3. Strict mode enforcement if REQUIRE_VIRUS_SCAN is enabled.
+ */
+export async function scanFileForViruses(bytes: Buffer | string): Promise<VirusScanResult> {
+  const heuristicResult = checkFileSafetyHeuristics(bytes);
+  if (!heuristicResult.clean) {
+    return heuristicResult;
+  }
+
+  const scanUrl = process.env.CLAMAV_URL || process.env.VIRUS_SCAN_URL;
+  if (scanUrl) {
+    try {
+      const buf = typeof bytes === 'string' ? Buffer.from(bytes) : bytes;
+      const res = await fetch(scanUrl.replace(/\/$/, '') + '/scan', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/octet-stream' },
+        body: new Uint8Array(buf),
+        signal: AbortSignal.timeout(15_000),
+      });
+
+      if (!res.ok) {
+        if (res.status === 406 || res.status === 418) {
+          const bodyText = await res.text().catch(() => 'Malware detected');
+          return { clean: false, scanner: 'clamav', reason: `Infected file detected: ${bodyText}` };
+        }
+        throw new Error(`AV service returned HTTP ${res.status}`);
+      }
+
+      const json = (await res.json().catch(() => null)) as any;
+      if (json && (json.isInfected === true || json.clean === false)) {
+        return {
+          clean: false,
+          scanner: 'clamav',
+          reason: json.virus || json.reason || 'Malware detected by external scanner',
+        };
+      }
+      return { clean: true, scanner: 'clamav' };
+    } catch (err: any) {
+      console.warn('[VirusScan] External scanner error:', err?.message);
+      if (process.env.REQUIRE_VIRUS_SCAN === 'true') {
+        return {
+          clean: false,
+          scanner: 'clamav',
+          reason: `Virus scan required but service unavailable: ${err?.message}`,
+        };
+      }
+    }
+  } else {
+    if (!warnedMissingScanner && process.env.NODE_ENV === 'production') {
+      warnedMissingScanner = true;
+      console.warn(
+        '[VirusScan] External AV scanner not configured (CLAMAV_URL/VIRUS_SCAN_URL unset). Ingestion protected by heuristic payload & binary rejection checks.'
+      );
+    }
+    if (process.env.REQUIRE_VIRUS_SCAN === 'true') {
+      return {
+        clean: false,
+        scanner: 'config',
+        reason: 'REQUIRE_VIRUS_SCAN=true but no CLAMAV_URL or VIRUS_SCAN_URL configured',
+      };
+    }
+  }
+
+  return { clean: true, scanner: scanUrl ? 'clamav' : 'heuristic' };
+}
+
+/** Legacy alias for backwards compatibility */
+export function virusScanStub(bytes: Buffer | string): VirusScanResult {
+  return checkFileSafetyHeuristics(bytes);
 }
 
 function isTableBlock(block: string): boolean {
@@ -311,6 +423,10 @@ async function parseFile(bytes: Buffer, fileName: string, mimeType: string): Pro
 }
 
 async function googleDriveToken(orgId: string): Promise<string | null> {
+  const auth = await resolveGoogleAuth(orgId, 'google-drive');
+  if (auth.kind === 'connected' && typeof auth.accessToken === 'string') {
+    return auth.accessToken;
+  }
   const connId = `${orgId}_google-drive`;
   for (const providerKey of ['google-drive', 'google'] as const) {
     const token = await getNangoAccessToken(connId, providerKey);
@@ -406,7 +522,7 @@ async function upsertCatalog(params: {
      ON CONFLICT (org_id, connector, path)
      DO UPDATE SET
        metadata = knowledge_sources.metadata || EXCLUDED.metadata,
-       status = EXCLUDED.status,
+       status = CASE WHEN knowledge_sources.status = 'disabled' THEN 'disabled' ELSE EXCLUDED.status END,
        content_hash = COALESCE(EXCLUDED.content_hash, knowledge_sources.content_hash),
        updated_at = NOW()
      RETURNING id`,
@@ -471,7 +587,7 @@ async function finishJob(params: {
   };
   await params.client.query(
     `UPDATE knowledge_sources
-        SET status = $1,
+        SET status = CASE WHEN status = 'disabled' THEN status ELSE $1 END,
             content_hash = COALESCE($2, content_hash),
             metadata = (metadata - 'ingestText' - 'ingestBase64' - 'pendingText') || $3::jsonb
       WHERE id = $4 AND org_id = $5`,
@@ -563,14 +679,14 @@ async function prepareIngest(input: IngestFileActivityInput): Promise<IngestFile
         const jobId = await ensureJob(client, orgId, sourceId, input.jobId);
         await finishJob({
           client, orgId, jobId, sourceId, state: 'failed',
-          error: 'google-drive not connected. Authorize via Nango OAuth at /connectors.',
-          extraMeta: { connected: false, setupUrl: '/connectors' },
+          error: `google-drive not connected. Authorize via Nango OAuth at ${connectorSignInPath('google-drive')}.`,
+          extraMeta: { connected: false, setupUrl: connectorSignInPath('google-drive') },
         });
         return {
           orgId, sourceId, jobId, status: 'skipped' as const, skipReason: 'not_connected' as const,
           path: catalogPath, modifiedAt: resolvedModified || undefined,
-          connected: false, setupUrl: '/connectors',
-          error: 'google-drive not connected. Authorize via Nango OAuth at /connectors.',
+          connected: false, setupUrl: connectorSignInPath('google-drive'),
+          error: `google-drive not connected. Authorize via Nango OAuth at ${connectorSignInPath('google-drive')}.`,
         };
       }
       if (!fileId) {
@@ -590,7 +706,7 @@ async function prepareIngest(input: IngestFileActivityInput): Promise<IngestFile
       throw ApplicationFailure.nonRetryable('No file bytes to ingest', 'InvalidArgumentError');
     }
 
-    const scan = virusScanStub(bytes);
+    const scan = await scanFileForViruses(bytes);
     const sourceId = source?.id || await upsertCatalog({
       client,
       orgId,
@@ -607,7 +723,7 @@ async function prepareIngest(input: IngestFileActivityInput): Promise<IngestFile
     if (scan.clean === false) {
       await finishJob({
         client, orgId, jobId, sourceId, state: 'failed',
-        error: `virus-scan stub rejected payload: ${scan.reason}`,
+        error: `virus-scan rejected payload: ${scan.reason}`,
         extraMeta: { modifiedAt: resolvedModified, skipped: 'virus' },
       });
       return {
@@ -670,7 +786,7 @@ async function prepareIngest(input: IngestFileActivityInput): Promise<IngestFile
     const contentHash = createHash('sha256').update(redactedWhole.text, 'utf8').digest('hex');
     await client.query(
       `UPDATE knowledge_sources
-          SET status = 'syncing',
+          SET status = CASE WHEN status = 'disabled' THEN status ELSE 'syncing' END,
               content_hash = $1,
               metadata = (metadata - 'ingestText' - 'ingestBase64' - 'pendingText') || $2::jsonb
         WHERE id = $3 AND org_id = $4`,
@@ -740,6 +856,9 @@ export async function ingestFileActivity(input: IngestFileActivityInput): Promis
             path: prepared.catalogPath,
           },
         });
+        // Every chunk may already be embedded (hash skip) or finished while
+        // this loop ran; settle the file's own status now if so (MEM-B01).
+        await rollupChunkedSource(client, prepared.orgId, { parentId: prepared.sourceId });
       });
 
       return {
@@ -821,7 +940,7 @@ async function markConflict(
 ): Promise<number> {
   const res = await client.query(
     `UPDATE knowledge_sources
-        SET status = 'conflict',
+        SET status = CASE WHEN status = 'disabled' THEN status ELSE 'conflict' END,
             metadata = metadata || $1::jsonb
       WHERE org_id = $2 AND path = $3 AND connector = ANY($4::text[])`,
     [JSON.stringify({ conflict: { connectors, hashes, markedAt: new Date().toISOString() } }), orgId, path, connectors],
@@ -871,8 +990,8 @@ async function syncDriveFiles(params: {
       conflicts: 0,
       pendingIngest: [],
       connected: false,
-      setupUrl: '/connectors',
-      error: 'google-drive not connected. Authorize via Nango OAuth at /connectors to enable real actions.',
+      setupUrl: connectorSignInPath('google-drive'),
+      error: `google-drive not connected. Authorize via Nango OAuth at ${connectorSignInPath('google-drive')} to enable real actions.`,
     };
   }
 
@@ -909,8 +1028,8 @@ async function syncDriveFiles(params: {
         return {
           status: 'not_connected',
           upserted, skipped, conflicts, pendingIngest,
-          connected: false, setupUrl: '/connectors',
-          error: 'google-drive connection revoked or expired. Re-authorize at /connectors.',
+          connected: false, setupUrl: connectorSignInPath('google-drive'),
+          error: `google-drive connection revoked or expired. Re-authorize at ${connectorSignInPath('google-drive')}.`,
         };
       }
       if (!res.ok) {
@@ -1010,8 +1129,8 @@ async function syncSheetsInventory(params: {
     return {
       status: 'not_connected',
       upserted: 0, skipped: 0, conflicts: 0, pendingIngest: [],
-      connected: false, setupUrl: '/connectors',
-      error: 'google-sheets not connected. Authorize via Nango OAuth at /connectors to enable real actions.',
+      connected: false, setupUrl: connectorSignInPath('google-sheets'),
+      error: `google-sheets not connected. Authorize via Nango OAuth at ${connectorSignInPath('google-sheets')} to enable real actions.`,
     };
   }
 
@@ -1040,8 +1159,8 @@ async function syncSheetsInventory(params: {
       return {
         status: 'not_connected',
         upserted: 0, skipped: 0, conflicts: 0, pendingIngest: [],
-        connected: false, setupUrl: '/connectors',
-        error: 'google-sheets connection revoked or expired. Re-authorize at /connectors.',
+        connected: false, setupUrl: connectorSignInPath('google-sheets'),
+        error: `google-sheets connection revoked or expired. Re-authorize at ${connectorSignInPath('google-sheets')}.`,
       };
     }
     if (!res.ok) {
@@ -1107,8 +1226,8 @@ async function syncHubspotContacts(params: {
     return {
       status: 'not_connected',
       upserted: 0, skipped: 0, conflicts: 0, pendingIngest: [],
-      connected: false, setupUrl: '/connectors',
-      error: 'hubspot not connected. Authorize via Nango OAuth at /connectors to enable real actions.',
+      connected: false, setupUrl: connectorSignInPath('hubspot'),
+      error: `hubspot not connected. Authorize via Nango OAuth at ${connectorSignInPath('hubspot')} to enable real actions.`,
     };
   }
 
@@ -1128,8 +1247,8 @@ async function syncHubspotContacts(params: {
       return {
         status: 'not_connected',
         upserted: 0, skipped: 0, conflicts: 0, pendingIngest: [],
-        connected: false, setupUrl: '/connectors',
-        error: 'hubspot connection revoked or expired. Re-authorize at /connectors.',
+        connected: false, setupUrl: connectorSignInPath('hubspot'),
+        error: `hubspot connection revoked or expired. Re-authorize at ${connectorSignInPath('hubspot')}.`,
       };
     }
     if (!res.ok) {

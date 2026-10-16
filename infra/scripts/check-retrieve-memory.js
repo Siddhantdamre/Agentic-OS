@@ -12,10 +12,6 @@
  * Requires: compiled @darex/workflows (pnpm --filter @darex/workflows exec tsc)
  */
 
-// NOTE: 127.0.0.1, never 'localhost'. Node resolves localhost to IPv6 ::1 first;
-// Docker publishes on [::] but that path resets the connection, producing
-// intermittent ECONNRESET / "fetch failed" that looks like random flakiness.
-// curl hides this by falling back to IPv4 — Node's fetch and pg do not.
 const fs = require('fs');
 const path = require('path');
 const {
@@ -41,13 +37,13 @@ function allowMissingMemory() {
 
 function loadRetrieveModule() {
   const retrievePath = path.join(__dirname, '../../services/workflows/dist/memory/retrieve.js');
-  const clientPath = path.join(__dirname, '../../services/workflows/dist/atomic-agent-client.js');
+  const clientPath = path.join(__dirname, '../../services/workflows/dist/agent-client.js');
   if (!fs.existsSync(retrievePath) || !fs.existsSync(clientPath)) {
     throw new Error(
       'compiled retrieve missing — run pnpm --filter @darex/workflows exec tsc (emit to dist/)',
     );
   }
-  process.env.DB_HOST = process.env.DB_HOST || '127.0.0.1';
+  process.env.DB_HOST = process.env.DB_HOST || 'localhost';
   process.env.DB_PORT = process.env.DB_PORT || '5432';
   process.env.DB_NAME = process.env.DB_NAME || 'darex';
   const savedPassword = process.env.DB_PASSWORD;
@@ -103,7 +99,7 @@ async function run() {
   let retrieveMod;
   try {
     retrieveMod = loadRetrieveModule();
-    console.log('  [PASS] compiled retrieveMemory + atomic-agent-client loaded');
+    console.log('  [PASS] compiled retrieveMemory + agent-client loaded');
     pass += 1;
   } catch (err) {
     console.log(`  [FAIL] ${err.message}`);

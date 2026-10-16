@@ -33,20 +33,8 @@ interface AIEmployee {
 // Persona is stored as either plain text or a JSON-encoded pack descriptor
 // (`{"text": "...", "packId": "...", "rosterKey": "..."}`). Show the human
 // text, never the raw JSON.
-/**
- * The fallback says the persona is missing; it does not invent one.
- *
- * It used to read "Specialized AI employee for processing inquiries and
- * handling user interactions" — a confident sentence describing work the
- * employee has been given no instructions to do. Every seeded employee here
- * carries a real persona ("never invent pipeline amounts", "never invent order
- * status"), so the one card showing the fallback is precisely the one nobody
- * has finished configuring, and that is the useful thing to say. An operator
- * who reads "no instructions yet" goes and writes some; an operator who reads
- * the old sentence believes the employee is ready.
- */
 function describePersona(persona: unknown): string {
-  const fallback = 'No instructions written yet. This employee will not act until someone gives it a persona.';
+  const fallback = 'Specialized AI employee for processing inquiries and handling user interactions.';
   if (!persona) return fallback;
 
   if (typeof persona === 'object') {
@@ -83,45 +71,18 @@ const AVAILABLE_TOOLS = [
   { id: 'notion', label: 'Notion' },
   { id: 'meta-ads', label: 'Meta Ads' },
   { id: 'web_search', label: 'Web search' },
-  { id: 'web_extract', label: 'Read a web page' },
-  { id: 'database_query', label: 'Your own data' },
-  { id: 'metrics', label: 'Your own KPIs' },
-  { id: 'stripe', label: 'Stripe' },
-  { id: 'razorpay', label: 'Razorpay' },
-  { id: 're', label: 'Real estate' },
 ];
-
-/**
- * Human label for a tool slug.
- *
- * The badges used to print the raw slug under a CSS `capitalize`, which is fine
- * for `gmail` and unreadable for everything else: `re` — a real tool, the
- * real-estate namespace — rendered as the badge "Re", which looks like a
- * truncation bug rather than a capability, and `web_search` rendered as
- * "Web_search". These badges are the page's answer to "what is this employee
- * allowed to touch", so they have to be legible to someone who does not know
- * the slugs. Unknown slugs are prettified rather than dropped: a tool nobody
- * has named yet must still be visible, because hiding one would understate
- * what an employee can reach.
- */
-const TOOL_LABELS: Record<string, string> = Object.fromEntries(
-  AVAILABLE_TOOLS.map((t) => [t.id, t.label])
-);
-
-function toolLabel(slug: string): string {
-  const known = TOOL_LABELS[String(slug).toLowerCase()];
-  if (known) return known;
-  const words = String(slug).replace(/[-_]+/g, ' ').trim();
-  return words.charAt(0).toUpperCase() + words.slice(1);
-}
 
 export default function EmployeesPage() {
   const [employees, setEmployees] = useState<AIEmployee[]>([]);
+  const [connectedChannels, setConnectedChannels] = useState<string[]>([]);
   const [empStats, setEmpStats] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<'all' | 'active' | 'paused'>('all');
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [hireError, setHireError] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   // Form State
   const [name, setName] = useState('');
@@ -133,10 +94,18 @@ export default function EmployeesPage() {
     try {
       setLoading(true);
       const res = await fetch('/api/employees');
-      if (res.ok) {
-        const data = await res.json();
-        setEmployees(data.employees || []);
+      if (res.status === 401) {
+        window.location.href = '/login';
+        return;
       }
+      if (!res.ok) {
+        setLoadError('We couldn’t load employees. Please try again.');
+        return;
+      }
+      const data = await res.json();
+      setEmployees(data.employees || []);
+      setConnectedChannels(Array.isArray(data.connectedChannels) ? data.connectedChannels.map(String) : []);
+      setLoadError(null);
       try {
         const statsRes = await fetch('/api/employees/stats');
         if (statsRes.ok) {
@@ -148,6 +117,7 @@ export default function EmployeesPage() {
       }
     } catch (error) {
       console.error('Failed to fetch employees:', error);
+      setLoadError('Failed to load employees');
     } finally {
       setLoading(false);
     }
@@ -159,29 +129,66 @@ export default function EmployeesPage() {
 
   const handleToggleStatus = async (id: string, currentStatus: string) => {
     const nextStatus = currentStatus === 'active' ? 'paused' : 'active';
+    const previous = employees;
+    setEmployees((prev) =>
+      prev.map((e) => (e.id === id ? { ...e, status: nextStatus } : e))
+    );
     try {
-      setEmployees((prev) =>
-        prev.map((e) => (e.id === id ? { ...e, status: nextStatus } : e))
-      );
-      await fetch(`/api/employees/${id}`, {
+      const res = await fetch(`/api/employees/${id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ status: nextStatus }),
       });
+      if (!res.ok) {
+        setEmployees(previous);
+        const err = await res.json().catch(() => ({}));
+        alert(typeof err.error === 'string' ? err.error : 'Failed to update employee status');
+      }
     } catch (error) {
       console.error('Failed to toggle status:', error);
-      fetchEmployees();
+      setEmployees(previous);
+      alert('Network error updating employee status');
     }
   };
 
   const handleDelete = async (id: string) => {
-    if (!confirm('Are you sure you want to delete this AI employee?')) return;
+    if (!confirm('Archive this AI employee? Open tasks must be reassigned first.')) return;
+    const previous = employees;
+    setEmployees((prev) => prev.filter((e) => e.id !== id));
     try {
-      setEmployees((prev) => prev.filter((e) => e.id !== id));
-      await fetch(`/api/employees/${id}`, { method: 'DELETE' });
+      let res = await fetch(`/api/employees/${id}`, { method: 'DELETE' });
+      if (res.status === 409) {
+        const err = await res.json().catch(() => ({}));
+        const count = typeof err.activeTaskCount === 'number' ? err.activeTaskCount : '?';
+        const others = previous.filter((e) => e.id !== id && e.status === 'active');
+        if (others.length === 0) {
+          setEmployees(previous);
+          alert(`${err.error || 'Active tasks require reassignment'} (${count} tasks). Hire or activate another employee first.`);
+          return;
+        }
+        const pick = window.prompt(
+          `${err.error || 'Reassign tasks first'}\nEnter reassign target employee id:\n${others
+            .map((e) => `${e.name}: ${e.id}`)
+            .join('\n')}`,
+          others[0]?.id || '',
+        );
+        if (!pick) {
+          setEmployees(previous);
+          return;
+        }
+        res = await fetch(`/api/employees/${id}?reassignTo=${encodeURIComponent(pick.trim())}`, {
+          method: 'DELETE',
+        });
+      }
+      if (!res.ok) {
+        setEmployees(previous);
+        const err = await res.json().catch(() => ({}));
+        alert(typeof err.error === 'string' ? err.error : 'Failed to archive employee');
+      }
     } catch (error) {
       console.error('Failed to delete employee:', error);
-      fetchEmployees();
+      setEmployees(previous);
+      alert('Network error archiving employee');
     }
   };
 
@@ -191,6 +198,7 @@ export default function EmployeesPage() {
 
     try {
       setSubmitting(true);
+      setHireError(null);
       const res = await fetch('/api/employees', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -209,13 +217,35 @@ export default function EmployeesPage() {
         setRole('');
         setPersona('');
         setSelectedTools(['gmail', 'whatsapp']);
+        setHireError(null);
         fetchEmployees();
+      } else {
+        const err = await res.json().catch(() => ({}));
+        setHireError(typeof err.error === 'string' ? err.error : 'Failed to hire employee');
       }
     } catch (error) {
       console.error('Failed to create employee:', error);
+      setHireError('Network error hiring employee');
     } finally {
       setSubmitting(false);
     }
+  };
+
+  // Built-in, DB-backed modules (services/workflows/src/tools) with no OAuth of
+  // their own — never show "· connect" for these.
+  const ALWAYS_READY = new Set([
+    'web_search', 'web_extract', 'database_query', 'knowledge_search', 'metrics', 'file_ops', 'code_execution',
+    'customer-ops', 'operations', 'growth', 're', 'realestate', 'rera',
+    'cognee', 'cognee-memory', 'daily_brief', 'daily-brief', 'billing', 'billing_usage',
+  ]);
+
+  const toolReady = (tool: string): boolean => {
+    const key = tool.toLowerCase().replace(/_/g, '-');
+    if (ALWAYS_READY.has(tool.toLowerCase()) || ALWAYS_READY.has(key)) return true;
+    return connectedChannels.some((channel) => {
+      const ch = channel.toLowerCase().replace(/_/g, '-');
+      return ch === key || ch.startsWith(`${key}-`) || key.startsWith(`${ch}-`);
+    });
   };
 
   const parseTools = (tools: any): string[] => {
@@ -248,7 +278,7 @@ export default function EmployeesPage() {
             AI Employee Roster
           </h1>
           <p className="text-slate-500 text-sm mt-1">
-            Mention an employee in Ask AI with @Name. Tool allowlist stays org-union.
+            Mention an employee in Ask AI with @Name. Whoever you mention, they share the same connected apps.
           </p>
         </div>
 
@@ -266,29 +296,37 @@ export default function EmployeesPage() {
         <div className="bg-cream-200/70 border border-cream-300 p-5 rounded-2xl space-y-2 shadow-sm">
           <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Total Workforce</span>
           <div className="text-3xl font-bold text-heading">{employees.length}</div>
-          <span className="text-xs text-slate-500">Autonomous agents</span>
+          <span className="text-xs text-slate-500">AI employees</span>
         </div>
 
         <div className="bg-cream-200/70 border border-cream-300 p-5 rounded-2xl space-y-2 shadow-sm">
           <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Active Status</span>
-          <div className="text-3xl font-bold text-emerald-600">{activeCount}</div>
-          <span className="text-xs text-emerald-600 font-medium">Ready for messages</span>
+          <div className="text-3xl font-bold text-emerald-700">{activeCount}</div>
+          <span className="text-xs text-emerald-700 font-medium">Ready for messages</span>
         </div>
 
         <div className="bg-cream-200/70 border border-cream-300 p-5 rounded-2xl space-y-2 shadow-sm">
           <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Automation Rate</span>
           <div className="text-3xl font-bold text-heading">
-            {empStats?.automationRate ? empStats.automationRate + '%' : (employees.length > 0 ? (activeCount / Math.max(employees.length, 1) * 100).toFixed(0) + '%' : '--')}
+            {empStats?.automationRate != null ? empStats.automationRate + '%' : '—'}
           </div>
-          <span className="text-xs text-slate-500 font-medium">Share of roster currently active</span>
+          <span className="text-xs text-slate-500 font-medium">Conversations with an AI reply</span>
         </div>
 
         <div className="bg-cream-200/70 border border-cream-300 p-5 rounded-2xl space-y-2 shadow-sm">
           <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Avg Resolution</span>
           <div className="text-3xl font-bold text-heading">
-            {empStats?.avgResolutionSec ? empStats.avgResolutionSec.toFixed(1) + 's' : '--'}
+            {empStats && typeof empStats.avgResolutionSec === 'number'
+              ? empStats.avgResolutionSec > 0
+                ? empStats.avgResolutionSec.toFixed(1) + 's'
+                : '0s'
+              : '--'}
           </div>
-          <span className="text-xs text-slate-500 font-medium">Time to conversation.resolved_at when present</span>
+          <span className="text-xs text-slate-500 font-medium">
+            {empStats && !empStats.conversationsResolved
+              ? 'No resolved conversations yet'
+              : 'Time to conversation.resolved_at when present'}
+          </span>
         </div>
       </div>
 
@@ -315,6 +353,17 @@ export default function EmployeesPage() {
           {[1, 2, 3].map((i) => (
             <div key={i} className="h-64 bg-cream-200/50 rounded-3xl animate-pulse border border-cream-300" />
           ))}
+        </div>
+      ) : loadError ? (
+        <div className="rounded-2xl border border-red-200 bg-red-50 p-6 text-sm text-red-800 space-y-3">
+          <p>{loadError}</p>
+          <button
+            type="button"
+            onClick={() => fetchEmployees()}
+            className="px-4 py-2 rounded-xl bg-amber-500 text-heading text-xs font-semibold"
+          >
+            Retry
+          </button>
         </div>
       ) : filteredEmployees.length === 0 ? (
         <div className="bg-white border-2 border-dashed border-cream-300 rounded-3xl p-12 text-center space-y-4">
@@ -347,17 +396,14 @@ export default function EmployeesPage() {
                   <div className="flex items-start justify-between">
                     <div className="flex items-center space-x-3">
                       <div className="w-12 h-12 rounded-2xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center shrink-0">
-                        <Bot className="w-6 h-6 text-amber-600" />
+                        <Bot className="w-6 h-6 text-amber-700" />
                       </div>
                       <div>
-                        {/* The name is the way in. A detail page nothing links
-                            to is a page that does not exist. */}
-                        <Link
-                          href={`/employees/${employee.id}`}
-                          className="font-bold font-serif text-lg text-heading hover:underline underline-offset-2"
-                        >
-                          {employee.name}
-                        </Link>
+                        <h3 className="font-bold font-serif text-lg text-heading">
+                          <Link href={`/employees/${employee.id}`} className="hover:underline">
+                            {employee.name}
+                          </Link>
+                        </h3>
                         <span className="text-xs font-semibold px-2.5 py-0.5 rounded-full bg-amber-500/20 text-amber-700">
                           {employee.role}
                         </span>
@@ -380,27 +426,41 @@ export default function EmployeesPage() {
                   <div className="space-y-1.5">
                     <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider flex items-center space-x-1">
                       <Shield className="w-3 h-3 text-slate-400" />
-                      <span>Authorized Tools</span>
+                      <span>Adds to org tools</span>
                     </span>
                     <div className="flex flex-wrap gap-1.5">
                       {tools.length > 0 ? (
-                        tools.map((tool) => (
-                          <span
-                            key={tool}
-                            className="text-[11px] font-medium px-2 py-0.5 bg-cream-200 text-slate-700 rounded-md border border-cream-300"
-                          >
-                            {toolLabel(tool)}
-                          </span>
-                        ))
+                        tools.map((tool) => {
+                          const ready = toolReady(tool);
+                          return (
+                            <span
+                              key={tool}
+                              title={ready ? 'Ready' : 'Not connected — open Connectors'}
+                              className={`text-[11px] font-medium px-2 py-0.5 rounded-md border capitalize ${
+                                ready
+                                  ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
+                                  : 'bg-amber-50 text-amber-800 border-amber-200'
+                              }`}
+                            >
+                              {tool}
+                              {ready ? '' : ' · connect'}
+                            </span>
+                          );
+                        })
                       ) : (
                         <span className="text-xs text-slate-400 italic">No tools assigned</span>
                       )}
                     </div>
+                    {tools.some((tool) => !toolReady(tool)) ? (
+                      <Link href="/connectors" className="touch-target text-[11px] font-semibold text-amber-700 hover:underline">
+                        Connect missing tools
+                      </Link>
+                    ) : null}
                   </div>
                 </div>
 
                 {/* Bottom Actions */}
-                <div className="pt-4 border-t border-cream-200 flex items-center justify-between">
+                <div className="pt-4 border-t border-cream-200 flex items-center justify-between gap-2">
                   <button
                     onClick={() => handleToggleStatus(employee.id, employee.status)}
                     className={`px-3 py-1.5 rounded-xl text-xs font-semibold flex items-center space-x-1.5 transition-colors ${
@@ -416,19 +476,30 @@ export default function EmployeesPage() {
                       </>
                     ) : (
                       <>
-                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-700" />
                         <span>Activate</span>
                       </>
                     )}
                   </button>
 
-                  <button
-                    onClick={() => handleDelete(employee.id)}
-                    className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-xl transition-colors"
-                    title="Delete AI Employee"
-                  >
-                    <Trash2 className="w-4 h-4" />
-                  </button>
+                  <div className="flex items-center gap-1.5">
+                    {isActive ? (
+                      <Link
+                        href={`/ask-ai?employee=${encodeURIComponent(employee.id)}&mode=single`}
+                        className="px-3 py-1.5 rounded-xl text-xs font-semibold inline-flex items-center gap-1.5 bg-amber-500/15 hover:bg-amber-500/25 text-amber-900 border border-amber-500/30 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
+                      >
+                        <MessageSquare className="w-3.5 h-3.5 text-amber-700" />
+                        <span className="truncate max-w-[9rem]">Chat with {employee.name}</span>
+                      </Link>
+                    ) : null}
+                    <button
+                      onClick={() => handleDelete(employee.id)}
+                      className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-xl transition-colors"
+                      title="Delete AI Employee"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
                 </div>
               </div>
             );
@@ -444,11 +515,11 @@ export default function EmployeesPage() {
       {/* Hire Modal */}
       {isModalOpen && (
         <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-white border border-cream-300 rounded-3xl p-8 max-w-lg w-full shadow-2xl space-y-6">
+          <div className="bg-white border border-cream-300 rounded-3xl p-8 max-w-lg w-full max-h-[calc(100vh-2rem)] overflow-y-auto shadow-2xl space-y-6">
             <div className="flex items-center justify-between border-b border-cream-200 pb-4">
               <div className="flex items-center space-x-3">
                 <div className="w-10 h-10 rounded-xl bg-amber-500/20 flex items-center justify-center">
-                  <Sparkles className="w-5 h-5 text-amber-600" />
+                  <Sparkles className="w-5 h-5 text-amber-700" />
                 </div>
                 <div>
                   <h2 className="text-xl font-serif font-bold text-heading">Hire AI Employee</h2>
@@ -464,6 +535,9 @@ export default function EmployeesPage() {
             </div>
 
             <form onSubmit={handleCreateEmployee} className="space-y-4">
+              {hireError && (
+                <p className="text-xs text-red-700 bg-red-50 border border-red-100 rounded-xl px-3 py-2">{hireError}</p>
+              )}
               <div>
                 <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">
                   Employee Name *
@@ -507,7 +581,7 @@ export default function EmployeesPage() {
 
               <div>
                 <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">
-                  Tool Permissions
+                  Adds to org tools
                 </label>
                 <div className="grid grid-cols-2 gap-2">
                   {AVAILABLE_TOOLS.map((t) => {
@@ -528,7 +602,7 @@ export default function EmployeesPage() {
                         }`}
                       >
                         <span>{t.label}</span>
-                        {isChecked && <CheckCircle2 className="w-3.5 h-3.5 text-amber-600" />}
+                        {isChecked && <CheckCircle2 className="w-3.5 h-3.5 text-amber-700" />}
                       </button>
                     );
                   })}

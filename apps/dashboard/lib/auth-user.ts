@@ -1,5 +1,6 @@
 import type { PoolClient } from 'pg';
 import { sha256Hex } from '@/lib/password';
+import { upsertOrgMembership } from '@/lib/auth-security';
 
 export type AuthUserRow = {
   id: string;
@@ -23,6 +24,11 @@ export async function lookupUserByEmail(client: PoolClient, email: string): Prom
     return res.rows[0] ?? null;
   } catch (err) {
     if (!isUndefinedFunction(err)) throw err;
+    if (process.env.NODE_ENV === 'production') {
+      console.error('[auth-user] Critical: auth_lookup_user_by_email DB function is missing in production');
+      throw err;
+    }
+    console.warn('[auth-user] lookupUserByEmail: DB function unavailable, using raw fallback query (dev only)');
     const res = await client.query<AuthUserRow>(
       `SELECT id, org_id, email, role, password_hash, supertokens_id FROM users WHERE lower(email) = lower($1) LIMIT 1`,
       [email]
@@ -40,6 +46,10 @@ export async function lookupUserById(client: PoolClient, userId: string): Promis
     return res.rows[0] ?? null;
   } catch (err) {
     if (!isUndefinedFunction(err)) throw err;
+    if (process.env.NODE_ENV === 'production') {
+      console.error('[auth-user] Critical: auth_lookup_user_by_id DB function is missing in production');
+      throw err;
+    }
     await client.query("SELECT set_config('app.current_user_id', $1, false)", [userId]);
     const res = await client.query<AuthUserRow>(
       `SELECT id, org_id, email, role, password_hash, supertokens_id FROM users WHERE id = $1 LIMIT 1`,
@@ -82,8 +92,32 @@ export async function insertAuthUser(
         `INSERT INTO org_onboarding (org_id, wizard_step) VALUES ($1, 'name') ON CONFLICT (org_id) DO NOTHING`,
         [opts.orgId]
       )
-      .catch(() => {});
+      .catch((err: unknown) => {
+        console.warn('[auth-user] Onboarding insert failed:', err instanceof Error ? err.message : err);
+      });
     return insertRes.rows[0].id;
+  }
+}
+
+/**
+ * Records email-signup consent. Prefer the SECURITY DEFINER helper so this
+ * works before the session GUC is set. Falls back to an org-scoped UPDATE
+ * when the migration has not been applied yet.
+ */
+export async function markTermsAccepted(
+  client: PoolClient,
+  userId: string,
+  orgId: string,
+): Promise<void> {
+  try {
+    await client.query(`SELECT auth_set_terms_accepted($1::uuid)`, [userId]);
+  } catch (err) {
+    if (!isUndefinedFunction(err)) throw err;
+    await client.query("SELECT set_config('app.current_org_id', $1, false)", [orgId]);
+    await client.query(
+      `UPDATE users SET terms_accepted_at = COALESCE(terms_accepted_at, NOW()), updated_at = NOW() WHERE id = $1`,
+      [userId],
+    );
   }
 }
 
@@ -104,6 +138,7 @@ export async function attachUserToOrg(
       userId,
     ]);
   }
+  await upsertOrgMembership(client, userId, orgId, role || 'member', true);
 }
 
 export async function updatePasswordHash(client: PoolClient, userId: string, passwordHash: string): Promise<void> {

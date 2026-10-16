@@ -19,6 +19,7 @@
  */
 
 import React, { useState } from 'react';
+import { networkErrorMessage } from '@/lib/client-error';
 import { Lightbulb, Check } from 'lucide-react';
 
 const KINDS = [
@@ -54,7 +55,7 @@ export function TeachFact({ onSaved }: { onSaved?: () => void }) {
       setTitle('');
       onSaved?.();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not save that.');
+      setError(networkErrorMessage(err, 'Could not save that.'));
     } finally {
       setSaving(false);
     }

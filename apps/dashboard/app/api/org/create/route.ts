@@ -1,70 +1,85 @@
 import { NextResponse } from 'next/server';
-import { getScopedClient } from '@/lib/db';
-import { applySessionCookies } from '@/lib/session-cookie';
+import { issueSessionCookies } from '@/lib/session-epoch';
+import type { PoolClient } from 'pg';
+import { getScopedClient, scopedAuthErrorResponse } from '@/lib/db';
+
 import { recommendationPayload } from '@/app/(onboarding)/pack-recommendations';
+import { seedDefaultEmployees } from '@/lib/employee-provision';
+import { seedColdStart } from '@darex/workflows/dist/cold-start';
+import { canManageOrgSettings, loadHumanRole } from '@/lib/rbac';
+import { upsertOrgMembership } from '@/lib/auth-security';
+import { recordAuditEvent } from '@/lib/audit-events';
+import { installPackForOrg, isLivePackId } from '@/app/api/packs/_lib';
+import { jsonBodyOrEmpty } from '@/lib/safe-json';
+import { publicErrorMessage } from '@/lib/public-error';
 
-const PACK_INSTALL_PATHS = ['/api/packs/install', '/api/packs'];
-
-async function tryInstallRecommendedPacks(
-  request: Request,
+/**
+ * Install recommended packs via the canonical dashboard installer
+ * (`installPackForOrg` from packs/_lib). Session org only — never body org_id.
+ * Non-live ids are skipped (not reported as installed).
+ */
+async function installRecommendedPacks(
+  client: PoolClient,
+  orgId: string,
+  userId: string,
   packIds: string[]
-): Promise<{ attempted: boolean; installed: string[]; failed: string[] }> {
+): Promise<{ attempted: boolean; installed: string[]; failed: string[]; skipped: string[] }> {
   const installed: string[] = [];
   const failed: string[] = [];
-  let attempted = false;
-  const cookie = request.headers.get('cookie') || '';
-  const origin = new URL(request.url).origin;
+  const skipped: string[] = [];
+  const liveIds = packIds.filter((id) => {
+    if (isLivePackId(id)) return true;
+    skipped.push(id);
+    return false;
+  });
 
-  for (const packId of packIds) {
-    let handled = false;
-    for (const path of PACK_INSTALL_PATHS) {
-      try {
-        const res = await fetch(`${origin}${path}`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            cookie,
-          },
-          body: JSON.stringify({ packId }),
-        });
-        if (res.status === 404) continue;
-        attempted = true;
-        handled = true;
-        if (res.ok) installed.push(packId);
-        else failed.push(packId);
-        break;
-      } catch {
-        // try the next known pack-install path
-      }
-    }
-    if (!handled) {
-      // Packs API is not on this branch yet — recommend only, never fake install.
-    }
+  if (liveIds.length === 0) {
+    return { attempted: false, installed, failed, skipped };
   }
 
-  return { attempted, installed, failed };
+  await client.query('BEGIN');
+  try {
+    for (const packId of liveIds) {
+      const result = await installPackForOrg(client, orgId, packId, { userId });
+      if (result.status === 'installed') {
+        installed.push(packId);
+      } else {
+        failed.push(packId);
+      }
+    }
+    await client.query('COMMIT');
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => undefined);
+    throw err;
+  }
+
+  return { attempted: true, installed, failed, skipped };
 }
 
 /**
  * POST /api/org/create
- * Called at the final step of onboarding to persist org name, team size,
- * business type, and selected channels (initial channel seed).
- * Org is resolved from the session — body org_id is ignored.
+ * Final onboarding step. Org resolved from session — body org_id rejected.
+ * DB writes (name, channels, onboarding) run in one transaction; employee seed
+ * and pack install run after commit (seed has its own txn; packs use installPackForOrg).
  */
 export async function POST(request: Request) {
   let scoped: Awaited<ReturnType<typeof getScopedClient>> | null = null;
   try {
     scoped = await getScopedClient();
   } catch (err) {
-    if (err instanceof Error && err.message === 'Unauthorized') {
-      return NextResponse.json({ status: 'ERROR', message: 'Unauthorized' }, { status: 401 });
-    }
+    const authErr = scopedAuthErrorResponse(err);
+    if (authErr) return authErr;
     throw err;
   }
 
   const { client, orgId, userId } = scoped;
   try {
-    const body = (await request.json().catch(() => ({}))) as {
+    const role = await loadHumanRole(client, userId);
+    if (!canManageOrgSettings(role)) {
+      return NextResponse.json({ status: 'ERROR', message: 'Forbidden' }, { status: 403 });
+    }
+
+    const body = (await jsonBodyOrEmpty(request)) as {
       businessName?: string;
       teamSize?: number;
       businessType?: string;
@@ -91,44 +106,80 @@ export async function POST(request: Request) {
       ? body.channels.filter((c): c is string => typeof c === 'string' && c.length > 0)
       : [];
 
-    await client.query(
-      `UPDATE orgs SET name = $1, status = 'active', updated_at = NOW() WHERE id = $2`,
-      [businessName, orgId]
-    );
+    await client.query('BEGIN');
+    try {
+      await client.query(
+        `UPDATE orgs SET name = $1, status = 'active', updated_at = NOW() WHERE id = $2`,
+        [businessName, orgId]
+      );
 
-    if (channels.length > 0) {
       for (const channelType of channels) {
         await client.query(
           `INSERT INTO channels (org_id, channel_type, status)
            VALUES ($1, $2, 'pending')
-           ON CONFLICT (org_id, channel_type) DO NOTHING`,
+           ON CONFLICT (org_id, channel_type, account_key) DO NOTHING`,
           [orgId, channelType]
         );
       }
+
+      await client.query(
+        `INSERT INTO org_onboarding (
+           org_id, wizard_step, business_name, team_size, business_type,
+           channels_selected, provisioning_started_at, provisioning_completed_at, updated_at
+         ) VALUES ($1, 'channels', $2, $3, $4, $5, NOW(), NOW(), NOW())
+         ON CONFLICT (org_id) DO UPDATE SET
+           wizard_step = 'channels',
+           business_name = EXCLUDED.business_name,
+           team_size = EXCLUDED.team_size,
+           business_type = EXCLUDED.business_type,
+           channels_selected = EXCLUDED.channels_selected,
+           provisioning_started_at = COALESCE(org_onboarding.provisioning_started_at, NOW()),
+           provisioning_completed_at = NOW(),
+           updated_at = NOW()`,
+        [orgId, businessName, teamSize, businessType, channels]
+      );
+
+      await upsertOrgMembership(client, userId, orgId, role, true);
+      await client.query('COMMIT');
+    } catch (txnErr) {
+      await client.query('ROLLBACK').catch(() => undefined);
+      throw txnErr;
     }
 
-    await client.query(
-      `INSERT INTO org_onboarding (
-         org_id, wizard_step, business_name, team_size, business_type,
-         channels_selected, provisioning_started_at, provisioning_completed_at, updated_at
-       ) VALUES ($1, 'channels', $2, $3, $4, $5, NOW(), NOW(), NOW())
-       ON CONFLICT (org_id) DO UPDATE SET
-         wizard_step = 'channels',
-         business_name = EXCLUDED.business_name,
-         team_size = EXCLUDED.team_size,
-         business_type = EXCLUDED.business_type,
-         channels_selected = EXCLUDED.channels_selected,
-         provisioning_started_at = COALESCE(org_onboarding.provisioning_started_at, NOW()),
-         provisioning_completed_at = NOW(),
-         updated_at = NOW()`,
-      [orgId, businessName, teamSize, businessType, channels]
-    );
+    // Own transaction inside seedDefaultEmployees — after org txn commits.
+    await seedDefaultEmployees(client, orgId);
+    const coldStart = seedColdStart(0);
 
     const recommendation = recommendationPayload(businessType);
+    // Canonical packs installer (same path as POST /api/packs) — session org only.
+    const packInstall = await installRecommendedPacks(
+      client,
+      orgId,
+      userId,
+      recommendation.recommendedPacks
+    );
+
+    try {
+      await recordAuditEvent({
+        orgId,
+        kind: 'settings.update',
+        actor: { actorType: 'user', userId },
+        action: 'onboarding.complete',
+        resultStatus: 'ok',
+        payload: {
+          businessName,
+          channelsSeeded: channels.length,
+          packsInstalled: packInstall.installed,
+          packsFailed: packInstall.failed,
+          coldStartPhase: coldStart.phase,
+        },
+      });
+    } catch {
+      // audit is best-effort
+    }
+
     client.release();
     scoped = null;
-
-    const packInstall = await tryInstallRecommendedPacks(request, recommendation.recommendedPacks);
 
     const res = NextResponse.json({
       status: 'OK',
@@ -140,18 +191,18 @@ export async function POST(request: Request) {
       channelsStatus: 'pending',
       connectorsMarkedConnected: false,
       packInstall,
+      coldStart,
       ...recommendation,
     });
-    await applySessionCookies(res, { userId, orgId, onboardingComplete: true });
+    await issueSessionCookies(res, { userId, orgId, onboardingComplete: true });
     return res;
   } catch (err) {
     console.error('Org create error:', err);
     return NextResponse.json(
-      { status: 'ERROR', message: err instanceof Error ? err.message : 'Failed to create organization' },
+      { status: 'ERROR', message: publicErrorMessage(err, 'Failed to create organization') },
       { status: 500 }
     );
   } finally {
     if (scoped) scoped.client.release();
   }
 }
-

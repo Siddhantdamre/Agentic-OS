@@ -4,7 +4,9 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { ListChecks, RefreshCw } from 'lucide-react';
 import { PlanCard, type PlanStep } from '@/components/chat/PlanCard';
 import { ExecutionStrip, type StepRunStatus } from '@/components/chat/ExecutionStrip';
+import { useRealtimeStream } from '@/lib/use-realtime-stream';
 import { LiveRegion, StatusBadge, type StatusTone } from '@/components/a11y';
+import { responseErrorMessage } from '@/lib/client-error';
 
 type PlanStatus =
   | 'pending'
@@ -71,6 +73,10 @@ function normalizePlan(row: Record<string, unknown>): InboxPlan | null {
   };
 }
 
+const PLAN_EVENTS = ['plan_updated'] as const;
+
+const PLANS_LOAD_FAILED = 'We couldn’t load your plans just now. Please try again in a moment.';
+
 export default function PlansPage() {
   const [plans, setPlans] = useState<InboxPlan[]>([]);
   const [loading, setLoading] = useState(true);
@@ -80,28 +86,45 @@ export default function PlansPage() {
     {}
   );
   const [errors, setErrors] = useState<Record<string, string>>({});
+  const [showHistory, setShowHistory] = useState(false);
+  const [loadError, setLoadError] = useState('');
 
-  const loadPlans = useCallback(async () => {
-    setLoading(true);
+  const loadPlans = useCallback(async (quiet = false) => {
+    if (!quiet) setLoading(true);
     try {
-      const res = await fetch('/api/ask-ai/plan');
+      const res = await fetch(showHistory ? '/api/ask-ai/plan?history=1' : '/api/ask-ai/plan');
       if (!res.ok) {
-        setPlans([]);
+        // Keep what is on screen on a quiet refresh; otherwise say so rather than showing an empty inbox.
+        if (!quiet) setPlans([]);
+        setLoadError(await responseErrorMessage(res, PLANS_LOAD_FAILED));
         return;
       }
+      setLoadError('');
       const data = await res.json();
       const rows = Array.isArray(data.plans) ? data.plans : data.plan ? [data.plan] : [];
       setPlans(rows.map(normalizePlan).filter((p: InboxPlan | null): p is InboxPlan => Boolean(p)));
     } catch {
-      setPlans([]);
+      if (!quiet) setPlans([]);
+      setLoadError(PLANS_LOAD_FAILED);
     } finally {
-      setLoading(false);
+      if (!quiet) setLoading(false);
     }
-  }, []);
+  }, [showHistory]);
 
   useEffect(() => {
     void loadPlans();
   }, [loadPlans]);
+
+  // Live refresh; skipped while this tab is streaming an execution itself.
+  const { fallback: streamDown } = useRealtimeStream({
+    events: PLAN_EVENTS,
+    onEvent: () => {
+      if (!executingId) void loadPlans(true);
+    },
+    onFallbackTick: () => {
+      if (!executingId) void loadPlans(true);
+    },
+  });
 
   const patchPlan = (planId: string, patch: Partial<InboxPlan>) => {
     setPlans((prev) => prev.map((p) => (p.id === planId ? { ...p, ...patch } : p)));
@@ -118,11 +141,44 @@ export default function PlansPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           planId,
-          steps: steps.map((s) => ({ id: s.id, description: s.description, enabled: s.enabled })),
+          steps: steps.map((s) => ({
+            id: s.id,
+            description: s.description,
+            enabled: s.enabled,
+            payload: s.payload || {},
+          })),
         }),
       });
     } catch {
       // keep optimistic steps
+    }
+  };
+
+  const handleUpdateStepPayload = async (
+    planId: string,
+    index: number,
+    payload: Record<string, unknown>
+  ) => {
+    const plan = plans.find((p) => p.id === planId);
+    if (!plan) return;
+    const steps = plan.steps.map((s, i) => (i === index ? { ...s, payload } : s));
+    patchPlan(planId, { steps });
+    try {
+      await fetch('/api/ask-ai/plan', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          planId,
+          steps: steps.map((s) => ({
+            id: s.id,
+            description: s.description,
+            enabled: s.enabled,
+            payload: s.payload || {},
+          })),
+        }),
+      });
+    } catch (e) {
+      console.error('step payload sync failed, server state may not match UI:', planId, e);
     }
   };
 
@@ -290,22 +346,45 @@ export default function PlansPage() {
         <div>
           <h1 className="text-2xl sm:text-3xl font-serif font-bold text-heading">Plans</h1>
           <p className="text-slate-500 text-sm mt-1">
-            Pending and in-flight plans. Approve here is the same confirm as Ask AI.
+            {showHistory
+              ? 'Recent plans, including completed and cancelled.'
+              : 'Pending and in-flight plans. Approve here is the same confirm as Ask AI.'}
           </p>
         </div>
-        <button
-          type="button"
-          onClick={() => void loadPlans()}
-          className="px-3 py-2 bg-cream-200 hover:bg-cream-300 border border-cream-300 rounded-xl text-xs font-semibold text-slate-700 inline-flex items-center gap-2 focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
-        >
-          <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
-          Refresh
-        </button>
+        <div className="flex gap-2">
+          <button
+            type="button"
+            aria-pressed={showHistory}
+            onClick={() => setShowHistory((v) => !v)}
+            className="px-3 py-2 bg-cream-200 hover:bg-cream-300 border border-cream-300 rounded-xl text-xs font-semibold text-slate-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
+          >
+            {showHistory ? 'Active only' : 'History'}
+          </button>
+          {streamDown && (
+            <span className="text-[10px] text-amber-700 font-mono" role="status">
+              Polling fallback
+            </span>
+          )}
+          <button
+            type="button"
+            onClick={() => void loadPlans()}
+            className="px-3 py-2 bg-cream-200 hover:bg-cream-300 border border-cream-300 rounded-xl text-xs font-semibold text-slate-700 inline-flex items-center gap-2 focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
+            Refresh
+          </button>
+        </div>
       </div>
+
+      {loadError && (
+        <div role="alert" className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
+          {loadError}
+        </div>
+      )}
 
       {loading ? (
         <div className="p-8 text-center text-slate-500 font-serif">Loading plans…</div>
-      ) : plans.length === 0 ? (
+      ) : plans.length === 0 && !loadError ? (
         <div className="bg-white border border-dashed border-cream-300 rounded-3xl p-10 text-center space-y-2">
           <ListChecks className="w-10 h-10 text-slate-300 mx-auto" />
           <h2 className="font-serif font-bold text-heading">No plans in the inbox</h2>
@@ -342,6 +421,7 @@ export default function PlansPage() {
                     onCancel={handleCancel}
                     onToggleStep={handleToggleStep}
                     onAddInstruction={handleAddInstruction}
+                    onUpdateStepPayload={handleUpdateStepPayload}
                   />
                 ) : (
                   <p className="text-sm text-slate-600">{plan.summary || 'Plan'}</p>

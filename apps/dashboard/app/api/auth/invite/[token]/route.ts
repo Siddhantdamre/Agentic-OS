@@ -2,8 +2,12 @@ import { NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
 import { pool } from '@/lib/db';
 import { acceptInviteToken, lookupInviteByToken, lookupUserById } from '@/lib/auth-user';
-import { applySessionCookies, parseSessionCookie, SESSION_COOKIE } from '@/lib/session-cookie';
+import { parseSessionCookieParts, SESSION_COOKIE } from '@/lib/session-cookie';
+import { issueSessionCookies } from '@/lib/session-epoch';
 import { normalizeEmail } from '@/lib/password';
+import { clientIpFromRequest, denyAuthIfLimited } from '@/lib/rate-limit';
+import { recordAuditEvent } from '@/lib/audit-events';
+import { upsertOrgMembership } from '@/lib/auth-security';
 
 function inviteExpired(expiresAt: Date | string): boolean {
   return new Date(expiresAt).getTime() < Date.now();
@@ -41,12 +45,16 @@ export async function POST(
   _request: Request,
   { params }: { params: Promise<{ token: string }> }
 ) {
+  const limited = denyAuthIfLimited(clientIpFromRequest(_request), 'invite');
+  if (limited) return limited;
+
   const { token } = await params;
   const cookieStore = await cookies();
-  const userId = await parseSessionCookie(cookieStore.get(SESSION_COOKIE)?.value);
-  if (!userId) {
+  const session = await parseSessionCookieParts(cookieStore.get(SESSION_COOKIE)?.value);
+  if (!session) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
+  const { userId, epoch: cookieEpoch } = session;
 
   const client = await pool.connect();
   try {
@@ -65,6 +73,21 @@ export async function POST(
     if (!user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
+
+    let sessionEpoch = 0;
+    try {
+      const epochRes = await client.query<{ session_epoch: number }>(
+        `SELECT session_epoch FROM users WHERE id = $1 LIMIT 1`,
+        [userId]
+      );
+      sessionEpoch = Number(epochRes.rows[0]?.session_epoch ?? 0);
+    } catch (err: unknown) {
+      if ((err as { code?: string })?.code !== '42703') throw err;
+      sessionEpoch = 0;
+    }
+    if (cookieEpoch !== sessionEpoch) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
     if (normalizeEmail(user.email) !== normalizeEmail(invite.email)) {
       return NextResponse.json(
         { error: 'This invite was sent to a different email address.' },
@@ -77,13 +100,26 @@ export async function POST(
       return NextResponse.json({ error: 'Invite org mismatch' }, { status: 409 });
     }
 
+    await upsertOrgMembership(client, userId, accepted.orgId, accepted.role || invite.role, true);
+    try {
+      await recordAuditEvent({
+        orgId: accepted.orgId,
+        kind: 'invite.accept',
+        actor: { actorType: 'user', userId },
+        action: 'invite.accept',
+        resultStatus: 'ok',
+      });
+    } catch {
+      // best-effort
+    }
+
     const res = NextResponse.json({
       status: 'OK',
       orgId: accepted.orgId,
       role: accepted.role,
       onboardingComplete: true,
     });
-    await applySessionCookies(res, {
+    await issueSessionCookies(res, {
       userId,
       orgId: accepted.orgId,
       onboardingComplete: true,

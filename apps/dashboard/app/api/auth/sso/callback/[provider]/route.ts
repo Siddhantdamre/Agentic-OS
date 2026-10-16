@@ -2,7 +2,8 @@ import { NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
 import ThirdParty from 'supertokens-node/recipe/thirdparty';
 import { pool, createOrgForEmail, ensureUserOrg, getOrgScopedClient } from '@/lib/db';
-import { applySessionCookies, PENDING_INVITE_COOKIE } from '@/lib/session-cookie';
+import { PENDING_INVITE_COOKIE } from '@/lib/session-cookie';
+import { issueSessionCookies } from '@/lib/session-epoch';
 import {
   acceptInviteToken,
   insertAuthUser,
@@ -12,12 +13,13 @@ import {
   linkSuperTokensId,
 } from '@/lib/auth-user';
 import { normalizeEmail } from '@/lib/password';
-import { recordAuditEvent } from '@/lib/inbound-confirm';
+import { recordAuditEvent } from '@/lib/audit-events';
 import {
   ensureSuperTokensInit,
   parseSsoProvider,
   ssoThirdPartyId,
 } from '@/lib/supertokens';
+import { resolveAppUrl } from '@/lib/oauth-providers';
 
 export const dynamic = 'force-dynamic';
 
@@ -49,24 +51,24 @@ export async function GET(
   const { provider: rawProvider } = await params;
   const provider = parseSsoProvider(rawProvider);
   const url = new URL(request.url);
+  const appUrl = resolveAppUrl(request);
 
   if (!provider) {
-    return redirectLogin(url.origin, 'Unsupported SSO provider');
+    return redirectLogin(appUrl, 'Unsupported SSO provider');
   }
 
   const errorParam = url.searchParams.get('error');
   if (errorParam) {
-    return redirectLogin(url.origin, `SSO denied: ${errorParam}`);
+    return redirectLogin(appUrl, `SSO denied: ${errorParam}`);
   }
 
   const cookieStore = await cookies();
   const savedState = cookieStore.get(SSO_STATE_COOKIE(provider))?.value;
   const state = url.searchParams.get('state') || '';
   if (!savedState || !state || savedState !== state) {
-    return redirectLogin(url.origin, 'Invalid SSO state. Please try again.');
+    return redirectLogin(appUrl, 'Invalid SSO state. Please try again.');
   }
 
-  const appUrl = process.env.NEXT_PUBLIC_APP_URL || url.origin;
   const redirectURIOnProviderDashboard = `${appUrl}/api/auth/sso/callback/${provider}`;
   const pkceCodeVerifier = cookieStore.get(SSO_PKCE_COOKIE(provider))?.value;
   const pendingInvite = cookieStore.get(PENDING_INVITE_COOKIE)?.value;
@@ -74,7 +76,7 @@ export async function GET(
   try {
     const tp = await ThirdParty.getProvider('public', ssoThirdPartyId(provider), undefined);
     if (!tp) {
-      return redirectLogin(url.origin, `${provider} SSO is not registered in SuperTokens`);
+      return redirectLogin(appUrl, `${provider} SSO is not registered in SuperTokens`);
     }
 
     const redirectURIQueryParams: Record<string, string> = {};
@@ -93,7 +95,7 @@ export async function GET(
     const userInfo = await tp.getUserInfo({ oAuthTokens, userContext: {} as never });
     const email = userInfo.email?.id ? normalizeEmail(userInfo.email.id) : '';
     if (!email) {
-      return redirectLogin(url.origin, 'SSO IdP did not return an email');
+      return redirectLogin(appUrl, 'SSO IdP did not return an email');
     }
 
     const st = await ThirdParty.manuallyCreateOrUpdateUser(
@@ -104,7 +106,7 @@ export async function GET(
       userInfo.email?.isVerified ?? true
     );
     if (st.status !== 'OK') {
-      return redirectLogin(url.origin, `SSO sign-in not allowed (${st.status})`);
+      return redirectLogin(appUrl, `SSO sign-in not allowed (${st.status})`);
     }
 
     const client = await pool.connect();
@@ -143,9 +145,9 @@ export async function GET(
       }
 
       const onboardingComplete = isNew ? false : await isOnboardingComplete(client, orgId);
-      const dest = new URL(onboardingComplete ? '/' : '/onboarding/name', url.origin);
+      const dest = new URL(onboardingComplete ? '/' : '/onboarding/name', appUrl);
       const res = NextResponse.redirect(dest);
-      await applySessionCookies(res, { userId, orgId, onboardingComplete });
+      await issueSessionCookies(res, { userId, orgId, onboardingComplete });
       clearSsoCookies(res, provider);
 
       try {
@@ -176,6 +178,6 @@ export async function GET(
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
     console.error(`[sso] callback ${provider}:`, message);
-    return redirectLogin(url.origin, `SSO failed: ${message.slice(0, 180)}`);
+    return redirectLogin(appUrl, 'SSO failed. Please try again.');
   }
 }

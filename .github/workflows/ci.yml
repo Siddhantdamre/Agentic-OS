@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main, develop, feat/atomic-agent-integration, future-scope]
+    branches: [main, develop, feat/atomic-agent-integration, feat/close-109-plan-gaps, future-scope]
   pull_request:
 
 concurrency:
@@ -140,6 +140,8 @@ jobs:
         run: |
           pnpm --filter @darex/shared-types exec tsc --noEmit
           pnpm --filter @darex/shared-types build
+          # workflows imports @darex/whatsapp-gateway, which resolves to its dist/ (gitignored).
+          pnpm --filter @darex/whatsapp-gateway build
           pnpm --filter @darex/connectors exec tsc --noEmit
           pnpm --filter @darex/workflows exec tsc --noEmit
           # Dashboard imports @darex/workflows/dist/*; dist/ is gitignored.
@@ -153,6 +155,23 @@ jobs:
 
       - name: Build all workspaces
         run: pnpm build
+
+      - name: Deploy port guard
+        run: bash tests/deploy-port-guard.sh
+
+      - name: Deploy pre-built image pull
+        run: bash tests/deploy-prebuilt.sh
+
+      - name: Deploy checkout sync guard
+        run: bash tests/deploy-sync-guard.sh
+
+      - name: Unit tests
+        run: |
+          pnpm --filter @darex/workflows test
+          pnpm --filter @darex/dashboard test
+
+      - name: Dependency audit
+        run: node infra/scripts/audit-gate.js
 
   isolation:
     name: Multi-tenant RLS isolation suite
@@ -205,5 +224,52 @@ jobs:
       - name: Apply migrations
         run: node infra/db/migrate.js
 
+      # Migration 119 creates darex_platform with no password. The suite logs in as that role to
+      # exercise its grants and fails in CI without one; this is the throwaway service-container DB.
+      - name: Give the darex_platform role a CI-only password
+        run: |
+          PGPASSWORD="$DB_PASSWORD" psql -h 127.0.0.1 -U darex -d darex -v ON_ERROR_STOP=1 \
+            -c "ALTER ROLE darex_platform PASSWORD 'darex_platform_ci_secret';"
+
       - name: Run multi-tenant isolation tests
+        env:
+          DAREX_PLATFORM_DB_PASSWORD: darex_platform_ci_secret
         run: node tests/e2e-tenant-isolation.test.js
+
+      # The model-SQL boundary and the RLS catalog rules (migration 207). Both run as the
+      # real roles against the migrated database. Each fails on the pre-207 tool and schema.
+      - name: Build workflows (the SQL tool is imported from dist/)
+        run: |
+          pnpm --filter @darex/shared-types build
+          pnpm --filter @darex/whatsapp-gateway build
+          pnpm --filter @darex/workflows build
+
+      - name: Model-written SQL cannot write, cross tenants or read credentials
+        env:
+          DB_USER: darex_app
+          DB_PASSWORD: darex_app_dev_secret
+          DB_RESOLVER_USER: darex
+          DB_RESOLVER_PASSWORD: darex_dev_secret
+        run: node infra/scripts/check-database-query.js
+
+      - name: RLS coverage and reader-role rules
+        env:
+          DB_USER: darex_app
+          DB_PASSWORD: darex_app_dev_secret
+          DB_RESOLVER_USER: darex
+          DB_RESOLVER_PASSWORD: darex_dev_secret
+        run: node infra/scripts/check-rls-coverage.js
+
+      # The Trust page's evidence is counted in SQL. This runs those queries against the migrated
+      # database as the application role (row-level security on), with data for two workspaces.
+      - name: Trust evidence queries (real database, as the app role)
+        env:
+          TRUST_DB_TEST: "1"
+          DB_HOST: 127.0.0.1
+          DB_PORT: "5432"
+          DB_NAME: darex
+          DB_USER: darex_app
+          DB_PASSWORD: darex_app_dev_secret
+          DB_RESOLVER_USER: darex
+          DB_RESOLVER_PASSWORD: darex_dev_secret
+        run: pnpm --filter @darex/dashboard exec jest --forceExit lib/__tests__/trust-query.db.test.ts

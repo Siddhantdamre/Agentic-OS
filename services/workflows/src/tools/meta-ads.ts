@@ -1,6 +1,6 @@
 import type { ToolRisk } from './risk.js';
 import type { ToolActionContext, ToolModule } from './shared.js';
-import { apiError, confirmFromRisk, getNangoAccessToken, notConnected } from './shared.js';
+import { apiError, confirmFromRisk, nangoAuthError, notConnected, resolveNangoAuth, fetchWithTimeout } from './shared.js';
 
 const ACTIONS = ['fetch_campaign_metrics'] as const;
 
@@ -11,7 +11,9 @@ function riskFor(_action: string): ToolRisk {
 async function execute(ctx: ToolActionContext) {
   const { payload, orgId, timestamp } = ctx;
   const metaAdsConnId = `${orgId}_meta-ads`;
-  const metaAdsToken = await getNangoAccessToken(metaAdsConnId, 'meta-ads');
+  const _metaAuth = await resolveNangoAuth(metaAdsConnId, 'meta-ads');
+  const metaAdsToken = _metaAuth.kind === 'connected' ? _metaAuth.accessToken : null;
+  const _metaAuthErr = _metaAuth.kind === 'connected' ? null : nangoAuthError('meta-ads', 'fetch_campaign_metrics', timestamp, _metaAuth);
   if (metaAdsToken) {
     try {
       const adAccountId = payload.adAccountId || process.env.META_AD_ACCOUNT_ID;
@@ -20,7 +22,7 @@ async function execute(ctx: ToolActionContext) {
       }
       if (adAccountId) {
         const fields = 'campaign_name,impressions,clicks,ctr,spend,reach';
-        const metaRes = await fetch(
+        const metaRes = await fetchWithTimeout(
           `https://graph.facebook.com/v18.0/${adAccountId}/insights?fields=${fields}&date_preset=last_7d`,
           { headers: { Authorization: `Bearer ${metaAdsToken}` } }
         );
@@ -40,7 +42,7 @@ async function execute(ctx: ToolActionContext) {
       console.error('[Meta Ads] API error:', e.message);
     }
   }
-  return notConnected('meta-ads', 'fetch_campaign_metrics', timestamp);
+  return _metaAuthErr ?? notConnected('meta-ads', 'fetch_campaign_metrics', timestamp);
 }
 
 export const metaAds: ToolModule = {

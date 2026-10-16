@@ -1,3 +1,4 @@
+import { openSecret } from '@darex/whatsapp-gateway';
 import type { ToolRisk } from './risk.js';
 import type { ToolActionContext, ToolModule } from './shared.js';
 import { apiError, confirmFromRisk, fetchWithTimeout, notConnected, withOrgScopedClient } from './shared.js';
@@ -21,15 +22,29 @@ async function execute(ctx: ToolActionContext) {
     razorpayKeyId = String(meta.keyId || meta.key_id || '');
     razorpayKeySecret = String(meta.keySecret || meta.key_secret || '');
   });
+  if (razorpayKeySecret) {
+    try {
+      razorpayKeySecret = openSecret(razorpayKeySecret);
+    } catch (err) {
+      // A sealed secret we cannot open (missing or changed key) is never sent.
+      return apiError('razorpay', actionName, timestamp, `${err instanceof Error ? err.message : err}. Reconnect Razorpay in Connectors.`);
+    }
+  }
   if (!razorpayKeyId || !razorpayKeySecret) {
-    razorpayKeyId = process.env.RAZORPAY_KEY_ID || '';
-    razorpayKeySecret = process.env.RAZORPAY_KEY_SECRET || '';
+    if (process.env.NODE_ENV !== 'production' && process.env.ALLOW_GLOBAL_RAZORPAY_DEV === 'true') {
+      razorpayKeyId = process.env.RAZORPAY_KEY_ID || '';
+      razorpayKeySecret = process.env.RAZORPAY_KEY_SECRET || '';
+    }
   }
   if (!razorpayKeyId || !razorpayKeySecret) {
     return notConnected('razorpay', actionName, timestamp);
   }
   try {
-    const amount = payload.amount || 50000; // paise (₹500)
+    // Paise. No default: a garbled call must not create a ₹500 link (RT-B06).
+    const amount = Math.trunc(Number(payload.amount));
+    if (!Number.isFinite(amount) || amount <= 0) {
+      return apiError('razorpay', 'create_payment_link', timestamp, 'amount (positive paise) is required to create a payment link');
+    }
     const currency = payload.currency || 'INR';
     const description = payload.description || 'DareX AI Invoice';
     const auth = Buffer.from(`${razorpayKeyId}:${razorpayKeySecret}`).toString('base64');

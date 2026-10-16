@@ -10,7 +10,7 @@ import {
   revoked,
 } from './shared.js';
 
-const ACTIONS = ['list_contacts', 'create_contact', 'create_lead'] as const;
+const ACTIONS = ['list_contacts', 'create_contact', 'create_lead', 'list_deals', 'create_deal', 'update_deal'] as const;
 const API_VERSION = 'v2';
 
 function riskFor(action: string): ToolRisk {
@@ -58,6 +58,108 @@ async function execute(ctx: ToolActionContext) {
   const crmBase = `${base}/crm/${API_VERSION}`;
 
   try {
+    const action = String(actionName || '').toLowerCase();
+
+    if (action.includes('list_deal') || (action.includes('list') && action.includes('deal'))) {
+      const limit = Math.min(Number(payload.count) || Number(payload.limit) || 20, 50);
+      const res = await fetchWithTimeout(`${crmBase}/Deals?per_page=${limit}`, { headers });
+      const data = await res.json().catch(() => ({}));
+      if (isProviderUnauthorized(res.status)) return revoked('zoho-crm', 'list_deals', timestamp, `Zoho HTTP ${res.status}`);
+      if (res.status === 204) {
+        return {
+          tool: 'zoho-crm',
+          action: 'list_deals',
+          status: 'executed' as const,
+          message: 'Fetched 0 Zoho deals',
+          data: { totalSize: 0, deals: [], httpStatus: res.status, connected: true },
+          timestamp,
+        };
+      }
+      if (!res.ok) return apiError('zoho-crm', 'list_deals', timestamp, `Zoho Deals query failed: HTTP ${res.status}`, data);
+      const records = Array.isArray(data.data) ? data.data : [];
+      return {
+        tool: 'zoho-crm',
+        action: 'list_deals',
+        status: 'executed' as const,
+        message: `Fetched ${records.length} Zoho deals`,
+        data: { totalSize: data.info?.count ?? records.length, deals: records, httpStatus: res.status, connected: true },
+        timestamp,
+      };
+    }
+
+    if (action.includes('update_deal') || (action.includes('update') && action.includes('deal'))) {
+      const dealId = payload.dealId || payload.id;
+      if (!dealId) {
+        return apiError(
+          'zoho-crm',
+          'update_deal',
+          timestamp,
+          'dealId is required to update a Zoho Deal (use a real id from list_deals; never invent one)',
+        );
+      }
+      const record: Record<string, string | number> = { id: String(dealId) };
+      if (payload.name || payload.dealname || payload.Deal_Name) {
+        record.Deal_Name = String(payload.name || payload.dealname || payload.Deal_Name);
+      }
+      if (payload.amount !== undefined && payload.amount !== null) record.Amount = Number(payload.amount);
+      if (payload.stage || payload.dealstage || payload.Stage) {
+        record.Stage = String(payload.stage || payload.dealstage || payload.Stage);
+      }
+      if (Object.keys(record).length <= 1) {
+        return apiError('zoho-crm', 'update_deal', timestamp, 'No updatable Deal fields supplied (try name, amount, stage)');
+      }
+      const res = await fetchWithTimeout(`${crmBase}/Deals`, {
+        method: 'PUT',
+        headers,
+        body: JSON.stringify({ data: [record] }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (isProviderUnauthorized(res.status)) return revoked('zoho-crm', 'update_deal', timestamp, `Zoho HTTP ${res.status}`);
+      if (!res.ok) return apiError('zoho-crm', 'update_deal', timestamp, `Zoho update Deal failed: HTTP ${res.status}`, data);
+      const row = firstRecord(data);
+      if (row && String(row.status || '').toLowerCase() === 'error') {
+        return apiError('zoho-crm', 'update_deal', timestamp, `Zoho update Deal failed: ${row.message || row.code || 'error'}`, data);
+      }
+      return {
+        tool: 'zoho-crm',
+        action: 'update_deal',
+        status: 'executed' as const,
+        message: `Updated Zoho Deal ${dealId}`,
+        data: { id: row?.details?.id || dealId, status: row?.status, httpStatus: res.status, connected: true },
+        timestamp,
+      };
+    }
+
+    if (action.includes('create_deal') || (action.includes('create') && action.includes('deal'))) {
+      const name = payload.name || payload.dealname || payload.Deal_Name;
+      if (!name) return apiError('zoho-crm', 'create_deal', timestamp, 'name is required to create a Zoho Deal.');
+      const record: Record<string, string | number> = { Deal_Name: String(name) };
+      if (payload.amount !== undefined && payload.amount !== null) record.Amount = Number(payload.amount);
+      if (payload.stage || payload.dealstage || payload.Stage) {
+        record.Stage = String(payload.stage || payload.dealstage || payload.Stage);
+      }
+      const res = await fetchWithTimeout(`${crmBase}/Deals`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ data: [record] }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (isProviderUnauthorized(res.status)) return revoked('zoho-crm', 'create_deal', timestamp, `Zoho HTTP ${res.status}`);
+      if (!res.ok) return apiError('zoho-crm', 'create_deal', timestamp, `Zoho create Deal failed: HTTP ${res.status}`, data);
+      const row = firstRecord(data);
+      if (row && String(row.status || '').toLowerCase() === 'error') {
+        return apiError('zoho-crm', 'create_deal', timestamp, `Zoho create Deal failed: ${row.message || row.code || 'error'}`, data);
+      }
+      return {
+        tool: 'zoho-crm',
+        action: 'create_deal',
+        status: 'executed' as const,
+        message: `Created Zoho Deal ${row?.details?.id || ''}`.trim(),
+        data: { id: row?.details?.id, status: row?.status, httpStatus: res.status, connected: true },
+        timestamp,
+      };
+    }
+
     if (actionName.includes('lead')) {
       const lastName = payload.lastName || payload.lastname || payload.Last_Name || payload.name;
       const company = payload.company || payload.Company;

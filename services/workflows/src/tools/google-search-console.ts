@@ -1,6 +1,6 @@
 import type { ToolRisk } from './risk.js';
 import type { ToolActionContext, ToolModule } from './shared.js';
-import { apiError, confirmFromRisk, fetchWithTimeout, getNangoAccessToken, notConnected } from './shared.js';
+import { apiError, confirmFromRisk, fetchWithTimeout, nangoAuthError, notConnected, resolveGoogleAuth } from './shared.js';
 
 const ACTIONS = ['search_console_sites', 'search_console_query'] as const;
 
@@ -10,13 +10,10 @@ function riskFor(_action: string): ToolRisk {
 
 async function execute(ctx: ToolActionContext) {
   const { actionName, payload, orgId, timestamp } = ctx;
-  const gConnId = `${orgId}_google-search-console`;
-  let gToken: string | null = null;
-  for (const providerKey of ['google-search-console', 'google']) {
-    gToken = await getNangoAccessToken(gConnId, providerKey);
-    if (gToken) break;
-  }
-  if (!gToken) return notConnected('google-search-console', actionName, timestamp);
+  const _gAuth = await resolveGoogleAuth(orgId, 'google-search-console');
+  const gToken: string | null = _gAuth.kind === 'connected' ? _gAuth.accessToken : null;
+  const _gAuthErr = _gAuth.kind === 'connected' ? null : nangoAuthError('google-search-console', actionName, timestamp, _gAuth);
+  if (!gToken) return _gAuthErr ?? notConnected('google-search-console', actionName, timestamp);
 
   try {
     if (actionName.includes('query') || actionName.includes('analytics') || actionName.includes('report')) {

@@ -25,8 +25,8 @@ describe('ActionPermissionCard', () => {
   it('renders action details in pending state', () => {
     render(<ActionPermissionCard actionData={mockAction} />);
 
-    expect(screen.getByText(/Gmail Integration/i)).toBeInTheDocument();
-    expect(screen.getByText('Authorization Required')).toBeInTheDocument();
+    expect(screen.getByText(/Gmail (Integration|Action)/i)).toBeInTheDocument();
+    expect(screen.getByText(/Permission Required|Authorization Required/i)).toBeInTheDocument();
     expect(screen.getByText(mockAction.explanation)).toBeInTheDocument();
     expect(screen.getByText('send_email')).toBeInTheDocument();
   });
@@ -34,9 +34,9 @@ describe('ActionPermissionCard', () => {
   it('displays all parameters', () => {
     render(<ActionPermissionCard actionData={mockAction} />);
 
-    expect(screen.getByText('to')).toBeInTheDocument();
-    expect(screen.getByText('subject')).toBeInTheDocument();
-    expect(screen.getByText('body')).toBeInTheDocument();
+    expect(screen.getByText(/^to:/i)).toBeInTheDocument();
+    expect(screen.getByText(/^subject:/i)).toBeInTheDocument();
+    expect(screen.getByText(/^body:/i)).toBeInTheDocument();
   });
 
   it('handles approve action', async () => {
@@ -61,10 +61,10 @@ describe('ActionPermissionCard', () => {
   it('handles cancel action', () => {
     render(<ActionPermissionCard actionData={mockAction} />);
 
-    const denyBtn = screen.getByText('Deny');
+    const denyBtn = screen.getByRole('button', { name: /decline|deny/i });
     fireEvent.click(denyBtn);
 
-    expect(screen.getByText('Cancelled')).toBeInTheDocument();
+    expect(screen.getByText(/declined|cancelled/i)).toBeInTheDocument();
   });
 
   it('handles failed execution response', async () => {
@@ -91,7 +91,7 @@ describe('ActionPermissionCard', () => {
         <ActionPermissionCard actionData={{ ...mockAction, tool }} />
       );
       const toolName = tool.replace('-', ' ');
-      expect(screen.getByText(new RegExp(`${toolName}.*integration`, 'i'))).toBeInTheDocument();
+      expect(screen.getByText(new RegExp(`${toolName}.*(integration|action)`, 'i'))).toBeInTheDocument();
       unmount();
     });
   });

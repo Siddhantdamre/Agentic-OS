@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { getScopedClient } from '@/lib/db';
+import { getScopedClient, scopedAuthErrorResponse } from '@/lib/db';
 
 export const dynamic = 'force-dynamic';
 
@@ -28,8 +28,17 @@ export async function GET() {
       );
       const conv = convRes.rows[0] || { total_convs: 0, resolved_convs: 0, avg_resolution_ms: 0 };
 
-      const automationRate =
-        emp.total > 0 ? Math.round((emp.active / emp.total) * 100) : 0;
+      const autoRes = await client.query(
+        `SELECT
+           COUNT(DISTINCT conversation_id) AS with_messages,
+           COUNT(DISTINCT conversation_id) FILTER (WHERE role = 'assistant') AS ai_handled
+         FROM messages
+         WHERE org_id = $1`,
+        [orgId]
+      );
+      const withMessages = parseInt(autoRes.rows[0]?.with_messages || '0', 10);
+      const aiHandled = parseInt(autoRes.rows[0]?.ai_handled || '0', 10);
+      const automationRate = withMessages > 0 ? Math.round((aiHandled / withMessages) * 100) : 0;
 
       return NextResponse.json({
         totalEmployees: emp.total,
@@ -43,9 +52,8 @@ export async function GET() {
       client.release();
     }
   } catch (error: any) {
-    if (error.message === 'Unauthorized') {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
+    const __scopedAuth = scopedAuthErrorResponse(error);
+    if (__scopedAuth) return __scopedAuth;
     console.error('API /api/employees/stats Error:', error);
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
   }

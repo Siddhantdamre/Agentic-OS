@@ -260,7 +260,7 @@ async function execute(ctx: ToolActionContext) {
           status: 'executed' as const,
           message: points.length
             ? `Returned ${points.length} metric point${points.length === 1 ? '' : 's'} from the registry (not free SQL)`
-            : 'No metric points. Unknown ids are listed in gaps — use metrics.list.',
+            : `No metric points. Unknown ids are listed in gaps. Registered ids: ${loadCoreKpis().map((m) => m.id).join(', ')}. For a count the registry lacks (for example total conversations or messages), run a read-only database_query instead.`,
           data: { orgId, points, gaps: runtimeGaps, from: range.from, to: range.to },
           timestamp,
         };

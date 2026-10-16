@@ -1,57 +1,62 @@
 import { NextResponse } from 'next/server';
 import crypto from 'crypto';
 import { pool, createOrgForEmail } from '@/lib/db';
-import { applySessionCookies, PENDING_INVITE_COOKIE } from '@/lib/session-cookie';
+import {
+  cookieSecure,
+  PENDING_INVITE_COOKIE,
+} from '@/lib/session-cookie';
+import { issueSessionCookies } from '@/lib/session-epoch';
 import {
   demoAuthAllowed,
   getAuthorizationUrl,
   getOAuthClientId,
   parseOAuthProvider,
+  resolveAppUrl,
 } from '@/lib/oauth-providers';
 import { insertAuthUser, isOnboardingComplete, lookupUserByEmail } from '@/lib/auth-user';
+import { clientIpFromRequest, denyAuthIfLimited } from '@/lib/rate-limit';
 
 export async function GET(
   request: Request,
   { params }: { params: Promise<{ provider: string }> }
 ) {
+  const limited = denyAuthIfLimited(clientIpFromRequest(request), 'oauth');
+  if (limited) return limited;
+
   const { provider: rawProvider } = await params;
   const provider = parseOAuthProvider(rawProvider);
-  const url = new URL(request.url);
+  const appUrl = resolveAppUrl(request);
 
   if (!provider) {
-    const loginUrl = new URL('/login', url.origin);
+    const loginUrl = new URL('/login', appUrl);
     loginUrl.searchParams.set('error', 'Unsupported OAuth provider');
     return NextResponse.redirect(loginUrl);
   }
 
-  const appUrl = process.env.NEXT_PUBLIC_APP_URL || url.origin;
   const redirectUri = `${appUrl}/api/auth/oauth/callback/${rawProvider}`;
   const state = crypto.randomBytes(16).toString('hex');
   const clientId = getOAuthClientId(provider);
-  const inviteToken = url.searchParams.get('invite') || undefined;
+  const inviteToken = new URL(request.url).searchParams.get('invite') || undefined;
 
   if (clientId) {
     const authUrl = getAuthorizationUrl(provider, clientId, redirectUri, state);
     const res = NextResponse.redirect(authUrl);
-    res.cookies.set(`oauth_state_${rawProvider}`, state, {
-      httpOnly: true,
+    const cookieBase = {
+      httpOnly: true as const,
+      secure: cookieSecure(),
       path: '/',
       maxAge: 600,
-      sameSite: 'lax',
-    });
+      sameSite: 'lax' as const,
+    };
+    res.cookies.set(`oauth_state_${rawProvider}`, state, cookieBase);
     if (inviteToken) {
-      res.cookies.set(PENDING_INVITE_COOKIE, inviteToken, {
-        httpOnly: true,
-        path: '/',
-        maxAge: 600,
-        sameSite: 'lax',
-      });
+      res.cookies.set(PENDING_INVITE_COOKIE, inviteToken, cookieBase);
     }
     return res;
   }
 
   if (!demoAuthAllowed()) {
-    const loginUrl = new URL('/login', url.origin);
+    const loginUrl = new URL('/login', appUrl);
     loginUrl.searchParams.set(
       'error',
       `${provider} OAuth is not configured. Set the client ID/secret env vars.`
@@ -80,9 +85,9 @@ export async function GET(
     }
     const onboardingComplete = await isOnboardingComplete(client, orgId);
     const res = NextResponse.redirect(
-      new URL(onboardingComplete ? '/' : '/onboarding/name', url.origin)
+      new URL(onboardingComplete ? '/' : '/onboarding/name', appUrl)
     );
-    await applySessionCookies(res, { userId, orgId, onboardingComplete });
+    await issueSessionCookies(res, { userId, orgId, onboardingComplete });
     return res;
   } finally {
     client.release();

@@ -17,22 +17,6 @@ const scripts = [
   'alerting-connector-401s.js',
   'alerting-rls-job.js',
   'alerting-langfuse-ingest.js',
-  // Runs here rather than on its own schedule because each invocation also
-  // RECORDS a provider-usage sample, and a burn rate is only as good as its
-  // sampling cadence. An empty LLM balance takes the whole product down with
-  // no error raised anywhere, so it belongs beside the other outage alarms.
-  'spend-guard.js',
-  // The outcome ledger runs here for the same reason the spend guard does:
-  // this is the only recurring cadence in the repo, and a job nobody schedules
-  // is a job that does not exist — which is exactly how the ledger sat built,
-  // tested and never once executed. 2s across 53 orgs, and every write is
-  // idempotent, so running it too often costs nothing and running it too
-  // rarely only lowers resolution.
-  'run-outcome-ledger.js',
-  // The ignition. Runs on the same cadence for the same reason: a scheduler
-  // nobody schedules is how the whole trigger vocabulary sat unused. It fires
-  // nothing until an org opts in, so adding it here is safe by construction.
-  'trigger-engine.js',
 ];
 
 let failed = 0;

@@ -24,33 +24,149 @@
   background: #CBD5E1;
 }
 
-/* Keyboard focus.
- *
- * 39 places set `outline-none` without putting anything back, so a keyboard
- * user tabbing through the dashboard could not see where they were. That is
- * not a styling nit: without a visible focus ring the app is unusable without
- * a mouse, which locks out motor-impaired users and anyone on keyboard-only
- * navigation.
- *
- * One rule here rather than 39 edits. `:focus-visible` fires for keyboard
- * focus and not for mouse clicks, so this restores keyboard affordance
- * without putting a ring around every clicked button. Declared last so it
- * wins over the utility classes that cleared it.
- */
-:where(a, button, input, select, textarea, summary, [tabindex]):focus-visible {
-  outline: 2px solid #B45309;
-  outline-offset: 2px;
-  border-radius: 4px;
+/* OpenUI Generative Widget Scoping */
+.aui-openui,
+.markdown-openui-scope {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
 }
 
-/* Respect a user's reduced-motion setting. Vestibular disorders make large
- * transitions genuinely painful; this is an OS-level preference the browser
- * already knows, so honouring it costs nothing. */
+.aui-openui *,
+.markdown-openui-scope * {
+  box-sizing: border-box;
+}
+
+.aui-openui [class*='openui-card'],
+.aui-openui [class*='openui-chart'],
+.aui-openui [class*='openui-table'],
+.aui-openui [class*='openui-scrollable'] {
+  max-width: 100%;
+}
+
+.markdown-openui-scope .openui-table-container {
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+/* OpenUI Light & Dark Mode Contrast Safeguards */
+.markdown-openui-scope.openui-light {
+  color: #0f172a;
+}
+.markdown-openui-scope.openui-light [class*='openui-'],
+.markdown-openui-scope.openui-light .openui-card,
+.markdown-openui-scope.openui-light .text-content,
+.markdown-openui-scope.openui-light .openui-label,
+.markdown-openui-scope.openui-light .openui-table-cell,
+.markdown-openui-scope.openui-light .openui-table-head,
+.markdown-openui-scope.openui-light .openui-markdown-renderer {
+  color: #0f172a;
+}
+.markdown-openui-scope.openui-light .openui-table-head .openui-table-head-label {
+  color: #475569;
+}
+.markdown-openui-scope.openui-light .openui-table-container {
+  border-color: #ECE7C2;
+  background-color: #ffffff;
+}
+
+.markdown-openui-scope.openui-dark {
+  color: #f8fafc;
+}
+.markdown-openui-scope.openui-dark [class*='openui-'],
+.markdown-openui-scope.openui-dark .openui-card,
+.markdown-openui-scope.openui-dark .text-content,
+.markdown-openui-scope.openui-dark .openui-label,
+.markdown-openui-scope.openui-dark .openui-table-cell,
+.markdown-openui-scope.openui-dark .openui-table-head,
+.markdown-openui-scope.openui-dark .openui-markdown-renderer {
+  color: #f8fafc;
+}
+.markdown-openui-scope.openui-dark .openui-table-head .openui-table-head-label {
+  color: #94a3b8;
+}
+.markdown-openui-scope.openui-dark .openui-table-container {
+  border-color: #334155;
+  background-color: #0f172a;
+}
+.markdown-openui-scope.openui-dark .openui-table-row:nth-child(even) {
+  background-color: rgba(255, 255, 255, 0.04);
+}
+
+/* Claude-style streaming cursor */
+@keyframes blink-cursor {
+  0%, 50% { opacity: 1; }
+  51%, 100% { opacity: 0; }
+}
+.streaming-cursor::after {
+  content: '▌';
+  animation: blink-cursor 1s infinite;
+  color: #D9A53D;
+  font-weight: 400;
+}
+
+/* Thinking shimmer */
+@keyframes thinking-shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+.thinking-shimmer {
+  background: linear-gradient(90deg, transparent 0%, #F0C05A20 50%, transparent 100%);
+  background-size: 200% 100%;
+  animation: thinking-shimmer 2s ease-in-out infinite;
+}
+
+/* Hover-reveal toolbar */
+.msg-hover-toolbar {
+  opacity: 0;
+  transition: opacity 150ms ease;
+}
+.msg-group:hover .msg-hover-toolbar,
+.msg-group:focus-within .msg-hover-toolbar {
+  opacity: 1;
+}
+
+/* Auto-resize textarea */
+.chat-textarea {
+  field-sizing: content;
+  min-height: 52px;
+  max-height: 200px;
+  resize: none;
+}
+
+
+/* Keyboard focus.
+ *
+ * Screens clear the browser's focus outline with `outline-none` / `focus:outline-none`. Where nothing replaces it
+ * (the sign-in and sign-up fields, the conversation reply box) a person using the keyboard cannot see where they are.
+ * One rule here instead of editing every screen. `:focus-visible` fires for keyboard focus and for text fields, not
+ * for a mouse click on a button. The doubled pseudo-class raises its specificity above `.focus\:outline-none:focus`,
+ * which a single `:focus-visible` would lose to. Elements focused only by script (tabindex -1) are left alone. */
+:is(a, button, input, select, textarea, summary, [tabindex]:not([tabindex="-1"])):focus-visible:focus-visible {
+  outline: 2px solid #B45309;
+  outline-offset: 2px;
+}
+
+/* Respect a person's reduced-motion setting (an operating-system preference the browser already knows). */
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
     scroll-behavior: auto !important;
+  }
+}
+
+/* Touch screens: a control must be big enough to tap. On a phone, small text links and icon buttons were as little
+ * as 12 to 22 px high; WCAG 2.2 asks for at least 24 px and 44 px is comfortable. This applies only to devices
+ * whose main pointer is a finger, so desktop layouts are unchanged. */
+@media (pointer: coarse) {
+  .touch-target {
+    min-height: 44px;
+    min-width: 44px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
   }
 }

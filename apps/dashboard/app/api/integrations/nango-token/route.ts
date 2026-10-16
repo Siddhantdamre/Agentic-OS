@@ -1,13 +1,17 @@
 import { NextResponse } from 'next/server';
-import { getScopedClient } from '@/lib/db';
-import { browserReachableOrigin, getIntegration, isIntegrationId, isPublicMetaKey, nangoUiUrl } from '@/lib/integrations-catalog';
-import { nangoKeysFor } from '@darex/connectors';
+import { getScopedClient, scopedAuthErrorResponse } from '@/lib/db';
+import { denyUnlessConnectorManager } from '@/lib/connector-rbac';
+import { tryReadJson } from '@/lib/safe-json';
+import { getIntegration, isIntegrationId, isPublicMetaKey, nangoUiUrl } from '@/lib/integrations-catalog';
+import { upsertOrgConnector } from '@/lib/connector-registry';
+import { connectionIdsFor, nangoKeysFor } from '@darex/connectors';
 import {
   getNangoConfigStatus,
   getNangoServerConfig,
   nangoConnectionExists,
   primaryConnectionId,
 } from '@/lib/nango-server';
+import { publicErrorMessage } from '@/lib/public-error';
 
 /**
  * GET /api/integrations/nango-token
@@ -25,10 +29,10 @@ export async function GET(request: Request) {
     }
 
     const spec = getIntegration(provider);
-    const { publicKey, host } = getNangoServerConfig();
-    // The browser dials this host in the OAuth popup, so it must be an address
-    // the browser can resolve — never the compose service name this container uses.
-    const nangoHost = browserReachableOrigin(process.env.NEXT_PUBLIC_NANGO_HOST || host);
+    const { publicKey } = getNangoServerConfig();
+    // Browser-reachable host for the Nango popup SDK — never container DNS.
+    // nangoUiUrl() prefers NEXT_PUBLIC_NANGO_HOST, then NANGO_SERVER_URL.
+    const nangoHost = nangoUiUrl();
     const connectionId = primaryConnectionId(orgId, provider);
     const keys = nangoKeysFor(provider);
     const config = spec?.authMode === 'oauth' ? await getNangoConfigStatus(provider) : null;
@@ -50,9 +54,8 @@ export async function GET(request: Request) {
         : undefined,
     });
   } catch (error: any) {
-    if (error.message === 'Unauthorized') {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
+    const __scopedAuth = scopedAuthErrorResponse(error);
+    if (__scopedAuth) return __scopedAuth;
     console.error('Nango token GET error:', error);
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
   }
@@ -64,9 +67,18 @@ export async function GET(request: Request) {
  */
 export async function POST(request: Request) {
   try {
-    const { client, orgId } = await getScopedClient();
+    const { client, orgId, userId } = await getScopedClient();
     try {
-      const { provider, connectionId, success, extra } = await request.json();
+      const forbidden = await denyUnlessConnectorManager(client, userId);
+      if (forbidden) return forbidden;
+      const body = await tryReadJson<Record<string, unknown>>(request);
+      if (!body) {
+        return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 });
+      }
+      const { provider: rawProvider, connectionId, success, extra } = body as {
+        provider?: unknown; connectionId?: unknown; success?: unknown; extra?: unknown;
+      };
+      const provider = typeof rawProvider === 'string' ? rawProvider : '';
 
       if (!provider) {
         return NextResponse.json({ error: 'provider is required' }, { status: 400 });
@@ -86,7 +98,19 @@ export async function POST(request: Request) {
         );
       }
 
-      const nangoConnId = connectionId || primaryConnectionId(orgId, provider);
+      const nangoConnId = typeof connectionId === 'string' && connectionId
+        ? connectionId
+        : primaryConnectionId(orgId, String(provider));
+
+      // Never persist a client-supplied connectionId that doesn't belong to
+      // this org — it could point at another tenant's Nango connection.
+      const allowedIds = new Set(connectionIdsFor(orgId, String(provider)));
+      if (!allowedIds.has(nangoConnId)) {
+        return NextResponse.json(
+          { error: 'connectionId does not belong to this organization' },
+          { status: 400 }
+        );
+      }
 
       const real = success && (await nangoConnectionExists(orgId, provider));
       const status = real ? 'connected' : 'failed';
@@ -101,9 +125,11 @@ export async function POST(request: Request) {
 
       await client.query(
         `INSERT INTO channels (org_id, channel_type, status, nango_connection_id, connected_at, meta)
-         VALUES ($1, $2, $3, $4, NOW(), $5::jsonb)
-         ON CONFLICT (org_id, channel_type)
-         DO UPDATE SET status = $3, nango_connection_id = $4, connected_at = NOW(),
+         VALUES ($1, $2, $3, $4, CASE WHEN $3 = 'connected' THEN NOW() ELSE NULL END, $5::jsonb)
+         ON CONFLICT (org_id, channel_type, account_key)
+         DO UPDATE SET status = $3,
+           nango_connection_id = CASE WHEN $3 = 'connected' THEN $4 ELSE NULL END,
+           connected_at = CASE WHEN $3 = 'connected' THEN NOW() ELSE NULL END,
            meta = COALESCE(channels.meta, '{}'::jsonb) || $5::jsonb`,
         [orgId, provider, status, nangoConnId, JSON.stringify(extraMeta)]
       );
@@ -121,22 +147,66 @@ export async function POST(request: Request) {
         ]
       );
 
+      await upsertOrgConnector(client, orgId, provider, {
+        status: effectiveSuccess ? 'connected' : 'error',
+        nangoConnectionId: effectiveSuccess ? nangoConnId : null,
+        scopes: spec?.scopes || [],
+        lastOkAt: effectiveSuccess ? new Date() : null,
+        lastError: effectiveSuccess ? null : 'Nango OAuth not confirmed',
+      });
+
+      if (effectiveSuccess && (provider === 'google-workspace' || provider === 'google' || provider === 'gmail' || provider.startsWith('google-'))) {
+        const googleFamily = [
+          'gmail',
+          'google-calendar',
+          'google-drive',
+          'google-docs',
+          'google-sheets',
+          'google-slides',
+          'google-workspace',
+        ];
+        for (const gProvider of googleFamily) {
+          if (gProvider === provider) continue;
+          const gSpec = getIntegration(gProvider);
+          await client.query(
+            `INSERT INTO channels (org_id, channel_type, status, nango_connection_id, connected_at, meta)
+             VALUES ($1, $2, 'connected', $3, NOW(), $4::jsonb)
+             ON CONFLICT (org_id, channel_type, account_key)
+             DO UPDATE SET status = 'connected',
+               nango_connection_id = $3,
+               connected_at = NOW(),
+               meta = COALESCE(channels.meta, '{}'::jsonb) || $4::jsonb`,
+            [orgId, gProvider, nangoConnId, JSON.stringify(extraMeta)]
+          );
+          await upsertOrgConnector(client, orgId, gProvider, {
+            status: 'connected',
+            nangoConnectionId: nangoConnId,
+            scopes: gSpec?.scopes || [],
+            lastOkAt: new Date(),
+            lastError: null,
+          });
+        }
+      }
+
       return NextResponse.json({
         success: effectiveSuccess,
+        connected: effectiveSuccess,
         connectionId: nangoConnId,
         message: effectiveSuccess
           ? `${provider} connected via Nango`
           : `connection not confirmed (no real Nango OAuth connection found for ${provider})`,
+        ...(effectiveSuccess
+          ? {}
+          : { reconnectUrl: '/connectors', setupUrl: '/connectors' }),
         nangoUiUrl: nangoUiUrl(),
       });
     } finally {
       client.release();
     }
   } catch (error: any) {
-    if (error.message === 'Unauthorized') {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
+    const __scopedAuth2 = scopedAuthErrorResponse(error);
+    if (__scopedAuth2) return __scopedAuth2;
     console.error('Nango token confirm error:', error);
-    return NextResponse.json({ error: error.message || 'Internal Server Error' }, { status: 500 });
+    return NextResponse.json({ error: publicErrorMessage(error, 'Internal Server Error') }, { status: 500 });
   }
 }

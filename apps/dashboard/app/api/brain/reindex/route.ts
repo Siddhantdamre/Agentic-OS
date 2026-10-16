@@ -1,6 +1,14 @@
 import { NextResponse } from 'next/server';
-import { getScopedClient } from '@/lib/db';
+import { getScopedClient, scopedAuthErrorResponse } from '@/lib/db';
 import { getTemporalClient } from '@darex/workflows/dist/workflow-client';
+import { jsonBodyOrEmpty } from '@/lib/safe-json';
+
+/**
+ * Connector Sync/Ingest entrypoint (Temporal SyncWorkflow / IngestWorkflow).
+ * Source-level reindex (enqueue EmbedWorkflow for an existing knowledge_sources
+ * row) lives in `@/lib/brain-reindex` and is called from POST /api/brain and
+ * POST /api/brain/[id] — do not duplicate that path here.
+ */
 
 export const dynamic = 'force-dynamic';
 
@@ -133,9 +141,8 @@ export async function GET() {
       client.release();
     }
   } catch (error: unknown) {
-    if (error instanceof Error && error.message === 'Unauthorized') {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
+    const __scopedAuth = scopedAuthErrorResponse(error);
+    if (__scopedAuth) return __scopedAuth;
     console.error('API GET /api/brain/reindex Error:', error);
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
   }
@@ -143,7 +150,7 @@ export async function GET() {
 
 export async function POST(request: Request) {
   try {
-    const body = asRecord(await request.json().catch(() => ({})));
+    const body = asRecord(await jsonBodyOrEmpty(request));
     // Never trust body.org_id / body.orgId — session RLS only.
     void body.org_id;
     void body.orgId;
@@ -194,7 +201,7 @@ export async function POST(request: Request) {
              VALUES ($1, $2, $3, 'pending', $4::jsonb)
              ON CONFLICT (org_id, connector, path)
              DO UPDATE SET
-               status = 'pending',
+               status = CASE WHEN knowledge_sources.status = 'disabled' THEN 'disabled' ELSE 'pending' END,
                metadata = knowledge_sources.metadata || EXCLUDED.metadata,
                updated_at = NOW()
              RETURNING id`,
@@ -308,9 +315,8 @@ export async function POST(request: Request) {
       message: 'Ingest enqueued. SOP is retrievable with path + modified_at once embedded, or stays pending.',
     });
   } catch (error: unknown) {
-    if (error instanceof Error && error.message === 'Unauthorized') {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
+    const __scopedAuth2 = scopedAuthErrorResponse(error);
+    if (__scopedAuth2) return __scopedAuth2;
     console.error('API POST /api/brain/reindex Error:', error);
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
   }

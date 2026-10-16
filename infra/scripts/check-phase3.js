@@ -1,16 +1,4 @@
-/**
- * Darex Phase 3 — inbound webhook exit criteria.
- *
- * EXCLUDED-FROM-VERIFY: stale. It posts an org id read from a `darex_org_id` cookie that the auth flow
- * no longer sets, because a client-supplied org id must never be trusted. The
- * same path is covered by check-e2e-inbound.js, which uses the documented
- * per-tenant webhook URL.
- */
 const http = require('http');
-// NOTE: 127.0.0.1, never 'localhost'. Node resolves localhost to IPv6 ::1 first;
-// Docker publishes on [::] but that path resets the connection, producing
-// intermittent ECONNRESET / "fetch failed" that looks like random flakiness.
-// curl hides this by falling back to IPv4 — Node's fetch and pg do not.
 const crypto = require('crypto');
 const path = require('path');
 let Pool;
@@ -26,7 +14,7 @@ let pass = 0;
 let fail = 0;
 
 const pool = new Pool({
-  host: process.env.DB_HOST || '127.0.0.1',
+  host: process.env.DB_HOST || 'localhost',
   port: parseInt(process.env.DB_PORT || '5432'),
   user: process.env.DB_USER || 'darex',
   password: process.env.DB_PASSWORD || 'darex_dev_secret',
@@ -103,6 +91,14 @@ async function obtainSessionCookie() {
 
   const setCookie = (res.headers['set-cookie'] || []).map((c) => c.split(';')[0]).join('; ');
   if (!setCookie) throw new Error('No session cookie returned by auth endpoint');
+
+  // Activate the org by completing initial onboarding
+  await makeRequest('http://localhost:3000/api/org/create', 'POST', {
+    businessName: 'Phase 3 Check Org',
+    teamSize: 5,
+    businessType: 'SaaS',
+  }, setCookie);
+
   return setCookie;
 }
 
@@ -141,7 +137,11 @@ async function runPhase3Checks() {
       sender_name: 'Alex Johnson',
       content: 'Hello! I need assistance with my order pricing.',
     };
-    const webhookRes = await makeRequest(webhookBase, 'POST', webhookPayload, null, chatwootSignature(webhookPayload));
+    const webhookHeaders = {
+      ...chatwootSignature(webhookPayload),
+      ...(orgIdFromCookie ? { 'X-Darex-Org-Id': orgIdFromCookie } : {}),
+    };
+    const webhookRes = await makeRequest(webhookBase, 'POST', webhookPayload, null, webhookHeaders);
 
     const elapsed = Date.now() - startTime;
     let createdConvId = null;
@@ -226,7 +226,11 @@ async function runPhase3Checks() {
       sender_name: 'Enterprise Support Client',
       content: 'Subject: Urgent API access inquiry',
     };
-    const emailRes = await makeRequest(webhookBase, 'POST', emailPayload, null, chatwootSignature(emailPayload));
+    const emailHeaders = {
+      ...chatwootSignature(emailPayload),
+      ...(orgIdFromCookie ? { 'X-Darex-Org-Id': orgIdFromCookie } : {}),
+    };
+    const emailRes = await makeRequest(webhookBase, 'POST', emailPayload, null, emailHeaders);
 
     if (emailRes.statusCode === 200 && emailRes.body.success) {
       console.log(`  [PASS] Inbound Email message ingested & logged successfully`);

@@ -6,6 +6,40 @@
 
 ---
 
+## 0. Direction: know where the work is going before you code
+
+Darex / DareXAI One is an autonomous AI workforce. Specialised AI employees
+share one brain (memory + connectors), and the **Ask AI chat is the front
+door**: every tab action and every connected tool must be doable from the chat,
+by the right employee, with approval before risky actions.
+
+Before starting any task:
+
+1. Read `AGENTS.md` §4a. It covers the planning corpus, the active work, and the working loop.
+2. For a fix, open the matching domain file in
+   `docs/new-109-pg-plan/gap26sept/`. That is the current gap audit, and
+   `00-summary.md` is the priority roll-up. For employee behaviour, use
+   `docs/new-109-pg-plan/plan/` and the blueprint. For architecture fit, use
+   `docs/plan/` (principles, workstreams, definition of done).
+3. Confirm the gap still exists in code. Some docs lag behind `BUILD_STATE.md`.
+4. Once it's fixed and verified, update that doc's tracker row (🟢/🟡/🔴) in the
+   same commit as the code and `BUILD_STATE.md`.
+
+The UI users see is `NEW-FRONTEND/` (its own git repo, gitignored here; commit
+there separately). `apps/dashboard` is the API backend. `deploy/deploy.sh`
+deploys both.
+
+Priorities right now:
+- the P0 → P1 rows in `gap26sept/`
+- chat coverage of every tool and tab action (`gap26sept/chat-coverage.md`)
+- per-employee specs and the Ask AI employee mode selector (Auto / Pick one /
+  Team) (`gap26sept/employees/`)
+
+Human-only blockers (OAuth client IDs, keys, licences) get marked 🔴 with a
+reason, never faked. For long multi-agent runs, use `COMPLETE_SAAS_PROMPT.md`.
+
+---
+
 ## 1. Attribution — never mention the AI
 
 **No commit, PR, branch name, or code comment may mention Claude, Anthropic, or

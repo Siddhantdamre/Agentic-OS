@@ -4,6 +4,7 @@ import React, { Suspense, useState } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Loader2, Lock } from 'lucide-react';
+import { responseErrorMessage } from '@/lib/client-error';
 
 function ResetForm() {
   const router = useRouter();
@@ -22,25 +23,29 @@ function ResetForm() {
     }
     setLoading(true);
     setError('');
-    const res = await fetch('/api/auth/reset-password', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ token, password }),
-    });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) {
-      setError(data.message || 'Could not reset password');
+    try {
+      const res = await fetch('/api/auth/reset-password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token, password }),
+      });
+      if (!res.ok) {
+        setError(await responseErrorMessage(res, 'We couldn’t reset your password. Please try again, or request a new link.'));
+        setLoading(false);
+        return;
+      }
+      router.push('/login');
+    } catch {
+      setError('We couldn’t reset your password. Please check your connection and try again.');
       setLoading(false);
-      return;
     }
-    router.push('/login');
   };
 
   if (!token) {
     return (
       <p className="text-sm text-red-300 text-center">
         Missing reset token. Request a new link from{' '}
-        <Link href="/forgot-password" className="text-[#F0C05A]">forgot password</Link>.
+        <Link href="/forgot-password" className="text-[#F0C05A] underline underline-offset-2">forgot password</Link>.
       </p>
     );
   }

@@ -1,5 +1,5 @@
 # R4 — skill playbook on vs off. Gmail SOP must change observed steering.
-# Rebuild atomic-agent after SKILL.md edits. Do not fabricate inbox rows.
+# Rebuild TrueForge skills after SKILL.md edits. Do not fabricate inbox rows.
 - description: Gmail playbook ON steers draft-before-send and forbids invented recipients
   vars:
     scenario: skill-playbook-on

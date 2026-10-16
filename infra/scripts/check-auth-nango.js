@@ -53,6 +53,7 @@ async function testAuthAndNango() {
     const regRes = await makeRequest(`${BASE}/api/auth/register`, 'POST', {
       email: testEmail,
       password: testPassword,
+      agreedTerms: true,
     });
 
     if (regRes.statusCode === 200 && regRes.body.status === 'OK' && regRes.body.userId) {

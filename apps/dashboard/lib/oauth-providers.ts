@@ -24,10 +24,24 @@ export function demoAuthAllowed(): boolean {
   return process.env.ALLOW_DEMO_AUTH === 'true';
 }
 
+export function listOAuthProviders(): Array<{ id: OAuthProvider; name: string; configured: boolean }> {
+  const providers: Array<{ id: OAuthProvider; name: string }> = [
+    { id: 'google', name: 'Google' },
+    { id: 'github', name: 'GitHub' },
+    { id: 'meta', name: 'Meta' },
+    { id: 'microsoft', name: 'Microsoft' },
+  ];
+  return providers.map((p) => ({
+    id: p.id,
+    name: p.name,
+    configured: demoAuthAllowed() || !!(getOAuthClientId(p.id) && getOAuthClientSecret(p.id)),
+  }));
+}
+
 export function getOAuthClientId(provider: OAuthProvider): string | undefined {
   switch (provider) {
     case 'google':
-      return process.env.GOOGLE_CLIENT_ID;
+      return process.env.GOOGLE_CLIENT_ID || process.env.GOOGLE_WORKSPACE_CLIENT_ID;
     case 'github':
       return process.env.GITHUB_CLIENT_ID;
     case 'facebook':
@@ -45,7 +59,7 @@ export function getOAuthClientId(provider: OAuthProvider): string | undefined {
 export function getOAuthClientSecret(provider: OAuthProvider): string | undefined {
   switch (provider) {
     case 'google':
-      return process.env.GOOGLE_CLIENT_SECRET;
+      return process.env.GOOGLE_CLIENT_SECRET || process.env.GOOGLE_WORKSPACE_CLIENT_SECRET;
     case 'github':
       return process.env.GITHUB_CLIENT_SECRET;
     case 'facebook':
@@ -136,3 +150,11 @@ export function getOAuthTokenUrl(provider: OAuthProvider): string {
     }
   }
 }
+
+export function resolveAppUrl(request: Request): string {
+  // Canonical origin only. Host / X-Forwarded-Host / X-Forwarded-Proto are
+  // attacker-controllable and must never decide the OAuth redirect_uri.
+  if (process.env.NEXT_PUBLIC_APP_URL) return process.env.NEXT_PUBLIC_APP_URL;
+  return new URL(request.url).origin;
+}
+

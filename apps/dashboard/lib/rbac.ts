@@ -1,6 +1,7 @@
 import type { PoolClient } from 'pg';
+import { canCallPayTools as sharedCanCallPayTools, ORG_HUMAN_ROLES } from '@darex/shared-types';
 
-export const HUMAN_ROLES = ['owner', 'admin', 'member', 'auditor'] as const;
+export const HUMAN_ROLES = ORG_HUMAN_ROLES;
 
 export type HumanRole = (typeof HUMAN_ROLES)[number];
 
@@ -39,6 +40,7 @@ export function canDisableEmployee(role: HumanRole): boolean {
       return true;
     case 'member':
     case 'auditor':
+    case 'billing':
       return false;
     default: {
       const _exhaustive: never = role;
@@ -47,13 +49,73 @@ export function canDisableEmployee(role: HumanRole): boolean {
   }
 }
 
-export function canCallPayTools(role: HumanRole): boolean {
+export const canCallPayTools = sharedCanCallPayTools;
+
+export function canApproveActions(role: HumanRole): boolean {
   switch (role) {
     case 'owner':
     case 'admin':
     case 'member':
       return true;
     case 'auditor':
+    case 'billing':
+      return false;
+    default: {
+      const _exhaustive: never = role;
+      return _exhaustive;
+    }
+  }
+}
+
+export function canApproveRefunds(role: HumanRole): boolean {
+  switch (role) {
+    case 'owner':
+    case 'admin':
+      return true;
+    case 'member':
+    case 'auditor':
+    case 'billing':
+      return false;
+    default: {
+      const _exhaustive: never = role;
+      return _exhaustive;
+    }
+  }
+}
+
+/**
+ * Customer-facing conversation actions: human reply, pause/resume AI,
+ * resolve, assign, create conversation or channel. Auditor and billing
+ * are read-only on the inbox (CH-S05).
+ */
+export function canActOnConversations(role: HumanRole): boolean {
+  switch (role) {
+    case 'owner':
+    case 'admin':
+    case 'member':
+      return true;
+    case 'auditor':
+    case 'billing':
+      return false;
+    default: {
+      const _exhaustive: never = role;
+      return _exhaustive;
+    }
+  }
+}
+
+/**
+ * Read access to operational queues (work items, pending approvals,
+ * autonomy rules, suppressions). Billing has no need for them.
+ */
+export function canReadOperations(role: HumanRole): boolean {
+  switch (role) {
+    case 'owner':
+    case 'admin':
+    case 'member':
+    case 'auditor':
+      return true;
+    case 'billing':
       return false;
     default: {
       const _exhaustive: never = role;
@@ -69,6 +131,7 @@ export function canReadAudit(role: HumanRole): boolean {
     case 'auditor':
       return true;
     case 'member':
+    case 'billing':
       return false;
     default: {
       const _exhaustive: never = role;
@@ -84,6 +147,7 @@ export function canManageOrgSettings(role: HumanRole): boolean {
       return true;
     case 'member':
     case 'auditor':
+    case 'billing':
       return false;
     default: {
       const _exhaustive: never = role;
@@ -99,6 +163,7 @@ export function canExportDsr(role: HumanRole): boolean {
       return true;
     case 'member':
     case 'auditor':
+    case 'billing':
       return false;
     default: {
       const _exhaustive: never = role;
@@ -114,6 +179,7 @@ export function canDeleteDsr(role: HumanRole): boolean {
     case 'admin':
     case 'member':
     case 'auditor':
+    case 'billing':
       return false;
     default: {
       const _exhaustive: never = role;

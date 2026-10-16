@@ -2,20 +2,23 @@ import type { ToolExecutionResult } from '@darex/shared-types';
 import type { ToolRisk } from './risk.js';
 import { confirmForRisk } from './risk.js';
 import type { ToolActionContext, ToolModule } from './shared.js';
+import { runWithToolSignal } from './shared.js';
 import { sandbox } from './sandbox.js';
 import { webSearch } from './web-search.js';
 import { webExtract } from './web-extract.js';
-import { deepResearch } from './deep-research.js';
 import { databaseQuery } from './database.js';
 import { fileOps } from './file-ops.js';
 import { gmail } from './gmail.js';
 import { googleCalendar } from './google-calendar.js';
 import { github } from './github.js';
 import { whatsapp } from './whatsapp.js';
+import { instagram } from './instagram.js';
 import { hubspot } from './hubspot.js';
 import { metaAds } from './meta-ads.js';
 import { googleAds } from './google-ads.js';
 import { slack } from './slack.js';
+import { linkedin } from './linkedin.js';
+import { apollo } from './apollo.js';
 import { notion } from './notion.js';
 import { stripe } from './stripe.js';
 import { shopify } from './shopify.js';
@@ -45,8 +48,19 @@ import { zoho } from './zoho.js';
 import { leegality } from './leegality.js';
 import { quickbooks } from './quickbooks.js';
 import { metrics } from './metrics.js';
-import { mls, realestate } from './realestate/index.js';
+import { billing } from './billing.js';
+import { connectors } from './connectors.js';
+import { realestate } from './realestate/index.js';
+import { mls } from './realestate/index.js';
 import { rera } from './public/rera.js';
+import { cognee } from './cognee.js';
+import { customerOps } from './customer-ops.js';
+import { operations } from './operations.js';
+import { growth } from './growth.js';
+import { dailyBrief } from './daily-brief.js';
+import { askNumbers } from './ask-numbers.js';
+import { researchTopic } from './research-topic.js';
+import { improvementNote } from './improvement-note.js';
 
 export type { ToolRisk } from './risk.js';
 export { confirmForRisk, isToolRisk } from './risk.js';
@@ -60,17 +74,19 @@ export const TOOL_MODULES = {
   sandbox,
   webSearch,
   webExtract,
-  deepResearch,
   databaseQuery,
   fileOps,
   gmail,
   googleCalendar,
   github,
   whatsapp,
+  instagram,
   hubspot,
   metaAds,
   googleAds,
   slack,
+  linkedin,
+  apollo,
   notion,
   stripe,
   shopify,
@@ -100,27 +116,40 @@ export const TOOL_MODULES = {
   leegality,
   quickbooks,
   metrics,
+  billing,
   realestate,
   rera,
   mls,
+  cognee,
+  customerOps,
+  operations,
+  growth,
+  dailyBrief,
+  askNumbers,
+  researchTopic,
+  improvementNote,
+  connectors,
 } as const;
 
 /** Every switch key the old gateway accepted, including aliases. */
 export const PROVIDER_KEYS = [
-  'sandbox', 'code_execution', 'execute_code',
+  'sandbox', 'code_execution', 'execute_code', 'terminal', 'terminal_run_command', 'python_execute', 'bash_execute',
   'web_search', 'search', 'google_search',
   'web_extract', 'fetch_url', 'read_url',
-  'deep_research', 'research', 'deep_think',
   'database_query', 'db_query', 'sql_analytics',
   'file_ops', 'file_system', 'workspace_file',
   'gmail',
   'google-calendar',
   'github',
   'whatsapp',
+  'instagram',
   'hubspot',
   'meta-ads',
   'google-ads',
   'slack',
+  'linkedin',
+  'apollo',
+  'apollo-io',
   'notion',
   'stripe',
   'shopify',
@@ -154,10 +183,26 @@ export const PROVIDER_KEYS = [
   'quick-books',
   'metrics',
   'metrics_query',
+  'billing',
+  'billing_usage',
+  'connectors',
+  'connectors_status',
   're',
   'realestate',
   'rera',
   'mls',
+  'cognee',
+  'cognee-memory',
+  'customer-ops',
+  'customer_ops',
+  'operations',
+  'growth',
+  'daily_brief',
+  'daily-brief',
+  'executive_brief',
+  'ask_numbers',
+  'research_topic',
+  'improvement_note',
 ] as const;
 
 export type ProviderKey = typeof PROVIDER_KEYS[number];
@@ -171,6 +216,10 @@ export function moduleForProvider(key: ProviderKey): ToolModule {
     case 'sandbox':
     case 'code_execution':
     case 'execute_code':
+    case 'terminal':
+    case 'terminal_run_command':
+    case 'python_execute':
+    case 'bash_execute':
       return sandbox;
     case 'web_search':
     case 'search':
@@ -180,10 +229,6 @@ export function moduleForProvider(key: ProviderKey): ToolModule {
     case 'fetch_url':
     case 'read_url':
       return webExtract;
-    case 'deep_research':
-    case 'research':
-    case 'deep_think':
-      return deepResearch;
     case 'database_query':
     case 'db_query':
     case 'sql_analytics':
@@ -200,6 +245,8 @@ export function moduleForProvider(key: ProviderKey): ToolModule {
       return github;
     case 'whatsapp':
       return whatsapp;
+    case 'instagram':
+      return instagram;
     case 'hubspot':
       return hubspot;
     case 'meta-ads':
@@ -208,6 +255,11 @@ export function moduleForProvider(key: ProviderKey): ToolModule {
       return googleAds;
     case 'slack':
       return slack;
+    case 'linkedin':
+      return linkedin;
+    case 'apollo':
+    case 'apollo-io':
+      return apollo;
     case 'notion':
       return notion;
     case 'stripe':
@@ -270,13 +322,39 @@ export function moduleForProvider(key: ProviderKey): ToolModule {
     case 'metrics':
     case 'metrics_query':
       return metrics;
+    case 'billing':
+    case 'billing_usage':
+      return billing;
     case 're':
     case 'realestate':
       return realestate;
     case 'rera':
       return rera;
+    case 'cognee':
+    case 'cognee-memory':
+      return cognee;
+    case 'connectors':
+    case 'connectors_status':
+      return connectors;
+    case 'daily_brief':
+    case 'daily-brief':
+    case 'executive_brief':
+      return dailyBrief;
+    case 'ask_numbers':
+      return askNumbers;
+    case 'research_topic':
+      return researchTopic;
+    case 'improvement_note':
+      return improvementNote;
     case 'mls':
       return mls;
+    case 'customer-ops':
+    case 'customer_ops':
+      return customerOps;
+    case 'operations':
+      return operations;
+    case 'growth':
+      return growth;
     default: {
       const _exhaustive: never = key;
       return _exhaustive;
@@ -285,16 +363,21 @@ export function moduleForProvider(key: ProviderKey): ToolModule {
 }
 
 export function getToolModule(tool: string): ToolModule | undefined {
-  const key = tool.toLowerCase();
-  if (!isProviderKey(key)) return undefined;
-  return moduleForProvider(key);
+  const raw = String(tool || '').toLowerCase().trim();
+  if (isProviderKey(raw)) return moduleForProvider(raw);
+  const hyphenated = raw.replace(/_/g, '-');
+  if (isProviderKey(hyphenated)) return moduleForProvider(hyphenated);
+  const underscored = raw.replace(/-/g, '_');
+  if (isProviderKey(underscored)) return moduleForProvider(underscored);
+  return undefined;
 }
 
 export function resolveToolRisk(tool: string, action: string): { risk: ToolRisk; confirm: boolean } | null {
   const mod = getToolModule(tool);
   if (!mod) return null;
   const risk = mod.risk(action);
-  return { risk, confirm: confirmForRisk(risk) };
+  const modConfirm = typeof mod.confirm === 'function' ? mod.confirm(action) : false;
+  return { risk, confirm: modConfirm || confirmForRisk(risk) };
 }
 
 export async function executeProvider(
@@ -302,5 +385,5 @@ export async function executeProvider(
 ): Promise<ToolExecutionResult | null> {
   const mod = getToolModule(ctx.tool);
   if (!mod) return null;
-  return mod.execute(ctx);
+  return runWithToolSignal(ctx.signal, () => mod.execute(ctx));
 }

@@ -2,16 +2,21 @@
 # Darex — Local Development Infrastructure (compose KERNEL)
 # Phase 0: Postgres (pgvector) + Temporal + Nango + Langfuse
 #
-# Kernel: 20 services (19 + pgbouncer). Do not add a second compose kernel.
+# Kernel: 21 services (20 + pgbouncer). Do not add a second compose kernel.
 #   postgres, pgbouncer, temporal, temporal-ui, redis, langfuse-redis, nango-server,
 #   langfuse-clickhouse, langfuse-minio, langfuse-minio-createbuckets,
-#   langfuse-server, langfuse-worker, supertokens, litellm, atomic-bridge,
-#   atomic-agent, sandbox, inbox, worker, dashboard
+#   langfuse-server, langfuse-worker, supertokens, litellm, mcp-bridge,
+#   sandbox, inbox, worker, dashboard, trueforge, cognee
+# Agent turns run in TrueForge, now IN compose (service `trueforge`, port 8790).
+# Override with TRUEFORGE_URL=http://host.docker.internal:8791 to use a host
+# TrueForge during migration.
+# Memory: Cognee knowledge-graph server, now IN compose (service `cognee`,
+# port 8000). Override with COGNEE_URL=http://host.docker.internal:8000 for host mode.
 #
 # Other workstreams add overlays at infra/compose-snippets/WS-XX.yml.
 # WS-23 merges those into this file. infra/scripts/compose-cmd.sh also
 # passes any unmerged snippets as extra -f files (kernel first).
-# Merged this pass: WS-02 (darex_app on dashboard/worker/atomic-bridge),
+# Merged this pass: WS-02 (darex_app on dashboard/worker/mcp-bridge),
 # WS-12 (Langfuse Redis keepalive / ClickHouse ulimits / ingest batch),
 # WS-11 (dashboard REDIS_URL → Nango redis:6379 for SSE; never langfuse-redis),
 # WS-04 (worker embed env via LiteLLM; no new broker; webhook path must not fail-fast).
@@ -29,6 +34,12 @@
 networks:
   darex-net:
     driver: bridge
+  # Sandbox only. Internal so untrusted code cannot reach Postgres, Nango, or the internet.
+  # Worker and mcp-bridge join this network to call POST /execute. network_mode: none
+  # would also block that call, so isolation is a dedicated network instead.
+  sandbox-net:
+    driver: bridge
+    internal: true
 
 volumes:
   postgres-data:
@@ -36,8 +47,9 @@ volumes:
   langfuse-clickhouse-data:
   langfuse-minio-data:
   nango-data:
-  atomic-agent-data:
-  atomic-agent-work:
+  trueforge-data:
+  cognee-data:
+  evolution-data:
 
 ##############################################################################
 # Services
@@ -53,35 +65,21 @@ services:
     image: pgvector/pgvector:pg16
     container_name: darex-postgres
     restart: unless-stopped
+    # 8GB-box budget: hard caps keep one runaway from OOM-killing the host.
+    # Limits are ceilings (overcommit is intentional single-node); reservations
+    # reflect steady-state RSS. Node heaps (NODE_OPTIONS) must stay ~128m below limits.
+    mem_limit: 768m
+    mem_reservation: 512m
     ports:
       - "5432:5432"
-    # max_connections raised from the Postgres default of 100.
-    #
-    # Measured on a healthy idle stack: 102 connections against a limit of 100,
-    # of which Temporal alone held 75 (62 on `temporal`, 13 on
-    # `temporal_visibility`) — all idle. The application could not get a
-    # connection at all, and the symptom was
-    #
-    #   HTTP 500  remaining connection slots are reserved for roles with the
-    #             SUPERUSER attribute
-    #
-    # on /api/auth/register — the very first thing a new customer does. Nothing
-    # was leaking; the stack simply asks for more connections than the default
-    # allows, and it does so from the moment it boots.
-    #
-    # The demand, service by service: temporal ~40 (capped below), temporal
-    # visibility ~10, supertokens 10, langfuse 5, litellm 4, nango 2, pgbouncer
-    # server-side pool 25, plus migrations and operator scripts. 200 leaves
-    # roughly 40% headroom over that without pretending the ceiling is free —
-    # each connection costs memory, so this is sized, not maximised.
-    command:
-      - postgres
-      - -c
-      - max_connections=200
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-darex}
-      POSTGRES_PASSWORD: ${DB_PASSWORD:-darex_dev_secret}
+      POSTGRES_PASSWORD: ${SUPERUSER_DB_PASSWORD:-darex_dev_secret}
       POSTGRES_DB: ${POSTGRES_DB:-darex}
+    # Default max_connections is 100. Temporal (~50) + Langfuse (~20) +
+    # SuperTokens, Nango, LiteLLM, and PgBouncer exceed that and new
+    # logins die with "sorry, too many clients already".
+    command: ["postgres", "-c", "max_connections=200"]
     volumes:
       - postgres-data:/var/lib/postgresql/data
       # Init scripts run in alphabetical order on first boot
@@ -105,6 +103,8 @@ services:
     image: edoburu/pgbouncer:v1.23.1-p1
     container_name: darex-pgbouncer
     restart: unless-stopped
+    mem_limit: 128m
+    mem_reservation: 64m
     depends_on:
       postgres:
         condition: service_healthy
@@ -135,6 +135,8 @@ services:
     image: temporalio/auto-setup:1.24.2
     container_name: darex-temporal
     restart: unless-stopped
+    mem_limit: 512m
+    mem_reservation: 256m
     depends_on:
       postgres:
         condition: service_healthy
@@ -144,26 +146,11 @@ services:
       - DB=postgres12
       - DB_PORT=5432
       - POSTGRES_USER=darex
-      - POSTGRES_PWD=${DB_PASSWORD:-darex_dev_secret}
+      - POSTGRES_PWD=${SUPERUSER_DB_PASSWORD:-darex_dev_secret}
       - POSTGRES_SEEDS=postgres
       - DYNAMIC_CONFIG_FILE_PATH=config/dynamicconfig/development-sql.yaml
       - ENABLE_ES=false
       - TEMPORAL_CLI_ADDRESS=temporal:7233
-      # Temporal held 75 idle Postgres connections on an idle stack, which is
-      # most of the default 100-connection budget for a service that was doing
-      # nothing. auto-setup runs frontend, history, matching and worker in one
-      # container and each opens its own pool, so the defaults multiply.
-      #
-      # 20 main + 10 visibility is ample for this deployment's throughput
-      # (single history shard, tens of workflows in flight) and leaves the
-      # budget for the services that serve customers. Raise these before
-      # raising max_connections if Temporal ever becomes the bottleneck —
-      # idle connections are not free.
-      - SQL_MAX_CONNS=20
-      - SQL_MAX_IDLE_CONNS=5
-      - SQL_MAX_CONN_TIME=5m
-      - SQL_VIS_MAX_CONNS=10
-      - SQL_VIS_MAX_IDLE_CONNS=2
     volumes:
       - ./temporal/dynamicconfig:/etc/temporal/config/dynamicconfig:ro
     networks:
@@ -180,6 +167,8 @@ services:
     image: temporalio/ui:2.26.2
     container_name: darex-temporal-ui
     restart: unless-stopped
+    mem_limit: 128m
+    mem_reservation: 64m
     depends_on:
       - temporal
     ports:
@@ -198,6 +187,8 @@ services:
     image: redis:7-alpine
     container_name: darex-redis
     restart: unless-stopped
+    mem_limit: 256m
+    mem_reservation: 128m
     ports:
       - "6379:6379"
     networks:
@@ -211,22 +202,11 @@ services:
   # Dedicated Langfuse BullMQ Redis (WS-12 / A1). Isolated from Nango and
   # from the dashboard SSE bus — do not point REDIS_URL / realtime-hub here.
   langfuse-redis:
-    # OPT-IN. Langfuse is 2.47 GB of a 4.05 GB idle stack — 61% — across
-    # ClickHouse, MinIO, its own Redis, a server and a worker. Everything that
-    # actually serves a customer fits in about 1.6 GB.
-    #
-    # Nothing outside this cluster depends on it: no depends_on in the worker,
-    # the dashboard or the inbox points here, which is what makes a profile
-    # safe rather than a coupling change. Tracing that a deployment cannot
-    # afford to run is not observability, it is overhead.
-    #
-    # Local dev keeps it (start.sh sets COMPOSE_PROFILES=observability).
-    # A first VPS deploy does not. Turn it on when there is traffic worth
-    # tracing:  docker compose --profile observability up -d
-    profiles: ["observability"]
     image: redis:7-alpine
     container_name: darex-langfuse-redis
     restart: unless-stopped
+    mem_limit: 300m
+    mem_reservation: 128m
     command:
       - redis-server
       - --appendonly
@@ -259,6 +239,9 @@ services:
     image: nangohq/nango-server:latest
     container_name: darex-nango
     restart: unless-stopped
+    # Cgroup-OOM-killed at ~476 MB RSS under 768m once page cache counted.
+    mem_limit: 1024m
+    mem_reservation: 512m
     depends_on:
       postgres:
         condition: service_healthy
@@ -268,16 +251,16 @@ services:
       - "3003:3003"   # Nango API + Dashboard
     environment:
       - NANGO_DB_USER=darex
-      - NANGO_DB_PASSWORD=${DB_PASSWORD:-darex_dev_secret}
+      - NANGO_DB_PASSWORD=${SUPERUSER_DB_PASSWORD:-darex_dev_secret}
       - NANGO_DB_HOST=postgres
       - NANGO_DB_PORT=5432
       - NANGO_DB_NAME=nango
       - NANGO_DB_SSL=false
       - NANGO_REDIS_URL=redis://redis:6379
       - SERVER_RUN_MODE=PROD
-      - NANGO_SECRET_KEY=${NANGO_SECRET_KEY:-0c2eb30a-0ecd-42ea-8918-0c73eda41a47}
-      - NANGO_SERVER_URL=http://localhost:3003
-      - WEBHOOK_TRACER_URL=http://localhost:3003
+      - NANGO_SECRET_KEY=${NANGO_SECRET_KEY:-cc462f97-125a-4508-bd47-7951c8213b5f}
+      - NANGO_SERVER_URL=${NANGO_SERVER_URL:-http://localhost:3003}
+      - WEBHOOK_TRACER_URL=${NANGO_SERVER_URL:-http://localhost:3003}
       - LOG_LEVEL=info
     volumes:
       - nango-data:/nango
@@ -295,13 +278,15 @@ services:
   # Uses ClickHouse for trace storage + Postgres for metadata.
   # ─────────────────────────────────────────────────────────────────────────
   langfuse-clickhouse:
-    profiles: ["observability"]
     image: clickhouse/clickhouse-server:24.3
     container_name: darex-langfuse-clickhouse
     restart: unless-stopped
     ports:
       - "8123:8123"   # HTTP
       - "9000:9000"   # Native
+    # Cgroup-OOM-killed at ~600 MB RSS on a 650m cap.
+    mem_limit: 896m
+    mem_reservation: 450m
     ulimits:
       nofile:
         soft: 262144
@@ -322,23 +307,25 @@ services:
       - darex-net
 
   langfuse-minio:
-    profiles: ["observability"]
-    image: minio/minio:RELEASE.2024-06-13T22-53-53Z
+    # Docker Hub removed minio/minio. This legacy image still speaks the
+    # same S3 API Langfuse expects.
+    image: bitnamilegacy/minio:latest
     container_name: darex-langfuse-minio
     restart: unless-stopped
+    mem_limit: 256m
+    mem_reservation: 128m
     ports:
       - "9090:9000"   # S3 API
       - "9091:9001"   # Console
     volumes:
-      - langfuse-minio-data:/data
+      - langfuse-minio-data:/bitnami/minio/data
     environment:
       - MINIO_ROOT_USER=langfuse
       - MINIO_ROOT_PASSWORD=langfuse_dev_secret
       - MINIO_ACCESS_KEY=langfuse
       - MINIO_SECRET_KEY=langfuse_dev_secret
-    command: server /data --console-address ":9001"
     healthcheck:
-      test: ["CMD", "mc", "ready", "local"]
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:9000/minio/health/live"]
       interval: 5s
       timeout: 5s
       retries: 10
@@ -346,25 +333,23 @@ services:
       - darex-net
 
   langfuse-minio-createbuckets:
-    profiles: ["observability"]
-    image: minio/mc
+    image: bitnamilegacy/minio-client:latest
     container_name: darex-langfuse-minio-init
     depends_on:
       - langfuse-minio
     entrypoint: >
       /bin/sh -c "
-      until (/usr/bin/mc alias set myminio http://darex-langfuse-minio:9000 langfuse langfuse_dev_secret); do echo 'Waiting for MinIO...'; sleep 1; done;
-      /usr/bin/mc mb --ignore-existing myminio/langfuse-events;
-      /usr/bin/mc mb --ignore-existing myminio/langfuse-media;
-      /usr/bin/mc anonymous set public myminio/langfuse-events;
-      /usr/bin/mc anonymous set public myminio/langfuse-media;
+      until (mc alias set myminio http://darex-langfuse-minio:9000 langfuse langfuse_dev_secret); do echo 'Waiting for MinIO...'; sleep 1; done;
+      mc mb --ignore-existing myminio/langfuse-events;
+      mc mb --ignore-existing myminio/langfuse-media;
+      mc anonymous set public myminio/langfuse-events;
+      mc anonymous set public myminio/langfuse-media;
       exit 0;
       "
     networks:
       - darex-net
 
   langfuse-server:
-    profiles: ["observability"]
     image: langfuse/langfuse:3
     container_name: darex-langfuse-server
     restart: unless-stopped
@@ -379,13 +364,18 @@ services:
         condition: service_completed_successfully
     ports:
       - "3002:3000"   # Langfuse UI + API
+    mem_limit: 1024m
+    mem_reservation: 400m
     environment:
-      DATABASE_URL: postgresql://darex:${DB_PASSWORD:-darex_dev_secret}@postgres:5432/langfuse
+      NODE_OPTIONS: "--max-old-space-size=768"
+      DATABASE_URL: postgresql://darex:${SUPERUSER_DB_PASSWORD:-darex_dev_secret}@postgres:5432/langfuse
       REDIS_HOST: langfuse-redis
       REDIS_PORT: "6379"
       REDIS_URL: redis://langfuse-redis:6379
       REDIS_CONNECTION_STRING: redis://langfuse-redis:6379
-      REDIS_SOCKET_TIMEOUT_MS: "120000"
+      # Do not set REDIS_SOCKET_TIMEOUT_MS. BullMQ blocks on Redis longer than
+      # that on idle queues and ioredis then errors data-retention-queue every
+      # two minutes ("Expecting data, but didn't receive any in 120000ms").
       LANGFUSE_INGESTION_QUEUE_DELAY_MS: "5000"
       NEXTAUTH_URL: http://localhost:3002
       NEXTAUTH_SECRET: darex-langfuse-nextauth-secret-dev
@@ -430,7 +420,6 @@ services:
       start_period: 45s
 
   langfuse-worker:
-    profiles: ["observability"]
     image: langfuse/langfuse-worker:3
     container_name: darex-langfuse-worker
     restart: unless-stopped
@@ -441,13 +430,17 @@ services:
         condition: service_healthy
       langfuse-minio-createbuckets:
         condition: service_completed_successfully
+    mem_limit: 450m
+    mem_reservation: 200m
     environment:
-      DATABASE_URL: postgresql://darex:${DB_PASSWORD:-darex_dev_secret}@postgres:5432/langfuse
+      DATABASE_URL: postgresql://darex:${SUPERUSER_DB_PASSWORD:-darex_dev_secret}@postgres:5432/langfuse
       REDIS_HOST: langfuse-redis
       REDIS_PORT: "6379"
       REDIS_URL: redis://langfuse-redis:6379
       REDIS_CONNECTION_STRING: redis://langfuse-redis:6379
-      REDIS_SOCKET_TIMEOUT_MS: "120000"
+      # Do not set REDIS_SOCKET_TIMEOUT_MS. BullMQ blocks on Redis longer than
+      # that on idle queues and ioredis then errors data-retention-queue every
+      # two minutes ("Expecting data, but didn't receive any in 120000ms").
       LANGFUSE_INGESTION_QUEUE_DELAY_MS: "5000"
       LANGFUSE_INGESTION_CLICKHOUSE_WRITE_INTERVAL_MS: "1000"
       LANGFUSE_INGESTION_CLICKHOUSE_WRITE_BATCH_SIZE: "1000"
@@ -479,6 +472,8 @@ services:
     image: registry.supertokens.io/supertokens/supertokens-postgresql:9.2.1
     container_name: darex-supertokens
     restart: unless-stopped
+    mem_limit: 384m
+    mem_reservation: 192m
     depends_on:
       postgres:
         condition: service_healthy
@@ -486,7 +481,7 @@ services:
       - "3567:3567"   # SuperTokens API
     environment:
       POSTGRESQL_USER: darex
-      POSTGRESQL_PASSWORD: ${DB_PASSWORD:-darex_dev_secret}
+      POSTGRESQL_PASSWORD: ${SUPERUSER_DB_PASSWORD:-darex_dev_secret}
       POSTGRESQL_HOST: postgres
       POSTGRESQL_PORT: 5432
       POSTGRESQL_DATABASE_NAME: supertokens
@@ -507,6 +502,9 @@ services:
     image: litellm/litellm:main-latest
     container_name: darex-litellm
     restart: unless-stopped
+    # 512m OOM-killed the proxy in a loop while Prisma prepared its toolchain.
+    mem_limit: 1024m
+    mem_reservation: 512m
     ports:
       - "4000:4000"
     volumes:
@@ -514,23 +512,15 @@ services:
     command: ["--config", "/app/config.yaml", "--host", "0.0.0.0", "--port", "4000", "--num_workers", "1"]
     environment:
       - LITELLM_MASTER_KEY=${LITELLM_MASTER_KEY:-sk-darex-litellm-dev-key}
-      - DATABASE_URL=postgresql://darex:${DB_PASSWORD:-darex_dev_secret}@postgres:5432/litellm
+      # NOTE: must NOT use ${DB_PASSWORD} here. Root .env's DB_PASSWORD is the
+      # APP-role password (darex_app) for host-side dev; the live superuser
+      # password is darex_dev_secret. Interpolating DB_PASSWORD via the wrapper
+      # injects the app password and Prisma fails P1000 forever (2026-09-14).
+      - DATABASE_URL=postgresql://darex:${SUPERUSER_DB_PASSWORD:-darex_dev_secret}@postgres:5432/litellm
       # OpenRouter key used by the model fallback chain in config.yaml
       - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
       # Gemini key used by the text-embedding-3-small route (see config.yaml)
       - GEMINI_API_KEY=${GEMINI_API_KEY}
-      # Tiers 4 and 5 of the fallback chain: a SECOND PAYMENT RAIL, so an empty
-      # OpenRouter balance cannot take every tier down at once.
-      #
-      # These two lines were missing while config.yaml already referenced
-      # os.environ/DEEPSEEK_API_KEY and os.environ/GROQ_API_KEY. So both tiers
-      # resolved to an empty key, returned 401 after two retries, and entered
-      # cooldown on every call that reached them - and atomic-agent-groq is LAST
-      # in the chain, so its failure was the chain's failure. Supplying the keys
-      # changed nothing, because the container never saw them. A tier whose
-      # credential is not plumbed is worse than no tier: it costs retries and
-      # ends in an error while the config claims five-deep redundancy.
-      - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY}
       - GROQ_API_KEY=${GROQ_API_KEY}
       - LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY:-pk-lf-darex-dev-public}
       - LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY:-sk-lf-darex-dev-secret}
@@ -548,44 +538,62 @@ services:
       start_period: 20s
 
   # ─────────────────────────────────────────────────────────────────────────
-  # Atomic Bridge — MCP SSE connector bridge for the Atomic Agent.
+  # SearXNG — Local open-source metasearch engine (Google, Bing, DDG, Wikipedia)
+  # Zero API key required; aggregates search results in clean JSON for AI agents.
+  # ─────────────────────────────────────────────────────────────────────────
+  searxng:
+    image: searxng/searxng:latest
+    container_name: darex-searxng
+    restart: unless-stopped
+    mem_limit: 256m
+    mem_reservation: 64m
+    ports:
+      - "127.0.0.1:${SEARXNG_HOST_PORT:-8088}:8080"
+    volumes:
+      - ./searxng:/etc/searxng:ro
+    environment:
+      - SEARXNG_BASE_URL=http://127.0.0.1:8088/
+    networks:
+      - darex-net
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # Crawl4AI — Local open-source LLM-friendly web crawler & markdown extractor
+  # Zero API key required; renders JavaScript/SPA & extracts clean LLM markdown.
+  # ─────────────────────────────────────────────────────────────────────────
+  crawl4ai:
+    image: unclecode/crawl4ai:basic-amd64
+    container_name: darex-crawl4ai
+    restart: unless-stopped
+    shm_size: '512m'
+    mem_limit: 768m
+    mem_reservation: 256m
+    ports:
+      - "127.0.0.1:${CRAWL4AI_HOST_PORT:-11235}:11235"
+    environment:
+      - CRAWL4AI_API_TOKEN=darex-crawl4ai-token
+    networks:
+      - darex-net
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # Atomic Bridge — MCP SSE connector bridge for the TrueForge agent loop.
   # Exposes the DareX business connectors (WhatsApp, Gmail, Calendar, HubSpot,
   # Meta/Google Ads, Slack, Notion, Stripe, Shopify, Zendesk, Intercom,
   # Razorpay, web, DB) as MCP tools (mcp.darex-connectors.*). Built from the
   # @darex/workflows workspace so it can reuse executeAutonomousToolAction.
   # ─────────────────────────────────────────────────────────────────────────
-  atomic-bridge:
+  mcp-bridge:
     build:
       context: ../
-      dockerfile: infra/docker/atomic-bridge/Dockerfile
-    container_name: darex-atomic-bridge
+      dockerfile: infra/docker/mcp-bridge/Dockerfile
+    container_name: darex-mcp-bridge
     restart: unless-stopped
+    mem_limit: 256m
+    mem_reservation: 128m
     depends_on:
       postgres:
         condition: service_healthy
-      # STARTED, not healthy — deliberately.
-      #
-      # Nango is third-party connector OAuth (Gmail, Slack). It is not on the
-      # path that answers a customer, and the application already handles it
-      # being unavailable: connector tools report "not connected", which the
-      # connector-honesty tests assert.
-      #
-      # Requiring it HEALTHY let one auxiliary service take down the whole
-      # product and — far worse — the ability to recover from that:
-      #
-      #   nango unhealthy -> atomic-bridge won't start
-      #                   -> atomic-agent won't start
-      #                   -> dashboard cannot be recreated
-      #
-      # Measured by attempting an actual rollback:
-      #   "dependency failed to start: container darex-nango is unhealthy"
-      #
-      # An incident is precisely when an auxiliary service is down AND you need
-      # to roll back. Coupling the recovery path to something that is not on
-      # the serving path turns a degraded feature into an outage you cannot
-      # exit. Hard-depend only on what the service cannot function without.
       nango-server:
-        condition: service_started
+        condition: service_healthy
       pgbouncer:
         condition: service_healthy
     ports:
@@ -595,40 +603,26 @@ services:
       # `environment` wins over env_file. Runtime role is darex_app (WS-02);
       # migrations still use superuser darex on postgres:5432.
       # App traffic goes through pgbouncer (session pool, I4).
-      # ADVERTISE ONLY WHAT SOME EMPLOYEE CAN ACTUALLY USE.
-      #
-      # The bridge defines 45 tool modules. The union of every seeded pack's
-      # toolAllowlist is ELEVEN, and duties add three more (file_ops, razorpay,
-      # web_extract). Everything else is advertised to a model that is not
-      # permitted to call it and, for the unconfigured connectors, could only
-      # ever receive notConnected if it did.
-      #
-      # The cost is not theoretical. Every tool ships its full JSON schema in
-      # the prompt of EVERY turn, and the prompt reached:
-      #
-      #   402 "Prompt tokens limit exceeded: 30368 > 16800"
-      #
-      # Thirty thousand tokens to answer "is there parking?". That is paid on
-      # every message, it is slower, and a model choosing among 50 tools it
-      # mostly cannot use chooses worse than one shown the handful it holds.
-      #
-      # Kept: the pack allowlists, the duty tools, and deep_research. Nothing is
-      # deleted - definitions, declarations and execution paths are untouched,
-      # so re-enabling a connector is one environment variable and a restart.
-      # A workspace that connects Slack adds slack here and it returns.
-      - MCP_DISABLED_MODULES=${MCP_DISABLED_MODULES:-code_execution,docusign,github,google-ads,google-analytics,google-business-profile,google-chat,google-cloud,google-contacts,google-forms,google-meet,google-search-console,google-slides,google-tasks,intercom,leegality,maps,meta-ads,microsoft-calendar,microsoft-outlook,notion,quickbooks,rera,salesforce,shopify,slack,stripe,twilio,zendesk,zoho-crm}
       - DB_HOST=pgbouncer
       - DB_PORT=5432
       - DB_USER=${APP_DB_USER:-darex_app}
       - DB_PASSWORD=${APP_DB_PASSWORD:-darex_app_dev_secret}
       - NANGO_HOST=http://nango-server:3003
-      # The OAuth popup runs in the BROWSER, which needs Nango's PUBLIC key —
-      # a different value from NANGO_SECRET_KEY, which is server-side only.
-      # Nothing supplied this, so `getNangoServerConfig()` returned undefined
-      # and every Connect click failed with "Nango public key is not
-      # configured" while the connector itself was correctly registered. Same
-      # shape as the LiteLLM tiers: the app read a variable no one passed.
-      - NEXT_PUBLIC_NANGO_PUBLIC_KEY=${NEXT_PUBLIC_NANGO_PUBLIC_KEY}
+      # Decrypts stored WhatsApp tokens for the whatsapp tool. Same value as the dashboard/worker.
+      - CHANNEL_SECRETS_KEY=${CHANNEL_SECRETS_KEY:-0000000000000000000000000000000000000000000000000000000000000000}
+      - COGNEE_URL=${COGNEE_URL:-http://cognee:8000}
+      - COGNEE_API_KEY=${COGNEE_API_KEY:-}
+      - HINDSIGHT_URL=${HINDSIGHT_URL_DOCKER:-http://hindsight:8888}
+      - HINDSIGHT_API_KEY=${HINDSIGHT_API_KEY:-darex-hindsight-dev-key}
+      - SANDBOX_API_URL=http://sandbox:8080
+      - NODE_OPTIONS=--max-old-space-size=192
+      # Signs/verifies MCP tenant headers (x-tfg-mcp-headers). Must match the
+      # signer (worker/dashboard TRUEFORGE turn path). Unset = dev-only
+      # unsigned mode; production bridge refuses unsigned traffic.
+      - MCP_BRIDGE_SECRET=${MCP_BRIDGE_SECRET:-}
+      - SEARXNG_URL=${SEARXNG_URL:-http://searxng:8080}
+      - CRAWL4AI_URL=${CRAWL4AI_URL:-http://crawl4ai:11235}
+      - CRAWL4AI_API_TOKEN=${CRAWL4AI_API_TOKEN:-darex-crawl4ai-token}
     env_file:
       - path: ../.env
         required: false
@@ -640,75 +634,278 @@ services:
         required: false
     networks:
       - darex-net
+      - sandbox-net
     healthcheck:
-      test: ["CMD-SHELL", "node -e \"require('net').connect(8790,'localhost').on('connect',()=>process.exit(0)).on('error',()=>process.exit(1))\""]
+      test: ["CMD-SHELL", "node -e \"fetch('http://localhost:8790/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""]
       interval: 15s
       timeout: 10s
       retries: 10
       start_period: 20s
 
   # ─────────────────────────────────────────────────────────────────────────
-  # Atomic Agent — Local-first AI agent (OpenAI-compatible HTTP serve)
-  # Replaces the legacy Hermes agent. Full agent loop + memory fabric +
-  # MCP tool bridge lives here. Pinned release v0.1.72 (Node >= 25.7).
+  # TrueForge — agent harness (turn loop, sessions, compaction, subagents).
+  # In-compose replacement for the former host process on :8791. Pinned to the
+  # locally-built truefoundry-server image (2026-09-07) whose dist/ was verified
+  # to contain the full per-request x-tfg-mcp-headers forwarding
+  # (dist/main.js + McpServerWithAuthStore merge) that multi-tenancy depends on.
+  # Darex's own derivation of that delta lives on branch `darex/tenant-headers`
+  # in the sibling checkout (32bc86cb + a3706017 on upstream 4b1aa554);
+  # canonical copy: infra/patches/trueforge/darex-tenant-headers.patch.
+  # NEVER float this to latest blindly — re-verify the forwarding first.
+  # Session store is the `trueforge` database on the shared postgres (see
+  # db/init/00_create_databases.sql — existing volumes need one manual
+  # `CREATE DATABASE trueforge;`). STANDALONE=true keeps it single-process.
+  # In-compose it reaches the MCP bridge via service DNS:
+  # configure its MCP server URL as http://mcp-bridge:8790/sse
+  # (the old http://127.0.0.1:8790/sse note applied to host mode only).
+  # No host ports — worker/dashboard reach it as http://trueforge:8790.
   # ─────────────────────────────────────────────────────────────────────────
-  atomic-agent:
-    build:
-      context: ./docker/atomic-agent
-      dockerfile: Dockerfile
-    container_name: darex-atomic-agent
+  trueforge:
+    image: truefoundry-server:latest
+    # Local-only image (no registry): never attempt a pull.
+    pull_policy: never
+    user: "0:0"
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        mkdir -p /app/data
+        chown -R 10001:10001 /app/data
+        exec setpriv --reuid=10001 --regid=10001 --init-groups --inh-caps=-all node dist/main.js
+    container_name: darex-trueforge
     restart: unless-stopped
+    mem_limit: 768m
+    mem_reservation: 384m
     depends_on:
-      atomic-bridge:
+      postgres:
         condition: service_healthy
-      sandbox:
-        condition: service_started
-    ports:
-      - "127.0.0.1:8787:8787"   # OpenAI-compatible HTTP API (localhost only)
+      mcp-bridge:
+        condition: service_healthy
+    expose:
+      - "8790"
     environment:
-      - ATOMIC_AGENT_STATE_DIR=/data
-      - ATOMIC_AGENT_API_KEY=${ATOMIC_AGENT_API_KEY:-darex-atomic-agent-dev-key}
-      - OPENROUTER_MODEL=${ATOMIC_AGENT_OPENROUTER_MODEL:-deepseek/deepseek-v4-flash-0731}
-      - LITELLM_BASE_URL=http://litellm:4000/v1
-      - LITELLM_MODEL=atomic-agent
-      # OUTPUT CEILING FOR EVERY MODEL CALL THE AGENT MAKES.
-      #
-      # dist/llm/provider/openai/openai-build-body.js line 51:
-      #   max_tokens: filtered.maxTokens ?? getConfig().localModels.completionMaxTokens
-      #
-      # Despite the localModels name that default governs REMOTE calls too, and it
-      # is 8192. So every customer reply reserved 8192 output tokens, and OpenRouter
-      # charges against the RESERVED amount rather than the amount used:
-      #
-      #   402 "You requested up to 8192 tokens, but can only afford 4340"
-      #
-      # A two-sentence reply was refused for budget it was never going to spend,
-      # then fell through the chain to tiers that were also out. Capping it at the
-      # router did nothing: litellm treats litellm_params.max_tokens as a DEFAULT,
-      # and an explicit 8192 in the request wins. It has to be fixed at the source.
-      #
-      # 2048 is above every explicit maxTokens in this codebase (largest is 1400)
-      # and far above a customer reply, which is two or three sentences by policy.
-      - ATOMIC_AGENT_LLAMA_MAX_TOKENS=${ATOMIC_AGENT_LLAMA_MAX_TOKENS:-2048}
-      - ATOMIC_AGENT_ACTIVE_PROVIDER=${ATOMIC_AGENT_ACTIVE_PROVIDER:-darex-litellm}
+      - NODE_ENV=production
+      - PORT=8790
+      - HOST=0.0.0.0
+      # Image runs as uid 10001. The wrapper below starts as root, chowns
+      # the named volume, then drops to 10001. HOME must stay on that volume.
+      - HOME=/app/data
+      - XDG_DATA_HOME=/app/data
+      - STANDALONE=true
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_USER=${TF_POSTGRES_USER:-darex}
+      - POSTGRES_PASSWORD=${SUPERUSER_DB_PASSWORD:-darex_dev_secret}
+      - POSTGRES_DB=${TF_POSTGRES_DB:-trueforge}
+      - APP_DATA_DIR_SUFFIX=${TF_APP_DATA_DIR_SUFFIX:-darex-compose}
+      - PUBLIC_BASE_URL=${TF_PUBLIC_BASE_URL:-http://localhost:8791}
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY:-}
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+      - GROQ_API_KEY=${GROQ_API_KEY:-}
+      - MISTRAL_API_KEY=${MISTRAL_API_KEY:-}
     env_file:
       - path: ../.env
-        required: false
-      - path: ../apps/dashboard/.env.local
         required: false
       - path: ./.env
         required: false
     volumes:
-      - atomic-agent-data:/data
-      - atomic-agent-work:/work
+      - trueforge-data:/app/data
     networks:
       - darex-net
     healthcheck:
-      test: ["CMD-SHELL", "bash -c '</dev/tcp/127.0.0.1/8787' || exit 1"]
-      interval: 10s
-      timeout: 5s
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8790/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 10s
       retries: 10
       start_period: 30s
+    stop_grace_period: 35s
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # Cognee — knowledge-graph memory server (ECL + GRAPH_COMPLETION).
+  # In-compose replacement for the former host process on :8000. Built from
+  # the sibling cognee checkout (v1.5.4); LLM/embedding defaults mirror the
+  # verified host setup (OpenRouter gemini-2.5-flash + local FastEmbed
+  # BAAI/bge-small-en-v1.5). Graph data persists in cognee-data.
+  # VOLUME PERMS: the image's entrypoint runs as uid 1000, but a fresh named
+  # volume is root-owned and mkdir /data/system fails. The service starts as
+  # root, creates the dirs, then setpriv drops to cognee before entrypoint.sh.
+  # No host ports — worker/dashboard reach it as http://cognee:8000.
+  # ─────────────────────────────────────────────────────────────────────────
+  cognee:
+    build:
+      context: ../../cognee
+      dockerfile: Dockerfile
+    image: darex-cognee:1.5.4
+    user: "0:0"
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - |
+        mkdir -p /data/cognee /data/system/databases
+        chown -R cognee:cognee /data
+        exec setpriv --reuid=1000 --regid=1000 --init-groups --inh-caps=-all /app/entrypoint.sh
+    container_name: darex-cognee
+    restart: unless-stopped
+    # Cognify peaked at ~1.04 GB in a live check, so 1 GB was too tight.
+    mem_limit: 2048m
+    mem_reservation: 768m
+    expose:
+      - "8000"
+    environment:
+      - HOST=0.0.0.0
+      - PORT=8000
+      - LLM_PROVIDER=${COGNEE_LLM_PROVIDER:-custom}
+      - LLM_ENDPOINT=${COGNEE_LLM_ENDPOINT:-https://openrouter.ai/api/v1}
+      - LLM_API_KEY=${OPENROUTER_API_KEY:-}
+      - LLM_MODEL=${COGNEE_LLM_MODEL:-openrouter/google/gemini-2.5-flash}
+      - EMBEDDING_PROVIDER=${COGNEE_EMBEDDING_PROVIDER:-fastembed}
+      - EMBEDDING_MODEL=${COGNEE_EMBEDDING_MODEL:-BAAI/bge-small-en-v1.5}
+      - DATA_ROOT_DIRECTORY=/data/cognee
+      - SYSTEM_ROOT_DIRECTORY=/data/system
+      - ENABLE_BACKEND_ACCESS_CONTROL=false
+      # Kuzu defaults to a 32 GB buffer pool, which the 2 GB cgroup OOM-kills
+      # on the first /health call. Power of 2 required; 256 MB is ample here.
+      - KUZU_BUFFER_POOL_SIZE=${COGNEE_KUZU_BUFFER_POOL_SIZE:-268435456}
+      # Server-side auth (MEM-S03). Off by default because Cognee keys are
+      # minted per user via POST /api/v1/auth/api-keys, not set from env.
+      # Mint one, put it in COGNEE_API_KEY (worker + dashboard send it as
+      # X-Api-Key), then set COGNEE_REQUIRE_AUTHENTICATION=true.
+      - REQUIRE_AUTHENTICATION=${COGNEE_REQUIRE_AUTHENTICATION:-false}
+    volumes:
+      - cognee-data:/data
+    networks:
+      - darex-net
+    healthcheck:
+      test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/health')\""]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 60s
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # Hindsight (vectorize-io/hindsight, MIT) — agent memory: retain extracts
+  # facts/entities, recall runs semantic+BM25+graph+temporal. Runs beside
+  # Cognee; one bank per org (`org_<uuid>`). Slim image: no local models, so
+  # LLM + embeddings go through LiteLLM and the reranker is RRF (no model).
+  # Own database `hindsight` in the shared Postgres (existing volumes: run
+  # `CREATE DATABASE hindsight;` once — init scripts run on first boot only).
+  # Embedding dim is fixed at first migration; changing the embedding model
+  # needs a fresh database.
+  # ─────────────────────────────────────────────────────────────────────────
+  hindsight:
+    image: ghcr.io/vectorize-io/hindsight-api:0.10.2-slim
+    container_name: darex-hindsight
+    restart: unless-stopped
+    mem_limit: 1024m
+    mem_reservation: 512m
+    depends_on:
+      postgres:
+        condition: service_healthy
+      litellm:
+        condition: service_healthy
+    expose:
+      - "8888"
+    environment:
+      - HINDSIGHT_API_DATABASE_URL=postgresql://darex:${SUPERUSER_DB_PASSWORD:-darex_dev_secret}@postgres:5432/hindsight
+      - HINDSIGHT_API_WORKER_ID=darex-hindsight
+      - HINDSIGHT_API_LLM_PROVIDER=openai
+      - HINDSIGHT_API_LLM_BASE_URL=http://litellm:4000/v1
+      - HINDSIGHT_API_LLM_API_KEY=${LITELLM_MASTER_KEY:-sk-darex-litellm-dev-key}
+      - HINDSIGHT_API_LLM_MODEL=${HINDSIGHT_LLM_MODEL:-darex-default}
+      - HINDSIGHT_API_EMBEDDINGS_PROVIDER=openai
+      - HINDSIGHT_API_EMBEDDINGS_OPENAI_BASE_URL=http://litellm:4000/v1
+      - HINDSIGHT_API_EMBEDDINGS_OPENAI_API_KEY=${LITELLM_MASTER_KEY:-sk-darex-litellm-dev-key}
+      - HINDSIGHT_API_EMBEDDINGS_OPENAI_MODEL=text-embedding-3-small
+      - HINDSIGHT_API_RERANKER_PROVIDER=rrf
+      # Shared-secret auth; worker/dashboard send it as Authorization: Bearer.
+      - HINDSIGHT_API_TENANT_EXTENSION=hindsight_api.extensions.builtin.tenant:ApiKeyTenantExtension
+      - HINDSIGHT_API_TENANT_API_KEY=${HINDSIGHT_API_KEY:-darex-hindsight-dev-key}
+    networks:
+      - darex-net
+    healthcheck:
+      test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:8888/health')\""]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 90s
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # Evolution API — self-hosted WhatsApp gateway for "scan a QR" linking
+  # (packages/whatsapp-gateway provider `evolution`). Apache-2.0 with an
+  # attribution condition (shown in the connect modal). One instance per org,
+  # created by the dashboard. Own schema `evolution_api` in the darex DB;
+  # message bodies are NOT stored here (the dashboard stores them).
+  # Unofficial WhatsApp-Web transport: the official path is Meta Cloud API.
+  # ─────────────────────────────────────────────────────────────────────────
+  evolution:
+    image: evoapicloud/evolution-api:v2.3.7
+    container_name: darex-evolution
+    restart: unless-stopped
+    mem_limit: 768m
+    mem_reservation: 384m
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      # Loopback only: host-run `pnpm dev` reaches it here; containers use evolution:8080.
+      - "127.0.0.1:${EVOLUTION_PORT:-8085}:8080"
+    environment:
+      - SERVER_TYPE=http
+      - SERVER_PORT=8080
+      - SERVER_URL=http://evolution:8080
+      - LANGUAGE=en
+      - TELEMETRY_ENABLED=false
+      - AUTHENTICATION_API_KEY=${EVOLUTION_API_KEY:-darex-evolution-dev-key}
+      - AUTHENTICATION_EXPOSE_IN_FETCH_INSTANCES=false
+      - DATABASE_PROVIDER=postgresql
+      - DATABASE_CONNECTION_URI=postgresql://${POSTGRES_USER:-darex}:${SUPERUSER_DB_PASSWORD:-darex_dev_secret}@postgres:5432/${POSTGRES_DB:-darex}?schema=evolution_api
+      - DATABASE_CONNECTION_CLIENT_NAME=darex_evolution
+      - DATABASE_SAVE_DATA_INSTANCE=true
+      - DATABASE_SAVE_DATA_NEW_MESSAGE=false
+      - DATABASE_SAVE_MESSAGE_UPDATE=false
+      - DATABASE_SAVE_DATA_CONTACTS=false
+      - DATABASE_SAVE_DATA_CHATS=false
+      - DATABASE_SAVE_DATA_HISTORIC=false
+      - DATABASE_SAVE_DATA_LABELS=false
+      - DATABASE_SAVE_IS_ON_WHATSAPP=false
+      - CACHE_REDIS_ENABLED=false
+      - CACHE_LOCAL_ENABLED=true
+      - DEL_INSTANCE=false
+      - QRCODE_LIMIT=30
+      - CONFIG_SESSION_PHONE_CLIENT=Darex
+      - CONFIG_SESSION_PHONE_NAME=Chrome
+      - WEBHOOK_GLOBAL_ENABLED=false
+    volumes:
+      - evolution-data:/evolution/instances
+    networks:
+      - darex-net
+    healthcheck:
+      # Runtime image has no curl/wget; node 24 has fetch.
+      test: ["CMD", "node", "-e", "fetch('http://localhost:8080/').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 60s
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # Hindsight Control Plane — web UI to browse every org bank: memories,
+  # entities, documents, the knowledge graph, operations. Loopback only
+  # (127.0.0.1:9999); it holds the API key, so never publish it on 0.0.0.0.
+  # Banks are `org_<uuid>`. Open http://localhost:9999
+  # ─────────────────────────────────────────────────────────────────────────
+  hindsight-ui:
+    image: ghcr.io/vectorize-io/hindsight-control-plane:0.10.2
+    container_name: darex-hindsight-ui
+    restart: unless-stopped
+    mem_limit: 256m
+    depends_on:
+      hindsight:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:9999:9999"
+    environment:
+      - HINDSIGHT_CP_DATAPLANE_API_URL=http://hindsight:8888
+      - HINDSIGHT_CP_DATAPLANE_API_KEY=${HINDSIGHT_API_KEY:-darex-hindsight-dev-key}
+    networks:
+      - darex-net
 
   # ─────────────────────────────────────────────────────────────────────────
   # Code Sandbox — self-hosted, network-isolated code execution for the
@@ -722,14 +919,33 @@ services:
       dockerfile: Dockerfile
     container_name: darex-sandbox
     restart: unless-stopped
+    # Untrusted code runs here — the cap is a security boundary, not just budget.
+    mem_limit: 512m
+    mem_reservation: 128m
+    read_only: true
+    # Reap exited children so they never count against pids_limit.
+    init: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 64
+    tmpfs:
+      - /tmp:size=64m
     environment:
       - SANDBOX_PORT=8080
-      - SANDBOX_MAX_CONCURRENT=2
+      - SANDBOX_MAX_CONCURRENT=10
+      - SANDBOX_PER_TENANT_CONCURRENT=2
       - SANDBOX_DEFAULT_TIMEOUT_MS=10000
     networks:
-      - darex-net
+      - sandbox-net
+    ports:
+      - "127.0.0.1:8080:8080"
     healthcheck:
-      test: ["CMD-SHELL", "node -e \"fetch('http://localhost:8080/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""]
+      # curl, not `node -e fetch`: a node probe starts V8 (5-11 threads) and, on a
+      # loaded host, outlived its timeout so probes stacked up to pids_limit=64
+      # and every exec failed with "Cannot fork". -m bounds curl itself.
+      test: ["CMD-SHELL", "curl -fsS -m 5 -o /dev/null http://localhost:8080/health"]
       interval: 15s
       timeout: 10s
       retries: 10
@@ -745,14 +961,13 @@ services:
       dockerfile: Dockerfile
     container_name: darex-inbox
     restart: unless-stopped
+    mem_limit: 256m
+    mem_reservation: 128m
     ports:
-      - "3004:3004"
+      - "127.0.0.1:3004:3004"
     environment:
       - PORT=3004
       - DASHBOARD_URL=http://dashboard:3000
-      # `environment` overrides env_file, so an empty default here CLOBBERS the
-      # real value in apps/dashboard/.env.local and every webhook 401s.
-      # Keep a working dev default; production supplies it via --env-file.
       - CHATWOOT_WEBHOOK_SECRET=${CHATWOOT_WEBHOOK_SECRET:-darex-chatwoot-webhook-secret-dev}
     depends_on:
       postgres:
@@ -768,7 +983,7 @@ services:
 
   # ─────────────────────────────────────────────────────────────────────────
   # Worker — Temporal Autonomous Agent Worker (runs on the same tasks)
-  # Executes runAgentTurnActivity -> atomic-agent + persist activities.
+  # Executes runAgentTurnActivity -> TrueForge (in-compose, TRUEFORGE_URL) + persist activities.
   # Replaces the host-launched `node infra/scripts/worker-launcher.js`.
   # ─────────────────────────────────────────────────────────────────────────
   worker:
@@ -777,46 +992,52 @@ services:
       dockerfile: infra/docker/worker/Dockerfile
     container_name: darex-worker
     restart: unless-stopped
+    # Heap 256m + headroom; raise toward 768m when DAREX_INPROCESS_TURNS=true
+    # graduates (in-process turns hold model stream + compaction state here).
+    mem_limit: 384m
+    mem_reservation: 192m
     depends_on:
       postgres:
         condition: service_healthy
       temporal:
         condition: service_healthy
-      atomic-agent:
-        condition: service_healthy
       pgbouncer:
         condition: service_healthy
+      trueforge:
+        condition: service_healthy
+      cognee:
+        condition: service_started
+      hindsight:
+        condition: service_started
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     environment:
       # `environment` wins over env_file. Runtime role is darex_app (WS-02).
       - TEMPORAL_ADDRESS=temporal:7233
-      # The worker is the PUBLISHER on the realtime bus; the dashboard is only
-      # the subscriber. Only the dashboard had REDIS_URL, so publishOrgEvent —
-      # which returns silently when no Redis is configured — was a no-op in
-      # every activity that calls it: owner.briefing, conversation_updated,
-      # plan.step, and agent activity. The SSE route worked, the dashboard
-      # subscribed correctly, and nothing was ever sent.
-      #
-      # Same Redis as the dashboard subscribes to (`redis`), never
-      # langfuse-redis — a publisher pointed at the observability instance
-      # reaches no subscriber and looks identical to this bug.
-      - REDIS_URL=redis://redis:6379
       - DB_HOST=pgbouncer
       - DB_USER=${APP_DB_USER:-darex_app}
       - DB_PORT=5432
       - DB_NAME=${DB_NAME:-darex}
       - DB_PASSWORD=${APP_DB_PASSWORD:-darex_app_dev_secret}
       - NANGO_HOST=http://nango-server:3003
-      # The OAuth popup runs in the BROWSER, which needs Nango's PUBLIC key —
-      # a different value from NANGO_SECRET_KEY, which is server-side only.
-      # Nothing supplied this, so `getNangoServerConfig()` returned undefined
-      # and every Connect click failed with "Nango public key is not
-      # configured" while the connector itself was correctly registered. Same
-      # shape as the LiteLLM tiers: the app read a variable no one passed.
-      - NEXT_PUBLIC_NANGO_PUBLIC_KEY=${NEXT_PUBLIC_NANGO_PUBLIC_KEY}
-      - ATOMIC_AGENT_URL=http://atomic-agent:8787
-      - ATOMIC_AGENT_API_KEY=${ATOMIC_AGENT_API_KEY:-darex-atomic-agent-dev-key}
-      - ATOMIC_AGENT_ACTIVE_PROVIDER=${ATOMIC_AGENT_ACTIVE_PROVIDER:-darex-litellm}
-      - ATOMIC_AGENT_TIMEOUT_MS=${ATOMIC_AGENT_TIMEOUT_MS:-300000}
+      - EVOLUTION_API_URL=http://evolution:8080
+      - EVOLUTION_API_KEY=${EVOLUTION_API_KEY:-darex-evolution-dev-key}
+      - CHANNEL_SECRETS_KEY=${CHANNEL_SECRETS_KEY:-0000000000000000000000000000000000000000000000000000000000000000}
+      - USE_TRUEFORGE=true
+      # In-compose harness (cut over 2026-09-15, verified live). Deliberately
+      # NOT ${TRUEFORGE_URL}: root .env holds the HOST-dev value (127.0.0.1)
+      # which is a black hole inside containers. Host fallback if ever needed:
+      # TRUEFORGE_URL=http://host.docker.internal:8791 (recreate to apply).
+      - TRUEFORGE_URL=http://trueforge:8790
+      - TRUEFORGE_MODEL=${TRUEFORGE_MODEL:-openrouter/deepseek-v4-1-flash}
+      - TRUEFORGE_CHAT_MODEL=${TRUEFORGE_CHAT_MODEL:-openrouter/deepseek-v4-1-flash}
+      # Same two-runtime trap as above: root .env holds the host-dev value.
+      # Flip to http://cognee:8000 at cutover.
+      - COGNEE_URL=${COGNEE_URL:-http://cognee:8000}
+      - COGNEE_API_KEY=${COGNEE_API_KEY:-}
+      - HINDSIGHT_URL=${HINDSIGHT_URL_DOCKER:-http://hindsight:8888}
+      - HINDSIGHT_API_KEY=${HINDSIGHT_API_KEY:-darex-hindsight-dev-key}
+      - NODE_OPTIONS=--max-old-space-size=256
       - SANDBOX_API_URL=http://sandbox:8080
       - LANGFUSE_HOST=http://langfuse-server:3000
       - LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY:-pk-lf-darex-dev-public}
@@ -824,18 +1045,21 @@ services:
       - JINA_API_KEY=${JINA_API_KEY:-}
       # WS-04 / M2: embed activity on this worker (not a new broker).
       # Production fail if EMBEDDING_MODEL unset is this process, not webhooks.
-      - EMBEDDING_MODEL=${EMBEDDING_MODEL-text-embedding-3-small}
+      - EMBEDDING_MODEL=${EMBEDDING_MODEL:-text-embedding-3-small}
       - EMBEDDING_DIM=${EMBEDDING_DIM:-1536}
-      - LITELLM_BASE_URL=${LITELLM_BASE_URL:-http://litellm:4000/v1}
-      # Must match the litellm service's own master key. An empty default here
-      # silently breaks EVERY agent run with ConfigurationError while litellm
-      # itself looks healthy — `environment` overrides env_file, so the empty
-      # string wins over anything set in apps/dashboard/.env.local.
-      - LITELLM_API_KEY=${LITELLM_API_KEY:-sk-darex-litellm-dev-key}
-      - LITELLM_MASTER_KEY=${LITELLM_MASTER_KEY:-sk-darex-litellm-dev-key}
+      - LITELLM_BASE_URL=http://litellm:4000/v1
+      - LITELLM_API_KEY=${LITELLM_API_KEY:-}
+      - LITELLM_MASTER_KEY=${LITELLM_MASTER_KEY:-}
       # memory-writeback's extractWithLiteLLM requires this (no vendor
       # default in app code) — must name a model_name from litellm config.yaml.
-      - LITELLM_MODEL=${LITELLM_MODEL:-atomic-agent}
+      - LITELLM_MODEL=${LITELLM_MODEL:-darex-default}
+      # Signs MCP tenant headers for the mcp-bridge. Must match the bridge's
+      # MCP_BRIDGE_SECRET. In-compose TrueForge reaches the bridge at
+      # http://mcp-bridge:8790/sse (host-mode override: http://127.0.0.1:8790/sse).
+      - MCP_BRIDGE_SECRET=${MCP_BRIDGE_SECRET:-}
+      - SEARXNG_URL=${SEARXNG_URL:-http://searxng:8080}
+      - CRAWL4AI_URL=${CRAWL4AI_URL:-http://crawl4ai:11235}
+      - CRAWL4AI_API_TOKEN=${CRAWL4AI_API_TOKEN:-darex-crawl4ai-token}
     env_file:
       - path: ../.env
         required: false
@@ -845,51 +1069,51 @@ services:
         required: false
     networks:
       - darex-net
+      - sandbox-net
     healthcheck:
-      test: ["CMD-SHELL", "node -e \"process.exit(0)\""]
+      test: ["CMD-SHELL", "node -e \"fetch('http://127.0.0.1:8788/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""]
       interval: 15s
       timeout: 5s
       retries: 5
-      start_period: 20s
+      start_period: 40s
 
   # ─────────────────────────────────────────────────────────────────────────
-  # Dashboard — Next.js app (port 3000), supertokens auth, atomic-agent direct
+  # Dashboard — Next.js app (port 3000), supertokens auth, TrueForge direct
+  # (agent turns via TRUEFORGE_URL; plain completions via LiteLLM darex-default).
   # ─────────────────────────────────────────────────────────────────────────
   dashboard:
+    image: darex-dashboard:local
     build:
       context: ../
       dockerfile: infra/docker/dashboard/Dockerfile
     container_name: darex-dashboard
     restart: unless-stopped
+    # Heap 384m + Next SSR overhead.
+    mem_limit: 640m
+    mem_reservation: 320m
     depends_on:
       postgres:
         condition: service_healthy
       supertokens:
         condition: service_healthy
-      # Temporal and the agent are STARTED, not healthy — same principle as
-      # atomic-bridge -> nango above.
-      #
-      # The dashboard can sign a user in, show every past conversation, the
-      # approval queue, the shadow-mode evidence and the impact numbers with
-      # neither of these available; all of that is served from Postgres, which
-      # IS a hard dependency and stays one. What degrades without them is
-      # starting new work — and that path already retries, falls back through
-      # three model tiers, and tells the customer it is still working rather
-      # than going silent.
-      #
-      # Requiring them healthy meant a slow agent start left the entire
-      # product — including the pages an operator would use to diagnose the
-      # slow agent — refusing to come up at all.
       temporal:
-        condition: service_started
-      atomic-agent:
-        condition: service_started
+        condition: service_healthy
       redis:
         condition: service_healthy
       pgbouncer:
         condition: service_healthy
+      trueforge:
+        condition: service_healthy
+      cognee:
+        condition: service_started
+      hindsight:
+        condition: service_started
+      evolution:
+        condition: service_started
     ports:
       - "${DASHBOARD_PORT:-3000}:3000"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     environment:
       # `environment` wins over env_file. Runtime role is darex_app (WS-02).
       # SSE bus (WS-11 / I3): Nango redis — NEVER langfuse-redis.
@@ -899,38 +1123,57 @@ services:
       - DB_NAME=${DB_NAME:-darex}
       - DB_PASSWORD=${APP_DB_PASSWORD:-darex_app_dev_secret}
       - REDIS_URL=redis://redis:6379
-      # Two addresses for one server. NANGO_HOST is how THIS container reaches
-      # Nango; NEXT_PUBLIC_NANGO_HOST is how the BROWSER reaches it, and the
-      # browser cannot resolve a compose service name. The OAuth popup and the
-      # setup link both use the public one. Override for a real deployment.
       - NANGO_HOST=http://nango-server:3003
-      # The OAuth popup runs in the BROWSER, which needs Nango's PUBLIC key —
-      # a different value from NANGO_SECRET_KEY, which is server-side only.
-      # Nothing supplied this, so `getNangoServerConfig()` returned undefined
-      # and every Connect click failed with "Nango public key is not
-      # configured" while the connector itself was correctly registered. Same
-      # shape as the LiteLLM tiers: the app read a variable no one passed.
-      - NEXT_PUBLIC_NANGO_PUBLIC_KEY=${NEXT_PUBLIC_NANGO_PUBLIC_KEY}
-      - NEXT_PUBLIC_NANGO_HOST=${NEXT_PUBLIC_NANGO_HOST:-http://127.0.0.1:3003}
+      # Public browser-facing Nango URL for OAuth popups. Server-to-server
+      # NANGO_HOST above is container DNS browsers cannot resolve — the
+      # dashboard returns this value to the frontend instead.
+      - NEXT_PUBLIC_NANGO_HOST=${NEXT_PUBLIC_NANGO_HOST:-http://localhost:3003}
       - TEMPORAL_ADDRESS=temporal:7233
       - SUPERTOKENS_CONNECTION_URI=http://supertokens:3567
-      - ATOMIC_AGENT_URL=http://atomic-agent:8787
-      - ATOMIC_AGENT_API_KEY=${ATOMIC_AGENT_API_KEY:-darex-atomic-agent-dev-key}
+      - USE_TRUEFORGE=true
+      # In-compose harness (cut over 2026-09-15, verified live). Deliberately
+      # NOT ${TRUEFORGE_URL}: root .env holds the HOST-dev value (127.0.0.1)
+      # which is a black hole inside containers. Host fallback if ever needed:
+      # TRUEFORGE_URL=http://host.docker.internal:8791 (recreate to apply).
+      - TRUEFORGE_URL=http://trueforge:8790
+      - TRUEFORGE_MODEL=${TRUEFORGE_MODEL:-openrouter/deepseek-v4-1-flash}
+      - TRUEFORGE_CHAT_MODEL=${TRUEFORGE_CHAT_MODEL:-openrouter/deepseek-v4-1-flash}
+      # Same two-runtime trap as above: root .env holds the host-dev value.
+      # Flip to http://cognee:8000 at cutover.
+      - COGNEE_URL=${COGNEE_URL:-http://cognee:8000}
+      - COGNEE_API_KEY=${COGNEE_API_KEY:-}
+      - HINDSIGHT_URL=${HINDSIGHT_URL_DOCKER:-http://hindsight:8888}
+      - HINDSIGHT_API_KEY=${HINDSIGHT_API_KEY:-darex-hindsight-dev-key}
+      # Evolution API (QR WhatsApp). Container-to-container URLs; root .env holds host-dev values.
+      - EVOLUTION_API_URL=http://evolution:8080
+      - EVOLUTION_API_KEY=${EVOLUTION_API_KEY:-darex-evolution-dev-key}
+      - EVOLUTION_WEBHOOK_URL=http://dashboard:3000/api/webhooks/whatsapp-evolution
+      - EVOLUTION_WEBHOOK_SECRET=${EVOLUTION_WEBHOOK_SECRET:-darex-evolution-webhook-dev-secret}
+      # Encrypts stored WhatsApp tokens. The all-zero default is dev only; prod-failfast rejects it.
+      - CHANNEL_SECRETS_KEY=${CHANNEL_SECRETS_KEY:-0000000000000000000000000000000000000000000000000000000000000000}
+      - NODE_OPTIONS=--max-old-space-size=384
       - JINA_API_KEY=${JINA_API_KEY:-}
-      - ATOMIC_AGENT_TIMEOUT_MS=${ATOMIC_AGENT_TIMEOUT_MS:-300000}
       - SANDBOX_API_URL=http://sandbox:8080
+      - WORKER_HEALTH_URL=http://worker:8788/health
       - LANGFUSE_HOST=http://langfuse-server:3000
       - LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY:-pk-lf-darex-dev-public}
       - LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY:-sk-lf-darex-dev-secret}
-      # `environment` overrides env_file, so an empty default here CLOBBERS the
-      # real value in apps/dashboard/.env.local and every webhook 401s.
-      # Keep a working dev default; production supplies it via --env-file.
       - CHATWOOT_WEBHOOK_SECRET=${CHATWOOT_WEBHOOK_SECRET:-darex-chatwoot-webhook-secret-dev}
       # WS-04: enqueue may pass model/dim; webhook/request path must not fail
       # if EMBEDDING_MODEL is unset (worker owns that fail-fast).
-      - EMBEDDING_MODEL=${EMBEDDING_MODEL-text-embedding-3-small}
+      - EMBEDDING_MODEL=${EMBEDDING_MODEL:-text-embedding-3-small}
       - EMBEDDING_DIM=${EMBEDDING_DIM:-1536}
-      - LITELLM_BASE_URL=${LITELLM_BASE_URL:-http://litellm:4000/v1}
+      - LITELLM_BASE_URL=http://litellm:4000/v1
+      - LITELLM_MASTER_KEY=${LITELLM_MASTER_KEY:-sk-darex-litellm-dev-key}
+      - LITELLM_MODEL=${LITELLM_MODEL:-darex-default}
+      - NEXT_PUBLIC_APP_URL=${NEXT_PUBLIC_APP_URL:-http://localhost:3000}
+      # Signs MCP tenant headers (see worker block). Must match bridge secret.
+      - MCP_BRIDGE_SECRET=${MCP_BRIDGE_SECRET:-}
+      - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID:-${GOOGLE_WORKSPACE_CLIENT_ID:-}}
+      - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET:-${GOOGLE_WORKSPACE_CLIENT_SECRET:-}}
+      - SEARXNG_URL=${SEARXNG_URL:-http://searxng:8080}
+      - CRAWL4AI_URL=${CRAWL4AI_URL:-http://crawl4ai:11235}
+      - CRAWL4AI_API_TOKEN=${CRAWL4AI_API_TOKEN:-darex-crawl4ai-token}
     env_file:
       - path: ../.env
         required: false
@@ -940,6 +1183,7 @@ services:
         required: false
     networks:
       - darex-net
+      - sandbox-net
     healthcheck:
       test: ["CMD-SHELL", "node -e \"require('http').get('http://localhost:3000/api/health', r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))\""]
       interval: 15s

@@ -1,11 +1,12 @@
 import { NextResponse } from 'next/server';
-import { getScopedClient } from '@/lib/db';
+import { getScopedClient, scopedAuthErrorResponse } from '@/lib/db';
 import {
   loadOrgPromotedPlaybooks,
   sanitizePromotionSteps,
   slugifyPlaybookName,
 } from '@/lib/insight-engine';
 import { queryConfirmRejectDrift } from '@/lib/org-cost';
+import { jsonBodyOrEmpty } from '@/lib/safe-json';
 
 export const dynamic = 'force-dynamic';
 
@@ -56,9 +57,8 @@ export async function GET() {
       client.release();
     }
   } catch (error: unknown) {
-    if (error instanceof Error && error.message === 'Unauthorized') {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
+    const __scopedAuth = scopedAuthErrorResponse(error);
+    if (__scopedAuth) return __scopedAuth;
     console.error('GET /api/ask-ai/feedback Error:', error);
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
   }
@@ -68,7 +68,7 @@ export async function POST(request: Request) {
   try {
     const { client, orgId, userId } = await getScopedClient();
     try {
-      const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
+      const body = (await jsonBodyOrEmpty(request)) as Record<string, unknown>;
       if (body.org_id !== undefined || body.orgId !== undefined) {
         return NextResponse.json({ error: 'org_id is not accepted from the request body' }, { status: 400 });
       }
@@ -92,9 +92,8 @@ export async function POST(request: Request) {
       client.release();
     }
   } catch (error: unknown) {
-    if (error instanceof Error && error.message === 'Unauthorized') {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
+    const __scopedAuth2 = scopedAuthErrorResponse(error);
+    if (__scopedAuth2) return __scopedAuth2;
     console.error('POST /api/ask-ai/feedback Error:', error);
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
   }
@@ -129,21 +128,37 @@ async function handleVote(
     }
   }
 
+  const comment =
+    typeof body.comment === 'string' && body.comment.trim()
+      ? body.comment.trim().slice(0, 2000)
+      : null;
+
   if (messageId) {
     await client.query(
       `DELETE FROM ask_ai_feedback WHERE org_id = $1 AND user_id = $2 AND message_id = $3`,
       [orgId, userId, messageId]
     );
   }
-  await client.query(
-    `INSERT INTO ask_ai_feedback (org_id, user_id, conversation_id, plan_id, message_id, vote)
-     VALUES ($1, $2, $3, $4, $5, $6)`,
-    [orgId, userId, conversationId, planId, messageId, body.vote]
-  );
+  try {
+    await client.query(
+      `INSERT INTO ask_ai_feedback (org_id, user_id, conversation_id, plan_id, message_id, vote, comment)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+      [orgId, userId, conversationId, planId, messageId, body.vote, comment]
+    );
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    if (!/comment|42703|undefined column/i.test(message)) throw err;
+    await client.query(
+      `INSERT INTO ask_ai_feedback (org_id, user_id, conversation_id, plan_id, message_id, vote)
+       VALUES ($1, $2, $3, $4, $5, $6)`,
+      [orgId, userId, conversationId, planId, messageId, body.vote]
+    );
+  }
 
   return NextResponse.json({
     ok: true,
     vote: body.vote,
+    commentStored: Boolean(comment),
     trained: false,
     crossOrgTraining: false,
   });

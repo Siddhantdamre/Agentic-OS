@@ -1,23 +1,32 @@
-/**
- * SUPERVISION: GAP — spawns specialists and synthesises their output.
- * Nothing judges the synthesis, so a crew that agreed on something wrong
- * reports the same as one that got it right.
- */
 import { executeChild, proxyActivities, workflowInfo } from '@temporalio/workflow';
 import type * as activities from '../activities/index.js';
-import type { AgentTaskInput, CrewSpawnResult, CrewWorkflowInput, CrewWorkflowResult } from '@darex/shared-types';
+import type { AgentTaskInput, AgentTaskResult, CrewSpawnResult, CrewWorkflowInput, CrewWorkflowResult } from '@darex/shared-types';
 import {
   buildCrewSynthesisPrompt,
   capCrewSpecialists,
   crewChildWorkflowId,
+  MANAGER_SYNTHESIS_TIMEOUT,
+  prepareFixedMemberSpecialists,
 } from '../crew-contract.js';
 import { AutonomousAgentWorkflow } from './AutonomousAgentWorkflow.js';
 
-const { runAgentTurnActivity, saveMessageActivity, logChannelActivity, planCrewActivity } = proxyActivities<typeof activities>({
+const { saveMessageActivity, logChannelActivity, assertCrewSpendAllowedActivity } = proxyActivities<typeof activities>({
   startToCloseTimeout: '12 minutes',
   scheduleToCloseTimeout: '20 minutes',
   retry: {
     initialInterval: '5s',
+    maximumAttempts: 2,
+    backoffCoefficient: 2,
+    nonRetryableErrorTypes: ['AuthorizationError', 'InvalidArgumentError'],
+  },
+});
+
+/** Dedicated short timeout so manager synthesis cannot runaway after specialists finish. */
+const { runAgentTurnActivity: runManagerSynthesisActivity } = proxyActivities<typeof activities>({
+  startToCloseTimeout: MANAGER_SYNTHESIS_TIMEOUT,
+  scheduleToCloseTimeout: MANAGER_SYNTHESIS_TIMEOUT,
+  retry: {
+    initialInterval: '2s',
     maximumAttempts: 2,
     backoffCoefficient: 2,
     nonRetryableErrorTypes: ['AuthorizationError', 'InvalidArgumentError'],
@@ -33,37 +42,73 @@ function collectUsedTools(spawned: CrewSpawnResult[], synthesis: CrewWorkflowRes
   return Array.from(tools);
 }
 
+function failedSpecialistResult(reason: unknown): AgentTaskResult {
+  const message =
+    reason instanceof Error
+      ? reason.message
+      : typeof reason === 'string'
+        ? reason
+        : 'Specialist execution failed';
+  return {
+    success: false,
+    replyMessage: '',
+    executedSteps: [],
+    usedTools: [],
+    error: message,
+  };
+}
+
 export async function CrewWorkflow(input: CrewWorkflowInput): Promise<CrewWorkflowResult> {
   const parentId = workflowInfo().workflowId;
+  const fixedMembers = input.fixedMembers === true;
+  let specialists = capCrewSpecialists(input.specialists || []);
+  if (fixedMembers) {
+    specialists = prepareFixedMemberSpecialists(specialists, input.userMessage);
+  }
 
-  // Caller-supplied specialists win. When none are given, ask the planner to
-  // pick from the org's real roster — this is what turns a fixed fan-out into
-  // actual composition. Planning is an activity (DB + model = non-deterministic,
-  // forbidden in workflow code) and fails soft to solo, so a planner outage
-  // degrades to one agent rather than a failed request.
-  let resolved = input.specialists || [];
-  let planReason = input.reason;
+  if (fixedMembers && specialists.length === 0) {
+    const msg = 'No fixed team members to run.';
+    return {
+      mode: 'crew',
+      success: false,
+      replyMessage: msg,
+      reason: input.reason,
+      spawned: [],
+      synthesis: {
+        success: false,
+        replyMessage: msg,
+        executedSteps: [],
+        usedTools: [],
+        error: msg,
+      },
+      usedTools: [],
+    };
+  }
 
-  if (resolved.length === 0 && input.userMessage) {
-    const plan = await planCrewActivity({ orgId: input.orgId, userMessage: input.userMessage });
-    if (plan.mode === 'crew') {
-      resolved = plan.assignments.map((a) => ({
-        ...input.manager,
-        employeeId: a.employeeId,
-        employeeName: a.name,
-        employeeRole: a.role,
-        employeePersona: a.persona,
-        // Authoritative allowlist from the employee record — never the model's.
-        toolAllowlist: a.toolAllowlist,
-        // Each specialist works its own slice, not the whole request.
-        userMessage: a.subtask,
-      }));
-      planReason = plan.reason;
+  if (input.orgId && specialists.length > 1) {
+    const spend = await assertCrewSpendAllowedActivity({ orgId: input.orgId });
+    if (!spend.allowed) {
+      const msg = spend.reason || 'Crew spawn blocked by org spend ceiling.';
+      return {
+        mode: 'crew',
+        success: false,
+        replyMessage: msg,
+        reason: input.reason,
+        spawned: [],
+        synthesis: {
+          success: false,
+          replyMessage: msg,
+          executedSteps: [],
+          usedTools: [],
+          error: msg,
+        },
+        usedTools: [],
+      };
     }
   }
 
-  const specialists = capCrewSpecialists(resolved);
-
+  // Auto mode: empty specialists fall back to the manager. Fixed Team never
+  // collapses to a solo executive when the user selected the roster.
   if (specialists.length <= 1) {
     const spec: AgentTaskInput = specialists[0]
       ? {
@@ -99,14 +144,15 @@ export async function CrewWorkflow(input: CrewWorkflowInput): Promise<CrewWorkfl
       mode: 'solo',
       success: result.success !== false,
       replyMessage: result.replyMessage,
-      reason: planReason,
+      reason: input.reason,
       spawned,
       synthesis: result,
       usedTools: result.usedTools || [],
     };
   }
 
-  const spawned: CrewSpawnResult[] = await Promise.all(
+  // Isolate specialist failures so one timeout/crash does not discard sibling results.
+  const settled = await Promise.allSettled(
     specialists.map(async (spec, index) => {
       const specialistInput: AgentTaskInput = {
         ...spec,
@@ -131,9 +177,21 @@ export async function CrewWorkflow(input: CrewWorkflowInput): Promise<CrewWorkfl
         employeeRole: specialistInput.employeeRole,
         task: specialistInput.userMessage,
         result,
-      };
+      } satisfies CrewSpawnResult;
     })
   );
+
+  const spawned: CrewSpawnResult[] = settled.map((outcome, index) => {
+    if (outcome.status === 'fulfilled') return outcome.value;
+    const spec = specialists[index];
+    return {
+      employeeId: spec.employeeId,
+      employeeName: spec.employeeName,
+      employeeRole: spec.employeeRole,
+      task: spec.userMessage,
+      result: failedSpecialistResult(outcome.reason),
+    };
+  });
 
   const synthesisInput: AgentTaskInput = {
     ...input.manager,
@@ -147,7 +205,8 @@ export async function CrewWorkflow(input: CrewWorkflowInput): Promise<CrewWorkfl
         employeeRole: s.employeeRole,
         task: s.task,
         reply: s.result.replyMessage || s.result.error || '',
-      }))
+      })),
+      { fixedMembers },
     ),
     priorToolResults: spawned.flatMap((s) =>
       (s.result.executedSteps || []).map((step) => ({
@@ -158,7 +217,20 @@ export async function CrewWorkflow(input: CrewWorkflowInput): Promise<CrewWorkfl
     idempotencyKey: input.idempotencyKey ? `${input.idempotencyKey}:synth` : `${parentId}:synth`,
   };
 
-  const synthesis = await runAgentTurnActivity(synthesisInput);
+  let synthesis: AgentTaskResult;
+  try {
+    synthesis = await runManagerSynthesisActivity(synthesisInput);
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    synthesis = {
+      success: false,
+      replyMessage:
+        'Crew specialists finished, but manager synthesis timed out or failed. Partial specialist reports are available.',
+      executedSteps: [],
+      usedTools: [],
+      error: message,
+    };
+  }
 
   if (input.orgId) {
     await logChannelActivity({
@@ -169,7 +241,7 @@ export async function CrewWorkflow(input: CrewWorkflowInput): Promise<CrewWorkfl
         mode: 'crew',
         specialists: spawned.map((s) => s.employeeName),
         usedTools: collectUsedTools(spawned, synthesis),
-        engine: 'atomic-agent',
+        engine: 'trueforge',
       },
       idempotencyKey: input.idempotencyKey ? `${input.idempotencyKey}:crew-log` : undefined,
     });
@@ -190,7 +262,7 @@ export async function CrewWorkflow(input: CrewWorkflowInput): Promise<CrewWorkfl
     mode: 'crew',
     success: spawned.every((s) => s.result.success !== false) && synthesis.success !== false,
     replyMessage: synthesis.replyMessage,
-    reason: planReason,
+    reason: input.reason,
     spawned,
     synthesis,
     usedTools: collectUsedTools(spawned, synthesis),

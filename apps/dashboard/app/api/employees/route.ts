@@ -1,121 +1,92 @@
 import { NextResponse } from 'next/server';
-import { getScopedClient } from '@/lib/db';
+import type { PoolClient } from 'pg';
+import { getScopedClient, scopedAuthErrorResponse } from '@/lib/db';
+import { tryReadJson } from '@/lib/safe-json';
 import { canDisableEmployee, loadHumanRole } from '@/lib/rbac';
+import {
+  provisionCustomEmployee,
+  seedDefaultEmployees,
+} from '@/lib/employee-provision';
+import { validateToolAllowlist } from '@/lib/tool-allowlist';
 
-const DEFAULT_ROSTER = [
-  {
-    name: 'Sarah',
-    role: 'Sales & Lead Gen',
-    persona: 'Enthusiastic and persuasive sales specialist focused on lead qualification, product demos, and pricing negotiations.',
-    tool_allowlist: ['gmail', 'whatsapp', 'hubspot'],
-    status: 'active',
-  },
-  {
-    name: 'Emma',
-    role: 'Customer Support',
-    persona: 'Empathetic and efficient customer support agent handling FAQs, order tracking, issue resolution, and refund processing.',
-    tool_allowlist: ['gmail', 'whatsapp', 'google-calendar'],
-    status: 'active',
-  },
-  {
-    name: 'Marcus',
-    role: 'Marketing & Analytics',
-    persona: 'Data-driven marketing strategist monitoring campaign performance, ad conversions, customer feedback, and market trends.',
-    tool_allowlist: ['meta-ads', 'google-ads', 'gmail'],
-    status: 'active',
-  },
-  {
-    name: 'Research',
-    role: 'Research',
-    persona: {
-      text: 'Read-heavy researcher. Cite web and Drive/Notion docs. Never invent sources or listings.',
-      rosterKey: 'research',
-      confirmClasses: [],
-    },
-    tool_allowlist: ['web_search', 'web_extract', 'google-drive', 'notion'],
-    status: 'active',
-  },
-  {
-    name: 'Finance',
-    role: 'Finance',
-    persona: {
-      text: 'Invoices and payment links. Always confirm before pay. Never create a charge or payout without owner confirmation.',
-      rosterKey: 'finance',
-      confirmClasses: ['pay'],
-    },
-    tool_allowlist: ['stripe', 'razorpay'],
-    status: 'active',
-  },
-];
+function isMissingColumn(err: unknown): boolean {
+  return (err as { code?: string })?.code === '42703';
+}
 
-function encodePersona(persona: (typeof DEFAULT_ROSTER)[number]['persona']): string {
-  return JSON.stringify(typeof persona === 'string' ? persona : persona);
+async function connectedChannelTypes(client: PoolClient, orgId: string): Promise<string[]> {
+  try {
+    const ch = await client.query(
+      `SELECT channel_type FROM channels WHERE org_id = $1 AND status IN ('connected', 'active')`,
+      [orgId],
+    );
+    return ch.rows.map((row) => String(row.channel_type || '')).filter(Boolean);
+  } catch {
+    return [];
+  }
 }
 
 export async function GET() {
   try {
     const { client, orgId } = await getScopedClient();
     try {
-      const res = await client.query(
-        `SELECT id, name, role, persona, tool_allowlist, graph_id, status, created_at, updated_at 
-         FROM ai_employees 
-         WHERE org_id = $1 
-         ORDER BY created_at ASC`,
-        [orgId]
-      );
-
-      // Auto-seed default roster if empty for this org
-      if (res.rows.length === 0) {
-        const seeded = [];
-        for (const emp of DEFAULT_ROSTER) {
-          const insertRes = await client.query(
-            `INSERT INTO ai_employees (org_id, name, role, persona, tool_allowlist, graph_id, status) 
-             VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7) 
-             RETURNING id, name, role, persona, tool_allowlist, graph_id, status, created_at, updated_at`,
-            [
-              orgId,
-              emp.name,
-              emp.role,
-              encodePersona(emp.persona),
-              emp.tool_allowlist,
-              `default-${emp.name.toLowerCase()}`,
-              emp.status,
-            ]
-          );
-          seeded.push(insertRes.rows[0]);
-        }
-        return NextResponse.json({ employees: seeded });
-      }
-
-      const existingNames = new Set(res.rows.map((row: { name: string }) => String(row.name).toLowerCase()));
-      const employees = [...res.rows];
-      for (const emp of DEFAULT_ROSTER.filter((e) => e.name === 'Research' || e.name === 'Finance')) {
-        if (existingNames.has(emp.name.toLowerCase())) continue;
-        const insertRes = await client.query(
-          `INSERT INTO ai_employees (org_id, name, role, persona, tool_allowlist, graph_id, status)
-           VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7)
-           RETURNING id, name, role, persona, tool_allowlist, graph_id, status, created_at, updated_at`,
-          [
-            orgId,
-            emp.name,
-            emp.role,
-            encodePersona(emp.persona),
-            emp.tool_allowlist,
-            `default-${emp.name.toLowerCase()}`,
-            emp.status,
-          ]
+      let res;
+      try {
+        res = await client.query(
+          `SELECT id, name, role, persona, tool_allowlist, graph_id, status, created_at, updated_at
+             FROM ai_employees
+            WHERE org_id = $1 AND archived_at IS NULL
+            ORDER BY created_at ASC`,
+          [orgId],
         );
-        employees.push(insertRes.rows[0]);
+      } catch (err) {
+        if (!isMissingColumn(err)) throw err;
+        res = await client.query(
+          `SELECT id, name, role, persona, tool_allowlist, graph_id, status, created_at, updated_at
+             FROM ai_employees
+            WHERE org_id = $1
+            ORDER BY created_at ASC`,
+          [orgId],
+        );
       }
 
-      return NextResponse.json({ employees });
+      if (res.rows.length === 0) {
+        await seedDefaultEmployees(client, orgId);
+        try {
+          const seeded = await client.query(
+            `SELECT id, name, role, persona, tool_allowlist, graph_id, status, created_at, updated_at
+               FROM ai_employees
+              WHERE org_id = $1 AND archived_at IS NULL
+              ORDER BY created_at ASC`,
+            [orgId],
+          );
+          return NextResponse.json({
+            employees: seeded.rows,
+            connectedChannels: await connectedChannelTypes(client, orgId),
+          });
+        } catch (err) {
+          if (!isMissingColumn(err)) throw err;
+          const seeded = await client.query(
+            `SELECT id, name, role, persona, tool_allowlist, graph_id, status, created_at, updated_at
+               FROM ai_employees WHERE org_id = $1 ORDER BY created_at ASC`,
+            [orgId],
+          );
+          return NextResponse.json({
+            employees: seeded.rows,
+            connectedChannels: await connectedChannelTypes(client, orgId),
+          });
+        }
+      }
+
+      return NextResponse.json({
+        employees: res.rows,
+        connectedChannels: await connectedChannelTypes(client, orgId),
+      });
     } finally {
       client.release();
     }
   } catch (error: any) {
-    if (error.message === 'Unauthorized') {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
+    const __scopedAuth = scopedAuthErrorResponse(error);
+    if (__scopedAuth) return __scopedAuth;
     console.error('API /api/employees GET Error:', error);
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
   }
@@ -123,36 +94,53 @@ export async function GET() {
 
 export async function POST(request: Request) {
   try {
-    const { client, orgId } = await getScopedClient();
+    const { client, orgId, userId } = await getScopedClient();
     try {
-      const body = await request.json();
-      const { name, role, persona, tool_allowlist, status } = body;
+      const humanRole = await loadHumanRole(client, userId);
+      if (!canDisableEmployee(humanRole)) {
+        return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+      }
+      const body = await tryReadJson<Record<string, unknown>>(request);
+      if (!body) {
+        return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 });
+      }
+      const { name, role: empRole, persona, tool_allowlist, status } = body as {
+        name?: unknown; role?: unknown; persona?: unknown; tool_allowlist?: unknown; status?: unknown;
+      };
 
-      if (!name || !role) {
+      if (typeof name !== 'string' || !name.trim() || typeof empRole !== 'string' || !empRole.trim()) {
         return NextResponse.json({ error: 'Name and role are required' }, { status: 400 });
       }
 
-      const tools = Array.isArray(tool_allowlist)
+      const rawTools = Array.isArray(tool_allowlist)
         ? tool_allowlist.filter((item: unknown): item is string => typeof item === 'string' && item.length > 0)
         : [];
+      const validated = validateToolAllowlist(rawTools);
+      if (!validated.ok) {
+        return NextResponse.json(
+          { error: `Invalid tools: ${validated.invalid.join(', ')}` },
+          { status: 400 },
+        );
+      }
       const empStatus = status === 'paused' ? 'paused' : 'active';
       const personaJson = JSON.stringify(typeof persona === 'string' ? persona : persona ?? '');
 
-      const res = await client.query(
-        `INSERT INTO ai_employees (org_id, name, role, persona, tool_allowlist, graph_id, status) 
-         VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7) 
-         RETURNING id, name, role, persona, tool_allowlist, graph_id, status, created_at, updated_at`,
-        [orgId, name, role, personaJson, tools, `emp-${crypto.randomUUID()}`, empStatus]
-      );
+      const employee = await provisionCustomEmployee(client, orgId, {
+        name: name.trim(),
+        role: (empRole as string).trim(),
+        personaJson,
+        toolAllowlist: validated.tools,
+        status: empStatus,
+        graphId: `emp-${crypto.randomUUID()}`,
+      });
 
-      return NextResponse.json({ employee: res.rows[0] }, { status: 201 });
+      return NextResponse.json({ employee }, { status: 201 });
     } finally {
       client.release();
     }
   } catch (error: any) {
-    if (error.message === 'Unauthorized') {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
+    const __scopedAuth2 = scopedAuthErrorResponse(error);
+    if (__scopedAuth2) return __scopedAuth2;
     console.error('API /api/employees POST Error:', error);
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
   }
@@ -162,12 +150,15 @@ export async function PATCH(request: Request) {
   try {
     const { client, orgId, userId } = await getScopedClient();
     try {
-      const role = await loadHumanRole(client, userId);
-      if (!canDisableEmployee(role)) {
+      const humanRole = await loadHumanRole(client, userId);
+      if (!canDisableEmployee(humanRole)) {
         return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
       }
 
-      const body = await request.json();
+      const body = await tryReadJson<Record<string, unknown>>(request);
+      if (!body) {
+        return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 });
+      }
       const id = typeof body?.id === 'string' ? body.id : '';
       const name = typeof body?.name === 'string' ? body.name : '';
       const status = body?.status === 'paused' ? 'paused' : body?.status === 'active' ? 'active' : '';
@@ -197,9 +188,8 @@ export async function PATCH(request: Request) {
       client.release();
     }
   } catch (error: any) {
-    if (error.message === 'Unauthorized') {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
+    const __scopedAuth3 = scopedAuthErrorResponse(error);
+    if (__scopedAuth3) return __scopedAuth3;
     console.error('API /api/employees PATCH Error:', error);
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
   }

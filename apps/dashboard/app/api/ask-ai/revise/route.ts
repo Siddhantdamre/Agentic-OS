@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
-import { getScopedClient } from '@/lib/db';
+import { getScopedClient, scopedAuthErrorResponse } from '@/lib/db';
+import { tryReadJson } from '@/lib/safe-json';
 import { reviseDraft } from '@/lib/plan-generator';
 import { denyAskAiIfLimited, isRateLimitError, responseFromRateLimit } from '@/lib/rate-limit';
 
@@ -17,15 +18,21 @@ export async function POST(request: Request) {
   try {
     const scoped = await getScopedClient();
     client = scoped.client;
-    const { orgId } = scoped;
+    const { orgId, userId } = scoped;
 
     const limited = denyAskAiIfLimited(orgId);
     if (limited) {
       return limited;
     }
 
-    const body = await request.json();
-    const { planId, feedback } = body || {};
+    const body = await tryReadJson<Record<string, unknown>>(request);
+    if (!body) {
+      return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 });
+    }
+    if (body.org_id !== undefined || body.orgId !== undefined) {
+      return NextResponse.json({ error: 'org_id is not accepted from the request body' }, { status: 400 });
+    }
+    const { planId, feedback } = body as { planId?: unknown; feedback?: unknown };
     if (!planId) {
       return NextResponse.json({ error: 'planId is required' }, { status: 400 });
     }
@@ -34,8 +41,10 @@ export async function POST(request: Request) {
     }
 
     const rows = (await client.query(
-      `SELECT * FROM agent_plans WHERE id = $1 AND org_id = $2`,
-      [planId, orgId]
+      `SELECT * FROM agent_plans
+        WHERE id = $1 AND org_id = $2
+          AND (user_id = $3 OR user_id IS NULL)`,
+      [planId, orgId, userId]
     )).rows;
     if (rows.length === 0) {
       return NextResponse.json({ error: 'Plan not found' }, { status: 404 });
@@ -53,7 +62,7 @@ export async function POST(request: Request) {
     const currentDraft = String(plan.draft?.content || '');
     const summary = String(plan.summary || '');
 
-    const revised = (await reviseDraft(summary || '', currentDraft, String(feedback), orgId)).trim();
+    const revised = (await reviseDraft(summary || '', currentDraft, String(feedback))).trim();
     if (!revised) {
       return NextResponse.json({ error: 'Draft revision produced empty output' }, { status: 502 });
     }
@@ -61,7 +70,7 @@ export async function POST(request: Request) {
     // A revised draft is new content — always route back through explicit approval,
     // never straight to 'approved' (which would make it immediately re-executable
     // without a human looking at the revision first).
-    const newStatus = ['completed', 'completed_with_errors', 'failed'].includes(plan.status) ? 'pending' : plan.status;
+    const newStatus = 'pending';
 
     await client.query(
       `UPDATE agent_plans SET draft = $3, feedback = $4, status = $5, updated_at = NOW() WHERE id = $1 AND org_id = $2`,
@@ -77,9 +86,8 @@ export async function POST(request: Request) {
     if (isRateLimitError(error)) {
       return responseFromRateLimit(error);
     }
-    if (error.message === 'Unauthorized') {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
+    const __scopedAuth = scopedAuthErrorResponse(error);
+    if (__scopedAuth) return __scopedAuth;
     console.error('POST /api/ask-ai/revise Error:', error);
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
   } finally {

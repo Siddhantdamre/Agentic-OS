@@ -1,117 +1,109 @@
 import { NextResponse } from 'next/server';
-import type { PoolClient } from 'pg';
-import { getScopedClient } from '@/lib/db';
-import { recordAuditEvent } from '@/lib/inbound-confirm';
+import { getScopedClient, scopedAuthErrorResponse } from '@/lib/db';
+import { matchesDsrDeleteConfirm } from '@/lib/dsr-confirm';
+import { recordAuditEvent } from '@/lib/audit-events';
 import { canDeleteDsr, loadHumanRole } from '@/lib/rbac';
+import { enqueueDsrDelete } from '@darex/workflows/dist/workflow-client';
+import { jsonBodyOrEmpty } from '@/lib/safe-json';
 
 export const dynamic = 'force-dynamic';
 
-async function deleteOrgRows(client: PoolClient, orgId: string, sql: string): Promise<number> {
-  const res = await client.query(sql, [orgId]);
-  return res.rowCount ?? 0;
-}
-
 /**
- * POST /api/dsr/delete — hard-delete org memory including pgvector embeddings.
- * Neighbor orgs are untouched (RLS + org_id bind from session, never body).
+ * POST /api/dsr/delete — enqueue async org hard-delete (Temporal + resumable
+ * progress). Requires typed confirmation of the org slug or name.
+ * Org is always the session org via getScopedClient(); body org_id is rejected.
+ * RBAC: owner only (canDeleteDsr).
  */
 export async function POST(request: Request) {
   try {
     let body: Record<string, unknown> = {};
-    try {
-      body = (await request.json()) as Record<string, unknown>;
-    } catch {
-      body = {};
-    }
+    body = await jsonBodyOrEmpty<Record<string, unknown>>(request);
     if (body.org_id !== undefined || body.orgId !== undefined) {
       return NextResponse.json({ error: 'org_id is not accepted from the request body' }, { status: 400 });
     }
 
+    const confirm = body.confirm ?? body.confirmation ?? body.confirmSlug;
+    if (typeof confirm !== 'string' || !confirm.trim()) {
+      return NextResponse.json(
+        {
+          error:
+            'Typed confirmation required. Send { "confirm": "<org slug or exact name>" } to proceed.',
+        },
+        { status: 400 }
+      );
+    }
+
     const scoped = await getScopedClient();
     const { client, orgId, userId } = scoped;
+    let dsrRequestId: string;
     try {
       const role = await loadHumanRole(client, userId);
       if (!canDeleteDsr(role)) {
         return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
       }
 
+      const orgRes = await client.query<{ name: string; slug: string }>(
+        `SELECT name, slug FROM orgs WHERE id = $1`,
+        [orgId]
+      );
+      const org = orgRes.rows[0];
+      if (!org) {
+        return NextResponse.json({ error: 'Organization not found' }, { status: 404 });
+      }
+      if (!matchesDsrDeleteConfirm({ confirm, orgSlug: org.slug, orgName: org.name })) {
+        return NextResponse.json(
+          {
+            error:
+              'Confirmation does not match this organization. Type the org slug or exact name to confirm delete.',
+          },
+          { status: 400 }
+        );
+      }
+
       const reqIns = await client.query<{ id: string }>(
         `INSERT INTO dsr_requests (
            org_id, kind, status, requested_by_user_id,
-           include_memory, include_files, include_vectors
-         ) VALUES ($1, 'delete', 'running', $2, true, true, true)
+           include_memory, include_files, include_vectors, progress
+         ) VALUES ($1, 'delete', 'pending', $2, true, true, true, '{}'::jsonb)
          RETURNING id`,
         [orgId, userId]
       );
-      const dsrRequestId = reqIns.rows[0].id;
+      dsrRequestId = reqIns.rows[0].id;
 
-      const deleted: Record<string, number> = {};
-      try {
-        deleted.memory_edges = await deleteOrgRows(client, orgId, `DELETE FROM memory_edges WHERE org_id = $1`);
-        deleted.ingestion_jobs = await deleteOrgRows(client, orgId, `DELETE FROM ingestion_jobs WHERE org_id = $1`);
-        deleted.knowledge_sources = await deleteOrgRows(
-          client,
+      await recordAuditEvent(
+        {
           orgId,
-          `DELETE FROM knowledge_sources WHERE org_id = $1`
-        );
-        deleted.org_memory = await deleteOrgRows(client, orgId, `DELETE FROM org_memory WHERE org_id = $1`);
-        deleted.employee_memory = await deleteOrgRows(client, orgId, `DELETE FROM employee_memory WHERE org_id = $1`);
-        deleted.entity_memory = await deleteOrgRows(client, orgId, `DELETE FROM entity_memory WHERE org_id = $1`);
-        deleted.conversation_memory = await deleteOrgRows(
-          client,
-          orgId,
-          `DELETE FROM conversation_memory WHERE org_id = $1`
-        );
-        deleted.work_events = await deleteOrgRows(client, orgId, `DELETE FROM work_events WHERE org_id = $1`);
-        deleted.work_items = await deleteOrgRows(client, orgId, `DELETE FROM work_items WHERE org_id = $1`);
-        deleted.messages = await deleteOrgRows(client, orgId, `DELETE FROM messages WHERE org_id = $1`);
-        deleted.conversations = await deleteOrgRows(client, orgId, `DELETE FROM conversations WHERE org_id = $1`);
-        deleted.agent_plans = await deleteOrgRows(client, orgId, `DELETE FROM agent_plans WHERE org_id = $1`);
-        deleted.channel_logs = await deleteOrgRows(client, orgId, `DELETE FROM channel_logs WHERE org_id = $1`);
-        deleted.idempotency_keys = await deleteOrgRows(client, orgId, `DELETE FROM idempotency_keys WHERE org_id = $1`);
-
-        await client.query(
-          `UPDATE dsr_requests
-              SET status = 'completed', completed_at = NOW(), result = $3::jsonb
-            WHERE id = $1 AND org_id = $2`,
-          [dsrRequestId, orgId, JSON.stringify({ deleted, includeVectors: true })]
-        );
-
-        await recordAuditEvent(
-          {
-            orgId,
-            kind: 'dsr.delete',
-            actor: { actorType: 'user', userId },
-            resultStatus: 'ok',
-            payload: { dsrRequestId, deleted, includeVectors: true },
-          },
-          { client, orgId }
-        );
-
-        return NextResponse.json({
-          dsrRequestId,
-          status: 'completed',
-          includeVectors: true,
-          deleted,
-        });
-      } catch (inner: unknown) {
-        const message = inner instanceof Error ? inner.message : String(inner);
-        await client.query(
-          `UPDATE dsr_requests
-              SET status = 'failed', error = $3, completed_at = NOW()
-            WHERE id = $1 AND org_id = $2`,
-          [dsrRequestId, orgId, message.slice(0, 500)]
-        );
-        throw inner;
-      }
+          kind: 'dsr.delete',
+          actor: { actorType: 'user', userId },
+          resultStatus: 'ok',
+          payload: { dsrRequestId, status: 'enqueued' },
+        },
+        { client, orgId }
+      );
     } finally {
       client.release();
     }
+
+    // Pool released before Temporal / async work.
+    const mode = await enqueueDsrDelete({
+      orgId,
+      dsrRequestId,
+      requestedByUserId: userId,
+    });
+
+    return NextResponse.json(
+      {
+        dsrRequestId,
+        status: 'pending',
+        mode,
+        message: 'Delete job enqueued. Poll GET /api/dsr for progress.',
+      },
+      { status: 202 }
+    );
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : String(error);
-    if (message === 'Unauthorized') {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
+    const __scopedAuth = scopedAuthErrorResponse(error instanceof Error ? error : new Error(message));
+    if (__scopedAuth) return __scopedAuth;
     console.error('POST /api/dsr/delete Error:', error);
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
   }

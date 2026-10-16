@@ -12,6 +12,7 @@ export type MentionMode = 'auto' | 'mention';
 export interface MentionableEmployee {
   id?: string;
   name: string;
+  role?: string;
   status?: string;
 }
 

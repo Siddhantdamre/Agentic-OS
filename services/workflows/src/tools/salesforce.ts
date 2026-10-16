@@ -10,7 +10,7 @@ import {
   revoked,
 } from './shared.js';
 
-const ACTIONS = ['list_contacts', 'create_contact', 'create_lead'] as const;
+const ACTIONS = ['list_contacts', 'create_contact', 'create_lead', 'list_deals', 'create_deal', 'update_deal'] as const;
 const API_VERSION = 'v59.0';
 
 function riskFor(action: string): ToolRisk {
@@ -62,6 +62,98 @@ async function execute(ctx: ToolActionContext) {
   }
 
   try {
+    const action = String(actionName || '').toLowerCase();
+
+    if (action.includes('list_deal') || (action.includes('list') && (action.includes('deal') || action.includes('opportunit')))) {
+      const limit = Math.min(Number(payload.count) || Number(payload.limit) || 20, 50);
+      const q = `SELECT Id, Name, Amount, StageName, CloseDate FROM Opportunity ORDER BY LastModifiedDate DESC LIMIT ${limit}`;
+      const res = await fetchWithTimeout(
+        `${base}/services/data/${API_VERSION}/query?q=${encodeURIComponent(q)}`,
+        { headers: sfHeaders(auth.accessToken) },
+      );
+      const data = await res.json().catch(() => ({}));
+      if (isProviderUnauthorized(res.status)) return revoked('salesforce', 'list_deals', timestamp, `Salesforce HTTP ${res.status}`);
+      if (!res.ok) return apiError('salesforce', 'list_deals', timestamp, `Salesforce Opportunity query failed: HTTP ${res.status}`, data);
+      const records = Array.isArray(data.records) ? data.records : [];
+      return {
+        tool: 'salesforce',
+        action: 'list_deals',
+        status: 'executed' as const,
+        message: `Fetched ${records.length} Salesforce opportunities`,
+        data: { totalSize: data.totalSize ?? records.length, deals: records, httpStatus: res.status, connected: true },
+        timestamp,
+      };
+    }
+
+    if (action.includes('update_deal') || (action.includes('update') && (action.includes('deal') || action.includes('opportunit')))) {
+      const dealId = payload.dealId || payload.opportunityId || payload.id;
+      if (!dealId) {
+        return apiError(
+          'salesforce',
+          'update_deal',
+          timestamp,
+          'dealId is required to update a Salesforce Opportunity (use a real id from list_deals; never invent one)',
+        );
+      }
+      const body: Record<string, string | number> = {};
+      if (payload.name || payload.dealname) body.Name = String(payload.name || payload.dealname);
+      if (payload.amount !== undefined && payload.amount !== null) body.Amount = Number(payload.amount);
+      if (payload.stage || payload.stageName || payload.dealstage) {
+        body.StageName = String(payload.stage || payload.stageName || payload.dealstage);
+      }
+      if (payload.closeDate || payload.closedate) body.CloseDate = String(payload.closeDate || payload.closedate);
+      if (Object.keys(body).length === 0) {
+        return apiError('salesforce', 'update_deal', timestamp, 'No updatable Opportunity fields supplied (try name, amount, stage, closeDate)');
+      }
+      const res = await fetchWithTimeout(
+        `${base}/services/data/${API_VERSION}/sobjects/Opportunity/${encodeURIComponent(String(dealId))}`,
+        { method: 'PATCH', headers: sfHeaders(auth.accessToken), body: JSON.stringify(body) },
+      );
+      const data = await res.json().catch(() => ({}));
+      if (isProviderUnauthorized(res.status)) return revoked('salesforce', 'update_deal', timestamp, `Salesforce HTTP ${res.status}`);
+      if (!res.ok && res.status !== 204) {
+        return apiError('salesforce', 'update_deal', timestamp, `Salesforce update Opportunity failed: HTTP ${res.status}`, data);
+      }
+      return {
+        tool: 'salesforce',
+        action: 'update_deal',
+        status: 'executed' as const,
+        message: `Updated Salesforce Opportunity ${dealId}`,
+        data: { id: dealId, updated: body, httpStatus: res.status, connected: true },
+        timestamp,
+      };
+    }
+
+    if (action.includes('create_deal') || (action.includes('create') && (action.includes('deal') || action.includes('opportunit')))) {
+      const name = payload.name || payload.dealname || payload.Name;
+      const stage = payload.stage || payload.stageName || payload.dealstage || 'Prospecting';
+      const closeDate = payload.closeDate || payload.closedate || new Date().toISOString().slice(0, 10);
+      if (!name) return apiError('salesforce', 'create_deal', timestamp, 'name is required to create a Salesforce Opportunity.');
+      const body: Record<string, string | number> = {
+        Name: String(name),
+        StageName: String(stage),
+        CloseDate: String(closeDate),
+      };
+      if (payload.amount !== undefined && payload.amount !== null) body.Amount = Number(payload.amount);
+      if (payload.accountId) body.AccountId = String(payload.accountId);
+      const res = await fetchWithTimeout(`${base}/services/data/${API_VERSION}/sobjects/Opportunity/`, {
+        method: 'POST',
+        headers: sfHeaders(auth.accessToken),
+        body: JSON.stringify(body),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (isProviderUnauthorized(res.status)) return revoked('salesforce', 'create_deal', timestamp, `Salesforce HTTP ${res.status}`);
+      if (!res.ok) return apiError('salesforce', 'create_deal', timestamp, `Salesforce create Opportunity failed: HTTP ${res.status}`, data);
+      return {
+        tool: 'salesforce',
+        action: 'create_deal',
+        status: 'executed' as const,
+        message: `Created Salesforce Opportunity ${data.id || ''}`.trim(),
+        data: { id: data.id, success: data.success, httpStatus: res.status, connected: true },
+        timestamp,
+      };
+    }
+
     if (actionName.includes('lead')) {
       const lastName = payload.lastName || payload.lastname || payload.name;
       const company = payload.company;

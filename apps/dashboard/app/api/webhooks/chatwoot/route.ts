@@ -8,13 +8,13 @@ import {
   parseToolAllowlist,
 } from '@/lib/inbound-agent';
 import { replyTargetFromChannelMeta } from '@/lib/channel-outbound';
+import { isUuid } from '@/lib/session-cookie';
 import { denyWebhookIfLimited, isRateLimitError, responseFromRateLimit } from '@/lib/rate-limit';
 import {
   normalizeChannelKey,
   resolveOrgByChatwootInbox,
   upsertChatwootInboxMap,
 } from '@/lib/channel-normalize';
-import { resolvePersonId } from '@/lib/resolve-person';
 
 type ChatwootEvent =
   | 'message_created'
@@ -144,121 +144,56 @@ async function resolveOrgFromRequest(
   const inboxId = parseChatwootConvId(payload.inbox_id ?? inbox.id ?? conversation.inbox_id);
   const accountId = coerceAccountId(account.id) ?? coerceAccountId(inbox.account_id);
 
-  // PRECEDENCE: an authenticated credential beats the inbox map, always.
-  //
-  // The inbox map is keyed on `account.id` / `inbox_id` taken from the request
-  // BODY — values the sender picks. It is a routing *hint*, useful when Chatwoot
-  // sends nothing else, but it proves nothing. A per-org webhook secret does
-  // prove which org is calling. Proof outranks hint.
-  //
-  // This ordering is not theoretical. A test harness that reused
-  // `account:{id:1}, inbox_id:1` across tenants had every tenant's traffic
-  // routed to whichever org registered inbox 1 first — even though each request
-  // carried its own valid per-org token, because the map was consulted first.
-  // The same collision happens in production whenever two orgs connect
-  // Chatwoot instances that both number their first inbox 1.
   const mapped = await resolveOrgByChatwootInbox(accountId, inboxId);
 
-  const authHeader = request.headers.get('Authorization') || '';
-  const token = authHeader.replace(/^Bearer\s+/i, '').trim();
-  if (token) {
-    // No raw-SQL fallback behind this. `orgs` is behind RLS (migration 028)
-    // and the catch block used to do exactly the unscoped read the SECURITY
-    // DEFINER resolver exists to prevent — a hole that opened whenever the
-    // function call failed for any reason at all.
-    const res = await pool.query(`SELECT resolve_org_by_webhook_secret($1) AS id`, [token]);
-    const secretOrg = (res.rows[0]?.id as string) || null;
-    if (secretOrg) {
-      warnOnOrgConflict(mapped, secretOrg, 'secret', accountId, inboxId);
-      return { orgId: secretOrg, via: 'secret' };
-    }
-  }
-
-  // `?org_id=` is only trusted alongside a per-org secret (`?token=` matched against
-  // that org's own webhook_secret) — the global CHATWOOT_WEBHOOK_SECRET already
-  // verified in POST() is shared across all orgs, so org_id alone would let anyone
-  // holding it target any org by guessing/enumerating ids.
+  // `orgs` is FORCE ROW LEVEL SECURITY and this request has no org context yet, so a plain
+  // `SELECT ... FROM orgs` on the pool matches nothing — ever. Every lookup below goes through a
+  // SECURITY DEFINER resolver that returns an id only for a valid credential. No raw fallback:
+  // the one that used to sit behind the Bearer lookup was exactly the unscoped read the resolver
+  // exists to prevent, and it opened whenever the function call failed for any reason.
   const url = new URL(request.url);
-  const orgIdParam = url.searchParams.get('org_id');
+  const authHeader = request.headers.get('Authorization') || '';
+  const bearer = authHeader.replace(/^Bearer\s+/i, '').trim();
   const queryToken = url.searchParams.get('token');
-  if (orgIdParam && queryToken) {
-    const res = await pool.query(
-      `SELECT org_resolve_by_id_and_secret($1::uuid, $2::text) AS id`,
-      [orgIdParam, queryToken]
-    );
-    if (res.rows[0]?.id) {
-      const queryOrg = res.rows[0].id as string;
-      warnOnOrgConflict(mapped, queryOrg, 'query', accountId, inboxId);
-      return { orgId: queryOrg, via: 'query' };
-    }
+  const orgIdParam = url.searchParams.get('org_id');
+  const orgHeader = request.headers.get('X-Darex-Org-Id');
+
+  if (bearer) {
+    const res = await pool.query(`SELECT resolve_org_by_webhook_secret($1) AS id`, [bearer]);
+    const id = (res.rows[0]?.id as string | null) || null;
+    if (id) return { orgId: id, via: 'secret' };
   }
 
-  // A per-org credential was PRESENTED and did not validate. Stop here.
-  //
-  // Previously this fell through to the inbox map, and the consequence was
-  // measured, not theorised: posting `?org_id=<B>&token=<A's token>` was
-  // correctly refused for B, then silently routed into a THIRD org — whichever
-  // one happened to own the stale map row for the account/inbox ids in the
-  // payload body. The caller chose those ids.
-  //
-  // The global CHATWOOT_WEBHOOK_SECRET that signs the request is shared by
-  // every tenant, so a valid signature says "this came from our Chatwoot",
-  // never "this came from org X". Once a caller makes a per-org identity claim,
-  // that claim is the request's identity: if it fails, the request fails.
-  // Redirecting a failed authentication somewhere else is never correct.
-  const attemptedOrgAuth = Boolean(token) || Boolean(orgIdParam) || Boolean(queryToken);
-  if (attemptedOrgAuth) {
+  // The global CHATWOOT_WEBHOOK_SECRET already verified in POST() is shared by every tenant, so
+  // an org id alone would let anyone holding it target any org. An id is only trusted together
+  // with that org's OWN secret (`?token=`), checked against the same row.
+  const claimedOrg = orgIdParam || orgHeader;
+  if (claimedOrg && queryToken && isUuid(claimedOrg)) {
+    const res = await pool.query(`SELECT org_resolve_by_id_and_secret($1::uuid, $2::text) AS id`, [
+      claimedOrg,
+      queryToken,
+    ]);
+    const id = (res.rows[0]?.id as string | null) || null;
+    if (id) return { orgId: id, via: orgIdParam ? 'query' : 'header' };
+  }
+
+  // A per-org credential was PRESENTED and did not validate: stop. The caller chooses the
+  // account/inbox ids in the body, so falling through to the inbox map would turn a failed
+  // login for org B into a successful delivery to whichever org owns that inbox row.
+  if (bearer || orgIdParam || orgHeader || queryToken) {
     console.warn(
-      `[Chatwoot Webhook] REJECTED — a per-org credential was presented and did not validate `
-        + `(org_id param=${orgIdParam || 'none'}, bearer=${token ? 'present' : 'none'}, `
-        + `query token=${queryToken ? 'present' : 'none'}). Refusing to fall back to the inbox map `
-        + `for account=${accountId} inbox=${inboxId}.`
+      '[Chatwoot Webhook] REJECTED — a per-org credential was presented and did not validate ' +
+        `(org_id param=${orgIdParam ? 'present' : 'none'}, header=${orgHeader ? 'present' : 'none'}, ` +
+        `bearer=${bearer ? 'present' : 'none'}, token=${queryToken ? 'present' : 'none'}).`
     );
     return { orgId: null, via: null };
   }
 
-  // No identity was claimed at all — fall back to the hint.
+  // No identity was claimed: the Chatwoot inbox map is the only remaining route. Never fall back
+  // to "the only active org" — that bleeds inbound messages across tenants.
   if (mapped) return { orgId: mapped, via: 'inbox_map' };
 
-  // X-Darex-Org-Id is an id, not a credential, so it ranks BELOW the inbox map:
-  // anyone holding the shared global signing secret can set it to any org id.
-  const orgHeader = request.headers.get('X-Darex-Org-Id');
-  if (orgHeader) {
-    const res = await pool.query(`SELECT resolve_active_org($1::uuid) AS id`, [orgHeader]);
-    if (res.rows[0]?.id) return { orgId: res.rows[0].id as string, via: 'header' };
-  }
-
-  // Exactly one active org on the deployment: a development convenience, and
-  // single_active_org_id() returns NULL the moment a second org exists, so it
-  // can never silently pick a tenant on a real deployment.
-  const sole = await pool.query(`SELECT single_active_org_id() AS id`);
-  if (sole.rows[0]?.id) return { orgId: sole.rows[0].id as string, via: 'single_org' };
-
   return { orgId: null, via: null };
-}
-
-/**
- * Loud when the inbox map and an authenticated credential disagree.
- *
- * Neither side is ignored silently: the credential wins the routing decision
- * and the disagreement is logged, because it means either two orgs share
- * account/inbox numbering or a stale map row is pointing at the wrong tenant.
- * Both need a human to look.
- */
-function warnOnOrgConflict(
-  mapped: string | null,
-  authenticated: string,
-  via: 'secret' | 'query',
-  accountId: string | number | null,
-  inboxId: string | number | null
-): void {
-  if (!mapped || mapped === authenticated) return;
-  console.warn(
-    `[Chatwoot Webhook] ORG ROUTING CONFLICT — inbox map (account=${accountId} inbox=${inboxId}) `
-      + `resolves org ${mapped} but the authenticated ${via} credential belongs to org ${authenticated}. `
-      + `Using the authenticated org (${authenticated}); the inbox map entry is stale or account/inbox `
-      + `ids collide across tenants. Fix the chatwoot_inbox_map row for account=${accountId} inbox=${inboxId}.`
-  );
 }
 
 export async function POST(request: Request) {
@@ -304,7 +239,7 @@ export async function POST(request: Request) {
   const resolved = await resolveOrgFromRequest(request, payload);
   const orgId = resolved.orgId;
   if (!orgId) {
-    console.error('[Chatwoot Webhook] Cannot resolve org_id — webhook must include inbox map, auth token, or org_id param');
+    console.error('[Chatwoot Webhook] Cannot resolve org_id - webhook must include inbox map, auth token, or org_id param');
     return NextResponse.json(
       { error: 'Cannot resolve organization. Map the Chatwoot inbox to an org, or include Authorization header.' },
       { status: 400 }
@@ -358,26 +293,59 @@ export async function POST(request: Request) {
 
     const existingConv = inbound.chatwootConvId
       ? await client.query(
-          `SELECT id, status FROM conversations WHERE org_id = $1 AND chatwoot_conv_id = $2 LIMIT 1`,
+          `SELECT id, status, employee_id, ai_paused_until FROM conversations WHERE org_id = $1 AND chatwoot_conv_id = $2 LIMIT 1`,
           [orgId, inbound.chatwootConvId]
+        ).catch(() =>
+          client.query(
+            `SELECT id, status, employee_id FROM conversations WHERE org_id = $1 AND chatwoot_conv_id = $2 LIMIT 1`,
+            [orgId, inbound.chatwootConvId]
+          )
         )
       : await client.query(
-          `SELECT id, status FROM conversations WHERE org_id = $1 AND contact_id = $2 AND status != 'resolved' LIMIT 1`,
+          `SELECT id, status, employee_id, ai_paused_until FROM conversations WHERE org_id = $1 AND contact_id = $2 AND status != 'resolved' LIMIT 1`,
           [orgId, inbound.contactId]
+        ).catch(() =>
+          client.query(
+            `SELECT id, status, employee_id FROM conversations WHERE org_id = $1 AND contact_id = $2 AND status != 'resolved' LIMIT 1`,
+            [orgId, inbound.contactId]
+          )
         );
 
-    const empRes = await client.query(
-      `SELECT id, name, role, persona, tool_allowlist FROM ai_employees WHERE org_id = $1 AND status = 'active' LIMIT 1`,
-      [orgId]
-    );
-    employee = empRes.rows[0];
-    let assignedEmployeeId = employee?.id ?? null;
+    let assignedEmployeeId: string | null =
+      (existingConv.rows[0]?.employee_id as string | null | undefined) ?? null;
     if (inbound.employeeId) {
       const requested = await client.query(
         `SELECT id FROM ai_employees WHERE org_id = $1 AND id = $2 LIMIT 1`,
         [orgId, inbound.employeeId]
       );
       if (requested.rows[0]?.id) assignedEmployeeId = requested.rows[0].id;
+    }
+
+    if (assignedEmployeeId) {
+      const byId = await client.query(
+        `SELECT id, name, role, persona, tool_allowlist FROM ai_employees
+         WHERE org_id = $1 AND id = $2 AND status = 'active'`,
+        [orgId, assignedEmployeeId]
+      );
+      employee = byId.rows[0];
+    }
+    if (!employee) {
+      const empRes = await client.query(
+        `SELECT id, name, role, persona, tool_allowlist FROM ai_employees
+         WHERE org_id = $1 AND status = 'active'
+         ORDER BY created_at ASC NULLS LAST LIMIT 1`,
+        [orgId]
+      );
+      employee = empRes.rows[0];
+      assignedEmployeeId = employee?.id ?? null;
+    }
+
+    const pausedRaw = existingConv.rows[0]?.ai_paused_until;
+    if (pausedRaw) {
+      const until = new Date(pausedRaw as string);
+      if (!Number.isNaN(until.getTime()) && until.getTime() > Date.now()) {
+        shouldFireAgent = false;
+      }
     }
 
     const connectedRes = await client.query(
@@ -400,8 +368,8 @@ export async function POST(request: Request) {
       );
     } else {
       const newConv = await client.query(
-        `INSERT INTO conversations (org_id, channel_id, chatwoot_conv_id, status, contact_id, employee_id, summary, metadata, started_at, updated_at, person_id)
-         VALUES ($1, $2, $3, 'open', $4, $5, $6, $7, NOW(), NOW(), $8)
+        `INSERT INTO conversations (org_id, channel_id, chatwoot_conv_id, status, contact_id, employee_id, summary, metadata, started_at, updated_at)
+         VALUES ($1, $2, $3, 'open', $4, $5, $6, $7, NOW(), NOW())
          RETURNING id`,
         [
           orgId,
@@ -411,7 +379,6 @@ export async function POST(request: Request) {
           assignedEmployeeId,
           inbound.content.slice(0, 100),
           JSON.stringify(metadata),
-          await resolvePersonId(client, orgId, inbound.contactId, inbound.channelType),
         ]
       );
       conversationId = newConv.rows[0].id;

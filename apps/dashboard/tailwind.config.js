@@ -13,6 +13,11 @@ module.exports = {
           200: "#F5F2D8", // card surface accent
           300: "#ECE7C2",
         },
+        // Muted text on the cream and white pages: the stock slate-400/500 are 2.4-4.3:1 there; these are 4.6:1 or better.
+        slate: {
+          400: "#616f84",
+          500: "#55647a",
+        },
         amber: {
           500: "#F0C05A", // primary gold accent
           600: "#D9A53D",

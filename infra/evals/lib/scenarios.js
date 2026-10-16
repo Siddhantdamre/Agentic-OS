@@ -14,7 +14,7 @@ const {
 } = require('./listings-match');
 
 const FIXTURES = path.join(__dirname, '..', 'fixtures');
-const SKILLS_DIR = path.join(__dirname, '..', '..', 'docker', 'atomic-agent', 'custom-skills');
+const SKILLS_DIR = path.join(__dirname, '..', 'custom-skills');
 
 function readFixture(name) {
   return fs.readFileSync(path.join(FIXTURES, name), 'utf8');

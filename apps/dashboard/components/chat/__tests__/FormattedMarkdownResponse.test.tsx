@@ -1,6 +1,11 @@
 import React from 'react';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { FormattedMarkdownResponse } from '../FormattedMarkdownResponse';
+import { startRealNangoOAuth } from '@/lib/nango-client';
+
+jest.mock('@/lib/nango-client', () => ({
+  startRealNangoOAuth: jest.fn(async () => ({ success: true, provider: 'gmail' })),
+}));
 
 describe('FormattedMarkdownResponse', () => {
   it('renders empty content gracefully', () => {
@@ -24,6 +29,15 @@ describe('FormattedMarkdownResponse', () => {
     const langSpan = container.querySelector('[class*="uppercase"]');
     expect(langSpan?.textContent).toMatch(/code/i);
     expect(screen.getByText('code here')).toBeInTheDocument();
+  });
+
+  it('renders openui blocks via OpenUiFenceBlock', async () => {
+    const content = '```openui\nroot = Stack([title])\ntitle = TextContent("Dashboard")\n```';
+    render(<FormattedMarkdownResponse content={content} />);
+
+    const widget = await screen.findByTestId('openui-widget');
+    expect(widget).toBeInTheDocument();
+    expect(widget.textContent).toContain('root = Stack([title])');
   });
 
   it('handles copy code button', () => {
@@ -112,5 +126,63 @@ Recommendation: Follow the guide carefully.`;
 
     expect(screen.getByText('Line 1')).toBeInTheDocument();
     expect(screen.getByText('Line 2')).toBeInTheDocument();
+  });
+
+  it('renders markdown tables correctly', () => {
+    const content = `| Metric | Value |
+| --- | --- |
+| Conversations | 42 |
+| Employees | 5 |`;
+    render(<FormattedMarkdownResponse content={content} />);
+
+    expect(screen.getByText('Metric')).toBeInTheDocument();
+    expect(screen.getByText('Value')).toBeInTheDocument();
+    expect(screen.getByText('Conversations')).toBeInTheDocument();
+    expect(screen.getByText('42')).toBeInTheDocument();
+    expect(screen.getByText('Employees')).toBeInTheDocument();
+    expect(screen.getByText('5')).toBeInTheDocument();
+  });
+
+  it('renders markdown links correctly', () => {
+    const content = 'Visit our [Connectors page](/connectors) for tools.';
+    render(<FormattedMarkdownResponse content={content} />);
+
+    const link = screen.getByText('Connectors page');
+    expect(link).toBeInTheDocument();
+    expect(link.tagName.toLowerCase()).toBe('a');
+    expect(link).toHaveAttribute('href', '/connectors');
+  });
+
+  it('renders standalone Google Slides presentation card with Open button', () => {
+    const content = 'Here is the link:\n\n[Applications of Agentic AI](https://docs.google.com/presentation/d/1GddKrG5FUGuMU5sVNPdl3rQOi79tauR1eDKMNZ8Sb6w/edit)';
+    render(<FormattedMarkdownResponse content={content} />);
+
+    expect(screen.getByText('Google Slides Presentation')).toBeInTheDocument();
+    expect(screen.getByText('Applications of Agentic AI')).toBeInTheDocument();
+    const openBtn = screen.getByRole('link', { name: /Open/i });
+    expect(openBtn).toBeInTheDocument();
+    expect(openBtn).toHaveAttribute('href', 'https://docs.google.com/presentation/d/1GddKrG5FUGuMU5sVNPdl3rQOi79tauR1eDKMNZ8Sb6w/edit');
+    expect(openBtn).toHaveAttribute('target', '_blank');
+  });
+
+  it('autolinks bare URLs as clickable links', () => {
+    const content = 'Check out https://docs.google.com/presentation/d/123/edit for details.';
+    render(<FormattedMarkdownResponse content={content} />);
+
+    const link = screen.getByText('https://docs.google.com/presentation/d/123/edit');
+    expect(link).toBeInTheDocument();
+    expect(link.tagName.toLowerCase()).toBe('a');
+    expect(link).toHaveAttribute('href', 'https://docs.google.com/presentation/d/123/edit');
+    expect(link).toHaveAttribute('target', '_blank');
+  });
+
+  it('starts the same sign-in when a connect link in the reply is followed', async () => {
+    const start = startRealNangoOAuth as jest.Mock;
+    start.mockClear();
+    start.mockResolvedValue({ success: true, provider: 'gmail' });
+    render(<FormattedMarkdownResponse content="Gmail is not signed in. [Sign in](/connectors?connect=gmail)." />);
+    fireEvent.click(screen.getByRole('link', { name: 'Sign in' }));
+    await waitFor(() => expect(start).toHaveBeenCalledWith('gmail'));
+    expect(screen.getByText('Signed in. Send the question again to use this account.')).toBeInTheDocument();
   });
 });

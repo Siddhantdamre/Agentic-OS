@@ -1,6 +1,6 @@
 import type { ToolRisk } from './risk.js';
 import type { ToolActionContext, ToolModule } from './shared.js';
-import { confirmFromRisk, getNangoAccessToken, notConnected } from './shared.js';
+import { confirmFromRisk, nangoAuthError, notConnected, resolveGoogleAuth, fetchWithTimeout } from './shared.js';
 
 const ACTIONS = ['contacts_list'] as const;
 
@@ -10,16 +10,13 @@ function riskFor(_action: string): ToolRisk {
 
 async function execute(ctx: ToolActionContext) {
   const { actionName, payload, orgId, timestamp } = ctx;
-  const gConnId = `${orgId}_google-contacts`;
-  let gToken: string | null = null;
-  for (const providerKey of ['google-contacts', 'google']) {
-    gToken = await getNangoAccessToken(gConnId, providerKey);
-    if (gToken) break;
-  }
-  if (!gToken) return notConnected('google-contacts', actionName, timestamp);
+  const _gAuth = await resolveGoogleAuth(orgId, 'google-contacts');
+  const gToken: string | null = _gAuth.kind === 'connected' ? _gAuth.accessToken : null;
+  const _gAuthErr = _gAuth.kind === 'connected' ? null : nangoAuthError('google-contacts', actionName, timestamp, _gAuth);
+  if (!gToken) return _gAuthErr ?? notConnected('google-contacts', actionName, timestamp);
 
   try {
-    const contactsRes = await fetch(`https://people.googleapis.com/v1/people/me/connections?personFields=names,emailAddresses,phoneNumbers&pageSize=${payload.pageSize || 50}`, {
+    const contactsRes = await fetchWithTimeout(`https://people.googleapis.com/v1/people/me/connections?personFields=names,emailAddresses,phoneNumbers&pageSize=${payload.pageSize || 50}`, {
       headers: { Authorization: `Bearer ${gToken}` },
     });
     if (!contactsRes.ok) {
