@@ -1,5 +1,11 @@
 # Darex Build State
 
+## Quality tiers for the model router
+
+- New `model-tier.ts`: picks fast / standard / deep per turn. Anything touching money, refunds, complaints, tax, legal or contracts (English, Hinglish and Devanagari) goes to the deep model, because a wrong answer there costs a person; analysis, long messages and attachments go to standard; plain lookups stay fast. When a workspace's model budget is used up a money question steps down one level and says so, never silently.
+- `infra/litellm/config.yaml` gains `darex-standard` and `darex-deep` aliases (Anthropic first, OpenAI second) with failover down to `darex-default`. `runLocalTurn` leads with the matching alias only when `DAREX_TIER_ROUTING=1`; off by default, so behaviour is unchanged until the keys exist.
+- Verified: 8 tests, tsc clean. NOT verified: any real model answer (no keys here). The OpenAI model names in the config (`gpt-5`, `gpt-5-mini`) are placeholders to check against your account. The per-workspace budget is not yet wired into `deepAllowed` (always true for now).
+
 ## Background-check heartbeat and health note
 
 - Worker now leaves a heartbeat per workspace and activity (`agent_activity_health`, migration 213, row-level security forced): when it last finished, when it last failed and a short error cleaned of e-mail addresses and long numbers. It is a Temporal activity interceptor (`activity-health.ts`) that only watches: results and original errors pass through unchanged, a failing recorder is swallowed, successes are written at most once a minute per workspace and activity.

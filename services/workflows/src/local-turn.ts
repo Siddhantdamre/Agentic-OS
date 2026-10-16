@@ -14,6 +14,7 @@
  *   * LargeToolResponse (truncation, preview, and subagent delegation guidance)
  * - Real-time streaming: tokens, tool calls, subagents, and completion metrics stream directly to Ask AI.
  */
+import { applyTier, chooseTier } from './model-tier.js';
 import { z } from 'zod';
 import { labelText, readModelText } from './reply-from-tools.js';
 import { bindExternalAbort } from './trueforge-client.js';
@@ -1101,7 +1102,10 @@ export async function runLocalTurn(
   opts?: RunAgentOptions,
 ): Promise<AgentTurnResult | null> {
   if (!inprocessTurnsEnabled()) return null;
-  const candidates = getLocalModelCandidates();
+  // Where a wrong answer can hurt someone (money, promises, complaints) the stronger model answers. Off unless
+  // DAREX_TIER_ROUTING=1. The per-workspace model budget is not wired in yet, so deep is always allowed here.
+  const tier = chooseTier({ message: input.userMessage, deepAllowed: true });
+  const candidates = applyTier(getLocalModelCandidates(), tier.tier, process.env);
   if (candidates.length === 0 || !candidates.some((c) => Boolean(c.apiKey))) {
     console.warn('[local-turn] no model key configured — falling back to HTTP path');
     return null;
