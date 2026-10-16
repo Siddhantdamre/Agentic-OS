@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { jsonBodyOrEmpty } from '@/lib/safe-json';
 import { getScopedClient } from '@/lib/db';
 import { summariseRevival } from '@darex/workflows/dist/leads/quiet.js';
 
@@ -186,6 +187,7 @@ export async function GET() {
       },
     });
   } catch (err) {
+    console.error('[leaks] report failed:', err);
     // A leak report that 500s tells an owner nothing about their business and
     // everything about ours. Say which part failed.
     const message = err instanceof Error ? err.message : 'unknown error';
@@ -214,7 +216,7 @@ export async function POST(request: Request) {
   const { client, orgId } = scoped;
 
   try {
-    const body = await request.json().catch(() => ({}));
+    const body = await jsonBodyOrEmpty(request);
     const mode = String((body as { mode?: unknown }).mode ?? '');
     if (!['off', 'dry_run', 'on'].includes(mode)) {
       return NextResponse.json(
@@ -245,6 +247,7 @@ export async function POST(request: Request) {
 
     return NextResponse.json({ mode, message });
   } catch (err) {
+    console.error('[leaks] mode change failed:', err);
     const message = err instanceof Error ? err.message : 'unknown error';
     return NextResponse.json({ error: message }, { status: 500 });
   } finally {

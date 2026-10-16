@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { jsonBodyOrEmpty } from '@/lib/safe-json';
 import { getScopedClient } from '@/lib/db';
 import { signalWorkItemDecision } from '@darex/workflows/dist/workflow-client.js';
 
@@ -35,7 +36,7 @@ export async function POST(
 
   try {
     const { id } = await context.params;
-    const body = await request.json().catch(() => ({} as Record<string, unknown>));
+    const body = await jsonBodyOrEmpty(request);
     const decision = typeof body.decision === 'string' ? body.decision.trim() : '';
     const reason = typeof body.reason === 'string' ? body.reason.trim() : '';
 

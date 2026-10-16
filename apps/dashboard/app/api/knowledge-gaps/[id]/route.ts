@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { jsonBodyOrEmpty } from '@/lib/safe-json';
 import { getScopedClient } from '@/lib/db';
 
 export const dynamic = 'force-dynamic';
@@ -33,7 +34,7 @@ export async function POST(
 
   try {
     const { id: gapId } = await context.params;
-    const body = await request.json().catch(() => ({} as Record<string, unknown>));
+    const body = await jsonBodyOrEmpty(request);
     const answer = typeof body.answer === 'string' ? body.answer.trim() : '';
     const title = typeof body.title === 'string' ? body.title.trim() : '';
     const dismiss = body.dismiss === true;

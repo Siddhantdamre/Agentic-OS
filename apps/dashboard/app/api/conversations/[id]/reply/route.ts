@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { jsonBodyOrEmpty } from '@/lib/safe-json';
 import { getScopedClient } from '@/lib/db';
 import { realtimeHub } from '@/lib/realtime-hub';
 import { replyTargetFromChannelMeta, sendChannelReply } from '@/lib/channel-outbound';
@@ -38,7 +39,7 @@ export async function POST(
 
   try {
     const { id: conversationId } = await context.params;
-    const body = await request.json().catch(() => ({} as Record<string, unknown>));
+    const body = await jsonBodyOrEmpty(request);
     const text = typeof body.text === 'string' ? body.text.trim() : '';
     const aiDraft = typeof body.aiDraft === 'string' ? body.aiDraft.trim() : '';
 

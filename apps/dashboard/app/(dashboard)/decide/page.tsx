@@ -14,6 +14,7 @@
  */
 
 import React, { useState } from 'react';
+import { networkErrorMessage } from '@/lib/client-error';
 import {
   Scale,
   Building2,
@@ -119,12 +120,12 @@ export default function DecidePage() {
       });
       const data = (await res.json()) as BriefResponse;
       if (!res.ok) {
-        setError(data.error || `Request failed (${res.status}).`);
+        setError(data.error || 'The brief could not be produced.');
       } else {
         setBrief(data);
       }
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : 'The brief could not be produced.');
+      setError(networkErrorMessage(e, 'The brief could not be produced.'));
     } finally {
       setLoading(false);
     }

@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { jsonBodyOrEmpty } from '@/lib/safe-json';
 import { getScopedClient } from '@/lib/db';
 import { getTemporalClient } from '@darex/workflows/dist/workflow-client';
 
@@ -198,7 +199,7 @@ export async function POST(request: Request) {
     } else {
       // JSON fallback: { filename, text } or { filename, base64 }. Keeps the
       // endpoint usable from scripts and tests without multipart encoding.
-      const body = await request.json().catch(() => ({} as Record<string, unknown>));
+      const body = await jsonBodyOrEmpty(request);
       name = typeof body.filename === 'string' ? body.filename : 'upload.txt';
       mime = typeof body.mimeType === 'string' ? body.mimeType : '';
       title = typeof body.title === 'string' ? body.title : '';

@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useCallback, useEffect, useState } from 'react';
+import { networkErrorMessage } from '@/lib/client-error';
 import { Eye, EyeOff } from 'lucide-react';
 
 /**
@@ -70,6 +71,8 @@ export function ShadowPanel({ days = 30 }: { days?: number }) {
       const json = await res.json();
       setNote(json.message || null);
       await load();
+    } catch (e) {
+      setNote(networkErrorMessage(e, 'Could not change that.'));
     } finally {
       setBusy(false);
     }

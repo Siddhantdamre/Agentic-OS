@@ -1,5 +1,11 @@
 # Darex Build State
 
+## Bring Agentic-OS screens and routes up to the dashboard contracts
+
+- Screens and routes that came from the Agentic-OS line now follow the dashboard's own contracts, which five existing tests enforce: every button that calls the server says what happened when the connection drops (approvals, leaks, shadow mode); no raw error text or HTTP status reaches a person (decide page, teach-a-fact, briefings); eight routes read request bodies through `jsonBodyOrEmpty`; three routes that answer 500 now log the error first.
+- `unpdf` (used by the document upload route) is added as a dashboard dependency; it was missing from the merged lockfile.
+- Verified: dashboard tests 1,150 passed, 16 skipped; type check clean; lint clean.
+
 ## Restore Agentic-OS features the merge dropped
 
 - Features that only the Agentic-OS line had, and that the merge would otherwise have lost, are restored on top of the company line: the extra agent input fields (business name and type, model override, grounding context) and the "grounding" reply-gate verdict; the keyless web-search chain (kept as `tools/search-web.ts` next to the company line's `search-providers.ts`, which the web_search tool still uses); quota-exhausted detection for embeddings (a billing 429 is no longer retried); the activities for crew planning, reply revision, approval and commitment records, knowledge gaps, LLM budget, task supervision and market research; a work-item signal that reports whether it reached the workflow.

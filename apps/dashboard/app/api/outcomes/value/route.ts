@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { jsonBodyOrEmpty } from '@/lib/safe-json';
 import { getScopedClient } from '@/lib/db';
 
 export const dynamic = 'force-dynamic';
@@ -39,7 +40,7 @@ export async function POST(request: Request) {
   const { client, orgId } = scoped;
 
   try {
-    const body = await request.json().catch(() => ({} as Record<string, unknown>));
+    const body = await jsonBodyOrEmpty(request);
     const kind = typeof body.kind === 'string' ? body.kind.trim() : '';
     const sourceId = typeof body.sourceId === 'string' ? body.sourceId.trim() : '';
     const sourceTable = typeof body.sourceTable === 'string' && body.sourceTable.trim()

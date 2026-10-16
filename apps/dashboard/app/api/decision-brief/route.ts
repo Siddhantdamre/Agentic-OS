@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { jsonBodyOrEmpty } from '@/lib/safe-json';
 import { getScopedClient } from '@/lib/db';
 import { decisionBriefActivity } from '@darex/workflows/dist/activities/decision-brief';
 
@@ -20,7 +21,7 @@ export async function POST(request: Request) {
   try {
     const { client, orgId } = await getScopedClient();
     try {
-      const body = (await request.json().catch(() => ({}))) as {
+      const body = (await jsonBodyOrEmpty(request)) as {
         question?: string;
         internalOnly?: boolean;
         maxRounds?: number;
@@ -66,6 +67,7 @@ export async function POST(request: Request) {
       client.release();
     }
   } catch (error: unknown) {
+    console.error('[decision-brief] failed:', error);
     const message = error instanceof Error ? error.message : String(error);
     if (message === 'Unauthorized') {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });

@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { jsonBodyOrEmpty } from '@/lib/safe-json';
 import { getScopedClient } from '@/lib/db';
 import {
   summariseAgreement,
@@ -112,7 +113,7 @@ export async function POST(request: Request) {
   const { client, orgId, userId } = scoped;
 
   try {
-    const body = await request.json().catch(() => ({} as Record<string, unknown>));
+    const body = await jsonBodyOrEmpty(request);
     if (typeof body.enabled !== 'boolean') {
       return NextResponse.json({ error: 'enabled must be true or false.' }, { status: 400 });
     }
