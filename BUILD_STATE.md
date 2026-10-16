@@ -1,5 +1,12 @@
 # Darex Build State
 
+## Make merged migrations obey workspace isolation
+
+- The two histories of this project (the company copy and Agentic-OS) were joined. Migrations that only the Agentic-OS line had are renumbered 322-346 and run after the company line's 001-213; migration 347 brings their tables and functions up to the isolation rules the company line enforces.
+- Found by applying every migration to an empty database and running the isolation check: the view `outcome_lift` ran with its owner's rights and returned another workspace's rows; `duty_turn_grants` was not forced; three SECURITY DEFINER functions did not pin their search path; the model-SQL reader role could run SECURITY DEFINER functions and had no decision on 20 new tables. 347 fixes all four; customer-content tables stay withheld from model SQL (listed in `check-rls-coverage.js`).
+- Data-erasure coverage: content tables (what customers said, who they are, what was done) are added to the delete list; settings and the record that an erasure happened are kept, each with its reason.
+- Verified on a database built from scratch from all 119 migrations: isolation check 13 of 13, model-SQL check 41 of 41.
+
 ## Wire analyst, research and improvement tools into chat
 
 - Three read-only chat tools are now registered everywhere a tool must be (tool module index, MCP bridge, tool definitions, executor catalog, dashboard allowlist validator) and added to the Executive employee for newly created workspaces: `ask_numbers`, `research_topic`, `improvement_note`. The system prompt tells the model to quote `ask_numbers` as written and never state a figure it did not return.

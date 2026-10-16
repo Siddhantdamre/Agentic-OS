@@ -131,7 +131,10 @@ const su = new Client({
   if (!hasReader) {
     no('the reader role darex_sql_reader exists', 'apply migration 207_sql_reader_role.sql — model-written SQL would otherwise run with the full application role');
   } else {
-  const WITHHELD_WHOLE = ['org_sql_connections'];
+  // Withheld on purpose: they hold what customers said or who they are (347 grants the rest).
+  const WITHHELD_WHOLE = ['org_sql_connections', 'contact_identities', 'contact_persons', 'erasure_requests',
+    'reply_edits', 'lead_followups', 'commitments', 'knowledge_gaps', 'approval_requests', 'agent_actions',
+    'outcome_events', 'task_supervision'];
   const ungranted = (await su.query(`
     SELECT c.relname FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
       JOIN pg_attribute a ON a.attrelid = c.oid AND a.attname = 'org_id' AND NOT a.attisdropped
