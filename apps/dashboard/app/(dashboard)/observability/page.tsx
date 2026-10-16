@@ -6,6 +6,7 @@ import type { FirstObservation, TrajectorySnapshot } from '@/lib/onboarding-roll
 import { toRolloutWeekViews } from '@/lib/onboarding-rollout';
 import { useLiveRefresh } from '@/lib/use-live-refresh';
 import { PendingDecisionCard, type PendingDecision } from '@/components/observability/PendingDecisionCard';
+import { AgentHealthPanel } from '@/components/observability/AgentHealthPanel';
 import { responseErrorMessage } from '@/lib/client-error';
 
 const OBSERVABILITY_EVENTS = [
@@ -175,6 +176,7 @@ export default function ObservabilityPage() {
           <p className="text-xs text-slate-500 mt-1">{dispatchNote}</p>
         ) : null}
       </div>
+      <AgentHealthPanel />
       <div className="grid gap-3 md:grid-cols-2">
         {metrics.map((m) => (
           <div key={m.key} className={`rounded-2xl border p-4 ${m.status === 'alert' ? 'border-red-300 bg-red-50' : m.status === 'unknown' ? 'border-slate-200 bg-slate-50' : 'border-cream-300 bg-white'}`}>
