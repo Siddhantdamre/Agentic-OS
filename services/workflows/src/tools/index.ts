@@ -58,6 +58,9 @@ import { customerOps } from './customer-ops.js';
 import { operations } from './operations.js';
 import { growth } from './growth.js';
 import { dailyBrief } from './daily-brief.js';
+import { askNumbers } from './ask-numbers.js';
+import { researchTopic } from './research-topic.js';
+import { improvementNote } from './improvement-note.js';
 
 export type { ToolRisk } from './risk.js';
 export { confirmForRisk, isToolRisk } from './risk.js';
@@ -122,6 +125,9 @@ export const TOOL_MODULES = {
   operations,
   growth,
   dailyBrief,
+  askNumbers,
+  researchTopic,
+  improvementNote,
   connectors,
 } as const;
 
@@ -194,6 +200,9 @@ export const PROVIDER_KEYS = [
   'daily_brief',
   'daily-brief',
   'executive_brief',
+  'ask_numbers',
+  'research_topic',
+  'improvement_note',
 ] as const;
 
 export type ProviderKey = typeof PROVIDER_KEYS[number];
@@ -331,6 +340,12 @@ export function moduleForProvider(key: ProviderKey): ToolModule {
     case 'daily-brief':
     case 'executive_brief':
       return dailyBrief;
+    case 'ask_numbers':
+      return askNumbers;
+    case 'research_topic':
+      return researchTopic;
+    case 'improvement_note':
+      return improvementNote;
     case 'mls':
       return mls;
     case 'customer-ops':

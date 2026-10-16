@@ -22,6 +22,9 @@ const EXTRA_ALLOWED = new Set<string>([
   'daily_brief',
   'daily-brief',
   'executive_brief',
+  'ask_numbers',
+  'research_topic',
+  'improvement_note',
 ]);
 
 export function normalizeToolName(raw: string): string {

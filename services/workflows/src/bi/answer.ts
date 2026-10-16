@@ -17,7 +17,7 @@ const TIME_WORDS = /\b(last|previous|yesterday|today|tomorrow|month|week|year|qu
 
 type Resolved = string | 'ambiguous' | null;
 
-function resolve(q: string): Resolved {
+export function resolveMetric(q: string): Resolved {
   const dues = /overdue|baaki|baki|bakaya|outstanding|udhaar|udhar|unpaid|late payments?/.test(q);
   const paid = /\bpaid\b|received|collected|collection|vasool|paise (mile|mila|aaye)|\bpayments? (mili|mila|aayi|aaya)/.test(q);
   const inq = /inquir|enquir|\bleads?\b|queries/.test(q);
@@ -75,7 +75,7 @@ function decline(hi: boolean, why: string): Answer {
 export function buildAnswer(question: string, computed: ComputedValue[]): Answer {
   const q = String(question || '').toLowerCase();
   const hi = HINGLISH.test(q);
-  const id = resolve(q);
+  const id = resolveMetric(q);
   if (id === null) return decline(hi, 'No metric matches this question. Supported: overdue dues, payments received, inquiries, active listings.');
   if (id === 'ambiguous') return decline(hi, 'The question mixes more than one topic. Ask about one thing at a time.');
   const c = computed.find((v) => v.id === id);

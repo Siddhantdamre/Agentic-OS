@@ -1682,5 +1682,38 @@ export const TOOLS: ToolDef[] = [
     tool: 'daily_brief',
     action: 'read',
   },
+  {
+    name: 'ask_numbers',
+    description:
+      "Answer a question about money owed, payments received, enquiries or active listings from the workspace's own data. The number is computed by a fixed read-only query and checked; if the question does not map to one metric it says it cannot compute it. Never estimate a figure yourself.",
+    schema: {
+      org_id: z.string(),
+      question: z.string(),
+    },
+    tool: 'ask_numbers',
+    action: 'read',
+  },
+  {
+    name: 'research_topic',
+    description:
+      'Cited research on the outside world (market, competitors, regulation). Every kept fact is backed by a fetched source; unverifiable statements are removed and listed. Use when the owner asks about things outside their own data.',
+    schema: {
+      org_id: z.string(),
+      topic: z.string(),
+    },
+    tool: 'research_topic',
+    action: 'read',
+  },
+  {
+    name: 'improvement_note',
+    description:
+      'Read-only: summarise where the owner corrected the AI most in the last 60 days and suggest ONE improvement. Changes nothing; any change needs approval and testing.',
+    schema: {
+      org_id: z.string(),
+      
+    },
+    tool: 'improvement_note',
+    action: 'read',
+  },
 
 ];

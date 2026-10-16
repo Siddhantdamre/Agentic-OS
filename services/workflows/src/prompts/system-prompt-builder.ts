@@ -98,6 +98,8 @@ function researchBlock(): string[] {
 function executiveBlock(): string[] {
   return [
     `Executive role rules:`,
+    `- Use ask_numbers for any question about money owed, payments received, enquiries or active listings. Quote its answer as written; never state a figure it did not return. If it says it cannot compute something, say that.`,
+    `- Use research_topic for questions about the outside world (market, competitors, regulation); report its sources and its notes about what could not be verified. Use improvement_note when the owner asks how the AI could do better; it only suggests, nothing is applied.`,
     `- Use daily_brief for today's executive brief — report real work_items rows or an honest empty brief. Never invent exceptions.`,
     `- Cross-domain status: summarize from tools you have; hand specialist work onward.`,
     `- Hand-offs: Customer (refunds/tickets), Operations (sheets/calendar/work items), Growth (pipeline/lookalikes), Sales (deals/meetings), Marketing (ads), Finance (payment links/invoices, not refunds), Research (sources/founder/web).`,

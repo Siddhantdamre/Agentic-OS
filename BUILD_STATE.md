@@ -1,5 +1,12 @@
 # Darex Build State
 
+## Wire analyst, research and improvement tools into chat
+
+- Three read-only chat tools are now registered everywhere a tool must be (tool module index, MCP bridge, tool definitions, executor catalog, dashboard allowlist validator) and added to the Executive employee for newly created workspaces: `ask_numbers`, `research_topic`, `improvement_note`. The system prompt tells the model to quote `ask_numbers` as written and never state a figure it did not return.
+- `ask_numbers`: picks one fixed read-only metric from the question, runs it scoped to the workspace for the last 30 days (or as of today), builds the sentence from a template, and re-checks the sentence with the number verifier before showing it. Anything unclear gets "I can't compute that yet". `research_topic`: cited research with safe search and fetch; says plainly when the model gateway is missing and researches nothing. `improvement_note`: reads rejected drafts and thumbs-downs from the last 60 days and writes ONE suggestion; it changes nothing.
+- Verified: 6 tool tests; against the real sandbox database as the app role, a workspace with ₹1,23,456 + ₹50,000 overdue answered ₹1,73,456, 2 invoices and 99.4% (hand-calculated), and another workspace's ₹7,77,777 did not appear. NOT verified: a real model choosing these tools in chat, `research_topic` against the live web, or `improvement_note` on real feedback.
+- Existing workspaces keep their stored employee allowlists, so they do not get the tools until an allowlist is updated; only new workspaces do.
+
 ## Ask your numbers (core)
 
 - New `services/workflows/src/bi/`: the pure core of "Ask your numbers". Not wired to chat or a screen yet.
