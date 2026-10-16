@@ -1,5 +1,9 @@
 # Darex Build State
 
+## Run the Hive trust tests in the test script
+
+- The four Hive trust unit test files are now in the workflows test script, which now runs 1,298 tests, all passing.
+
 ## Hive trust (opt-in shared approval counts)
 
 - Hive trust (carried over from the uncommitted work in the Agentic-OS folder): a workspace can opt in to share noisy approve/reject counts per action class and borrow a bounded prior from workspaces that did the same, so a new workspace does not need ten approvals in a row for actions thousands have shown to be safe. Off by default. Four protections are enforced in the migration: opt-in plus eligibility (paid plan, age, volume), per-workspace clipping, a k-threshold, and noise added once per release. Model-written SQL can neither read the tables nor call the functions. The design and evidence are in `docs/adr/023-hive-trust.md`; `docs/adr/022` records why model SQL runs as a restricted role.
