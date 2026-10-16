@@ -1,5 +1,11 @@
 # Darex Build State
 
+## Hive trust (opt-in shared approval counts)
+
+- Hive trust (carried over from the uncommitted work in the Agentic-OS folder): a workspace can opt in to share noisy approve/reject counts per action class and borrow a bounded prior from workspaces that did the same, so a new workspace does not need ten approvals in a row for actions thousands have shown to be safe. Off by default. Four protections are enforced in the migration: opt-in plus eligibility (paid plan, age, volume), per-workspace clipping, a k-threshold, and noise added once per release. Model-written SQL can neither read the tables nor call the functions. The design and evidence are in `docs/adr/023-hive-trust.md`; `docs/adr/022` records why model SQL runs as a restricted role.
+- Migration is now 348 (was 049 in that line) and enables `pgcrypto`, which it needs. The two checks were pointed at the SQL tool directly because this line's gate refuses a bare fake tenant.
+- Verified on a database built from scratch: hive check 37 of 37; isolation check still 13 of 13; 52 hive unit tests. NOT verified: any real workspace opting in, or a scheduled publish job (nothing calls `hive_publish` on a timer yet).
+
 ## Bring Agentic-OS screens and routes up to the dashboard contracts
 
 - Screens and routes that came from the Agentic-OS line now follow the dashboard's own contracts, which five existing tests enforce: every button that calls the server says what happened when the connection drops (approvals, leaks, shadow mode); no raw error text or HTTP status reaches a person (decide page, teach-a-fact, briefings); eight routes read request bodies through `jsonBodyOrEmpty`; three routes that answer 500 now log the error first.
