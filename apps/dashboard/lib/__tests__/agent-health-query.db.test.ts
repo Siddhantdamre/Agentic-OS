@@ -68,13 +68,24 @@ d('loadAgentHealth against a real database', () => {
     for (const status of ['unresolved', 'unresolved', 'replayed']) {
       await admin.query(`INSERT INTO failed_webhooks (channel, org_id, raw_payload, error_message, status) VALUES ('whatsapp', $1, '{}', 'boom', $2)`, [orgA, status]);
     }
+    // Heartbeat: one check ran today, one went quiet four days ago. Another workspace's failing check must not leak in.
+    await admin.query(
+      `INSERT INTO agent_activity_health (org_id, activity, last_ok_at, ok_count) VALUES
+         ($1, 'sweepToday', NOW(), 5), ($1, 'sweepQuiet', NOW() - INTERVAL '4 days', 2)`,
+      [orgA],
+    );
     // Another workspace with its own stuck employee and failed messages must change nothing above.
     const intruder = await employee(orgB, 'Intruder', 'customer');
     await pending(orgB, 'customer', intruder, 200);
     await admin.query(`INSERT INTO failed_webhooks (channel, org_id, raw_payload, error_message, status) VALUES ('whatsapp', $1, '{}', 'boom', 'unresolved')`, [orgB]);
+    await admin.query(
+      `INSERT INTO agent_activity_health (org_id, activity, last_error_at, last_error, fail_count) VALUES ($1, 'sweepB', NOW(), 'Error: only B', 9)`,
+      [orgB],
+    );
   });
 
   afterAll(async () => {
+    await admin.query(`DELETE FROM agent_activity_health WHERE org_id = ANY($1::uuid[])`, [[orgA, orgB]]);
     await admin.query(`DELETE FROM failed_webhooks WHERE org_id = ANY($1::uuid[])`, [[orgA, orgB]]);
     await admin.query(`DELETE FROM orgs WHERE id = ANY($1::uuid[])`, [[orgA, orgB]]);
     await admin.end();
@@ -102,6 +113,15 @@ d('loadAgentHealth against a real database', () => {
   it('counts only this workspace’s unresolved customer messages', async () => {
     const s = await load(orgA);
     expect(s.notes.map((n) => n.text).join(' ')).toMatch(/2 customer messages failed to arrive/);
+  });
+
+  it('reports a background check that went quiet, and only for this workspace', async () => {
+    const a = await load(orgA);
+    const text = a.notes.map((n) => n.text).join(' ');
+    expect(text).toMatch(/A background check has not run for 4 days/);
+    expect(text).not.toMatch(/only B/);
+    const b = await load(orgB);
+    expect(b.notes.map((n) => n.text).join(' ')).toMatch(/background check failed on its last run \(Error: only B\)/);
   });
 
   it('shows nothing from another workspace', async () => {

@@ -11,6 +11,7 @@ import { collectTrustSnapshot } from '@/lib/trust-query';
 import {
   assessAgent,
   assessWorkspace,
+  type BackgroundCheck,
   orderByAttention,
   type AgentHealthResult,
   type HealthStatus,
@@ -100,6 +101,25 @@ export async function loadAgentHealth(client: PoolClient, orgId: string, now: Da
     [orgId],
   );
 
+  // The worker's heartbeat. A workspace on a database without the table yet reads as "nothing recorded", not a failure.
+  let backgroundChecks: BackgroundCheck[] = [];
+  try {
+    const hb = await client.query<{ activity: string; last_ok_at: Date | null; last_error_at: Date | null; last_error: string | null; fail_count: string }>(
+      `SELECT activity, last_ok_at, last_error_at, last_error, fail_count::text AS fail_count
+         FROM agent_activity_health WHERE org_id = $1`,
+      [orgId],
+    );
+    backgroundChecks = hb.rows.map((r) => ({
+      activity: r.activity,
+      lastOkAt: r.last_ok_at ? new Date(r.last_ok_at).toISOString() : null,
+      lastErrorAt: r.last_error_at ? new Date(r.last_error_at).toISOString() : null,
+      lastError: r.last_error,
+      failCount: Number(r.fail_count),
+    }));
+  } catch (err) {
+    if ((err as { code?: string }).code !== '42P01') throw err;
+  }
+
   const rows: AgentHealthRow[] = trust.employees.map((e) => {
     const lastActionAt = later(lastAction.get(e.id) ?? null, e.evidence.lastDecisionAt);
     const oldest = oldestWaiting.get(e.id);
@@ -137,6 +157,6 @@ export async function loadAgentHealth(client: PoolClient, orgId: string, now: Da
 
   const summary: Record<HealthStatus, number> = { stuck: 0, watch: 0, ok: 0, new: 0, paused: 0 };
   for (const r of rows) summary[r.status]++;
-  const notes = assessWorkspace({ webhookFailuresWaiting: Number(dlq.rows[0]?.n ?? 0), killSwitch: trust.killSwitch });
+  const notes = assessWorkspace({ webhookFailuresWaiting: Number(dlq.rows[0]?.n ?? 0), killSwitch: trust.killSwitch, backgroundChecks }, now);
   return { employees: orderByAttention(rows), notes, summary, asOf: now.toISOString() };
 }

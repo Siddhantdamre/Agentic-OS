@@ -20,6 +20,8 @@ for (const p of possibleEnvs) {
 import { Worker, NativeConnection } from '@temporalio/worker';
 import { Client } from '@temporalio/client';
 import * as activities from './activities/index.js';
+import { activityHealthInterceptor } from './activity-health.js';
+import { recordActivityHealth } from './activity-health-store.js';
 import { assertEmbeddingWorkerConfig } from './activities/embed.js';
 import { bootstrapPeriodicSweeps } from './periodic-registry.js';
 import { startBillingSweep } from './billing/sweep-starter.js';
@@ -80,6 +82,7 @@ async function runWorker() {
         workflowsPath: require.resolve('./workflows/index.js'),
         activities,
         taskQueue: 'darex-agent-tasks',
+        interceptors: { activityInbound: [activityHealthInterceptor(recordActivityHealth)] },
       });
 
       console.log('Temporal Agent Worker connected and listening on task queue: "darex-agent-tasks"');

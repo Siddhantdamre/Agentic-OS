@@ -104,7 +104,20 @@ export function orderByAttention<T extends { status: HealthStatus }>(rows: T[]):
     .map((x) => x.r);
 }
 
+/** The worker's heartbeat for one background activity in this workspace (agent_activity_health). */
+export interface BackgroundCheck {
+  activity: string;
+  lastOkAt: string | null;
+  lastErrorAt: string | null;
+  lastError: string | null;
+  failCount: number;
+}
+/** A check that finished before but has not for this long is treated as not running. */
+export const CHECK_SILENT_AFTER_HOURS = 24;
+
 export interface WorkspaceHealthInput {
+  /** Heartbeat rows; absent or empty means nothing has been recorded yet, which is not a problem to report. */
+  backgroundChecks?: BackgroundCheck[];
   /** Customer messages that failed to arrive and are waiting for a retry. */
   webhookFailuresWaiting: number;
   killSwitch: boolean;
@@ -114,13 +127,42 @@ export interface WorkspaceNote {
   text: string;
 }
 
-export function assessWorkspace(i: WorkspaceHealthInput): WorkspaceNote[] {
+export function assessWorkspace(i: WorkspaceHealthInput, now: Date = new Date()): WorkspaceNote[] {
   const notes: WorkspaceNote[] = [];
   if (i.killSwitch) notes.push({ level: 'stuck', text: 'Your AI team is switched off. Nothing will run until you switch it back on.' });
   if (i.webhookFailuresWaiting > 0) {
     notes.push({
       level: 'watch',
       text: `${plural(i.webhookFailuresWaiting, 'customer message', 'customer messages')} failed to arrive and ${i.webhookFailuresWaiting === 1 ? 'is' : 'are'} waiting for a retry.`,
+    });
+  }
+  const failing: BackgroundCheck[] = [];
+  const silent: number[] = [];
+  for (const c of i.backgroundChecks ?? []) {
+    const ok = c.lastOkAt ? new Date(c.lastOkAt).getTime() : null;
+    const err = c.lastErrorAt ? new Date(c.lastErrorAt).getTime() : null;
+    if (err !== null && (ok === null || err > ok)) failing.push(c);
+    else if (ok !== null) {
+      const hours = (now.getTime() - ok) / 3_600_000;
+      if (hours > CHECK_SILENT_AFTER_HOURS) silent.push(hours);
+    }
+  }
+  if (failing.length) {
+    const reason = failing[0].lastError;
+    notes.push({
+      level: 'watch',
+      text: failing.length === 1
+        ? `A background check failed on its last run${reason ? ` (${reason})` : ''}.`
+        : `${failing.length} background checks failed on their last run.`,
+    });
+  }
+  if (silent.length) {
+    const days = Math.floor(Math.max(...silent) / 24);
+    notes.push({
+      level: 'watch',
+      text: silent.length === 1
+        ? `A background check has not run for ${days} days.`
+        : `${silent.length} background checks have not run for up to ${days} days.`,
     });
   }
   return notes;

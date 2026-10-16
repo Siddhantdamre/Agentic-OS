@@ -1,5 +1,14 @@
 # Darex Build State
 
+## Background-check heartbeat and health note
+
+- Worker now leaves a heartbeat per workspace and activity (`agent_activity_health`, migration 213, row-level security forced): when it last finished, when it last failed and a short error cleaned of e-mail addresses and long numbers. It is a Temporal activity interceptor (`activity-health.ts`) that only watches: results and original errors pass through unchanged, a failing recorder is swallowed, successes are written at most once a minute per workspace and activity.
+- Why: the old sweep counters in `org_model_spend` were never incremented, so a dead sweep looked the same as a quiet one.
+- The Agent Health board shows a note when a background check failed on its last run, or has not run for over a day after running before. Nothing recorded yet is not reported as a problem.
+- Model-written SQL may read the table (no customer detail in it). Listed as retained (not erased) by a data-erasure request, since it holds no personal data; the erasure coverage test required that decision.
+- Verified: 6 interceptor tests, 24 health-rule tests, 5 database tests as the app role (including no leak between workspaces), RLS coverage 11/11, database-query 41/41, tsc clean.
+- NOT verified: the interceptor inside a real worker. There is no Temporal server in the sandbox, so wiring (`interceptors.activityInbound` in `worker.ts`) is checked by types only. First thing to confirm on a machine with the full stack.
+
 ## Agent health: is each AI employee doing its job? (2026-10-16)
 
 - Question asked: are all the AI employees working rightly? Reading the code showed there was no screen that could answer it: the Health page showed workspace-wide metrics, and nothing said which employee was idle, stuck behind a person, failing, or being rewritten by the owner.

@@ -96,6 +96,7 @@ export const DSR_RETAINED_TABLES: Readonly<Record<string, string>> = {
   web_push_subscriptions: 'account: members\' notification devices',
   ask_ai_user_mode_prefs: 'account: member UI preference',
   ai_employees: 'config: the org\'s employees',
+  agent_activity_health: 'operations: activity names, timestamps and counts, error text cleaned of e-mail addresses and long numbers; no personal data',
   employee_skills: 'config',
   org_skills: 'config',
   org_packs: 'config',

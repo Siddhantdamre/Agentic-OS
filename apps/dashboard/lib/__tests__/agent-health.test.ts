@@ -118,4 +118,42 @@ describe('workspace notes', () => {
     expect(n[0].level).toBe('stuck');
     expect(n[0].text).toMatch(/switched off/i);
   });
+
+  describe('background checks', () => {
+    const check = (over: object) => ({ activity: 'openLoopSweepActivity', lastOkAt: daysAgo(0), lastErrorAt: null, lastError: null, failCount: 0, ...over });
+    const run = (checks: any[]) => assessWorkspace({ webhookFailuresWaiting: 0, killSwitch: false, backgroundChecks: checks }, NOW);
+
+    it('says nothing for checks that ran lately', () => {
+      expect(run([check({})])).toEqual([]);
+    });
+
+    it('says nothing when no check has ever been recorded', () => {
+      expect(run([])).toEqual([]);
+    });
+
+    it('flags a check that used to run and has gone quiet for over a day', () => {
+      const n = run([check({ lastOkAt: daysAgo(3) })]);
+      expect(n).toHaveLength(1);
+      expect(n[0].level).toBe('watch');
+      expect(n[0].text).toMatch(/background check/i);
+      expect(n[0].text).toMatch(/3 days/);
+    });
+
+    it('flags a check whose latest result is a failure, with the reason', () => {
+      const n = run([check({ lastOkAt: daysAgo(1), lastErrorAt: daysAgo(0), lastError: 'Error: connection refused' })]);
+      expect(n).toHaveLength(1);
+      expect(n[0].text).toMatch(/failed/i);
+      expect(n[0].text).toMatch(/connection refused/);
+    });
+
+    it('does not flag an old failure that was followed by a success', () => {
+      expect(run([check({ lastOkAt: daysAgo(0), lastErrorAt: daysAgo(2), lastError: 'Error: x' })])).toEqual([]);
+    });
+
+    it('rolls several quiet checks into one sentence', () => {
+      const n = run([check({ activity: 'a', lastOkAt: daysAgo(2) }), check({ activity: 'b', lastOkAt: daysAgo(5) })]);
+      expect(n).toHaveLength(1);
+      expect(n[0].text).toMatch(/2 background checks/);
+    });
+  });
 });
