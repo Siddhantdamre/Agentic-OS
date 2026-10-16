@@ -9,7 +9,7 @@
     "dev": "tsc --watch"
   },
   "dependencies": {
-    "@nangohq/node": "^0.38.0",
+    "@nangohq/node": "^0.71.12",
     "axios": "^1.6.8"
   },
   "devDependencies": {
