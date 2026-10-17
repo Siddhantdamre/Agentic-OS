@@ -1,5 +1,11 @@
 # Darex Build State
 
+## Park inbound send-tool injection attempts again
+
+- A customer message that names a send tool by identifier (for example `gmail_send`, the shape of a prompt-injection attempt) is parked for a person again. When the pricing-question fix was restored in the history merge, `inboundRequiresHitlWait` stopped checking the customer's text for send-tool names. Nothing was sent in either state (the gate still refused), but the safeguard that tells a person was lost. Found because harness flow F13 failed (117 of 118).
+- The fix adds `isSendRisk(normalizeToken(userMessage))` to the natural-language path. Pay and sign checks stay intent-only, so ordinary words like "charge" still do not park a turn. Written test first: the new test failed, then passed; a second test keeps the plain pricing question unparked.
+- Verified: 34 of 34 in the three hitl test files; full flows 118 of 118 after rebuilding the dashboard. Note the dashboard bundles the workflows code at build time, so this fix reaches a running server only after the dashboard is rebuilt.
+
 ## Fix image builds: copy workflows build scripts
 
 - The dashboard and worker image builds failed in CI with `Cannot find module '/app/services/workflows/scripts/copy-assets.js'`. The workflows package builds with `tsc && node scripts/copy-assets.js`, but both builder stages copied only `tsconfig.json` and `src`, never `scripts/`. One `COPY services/workflows/scripts …` line is added to each Dockerfile; the asset-copy step is kept.
