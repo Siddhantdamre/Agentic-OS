@@ -1,5 +1,11 @@
 # Darex Build State
 
+## Check that nothing reaches a provider around the gate unlisted
+
+- `services/workflows/src/gate-exits.test.ts` counts `executeProvider(` calls outside `tool-executor.ts`. Seven exist today, all listed with a reason: three read-only customer-profile lookups, and four posts to the owner's own Slack or ops WhatsApp (decision card, churn alert, morning brief). None sends to a customer. A new call anywhere else fails the test until it is routed through `executeAutonomousToolAction` or listed.
+- Why a list and not a reroute: reading the sites showed they are owner notifications, so putting them behind an approval would only delay the owner's own alerts. An earlier note called them gate bypasses; that was too strong.
+- Test first in spirit: a planted call in a scratch file made the test fail, and removing it made it pass. Not covered: `sendChannelReply` in the dashboard (human replies and inbound auto-replies), listed in the plan for a later check.
+
 ## Insight: say a plain sentence when Review Action cannot start
 
 - `POST /api/insight` answered "Temporal is unavailable — InsightActionWorkflow was not started" when the workflow engine could not be reached, and the Insight page printed it under every card. It now answers 503 with "This action cannot start right now. Please try again in a few minutes."; the detail goes to the server log.
