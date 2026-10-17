@@ -1,5 +1,10 @@
 # Darex Build State
 
+## Fix image builds: copy workflows build scripts
+
+- The dashboard and worker image builds failed in CI with `Cannot find module '/app/services/workflows/scripts/copy-assets.js'`. The workflows package builds with `tsc && node scripts/copy-assets.js`, but both builder stages copied only `tsconfig.json` and `src`, never `scripts/`. One `COPY services/workflows/scripts …` line is added to each Dockerfile; the asset-copy step is kept.
+- Proof so far: a directory holding exactly the files the old builder stage had reproduces the CI error; with `scripts/` it runs and produces `dist/metrics/core-kpis.yaml`. The workspace build passes 6 of 6. A real image build was not possible in the sandbox (no Docker daemon): the GitHub images workflow on this branch is the real check.
+
 ## Run the Hive trust tests in the test script
 
 - The four Hive trust unit test files are now in the workflows test script, which now runs 1,298 tests, all passing.
