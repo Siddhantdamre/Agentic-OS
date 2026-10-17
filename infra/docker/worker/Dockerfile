@@ -38,6 +38,8 @@ COPY services/connectors/src services/connectors/src
 RUN pnpm --filter @darex/connectors build
 
 COPY services/workflows/tsconfig.json services/workflows/tsconfig.json
+# The package build is `tsc && node scripts/copy-assets.js`; without this the build stage cannot find the script.
+COPY services/workflows/scripts services/workflows/scripts
 COPY services/workflows/src services/workflows/src
 RUN pnpm --filter @darex/workflows build
 

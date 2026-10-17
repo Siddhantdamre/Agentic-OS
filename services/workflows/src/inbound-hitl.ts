@@ -190,7 +190,9 @@ export function inboundRequiresHitlWait(input: {
   if (SIGN_RE.test(userMessage) || USER_SIGN_INTENT_RE.test(userMessage)) {
     classes.push('sign');
   }
-  if (USER_SEND_INTENT_RE.test(userMessage)) {
+  // Send-tool identifiers (gmail-send, send-email, slack-send, ...) have no everyday meaning, unlike "charge", so a message that
+  // names one is checked as well; quoting a send tool by name is the shape of a prompt-injection attempt.
+  if (isSendRisk(normalizeToken(userMessage)) || USER_SEND_INTENT_RE.test(userMessage)) {
     classes.push('send');
   }
 
