@@ -209,7 +209,7 @@ export async function GET(request: Request) {
           await releaseScopedClient(pc);
         }
         return new Response(
-          'Temporal is unavailable. Send/pay/sign/publish/delete plans cannot fall back to HTTP SSE.',
+          'This plan sends, pays, signs, publishes or deletes, so it needs the background service. It is not available right now. Nothing was done. Please try again in a few minutes.',
           { status: 503 }
         );
       }

@@ -111,7 +111,7 @@ export async function GET() {
             nangoConnectionId: null,
             scopes: [],
             lastOkAt: null,
-            lastError: 'Nango connection missing — demoted on connectors refresh',
+            lastError: 'The connection is missing, so it was switched off. Connect it again.',
           });
           const row = dbChannelsMap.get(key) as { status?: string; nango_connection_id?: string } | undefined;
           if (row) {
@@ -138,14 +138,14 @@ export async function GET() {
               missingConfigReason = match.reason || item.operatorHint;
             } else if (nangoConfigs.length === 0 && nangoSecretOk) {
               oauthConfigured = false;
-              missingConfigReason = `No Nango integration named ${item.id}. Create it in ${nangoUiUrl()} and paste a real OAuth client ID.`;
+              missingConfigReason = `${item.id} is not set up yet. Your administrator needs to finish its setup.`;
             } else if (!nangoSecretOk) {
               oauthConfigured = false;
-              missingConfigReason = 'NANGO_SECRET_KEY is not set on the dashboard — cannot verify Nango configs.';
+              missingConfigReason = 'Connections cannot be checked until your administrator finishes setup.';
             } else {
               oauthConfigured = false;
               missingConfigReason =
-                `No Nango integration named ${item.id}. Create it in ${nangoUiUrl()} and paste a real OAuth client ID.`;
+                `${item.id} is not set up yet. Your administrator needs to finish its setup.`;
             }
           }
 
@@ -290,7 +290,7 @@ export async function POST(request: Request) {
                   ? `Use POST /api/integrations/whatsapp for WhatsApp BYOK.`
                   : spec?.authMode === 'api_key'
                     ? `Use POST /api/integrations/razorpay for Razorpay API keys.`
-                    : `${provider} cannot be connected via Nango OAuth.`,
+                    : `${provider} cannot be connected this way.`,
             },
             { status: 400 }
           );
@@ -302,7 +302,7 @@ export async function POST(request: Request) {
             {
               success: false,
               connected: false,
-              message: `No real Nango OAuth connection found for ${provider}. Complete the OAuth popup first — the connection was not persisted.`,
+              message: `No connection was found for ${provider}. Finish signing in in the pop-up window, then try again.`,
               reconnectUrl: '/connectors',
               setupUrl: '/connectors',
               nangoUiUrl: nangoUiUrl(),
@@ -330,7 +330,7 @@ export async function POST(request: Request) {
         await client.query(
           `INSERT INTO channel_logs (org_id, channel_type, event_type, status, status_code, message, payload)
            VALUES ($1, $2, 'connect', 'success', 200, $3, $4)`,
-          [orgId, provider, `${provider} connected via Nango OAuth`, JSON.stringify({ connectionId: nangoConnId })]
+          [orgId, provider, `${provider} connected`, JSON.stringify({ connectionId: nangoConnId })]
         );
 
         await upsertOrgConnector(client, orgId, provider, {
@@ -414,10 +414,11 @@ export async function POST(request: Request) {
           }
           const nangoRes = await deleteNangoConnection(orgId, provider);
           if (!nangoRes.deleted && !nangoRes.nothingExisted) {
+            console.error('[integrations] disconnect failed:', provider, nangoRes.error || 'unknown error');
             return NextResponse.json(
               {
                 success: false,
-                message: `Failed to revoke Nango connection for ${provider}: ${nangoRes.error || 'unknown error'}. Local status left unchanged.`,
+                message: `Could not disconnect ${provider} right now. Nothing was changed. Please try again.`,
               },
               { status: 502 }
             );
@@ -438,8 +439,8 @@ export async function POST(request: Request) {
               orgId,
               provider,
               nangoRes.nothingExisted
-                ? `${provider} disconnected locally (no Nango connection existed)`
-                : `${provider} disconnected (Nango connection deleted)`,
+                ? `${provider} disconnected (there was no live connection)`
+                : `${provider} disconnected`,
             ]
           );
 
@@ -501,10 +502,11 @@ export async function POST(request: Request) {
           ? { deleted: false, nothingExisted: true, error: undefined }
           : await deleteNangoConnection(orgId, provider);
         if (isNangoSecretConfigured() && nangoRes.error && !nangoRes.deleted && !nangoRes.nothingExisted) {
+          console.error('[integrations] disconnect failed:', provider, nangoRes.error);
           return NextResponse.json(
             {
               success: false,
-              message: `Failed to revoke Nango connection for ${provider}: ${nangoRes.error}. Local credentials left unchanged.`,
+              message: `Could not disconnect ${provider} right now. Nothing was changed. Please try again.`,
             },
             { status: 502 }
           );

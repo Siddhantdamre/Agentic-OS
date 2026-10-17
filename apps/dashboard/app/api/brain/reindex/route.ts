@@ -92,7 +92,7 @@ function notConnectedBody(tool: string) {
     status: 'error',
     connected: false,
     setupUrl: '/connectors',
-    message: `${tool} not connected. Authorize via Nango OAuth at /connectors to enable real actions.`,
+    message: `${tool} is not connected. Connect it in Connectors to turn this on.`,
   };
 }
 
@@ -246,7 +246,7 @@ export async function POST(request: Request) {
         modified_at: modifiedAt,
         status: 'pending',
         pending: true,
-        message: 'Job queued. Temporal is unavailable so ingest has not started yet.',
+        message: 'Queued. Indexing has not started yet and will begin when the background service is available.',
       });
     }
 

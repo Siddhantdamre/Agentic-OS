@@ -294,8 +294,8 @@ export async function POST(request: Request) {
         idempotencyKey: showingId,
       });
       reminders = reminderHandle
-        ? { scheduled: true, workflowId: reminderHandle.workflowId, message: 'ShowingReminderWorkflow started' }
-        : { scheduled: false, message: 'Temporal unavailable — reminders not scheduled (no fake send)' };
+        ? { scheduled: true, workflowId: reminderHandle.workflowId, message: 'Reminders are scheduled' }
+        : { scheduled: false, message: 'Reminders could not be scheduled right now. Nothing was sent.' };
     }
 
     // Best-effort two-way calendar watch — never fabricates sync when webhook URL unset.

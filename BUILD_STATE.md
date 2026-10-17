@@ -1,5 +1,17 @@
 # Darex Build State
 
+## Plain words in API answers (no Temporal, Nango, TrueForge on a customer's screen)
+
+- About twenty route answers named internal systems: "Temporal is unavailable" (Brain upload and reindex, showings, plan execution, the owner's WhatsApp briefing), "Nango connection ..." (connect and disconnect), "TrueForge agent service" (assistant proxy). The disconnect answers also copied the upstream error text. They are now plain sentences; the upstream error goes to the server log.
+- `lib/__tests__/api-customer-wording.test.ts` scans route files for those names inside string literals and fails on a new one. Skipped: administrator-only and machine-read routes (platform, health, Chatwoot and Nango webhooks), identifier fields such as `provider`, log lines and thrown errors that are caught. It listed 26 places before the fix and none after.
+- Verified: the new test, the route and integration tests that touch the changed files, tsc clean. Not verified: a click-through of the connect and disconnect screens against a real connector.
+
+## Check that nothing reaches a provider around the gate unlisted
+
+- `services/workflows/src/gate-exits.test.ts` counts `executeProvider(` calls outside `tool-executor.ts`. Seven exist today, all listed with a reason: three read-only customer-profile lookups, and four posts to the owner's own Slack or ops WhatsApp (decision card, churn alert, morning brief). None sends to a customer. A new call anywhere else fails the test until it is routed through `executeAutonomousToolAction` or listed.
+- Why a list and not a reroute: reading the sites showed they are owner notifications, so putting them behind an approval would only delay the owner's own alerts. An earlier note called them gate bypasses; that was too strong.
+- Test first in spirit: a planted call in a scratch file made the test fail, and removing it made it pass. Not covered: `sendChannelReply` in the dashboard (human replies and inbound auto-replies), listed in the plan for a later check.
+
 ## Insight: say a plain sentence when Review Action cannot start
 
 - `POST /api/insight` answered "Temporal is unavailable — InsightActionWorkflow was not started" when the workflow engine could not be reached, and the Insight page printed it under every card. It now answers 503 with "This action cannot start right now. Please try again in a few minutes."; the detail goes to the server log.

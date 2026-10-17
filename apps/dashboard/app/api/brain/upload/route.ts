@@ -274,7 +274,7 @@ export async function POST(request: Request) {
         filename: name,
         format: extracted.format,
         characters: extracted.text.length,
-        message: 'Saved. Temporal is unavailable, so indexing has not started yet.',
+        message: 'Saved. Indexing has not started yet and will begin when the background service is available.',
       });
     }
 

@@ -65,7 +65,7 @@ async function runOwnerCommand(job: OwnerJob): Promise<string> {
         idempotencyKey: `owner-brief:${job.orgId}:${Date.now()}`,
       });
       if (!handle) {
-        return 'Could not start briefing (Temporal unavailable). Open the dashboard Home.';
+        return 'Could not start the briefing right now. Open the dashboard Home.';
       }
       try {
         const result = (await handle.result()) as { narrative?: string; needsAttention?: number };
