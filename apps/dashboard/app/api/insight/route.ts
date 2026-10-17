@@ -167,8 +167,9 @@ export async function POST(request: Request) {
       namedWorkflow,
     });
     if (!handle) {
+      console.error('[insight] Review Action not started: workflow engine unavailable');
       return NextResponse.json(
-        { error: 'Temporal is unavailable — InsightActionWorkflow was not started' },
+        { error: 'This action cannot start right now. Please try again in a few minutes.' },
         { status: 503 }
       );
     }

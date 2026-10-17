@@ -1,5 +1,11 @@
 # Darex Build State
 
+## Insight: say a plain sentence when Review Action cannot start
+
+- `POST /api/insight` answered "Temporal is unavailable — InsightActionWorkflow was not started" when the workflow engine could not be reached, and the Insight page printed it under every card. It now answers 503 with "This action cannot start right now. Please try again in a few minutes."; the detail goes to the server log.
+- Found by a real-browser run over every screen (`reports/feature-sweep.js`, results in `reports/feature-coverage.md`). Test first: `app/api/insight/__tests__/review-action-unavailable.test.ts` failed on the old text and passes now.
+- Not changed, same kind of wording: `ask-ai/execute`, `brain/upload`, `brain/reindex` still name Temporal to the customer. Not verified: a real Temporal run of Review Action.
+
 ## Park inbound send-tool injection attempts again
 
 - A customer message that names a send tool by identifier (for example `gmail_send`, the shape of a prompt-injection attempt) is parked for a person again. When the pricing-question fix was restored in the history merge, `inboundRequiresHitlWait` stopped checking the customer's text for send-tool names. Nothing was sent in either state (the gate still refused), but the safeguard that tells a person was lost. Found because harness flow F13 failed (117 of 118).
