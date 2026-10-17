@@ -117,7 +117,7 @@ async function proxyToTrueforge(
   } catch (err: any) {
     console.error('[trueforge-proxy] Error proxying to TrueForge:', err?.message || err);
     return NextResponse.json(
-      { error: 'Failed to connect to TrueForge agent service' },
+      { error: 'The assistant is not reachable right now. Please try again.' },
       { status: 502 }
     );
   }

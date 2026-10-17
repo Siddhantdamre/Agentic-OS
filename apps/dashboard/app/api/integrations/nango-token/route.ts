@@ -92,7 +92,7 @@ export async function POST(request: Request) {
         return NextResponse.json(
           {
             success: false,
-            error: `${provider} is not Nango OAuth (${spec.authMode})`,
+            error: `${provider} cannot be connected this way.`,
           },
           { status: 400 }
         );
@@ -152,7 +152,7 @@ export async function POST(request: Request) {
         nangoConnectionId: effectiveSuccess ? nangoConnId : null,
         scopes: spec?.scopes || [],
         lastOkAt: effectiveSuccess ? new Date() : null,
-        lastError: effectiveSuccess ? null : 'Nango OAuth not confirmed',
+        lastError: effectiveSuccess ? null : 'The connection was not confirmed',
       });
 
       if (effectiveSuccess && (provider === 'google-workspace' || provider === 'google' || provider === 'gmail' || provider.startsWith('google-'))) {
@@ -193,8 +193,8 @@ export async function POST(request: Request) {
         connected: effectiveSuccess,
         connectionId: nangoConnId,
         message: effectiveSuccess
-          ? `${provider} connected via Nango`
-          : `connection not confirmed (no real Nango OAuth connection found for ${provider})`,
+          ? `${provider} connected`
+          : `connection not confirmed (no connection was found for ${provider})`,
         ...(effectiveSuccess
           ? {}
           : { reconnectUrl: '/connectors', setupUrl: '/connectors' }),
